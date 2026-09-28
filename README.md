@@ -1,6 +1,6 @@
 # Kalem plugins
 
-The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, Markdown and other plain-text formats. Every mode, file type, language pack, completer and exporter beyond Kalem's small core (Org, `.klm`, Markdown, CSV) is developed here as a plugin, never in the core (design document, sections 11.0 and 11.8).
+The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, Markdown and other plain-text formats. Every mode, file type, language pack, completer and exporter beyond Kalem's small core (Org, `.klm`, Markdown, CSV, LaTeX) is developed here as a plugin, never in the core (design document, sections 11.0 and 11.8).
 
 **Status: skeleton.** The plugin API (a WIT definition and the `kalem-plugin` bindings, Kalem's task T3.1.3) is not published yet. This repository holds the layout, the template, the conformance test and the CI so that the first plugin lands on a finished path.
 
@@ -19,7 +19,7 @@ The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, M
 
 ## What belongs here
 
-A mode belongs in Kalem's core only when it is Org, `.klm`, Markdown or CSV. Everything else is a plugin, and a mode is worth building only when what the reader sees differs from the source text: markers hidden, objects drawn, a grid, a tree. A format whose view is its source is a **language pack** (highlighting plus an outline provider, a formatter, completion and diagnostics), also a plugin. See group 2.7g of Kalem's `todo.md`.
+A mode belongs in Kalem's core only when it is Org, `.klm`, Markdown, CSV or LaTeX. Everything else is a plugin, and a mode is worth building only when what the reader sees differs from the source text: markers hidden, objects drawn, a grid, a tree. A format whose view is its source is a **language pack** (highlighting plus an outline provider, a formatter, completion and diagnostics), also a plugin. See group 2.7g of Kalem's `todo.md`.
 
 ## Layout
 
