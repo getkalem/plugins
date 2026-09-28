@@ -1,0 +1,5 @@
+/target
+**/dist/
+# Compiled components are never committed: the release workflow builds,
+# hashes, signs and publishes them (design document, section 11.8).
+*.wasm

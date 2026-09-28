@@ -1,0 +1,70 @@
+# Publishes one plugin: push a tag NAME-vX.Y.Z, where NAME is the directory
+# under plugins/ and X.Y.Z the version in its plugin.json. The component is
+# built from the tagged source, hashed, signed with sigstore through the
+# workflow's identity, and attached to a GitHub release; then main gets the
+# SHA-256 file and a regenerated index.json. Not run yet: the first tag runs it.
+name: Release a plugin
+
+on:
+  push:
+    tags: ["*-v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plugin name and version from the tag
+        id: tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          name="${tag%-v*}"
+          version="${tag##*-v}"
+          test -f "plugins/$name/plugin.json" || { echo "no plugins/$name/plugin.json"; exit 1; }
+          manifest_version=$(python3 -c "import json;print(json.load(open('plugins/$name/plugin.json'))['version'])")
+          test "$manifest_version" = "$version" || { echo "tag says $version, plugin.json says $manifest_version"; exit 1; }
+          asset=$(python3 -c "import json,os;print(os.path.basename(json.load(open('plugins/$name/plugin.json'))['main']))")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - name: Build the component from the tagged source
+        run: |
+          cargo build --release --target wasm32-wasip2 -p "kalem-plugin-${{ steps.tag.outputs.name }}"
+          mkdir -p dist
+          built=$(ls target/wasm32-wasip2/release/*.wasm | head -1)
+          cp "$built" "dist/${{ steps.tag.outputs.asset }}"
+          (cd dist && sha256sum "${{ steps.tag.outputs.asset }}" > SHA256SUMS)
+          cat dist/SHA256SUMS
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the component (sigstore, keyless)
+        run: |
+          cd dist
+          cosign sign-blob --yes "${{ steps.tag.outputs.asset }}" \
+            --bundle "${{ steps.tag.outputs.asset }}.sigstore.json"
+      - name: GitHub release with the component, its hash and its signature
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            dist/${{ steps.tag.outputs.asset }}
+            dist/SHA256SUMS
+            dist/${{ steps.tag.outputs.asset }}.sigstore.json
+      - name: Record the hash on main and regenerate the index
+        run: |
+          sha=$(cut -d' ' -f1 dist/SHA256SUMS)
+          git fetch origin main
+          git checkout main
+          echo "$sha  ${{ steps.tag.outputs.asset }}" > "releases/${{ github.ref_name }}.sha256"
+          python3 tools/build-index.py
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add releases index.json
+          git commit -m "Publish ${{ github.ref_name }}"
+          git push origin main

@@ -1,0 +1,5 @@
+# Default reviewer for everything.
+* @mhmtskrc2
+
+# One line per plugin, added with the plugin:
+# /plugins/NAME/ @github-user

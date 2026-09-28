@@ -1,0 +1,5 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+# The component target: rustup installs it on first use.
+targets = ["wasm32-wasip2"]
