@@ -7,11 +7,13 @@ use std::fmt;
 use std::ops::Range as Span;
 
 use crate::calc::{self, Engine};
-use crate::cellref::{CellRef, MAX_COL, Range};
+use crate::cellref::{CellRef, MAX_COL, MAX_ROW, Range};
+use crate::formula::Op;
 use crate::numfmt;
 use crate::package::{Package, PackageError};
 use crate::rels::{self, Rel, kind};
 use crate::sheet::{self, Cell, FormulaKind, Sheet, Value};
+use crate::structure;
 use crate::styles::{self, CellStyle, Styles};
 use crate::xml::{self, Reader, Token};
 
@@ -288,6 +290,26 @@ pub struct Workbook {
     trusted: HashSet<(usize, CellRef)>,
     /// The engine's latest result of every formula cell.
     computed: HashMap<(usize, CellRef), Value>,
+    /// States before each edit, for undo, and after each undone one, for redo.
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+}
+
+/// What an edit changes, kept whole for undo: the package's bytes are
+/// shared, so a snapshot costs the edited texts.
+#[derive(Clone)]
+struct Snapshot {
+    pkg: Package,
+    workbook_xml: String,
+    workbook_rels: Vec<Rel>,
+    defined_names: Vec<DefinedName>,
+    loaded: HashMap<usize, (String, Sheet)>,
+    dirty_sheets: Vec<usize>,
+    derived_styles: HashMap<(u32, u32), u32>,
+    styles_xml: Option<String>,
+    styles: Styles,
+    trusted: HashSet<(usize, CellRef)>,
+    computed: HashMap<(usize, CellRef), Value>,
 }
 
 impl fmt::Debug for Workbook {
@@ -373,6 +395,8 @@ impl Workbook {
             engine: None,
             trusted: HashSet::new(),
             computed: HashMap::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
         };
         wb.read_workbook_part();
         Ok(wb)
@@ -644,17 +668,35 @@ impl Workbook {
             .set(idx, at, formula.as_deref(), &value)
             .map_err(|e| Error::Refused(format!("the formula engine: {e}")))?;
         let after = engine.evaluate(&cells).clone();
+        let before = std::mem::take(&mut self.computed);
+        self.write_results(&before, after, &cells, Some((idx, at)));
+        Ok(())
+    }
+
+    /// Writes the results that changed between two computations: trusted
+    /// cells get the new result, untrusted ones lose theirs; the `edited`
+    /// cell gets its result unless the engine does not know a function in it.
+    fn write_results(
+        &mut self,
+        before: &HashMap<(usize, CellRef), Value>,
+        after: HashMap<(usize, CellRef), Value>,
+        cells: &[(usize, CellRef)],
+        edited: Option<(usize, CellRef)>,
+    ) {
         let mut writes: BTreeMap<usize, Vec<(CellRef, Option<Value>)>> = BTreeMap::new();
-        for key in &cells {
+        for key in cells {
             let new = after.get(key);
-            let changed = match (self.computed.get(key), new) {
+            let changed = match (before.get(key), new) {
                 (Some(a), Some(b)) => !calc::same(a, b),
                 (None, None) => false,
                 _ => true,
             };
-            if *key == (idx, at) {
+            if Some(*key) == edited {
                 let usable = new.filter(|v| !matches!(v, Value::Error(e) if e == "#NAME?"));
-                writes.entry(idx).or_default().push((at, usable.cloned()));
+                writes
+                    .entry(key.0)
+                    .or_default()
+                    .push((key.1, usable.cloned()));
                 if usable.is_some() {
                     self.trusted.insert(*key);
                 }
@@ -694,7 +736,6 @@ impl Workbook {
                 self.dirty_sheets.push(sheet_idx);
             }
         }
-        Ok(())
     }
 
     /// A cell's value through its number format.
@@ -819,6 +860,19 @@ impl Workbook {
     pub fn set_input(&mut self, idx: usize, at: CellRef, input: Input) -> Result<()> {
         self.load(idx)?;
         self.ensure_engine()?;
+        let snapshot = self.snapshot();
+        let result = self.set_input_inner(idx, at, input);
+        match &result {
+            Ok(()) => {
+                self.undo.push(snapshot);
+                self.redo.clear();
+            }
+            Err(_) => self.restore(snapshot),
+        }
+        result
+    }
+
+    fn set_input_inner(&mut self, idx: usize, at: CellRef, input: Input) -> Result<()> {
         let model = &self.loaded[&idx].1;
         let old = model.cells.get(&at).cloned();
         if let Some(m) = model.merge_at(at).filter(|m| m.start != at) {
@@ -935,6 +989,307 @@ impl Workbook {
             self.drop_calc_chain()?;
         }
         Ok(())
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            pkg: self.pkg.clone(),
+            workbook_xml: self.workbook_xml.clone(),
+            workbook_rels: self.workbook_rels.clone(),
+            defined_names: self.defined_names.clone(),
+            loaded: self.loaded.clone(),
+            dirty_sheets: self.dirty_sheets.clone(),
+            derived_styles: self.derived_styles.clone(),
+            styles_xml: self.styles_xml.clone(),
+            styles: self.styles.clone(),
+            trusted: self.trusted.clone(),
+            computed: self.computed.clone(),
+        }
+    }
+
+    fn restore(&mut self, s: Snapshot) {
+        self.pkg = s.pkg;
+        self.workbook_xml = s.workbook_xml;
+        self.workbook_rels = s.workbook_rels;
+        self.defined_names = s.defined_names;
+        self.loaded = s.loaded;
+        self.dirty_sheets = s.dirty_sheets;
+        self.derived_styles = s.derived_styles;
+        self.styles_xml = s.styles_xml;
+        self.styles = s.styles;
+        self.trusted = s.trusted;
+        self.computed = s.computed;
+        // The engine holds the cells as they were; it is built again when needed.
+        self.engine = None;
+    }
+
+    /// Undoes the last edit; `false` when there is none.
+    pub fn undo(&mut self) -> bool {
+        let Some(s) = self.undo.pop() else {
+            return false;
+        };
+        let now = self.snapshot();
+        self.restore(s);
+        self.redo.push(now);
+        true
+    }
+
+    /// Redoes the last undone edit; `false` when there is none.
+    pub fn redo(&mut self) -> bool {
+        let Some(s) = self.redo.pop() else {
+            return false;
+        };
+        let now = self.snapshot();
+        self.restore(s);
+        self.undo.push(now);
+        true
+    }
+
+    /// Whether there is an edit to undo, and one to redo.
+    pub fn can_undo_redo(&self) -> (bool, bool) {
+        (!self.undo.is_empty(), !self.redo.is_empty())
+    }
+
+    /// Inserts `n` empty rows before row `at` (zero-based).
+    pub fn insert_rows(&mut self, idx: usize, at: u32, n: u32) -> Result<()> {
+        self.structural(idx, Op::InsertRows { at, n })
+    }
+
+    /// Deletes rows `at..at + n`.
+    pub fn delete_rows(&mut self, idx: usize, at: u32, n: u32) -> Result<()> {
+        self.structural(idx, Op::DeleteRows { at, n })
+    }
+
+    /// Inserts `n` empty columns before column `at` (zero-based).
+    pub fn insert_cols(&mut self, idx: usize, at: u32, n: u32) -> Result<()> {
+        self.structural(idx, Op::InsertCols { at, n })
+    }
+
+    /// Deletes columns `at..at + n`.
+    pub fn delete_cols(&mut self, idx: usize, at: u32, n: u32) -> Result<()> {
+        self.structural(idx, Op::DeleteCols { at, n })
+    }
+
+    /// The parts a sheet's relationships name, by relationship type.
+    fn sheet_parts(&self, idx: usize) -> Result<Vec<(String, String)>> {
+        let part = &self.sheets[idx].part;
+        let rels_path = rels::rels_path(part);
+        if !self.pkg.contains(&rels_path) {
+            return Ok(Vec::new());
+        }
+        let rels = rels::parse(&text_of(self.pkg.part(&rels_path)?, &rels_path)?);
+        Ok(rels
+            .into_iter()
+            .filter(|r| !r.external)
+            .map(|r| (r.kind, rels::resolve(part, &r.target)))
+            .filter(|(_, p)| self.pkg.contains(p))
+            .collect())
+    }
+
+    fn rewrite_part(&mut self, part: &str, f: impl Fn(&str) -> String) -> Result<()> {
+        let text = text_of(self.pkg.part(part)?, part)?;
+        let new = f(&text);
+        if new != text {
+            self.pkg.set_part(part, new.into_bytes());
+        }
+        Ok(())
+    }
+
+    fn structural(&mut self, idx: usize, op: Op) -> Result<()> {
+        let (Op::InsertRows { n, .. }
+        | Op::DeleteRows { n, .. }
+        | Op::InsertCols { n, .. }
+        | Op::DeleteCols { n, .. }) = op;
+        if n == 0 {
+            return Ok(());
+        }
+        self.load(idx)?;
+        self.ensure_engine()?;
+        for i in 0..self.sheets.len() {
+            if self.sheets[i].kind == SheetKind::Worksheet {
+                self.load(i)?;
+            }
+        }
+        self.check_structural(idx, op)?;
+        let snapshot = self.snapshot();
+        match self.structural_inner(idx, op) {
+            Ok(()) => {
+                self.undo.push(snapshot);
+                self.redo.clear();
+                Ok(())
+            }
+            Err(e) => {
+                self.restore(snapshot);
+                Err(e)
+            }
+        }
+    }
+
+    /// What Excel refuses: data pushed off the sheet, part of an array
+    /// formula, columns through a table.
+    fn check_structural(&self, idx: usize, op: Op) -> Result<()> {
+        let model = &self.loaded[&idx].1;
+        let rows_op = matches!(op, Op::InsertRows { .. } | Op::DeleteRows { .. });
+        if let Op::InsertRows { n, .. } | Op::InsertCols { n, .. } = op {
+            let max = if rows_op { MAX_ROW } else { MAX_COL };
+            let last = model
+                .cells
+                .keys()
+                .map(|c| if rows_op { c.row } else { c.col })
+                .max()
+                .unwrap_or(0);
+            if !model.cells.is_empty() && last + n >= max {
+                return Err(Error::Refused(
+                    "cells would be pushed off the end of the sheet".into(),
+                ));
+            }
+        }
+        for c in model.cells.values() {
+            if let Some(f) = &c.formula
+                && let FormulaKind::Array { range } = f.kind
+                && range.start != range.end
+            {
+                let (a, b) = if rows_op {
+                    (range.start.row, range.end.row)
+                } else {
+                    (range.start.col, range.end.col)
+                };
+                let touched = match op {
+                    Op::InsertRows { at, .. } | Op::InsertCols { at, .. } => a < at && at <= b,
+                    Op::DeleteRows { at, n } | Op::DeleteCols { at, n } => {
+                        let (lo, hi) = (at, at + n - 1);
+                        hi >= a && lo <= b && !(lo <= a && hi >= b)
+                    }
+                };
+                if touched {
+                    return Err(Error::Refused(format!(
+                        "this would change part of the array formula over {range}"
+                    )));
+                }
+            }
+        }
+        if !rows_op {
+            for (kind, part) in self.sheet_parts(idx)? {
+                if kind != "table" {
+                    continue;
+                }
+                let text = text_of(self.pkg.part(&part)?, &part)?;
+                if let Some(t) = structure::table_range(&text) {
+                    let (a, b) = (t.start.col, t.end.col);
+                    let inside = match op {
+                        Op::InsertCols { at, .. } => a < at && at <= b,
+                        Op::DeleteCols { at, n } => at + n > a && at <= b,
+                        _ => false,
+                    };
+                    if inside {
+                        return Err(Error::Refused(format!(
+                            "columns of the table at {t} are changed in the table, not the sheet"
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn structural_inner(&mut self, idx: usize, op: Op) -> Result<()> {
+        let name = self.sheets[idx].name.clone();
+        let names: Vec<String> = self.sheets.iter().map(|s| s.name.clone()).collect();
+        // The sheets' parts.
+        let indices: Vec<usize> = self.loaded.keys().copied().collect();
+        for i in indices {
+            let (text, model) = &self.loaded[&i];
+            let new = if i == idx {
+                structure::rewrite_sheet(text, op, &name, model)
+            } else {
+                structure::rewrite_formulas(text, op, &name, &names[i])
+            };
+            if new != *text {
+                let model = sheet::parse(&new, &self.strings, self.date1904);
+                self.loaded.insert(i, (new, model));
+                if !self.dirty_sheets.contains(&i) {
+                    self.dirty_sheets.push(i);
+                }
+            }
+        }
+        // Defined names.
+        let wb = structure::rewrite_defined_names(&self.workbook_xml, op, &name, &names);
+        if wb != self.workbook_xml {
+            self.workbook_xml = wb;
+            self.reread_defined_names();
+        }
+        // What hangs on the sheet: comments, note shapes, drawings, tables.
+        for (kind, part) in self.sheet_parts(idx)? {
+            match kind.as_str() {
+                "comments" => self.rewrite_part(&part, |t| structure::rewrite_comments(t, op))?,
+                "vmlDrawing" => self.rewrite_part(&part, |t| structure::rewrite_vml(t, op))?,
+                "drawing" => self.rewrite_part(&part, |t| structure::rewrite_drawing(t, op))?,
+                "table" => self.rewrite_part(&part, |t| structure::rewrite_table(t, op))?,
+                _ => {}
+            }
+        }
+        // Charts and pivot caches anywhere in the package.
+        for part in self.pkg.names() {
+            let file = part.rsplit('/').next().unwrap_or_default();
+            if part.starts_with("xl/charts/") && file.starts_with("chart") && file.ends_with(".xml")
+            {
+                self.rewrite_part(&part, |t| structure::rewrite_chart(t, op, &name))?;
+            } else if file.starts_with("pivotCacheDefinition") && file.ends_with(".xml") {
+                self.rewrite_part(&part, |t| structure::rewrite_pivot_cache(t, op, &name))?;
+            }
+        }
+        self.drop_calc_chain()?;
+        self.set_full_calc_on_load();
+        // Results: the cells moved, so do their last results and trust.
+        let moved = |(s, p): (usize, CellRef)| -> Option<(usize, CellRef)> {
+            if s == idx {
+                op.cell(p).map(|q| (s, q))
+            } else {
+                Some((s, p))
+            }
+        };
+        let before: HashMap<(usize, CellRef), Value> = std::mem::take(&mut self.computed)
+            .into_iter()
+            .filter_map(|(k, v)| moved(k).map(|k| (k, v)))
+            .collect();
+        self.trusted = std::mem::take(&mut self.trusted)
+            .into_iter()
+            .filter_map(moved)
+            .collect();
+        let trusted = self.trusted.clone();
+        self.engine = None;
+        self.ensure_engine()?;
+        // Building the engine trusted cells against the file; keep the
+        // trust carried over from before the change.
+        self.trusted.extend(trusted);
+        let after = std::mem::take(&mut self.computed);
+        let cells = self.formula_cells();
+        self.write_results(&before, after, &cells, None);
+        Ok(())
+    }
+
+    fn reread_defined_names(&mut self) {
+        self.defined_names.clear();
+        let text = self.workbook_xml.clone();
+        let mut r = Reader::new(&text);
+        while let Some(t) = r.next_token() {
+            let Token::Start(tag) = t else { continue };
+            if tag.name == "definedName" && !tag.empty {
+                let name = tag.attr("name").unwrap_or_default().into_owned();
+                let local_sheet = tag.attr("localSheetId").and_then(|v| v.parse().ok());
+                let hidden = tag
+                    .attr("hidden")
+                    .as_deref()
+                    .is_some_and(|v| v == "1" || v == "true");
+                let (refers_to, _) = r.text_until_end("definedName");
+                self.defined_names.push(DefinedName {
+                    name,
+                    refers_to,
+                    local_sheet,
+                    hidden,
+                });
+            }
+        }
     }
 
     fn row_or_col_style(&self, _idx: usize, _at: CellRef) -> u32 {

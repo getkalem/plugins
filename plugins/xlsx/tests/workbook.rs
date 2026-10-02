@@ -260,3 +260,82 @@ fn the_empty_sheet_takes_a_first_cell() {
         "C3"
     );
 }
+
+fn part_text(bytes: &[u8], name: &str) -> String {
+    String::from_utf8(Package::read(bytes.to_vec()).unwrap().part(name).unwrap()).unwrap()
+}
+
+#[test]
+fn inserting_a_row_moves_everything_that_points_at_the_sheet() {
+    for f in ["libreoffice-budget.xlsx", "openpyxl-budget.xlsx"] {
+        let mut wb = Workbook::open(corpus(f)).unwrap();
+        // Before row 3 (Food).
+        wb.insert_rows(0, 2, 1).unwrap();
+        wb.set_cell(0, at("A3"), "Books").unwrap();
+        wb.set_cell(0, at("B3"), "100").unwrap();
+        let out = wb.save().unwrap();
+        let mut again = Workbook::open(out.clone()).unwrap();
+        assert_eq!(again.display(0, at("A4")).unwrap(), "Food", "{f}");
+        assert_eq!(again.edit_text(0, at("D4")).unwrap(), "=B4+C4", "{f}");
+        assert_eq!(again.edit_text(0, at("B6")).unwrap(), "=SUM(B2:B5)", "{f}");
+        assert_eq!(again.display(0, at("B6")).unwrap(), "1,731.50", "{f}");
+        let names = again.defined_names().to_vec();
+        assert_eq!(names[0].refers_to, "Budget!$B$2:$B$5", "{f}");
+        assert!(
+            part_text(&out, "xl/charts/chart1.xml").contains("$B$2:$B$5"),
+            "{f}"
+        );
+        assert_eq!(again.comments(0).unwrap()[0].cell, at("A2"), "{f}");
+        assert_eq!(
+            again.sheet(0).unwrap().merged[0].to_string(),
+            "F1:G1",
+            "{f}"
+        );
+        assert!(!Package::read(out).unwrap().contains("xl/calcChain.xml"));
+    }
+}
+
+#[test]
+fn deleting_rows_and_columns_recalculates() {
+    let mut wb = Workbook::open(corpus("libreoffice-budget.xlsx")).unwrap();
+    // Food goes.
+    wb.delete_rows(0, 2, 1).unwrap();
+    assert_eq!(wb.display(0, at("A3")).unwrap(), "Travel");
+    assert_eq!(wb.edit_text(0, at("B4")).unwrap(), "=SUM(B2:B3)");
+    assert_eq!(wb.display(0, at("B4")).unwrap(), "1,200.00");
+    assert_eq!(wb.display(0, at("D4")).unwrap(), "3,350.00");
+    // Column A goes: its note too.
+    wb.delete_cols(0, 0, 1).unwrap();
+    assert_eq!(wb.edit_text(0, at("C2")).unwrap(), "=A2+B2");
+    assert!(wb.comments(0).unwrap().is_empty());
+    let out = wb.save().unwrap();
+    let text = part_text(&out, "xl/worksheets/sheet1.xml");
+    assert!(text.contains("<mergeCell ref=\"E1:F1\"/>"), "{text}");
+    let mut again = Workbook::open(out).unwrap();
+    assert_eq!(again.display(0, at("C4")).unwrap(), "3,350.00");
+}
+
+#[test]
+fn undo_returns_to_the_file_as_read() {
+    let bytes = corpus("libreoffice-budget.xlsx");
+    let mut wb = Workbook::open(bytes.clone()).unwrap();
+    wb.set_cell(0, at("B2"), "5").unwrap();
+    wb.insert_cols(0, 1, 2).unwrap();
+    wb.delete_rows(0, 0, 1).unwrap();
+    assert_eq!(wb.can_undo_redo(), (true, false));
+    assert!(wb.undo() && wb.undo() && wb.undo());
+    assert!(!wb.undo());
+    assert_eq!(wb.save().unwrap(), bytes);
+    assert!(wb.redo());
+    assert_eq!(wb.display(0, at("B2")).unwrap(), "5.00");
+    assert_eq!(wb.display(0, at("D2")).unwrap(), "1,205.00");
+}
+
+#[test]
+fn structural_edits_excel_refuses() {
+    let mut wb = Workbook::open(corpus("libreoffice-budget.xlsx")).unwrap();
+    assert!(matches!(
+        wb.insert_rows(0, 0, 1_048_576),
+        Err(Error::Refused(_))
+    ));
+}

@@ -6,6 +6,8 @@
 //! cargo run -p kalem-plugin-xlsx --example xlsx -- show book.xlsx [SHEET]
 //! cargo run -p kalem-plugin-xlsx --example xlsx -- get book.xlsx 'Sheet1!B2'
 //! cargo run -p kalem-plugin-xlsx --example xlsx -- set book.xlsx 'Sheet1!B2' '=SUM(A1:A3)' [-o out.xlsx]
+//! cargo run -p kalem-plugin-xlsx --example xlsx -- insert-rows book.xlsx Sheet1 3 2
+//! cargo run -p kalem-plugin-xlsx --example xlsx -- delete-cols book.xlsx Sheet1 B 1
 //! cargo run -p kalem-plugin-xlsx --example xlsx -- vba book.xlsm
 //! ```
 //!
@@ -143,6 +145,28 @@ fn set(path: &Path, at: &str, entry: &str, out: Option<PathBuf>) -> Res<()> {
     Ok(())
 }
 
+/// `insert-rows FILE SHEET AT N`: rows are numbered from 1, columns by letter.
+fn structural(cmd: &str, path: &Path, sheet: &str, at: &str, n: &str) -> Res<()> {
+    let mut wb = open(path)?;
+    let idx = wb.sheet_index(sheet).ok_or(format!("no sheet {sheet}"))?;
+    let n: u32 = n.parse()?;
+    let at = match at.parse::<u32>() {
+        Ok(r) => r.checked_sub(1).ok_or("rows start at 1")?,
+        Err(_) => {
+            kalem_plugin_xlsx::cellref::column_index(at).ok_or(format!("not a column: {at}"))?
+        }
+    };
+    match cmd {
+        "insert-rows" => wb.insert_rows(idx, at, n)?,
+        "delete-rows" => wb.delete_rows(idx, at, n)?,
+        "insert-cols" => wb.insert_cols(idx, at, n)?,
+        _ => wb.delete_cols(idx, at, n)?,
+    }
+    std::fs::write(path, wb.save()?)?;
+    println!("parts written: {}", wb.changed_parts().join(", "));
+    Ok(())
+}
+
 fn show_vba(path: &Path) -> Res<()> {
     let wb = open(path)?;
     let Some(bin) = wb.vba_project_bytes()? else {
@@ -179,7 +203,14 @@ fn run(args: &[String]) -> Res<()> {
             )
         }
         Some("vba") => show_vba(&path),
-        _ => Err("commands: info, show, get, set, vba".into()),
+        Some(c @ ("insert-rows" | "delete-rows" | "insert-cols" | "delete-cols")) => structural(
+            c,
+            &path,
+            arg(2).ok_or("missing sheet")?,
+            arg(3).ok_or("missing row or column")?,
+            arg(4).unwrap_or("1"),
+        ),
+        _ => Err("commands: info, show, get, set, insert-rows, delete-rows, insert-cols, delete-cols, vba".into()),
     }
 }
 

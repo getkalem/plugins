@@ -70,7 +70,8 @@ enum Change {
 /// A ZIP package read from bytes.
 #[derive(Clone)]
 pub struct Package {
-    bytes: Vec<u8>,
+    /// Shared, so that a snapshot for undo costs nothing.
+    bytes: std::sync::Arc<Vec<u8>>,
     /// Entries in central directory order.
     entries: Vec<Entry>,
     index: HashMap<String, usize>,
@@ -276,7 +277,7 @@ impl Package {
             .map(|(i, e)| (e.name.clone(), i))
             .collect();
         Ok(Self {
-            bytes,
+            bytes: std::sync::Arc::new(bytes),
             entries,
             index,
             comment,
@@ -372,7 +373,7 @@ impl Package {
     /// The package as bytes: the input itself when nothing changed.
     pub fn write(&self) -> Result<Vec<u8>> {
         if !self.is_dirty() {
-            return Ok(self.bytes.clone());
+            return Ok(self.bytes.to_vec());
         }
         let mut out = Vec::with_capacity(self.bytes.len());
         let mut order: Vec<usize> = (0..self.entries.len()).collect();

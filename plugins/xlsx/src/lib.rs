@@ -25,6 +25,7 @@ pub mod numfmt;
 pub mod package;
 pub mod rels;
 pub mod sheet;
+pub mod structure;
 pub mod styles;
 pub mod vba;
 pub mod workbook;
