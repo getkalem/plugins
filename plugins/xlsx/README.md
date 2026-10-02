@@ -8,7 +8,9 @@ Opens, edits and saves Excel workbooks (SpreadsheetML, ECMA-376 part 1: `.xlsx`,
 - **Edits** a cell the way typing in Excel does: `=` starts a formula, `'` forces text, `1,234.5`, `50%`, `2026-10-03` and `14:30` are numbers (and a General cell gets the number format Excel would give it). Only the cell's `<c>` element is rewritten; its style is kept. Edits Excel refuses (inside a merged cell, part of an array formula or a data table) are refused.
 - **Recalculates** with [IronCalc](https://www.ironcalc.com) and writes the new results of the formulas an edit changed, so LibreOffice, which does not recalculate on open, and every viewer that shows stored results agree with Excel. The engine is trusted cell by cell: before an edit it computes the whole workbook, and only cells whose result equals the one stored in the file get new results; the others lose their stored result and are computed by Excel or LibreOffice on open. `calcPr fullCalcOnLoad` is set either way.
 - **Keeps everything else**: a save without edits returns the input byte for byte; after an edit only the edited parts are written, and every other ZIP entry (charts, pivot tables, drawings, images, the VBA project) is copied byte for byte, local header included. When a formula is removed, the calculation chain is dropped, as the specification allows and Excel rebuilds it.
-- **Macros**: `xl/vbaProject.bin` is kept untouched; the source of every VBA module is read from it ([MS-OVBA] compound file and compression) for the viewer. Running macros is not implemented (see below).
+- **Rows and columns** are inserted and deleted as Excel does it: every reference to the sheet moves (formulas on every sheet, absolute ones too, ranges grown and shrunk, `#REF!` where cells are gone), and so do merged cells, hyperlinks, conditional formats, validations, the filter, column widths, defined names, chart series, comments and their note shapes, drawing anchors, tables and pivot sources. Excel's refusals are kept. Every edit undoes and redoes; undoing everything saves the file as it was read.
+- **`.xls`, `.xlsb` and `.ods`** are shown (through calamine) and never written or converted. In the bundled (native) plugin only: calamine's zip does not build for `wasm32-wasip2` on stable Rust yet. calamine 0.36 misreads some BIFF8 formulas; those are not shown, their values are.
+- **Macros**: `xl/vbaProject.bin` is kept byte for byte, its modules' source is read ([MS-OVBA]), and macros **run** inside the plugin (`macros::run_macro`): VBA's language (procedures and functions, recursion, `ByRef`/`ByVal`, optional and named arguments, `ParamArray`, arrays with `ReDim Preserve`, `If`, `For`, `For Each`, `Do`, `While`, `Select Case`, `With`, `On Error Resume Next` and `On Error GoTo`, `Enum`, constants) and about 120 library functions; Excel's object model for data (`Application`, `ThisWorkbook`, `Worksheets`, `Range`, `Cells`, `Rows`, `Columns`, `Value`, `Formula`, `Text`, `Address`, `Offset`, `Resize`, `End`, `CurrentRegion`, `UsedRange`, `Find`, `Copy`, `ClearContents`, `EntireRow.Insert/Delete`, `Intersect`, `Evaluate`, `[A1]`), every Excel function through `WorksheetFunction` and `Application` (computed by IronCalc), `Collection` and `Scripting.Dictionary`, `MsgBox` and `InputBox` through the host, `Debug.Print`. A run is one undo step. A macro runs only when the user asks for it by name; event handlers (`Workbook_Open`, `Auto_Open`, `Worksheet_Change`) are listed and never run by themselves. Files, network, `Shell`, `Declare`, `CreateObject` beyond `Scripting.Dictionary`, other workbooks and `SendKeys` stop the macro with a message naming the call and the line; a step and time budget stops endless loops. Formatting (`Font`, `Interior`, `NumberFormat =`, widths) is not applied yet: those statements are skipped and listed in the run's report.
 
 ## Try it
 
@@ -19,8 +21,14 @@ cargo run -p kalem-plugin-xlsx --example xlsx -- info  book.xlsx
 cargo run -p kalem-plugin-xlsx --example xlsx -- show  book.xlsx [SHEET]
 cargo run -p kalem-plugin-xlsx --example xlsx -- get   book.xlsx 'Sheet1!D2'
 cargo run -p kalem-plugin-xlsx --example xlsx -- set   book.xlsx 'Sheet1!B2' 1300 [-o out.xlsx]
+cargo run -p kalem-plugin-xlsx --example xlsx -- insert-rows book.xlsx Sheet1 3 2
 cargo run -p kalem-plugin-xlsx --example xlsx -- vba   book.xlsm
+cargo run -p kalem-plugin-xlsx --example xlsx -- macros book.xlsm
+cargo run -p kalem-plugin-xlsx --example xlsx -- run   book.xlsm Module1.Fill [-o out.xlsm]
+cargo run -p kalem-plugin-xlsx --example xlsx -- show  old.xls
 ```
+
+Without Excel at hand, `attach-vba book.xlsx examples/Budget.bas out.xlsm` puts a module into a copy of a workbook to try `macros` and `run` on (the project it writes is enough for Kalem, not for Excel).
 
 ## Tests
 
@@ -28,9 +36,7 @@ cargo run -p kalem-plugin-xlsx --example xlsx -- vba   book.xlsm
 
 ## Not yet
 
-- Inserting and deleting rows and columns (references shifted as the specification says), and editing more than one cell at once.
-- Row and column default styles for new cells; rich text in cells; editing comments.
-- The `document-viewer` and `document-editor` contracts, once `kalem-plugin` is published.
-- Legacy `.xls` and `.ods` as viewers (calamine), and `.xlsb`.
-- Running VBA macros. That needs a VBA interpreter and the Excel object model (`Range`, `Cells`, `Worksheets`, events), sandboxed and off by default since macros are the classic Office malware vector. A subset (procedures, variables, loops, `Range(...).Value`, `Cells(r, c)`, `MsgBox`) is feasible inside the plugin's sandbox; it is a task of its own.
-- A test in Microsoft Excel itself that edited files open without a repair prompt (the exit criterion of T3.7.4).
+- Kalem's grid view over the `document-viewer` contract (being written in Kalem, T3.7.1); this crate is bundled into Kalem when it lands.
+- Partial-row and partial-column cell shifts (`Range.Insert Shift:=xlDown` on part of a row); row and column default styles for new cells; rich text in cells; editing comments.
+- In macros: formatting, sorting and filtering, `Resume` and `Resume Next` in handlers, user-defined `Type`s, class modules as objects, UserForms, events.
+- A test in Microsoft Excel itself that edited files open without a repair prompt (the exit criterion of T3.7.4), and macros compared with Excel's runs on a corpus of `.xlsm` files.

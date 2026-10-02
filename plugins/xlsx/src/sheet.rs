@@ -120,6 +120,8 @@ pub struct Sheet {
     pub(crate) sheet_data: Option<(Span<usize>, Option<Span<usize>>)>,
     /// The namespace prefix the part writes its elements with (`x:` or empty).
     pub(crate) prefix: String,
+    /// The sheet's code name (`<sheetPr codeName>`), its name in VBA.
+    pub code_name: Option<String>,
 }
 
 fn number(s: &str) -> Option<f64> {
@@ -191,6 +193,7 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
     while let Some(t) = r.next_token() {
         match t {
             Token::Start(tag) => match tag.name {
+                "sheetPr" => sheet.code_name = tag.attr("codeName").map(|v| v.into_owned()),
                 "dimension" => {
                     sheet.dimension = Some((
                         tag.span.clone(),

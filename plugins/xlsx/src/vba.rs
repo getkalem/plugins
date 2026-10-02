@@ -332,54 +332,76 @@ pub fn read_project(bin: &[u8]) -> Result<Project, VbaError> {
     })
 }
 
+fn rec(out: &mut Vec<u8>, id: u16, data: &[u8]) {
+    out.extend_from_slice(&id.to_le_bytes());
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(data);
+}
+
+/// A project holding the given modules (name, kind, source in `codepage`),
+/// with the records this reader needs: for tests and for trying macros on
+/// a workbook. It is not a project Excel would open as it is.
+pub fn write_project(modules: &[(&str, ModuleKind, &[u8])], codepage: u16) -> Vec<u8> {
+    use std::io::Write;
+    let mut dir = Vec::new();
+    rec(&mut dir, 0x0001, &1u32.to_le_bytes());
+    rec(&mut dir, 0x0002, &0x0409u32.to_le_bytes());
+    rec(&mut dir, 0x0003, &codepage.to_le_bytes());
+    rec(&mut dir, 0x0004, b"VBAProject");
+    // PROJECTVERSION: size 4, six bytes follow.
+    dir.extend_from_slice(&0x0009u16.to_le_bytes());
+    dir.extend_from_slice(&4u32.to_le_bytes());
+    dir.extend_from_slice(&[0; 6]);
+    rec(&mut dir, 0x000F, &(modules.len() as u16).to_le_bytes());
+    rec(&mut dir, 0x0013, &0xFFFFu16.to_le_bytes());
+    for (name, kind, _) in modules {
+        rec(&mut dir, 0x0019, name.as_bytes());
+        rec(&mut dir, 0x001A, name.as_bytes());
+        rec(&mut dir, 0x0031, &4u32.to_le_bytes());
+        rec(
+            &mut dir,
+            if *kind == ModuleKind::Standard {
+                0x0021
+            } else {
+                0x0022
+            },
+            &[],
+        );
+        rec(&mut dir, 0x002B, &[]);
+    }
+    rec(&mut dir, 0x0010, &[]);
+    let mut cf =
+        cfb::CompoundFile::create(Cursor::new(Vec::new())).expect("an in-memory compound file");
+    cf.create_storage("/VBA").expect("storage");
+    cf.create_stream("/VBA/dir")
+        .and_then(|mut s| s.write_all(&compress(&dir)))
+        .expect("dir");
+    for (name, _, source) in modules {
+        // Four bytes standing for the p-code before the source's offset.
+        let mut module = vec![0xAA; 4];
+        module.extend(compress(source));
+        cf.create_stream(format!("/VBA/{name}"))
+            .and_then(|mut s| s.write_all(&module))
+            .expect("module");
+    }
+    let listing: String = modules
+        .iter()
+        .map(|(n, _, _)| format!("Module={n}\r\n"))
+        .collect();
+    cf.create_stream("/PROJECT")
+        .and_then(|mut s| s.write_all(listing.as_bytes()))
+        .expect("project");
+    cf.flush().expect("flush");
+    cf.into_inner().into_inner()
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::io::Write;
 
-    fn rec(out: &mut Vec<u8>, id: u16, data: &[u8]) {
-        out.extend_from_slice(&id.to_le_bytes());
-        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        out.extend_from_slice(data);
-    }
-
-    /// A minimal project with one standard module, built as Excel lays it out.
+    /// A minimal project with one standard module.
     pub(crate) fn sample_project(source: &[u8]) -> Vec<u8> {
-        let mut dir = Vec::new();
-        rec(&mut dir, 0x0001, &1u32.to_le_bytes());
-        rec(&mut dir, 0x0002, &0x0409u32.to_le_bytes());
-        rec(&mut dir, 0x0003, &1254u16.to_le_bytes());
-        rec(&mut dir, 0x0004, b"VBAProject");
-        // PROJECTVERSION: size 4, six bytes follow.
-        dir.extend_from_slice(&0x0009u16.to_le_bytes());
-        dir.extend_from_slice(&4u32.to_le_bytes());
-        dir.extend_from_slice(&[0; 6]);
-        rec(&mut dir, 0x000F, &1u16.to_le_bytes());
-        rec(&mut dir, 0x0013, &0xFFFFu16.to_le_bytes());
-        rec(&mut dir, 0x0019, b"Module1");
-        rec(&mut dir, 0x001A, b"Module1");
-        rec(&mut dir, 0x0031, &4u32.to_le_bytes());
-        rec(&mut dir, 0x0021, &[]);
-        rec(&mut dir, 0x002B, &[]);
-        rec(&mut dir, 0x0010, &[]);
-        let mut module = vec![0xAA; 4]; // stand-in p-code before the offset
-        module.extend(compress(source));
-        let mut cf = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
-        cf.create_storage("/VBA").unwrap();
-        cf.create_stream("/VBA/dir")
-            .unwrap()
-            .write_all(&compress(&dir))
-            .unwrap();
-        cf.create_stream("/VBA/Module1")
-            .unwrap()
-            .write_all(&module)
-            .unwrap();
-        cf.create_stream("/PROJECT")
-            .unwrap()
-            .write_all(b"Module=Module1\r\n")
-            .unwrap();
-        cf.flush().unwrap();
-        cf.into_inner().into_inner()
+        write_project(&[("Module1", ModuleKind::Standard, source)], 1254)
     }
 
     #[test]

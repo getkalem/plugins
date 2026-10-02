@@ -293,6 +293,12 @@ pub struct Workbook {
     /// States before each edit, for undo, and after each undone one, for redo.
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    /// A batch of edits (a macro run): the state before it, one undo step.
+    batch: Option<Snapshot>,
+    /// Cells entered into the engine during a batch, not computed yet.
+    batch_edited: Vec<(usize, CellRef)>,
+    /// Whether the batch changed anything.
+    batch_changed: bool,
 }
 
 /// What an edit changes, kept whole for undo: the package's bytes are
@@ -397,6 +403,9 @@ impl Workbook {
             computed: HashMap::new(),
             undo: Vec::new(),
             redo: Vec::new(),
+            batch: None,
+            batch_edited: Vec::new(),
+            batch_changed: false,
         };
         wb.read_workbook_part();
         Ok(wb)
@@ -498,6 +507,16 @@ impl Workbook {
         }
     }
 
+    /// The VBA project's modules, read from its part; `None` without one.
+    pub fn vba_project(&self) -> Result<Option<crate::vba::Project>> {
+        match self.vba_project_bytes()? {
+            Some(bin) => crate::vba::read_project(&bin)
+                .map(Some)
+                .map_err(|e| Error::NotAWorkbook(e.to_string())),
+            None => Ok(None),
+        }
+    }
+
     /// The names of the package's parts.
     pub fn parts(&self) -> Vec<String> {
         self.pkg.names()
@@ -537,6 +556,7 @@ impl Workbook {
     /// A cell as the grid shows it: the value through its number format.
     pub fn display(&mut self, idx: usize, at: CellRef) -> Result<String> {
         self.load(idx)?;
+        self.flush()?;
         self.compute_missing(idx)?;
         let Some(c) = self.loaded[&idx].1.cells.get(&at) else {
             return Ok(String::new());
@@ -548,6 +568,7 @@ impl Workbook {
     /// result, the engine's.
     pub fn value(&mut self, idx: usize, at: CellRef) -> Result<Value> {
         self.load(idx)?;
+        self.flush()?;
         self.compute_missing(idx)?;
         Ok(self.loaded[&idx]
             .1
@@ -661,16 +682,78 @@ impl Workbook {
             None => (None, Value::Empty),
         };
         let cells = self.formula_cells();
+        let batch = self.batch.is_some();
         let Some(Ok(engine)) = self.engine.as_mut() else {
             return Ok(());
         };
         engine
             .set(idx, at, formula.as_deref(), &value)
             .map_err(|e| Error::Refused(format!("the formula engine: {e}")))?;
+        if batch {
+            // Computed when a value is read or the batch ends.
+            self.batch_edited.push((idx, at));
+            return Ok(());
+        }
         let after = engine.evaluate(&cells).clone();
         let before = std::mem::take(&mut self.computed);
-        self.write_results(&before, after, &cells, Some((idx, at)));
+        self.write_results(&before, after, &cells, &[(idx, at)]);
         Ok(())
+    }
+
+    /// Computes the cells entered during a batch and writes their results.
+    fn flush(&mut self) -> Result<()> {
+        if self.batch_edited.is_empty() {
+            return Ok(());
+        }
+        let edited = std::mem::take(&mut self.batch_edited);
+        let cells = self.formula_cells();
+        let Some(Ok(engine)) = self.engine.as_mut() else {
+            return Ok(());
+        };
+        let after = engine.evaluate(&cells).clone();
+        let before = std::mem::take(&mut self.computed);
+        self.write_results(&before, after, &cells, &edited);
+        Ok(())
+    }
+
+    /// Starts a batch of edits that undo as one step and compute when read:
+    /// a macro's run.
+    pub fn begin_batch(&mut self) -> Result<()> {
+        for i in 0..self.sheets.len() {
+            if self.sheets[i].kind == SheetKind::Worksheet {
+                self.load(i)?;
+            }
+        }
+        self.ensure_engine()?;
+        self.batch = Some(self.snapshot());
+        self.batch_changed = false;
+        Ok(())
+    }
+
+    /// Ends a batch: everything is computed, and the batch is one undo step
+    /// when it changed anything. Returns whether it did.
+    pub fn end_batch(&mut self) -> Result<bool> {
+        let flushed = self.flush();
+        let Some(before) = self.batch.take() else {
+            return flushed.map(|()| false);
+        };
+        if self.batch_changed {
+            self.undo.push(before);
+            self.redo.clear();
+        }
+        flushed.map(|()| self.batch_changed)
+    }
+
+    /// A formula computed as if it were in an unused cell of the sheet
+    /// (`Evaluate`, `WorksheetFunction`); `None` when the engine cannot.
+    pub fn evaluate_formula(&mut self, idx: usize, formula: &str) -> Result<Option<Value>> {
+        self.load(idx)?;
+        self.ensure_engine()?;
+        self.flush()?;
+        Ok(match self.engine.as_mut() {
+            Some(Ok(e)) => e.eval_scratch(idx, formula.trim_start_matches('=')),
+            _ => None,
+        })
     }
 
     /// Writes the results that changed between two computations: trusted
@@ -681,7 +764,7 @@ impl Workbook {
         before: &HashMap<(usize, CellRef), Value>,
         after: HashMap<(usize, CellRef), Value>,
         cells: &[(usize, CellRef)],
-        edited: Option<(usize, CellRef)>,
+        edited: &[(usize, CellRef)],
     ) {
         let mut writes: BTreeMap<usize, Vec<(CellRef, Option<Value>)>> = BTreeMap::new();
         for key in cells {
@@ -691,7 +774,7 @@ impl Workbook {
                 (None, None) => false,
                 _ => true,
             };
-            if Some(*key) == edited {
+            if edited.contains(key) {
                 let usable = new.filter(|v| !matches!(v, Value::Error(e) if e == "#NAME?"));
                 writes
                     .entry(key.0)
@@ -860,6 +943,11 @@ impl Workbook {
     pub fn set_input(&mut self, idx: usize, at: CellRef, input: Input) -> Result<()> {
         self.load(idx)?;
         self.ensure_engine()?;
+        if self.batch.is_some() {
+            self.set_input_inner(idx, at, input)?;
+            self.batch_changed = true;
+            return Ok(());
+        }
         let snapshot = self.snapshot();
         let result = self.set_input_inner(idx, at, input);
         match &result {
@@ -1111,6 +1199,12 @@ impl Workbook {
             }
         }
         self.check_structural(idx, op)?;
+        if self.batch.is_some() {
+            self.flush()?;
+            self.structural_inner(idx, op)?;
+            self.batch_changed = true;
+            return Ok(());
+        }
         let snapshot = self.snapshot();
         match self.structural_inner(idx, op) {
             Ok(()) => {
@@ -1264,7 +1358,7 @@ impl Workbook {
         self.trusted.extend(trusted);
         let after = std::mem::take(&mut self.computed);
         let cells = self.formula_cells();
-        self.write_results(&before, after, &cells, None);
+        self.write_results(&before, after, &cells, &[]);
         Ok(())
     }
 
@@ -1503,6 +1597,7 @@ impl Workbook {
     /// The grid of a sheet's used range as display strings, row by row.
     pub fn grid(&mut self, idx: usize) -> Result<Vec<Vec<String>>> {
         self.load(idx)?;
+        self.flush()?;
         self.compute_missing(idx)?;
         let model = &self.loaded[&idx].1;
         let Some(used) = model.used_range() else {

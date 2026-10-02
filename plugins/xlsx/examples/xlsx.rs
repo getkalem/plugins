@@ -9,6 +9,9 @@
 //! cargo run -p kalem-plugin-xlsx --example xlsx -- insert-rows book.xlsx Sheet1 3 2
 //! cargo run -p kalem-plugin-xlsx --example xlsx -- delete-cols book.xlsx Sheet1 B 1
 //! cargo run -p kalem-plugin-xlsx --example xlsx -- vba book.xlsm
+//! cargo run -p kalem-plugin-xlsx --example xlsx -- macros book.xlsm
+//! cargo run -p kalem-plugin-xlsx --example xlsx -- run book.xlsm Module1.Fill [-o out.xlsm]
+//! cargo run -p kalem-plugin-xlsx --example xlsx -- attach-vba book.xlsx Module1.bas out.xlsm
 //! ```
 //!
 //! `set` without `-o` writes the file in place, atomically.
@@ -227,6 +230,134 @@ fn legacy(cmd: &str, path: &Path, arg: Option<&str>) -> Res<()> {
     Ok(())
 }
 
+/// A terminal host: `MsgBox` prints and waits for Enter (or y/n),
+/// `InputBox` reads a line.
+struct Terminal;
+
+impl kalem_plugin_xlsx::macros::MacroHost for Terminal {
+    fn msg_box(&mut self, prompt: &str, buttons: i64, title: &str) -> i64 {
+        let yes_no = matches!(buttons & 7, 3 | 4);
+        println!("[{title}] {prompt}{}", if yes_no { " (y/n)" } else { "" });
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        if yes_no {
+            if line.trim().eq_ignore_ascii_case("y") {
+                6
+            } else {
+                7
+            }
+        } else {
+            1
+        }
+    }
+
+    fn input_box(&mut self, prompt: &str, title: &str, default: &str) -> Option<String> {
+        println!("[{title}] {prompt} [{default}]");
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).ok()?;
+        let t = line.trim_end_matches(['\r', '\n']);
+        Some(if t.is_empty() {
+            default.to_owned()
+        } else {
+            t.to_owned()
+        })
+    }
+
+    fn print(&mut self, line: &str) {
+        println!("{line}");
+    }
+}
+
+fn list_macros(path: &Path) -> Res<()> {
+    let wb = open(path)?;
+    let Some(project) = wb.vba_project()? else {
+        println!("no VBA project");
+        return Ok(());
+    };
+    for m in kalem_plugin_xlsx::macros::list_macros(&project)? {
+        println!(
+            "{}{}",
+            m.qualified,
+            if m.event {
+                "  (event: never run by itself)"
+            } else {
+                ""
+            }
+        );
+    }
+    Ok(())
+}
+
+fn run_macro(path: &Path, name: &str, out: Option<PathBuf>) -> Res<()> {
+    let mut wb = open(path)?;
+    let project = wb.vba_project()?.ok_or("no VBA project")?;
+    let result = kalem_plugin_xlsx::macros::run_macro(
+        &mut wb,
+        &project,
+        name,
+        &mut Terminal,
+        Default::default(),
+    );
+    let report = match result {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("macro stopped: {e}");
+            *e.report
+        }
+    };
+    for s in &report.skipped {
+        eprintln!("skipped: {s}");
+    }
+    if wb.is_dirty() {
+        let target = out.unwrap_or_else(|| path.to_path_buf());
+        std::fs::write(&target, wb.save()?)?;
+        println!(
+            "written: {} ({})",
+            target.display(),
+            wb.changed_parts().join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Puts a module's source into a copy of a workbook as its VBA project: for
+/// trying macros without Excel. The result opens in Kalem; Excel wants a
+/// fuller project than this writes.
+fn attach_vba(path: &Path, module: &Path, out: &Path) -> Res<()> {
+    use kalem_plugin_xlsx::package::Package;
+    let source = std::fs::read_to_string(module)?
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n");
+    let name = module
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Module1");
+    let bin = kalem_plugin_xlsx::vba::write_project(
+        &[(
+            name,
+            kalem_plugin_xlsx::vba::ModuleKind::Standard,
+            source.as_bytes(),
+        )],
+        1252,
+    );
+    let mut pkg = Package::read(std::fs::read(path)?)?;
+    pkg.set_part("xl/vbaProject.bin", bin);
+    let rels = String::from_utf8(pkg.part("xl/_rels/workbook.xml.rels")?)?;
+    let rels = rels.replace(
+        "</Relationships>",
+        "<Relationship Id=\"rIdVba\" Type=\"http://schemas.microsoft.com/office/2006/relationships/vbaProject\" Target=\"vbaProject.bin\"/></Relationships>",
+    );
+    pkg.set_part("xl/_rels/workbook.xml.rels", rels.into_bytes());
+    let ct = String::from_utf8(pkg.part("[Content_Types].xml")?)?;
+    let ct = ct
+        .replace("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml", "application/vnd.ms-excel.sheet.macroEnabled.main+xml")
+        .replace("</Types>", "<Override PartName=\"/xl/vbaProject.bin\" ContentType=\"application/vnd.ms-office.vbaProject\"/></Types>");
+    pkg.set_part("[Content_Types].xml", ct.into_bytes());
+    std::fs::write(out, pkg.write()?)?;
+    println!("written: {}", out.display());
+    Ok(())
+}
+
 fn run(args: &[String]) -> Res<()> {
     let arg = |i: usize| args.get(i).map(String::as_str);
     let path = PathBuf::from(arg(1).ok_or("missing file")?);
@@ -256,6 +387,12 @@ fn run(args: &[String]) -> Res<()> {
             )
         }
         Some("vba") => show_vba(&path),
+        Some("macros") => list_macros(&path),
+        Some("run") => {
+            let out = args.iter().position(|a| a == "-o").and_then(|p| args.get(p + 1)).map(PathBuf::from);
+            run_macro(&path, arg(2).ok_or("missing macro name")?, out)
+        }
+        Some("attach-vba") => attach_vba(&path, Path::new(arg(2).ok_or("missing module file")?), Path::new(arg(3).ok_or("missing output")?)),
         Some(c @ ("insert-rows" | "delete-rows" | "insert-cols" | "delete-cols")) => structural(
             c,
             &path,
@@ -263,7 +400,7 @@ fn run(args: &[String]) -> Res<()> {
             arg(3).ok_or("missing row or column")?,
             arg(4).unwrap_or("1"),
         ),
-        _ => Err("commands: info, show, get, set, insert-rows, delete-rows, insert-cols, delete-cols, vba".into()),
+        _ => Err("commands: info, show, get, set, insert-rows, delete-rows, insert-cols, delete-cols, vba, macros, run, attach-vba".into()),
     }
 }
 

@@ -154,6 +154,24 @@ impl Engine {
         })
     }
 
+    /// Computes a formula as if it were in a cell of `sheet` that is not
+    /// used: `Application.Evaluate` and `WorksheetFunction` in macros.
+    pub fn eval_scratch(&mut self, sheet: usize, formula: &str) -> Option<Value> {
+        let idx = (*self.map.get(sheet)?)?;
+        // The last cell of the sheet; cleared again afterwards.
+        let (r, c) = (
+            crate::cellref::MAX_ROW as i32,
+            crate::cellref::MAX_COL as i32,
+        );
+        self.model
+            .update_cell_with_formula(idx, r, c, engine_formula(formula))
+            .ok()?;
+        self.model.evaluate();
+        let v = self.value(sheet, CellRef::new(r as u32 - 1, c as u32 - 1));
+        let _ = self.model.set_user_input(idx, r, c, String::new());
+        v
+    }
+
     /// Enters a cell's new content: a formula, a value, or nothing.
     pub fn set(
         &mut self,
