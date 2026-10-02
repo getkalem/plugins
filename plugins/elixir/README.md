@@ -30,8 +30,10 @@ Diagnostics are the compiler's, and dialyzer's and Credo's where the server runs
 
 The first of these that is installed is used; set `server` to choose one.
 
-1. **Expert**, the Elixir team's language server: `expert --stdio` on the `PATH`. Releases: <https://github.com/elixir-lang/expert/releases>.
+1. **Expert**, the Elixir team's language server: `expert --stdio` on the `PATH`. Releases: <https://github.com/expert-lsp/expert/releases>.
 2. **ElixirLS**: `elixir-ls` or `language_server.sh` on the `PATH`, or `~/.elixir-ls/release/language_server.sh`. `brew install elixir-ls`, or a release from <https://github.com/elixir-lsp/elixir-ls/releases> unzipped to `~/.elixir-ls/release`.
+
+Expert builds its engine for the project's Elixir the first time (about forty seconds, cached after), then compiles and indexes the project; until then it answers about the standard library but not yet about the project's own code. Both servers were checked with `corpus/hello`: Expert 0.1.11 and ElixirLS 0.27.2, on Elixir 1.20 with OTP 28.
 
 Kalem never installs a server by itself. When none is found, the status bar says so with these instructions.
 

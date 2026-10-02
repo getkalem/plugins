@@ -54,7 +54,7 @@
       "command": ["expert", "--stdio"],
       "rootMarkers": ["mix.exs"],
       "rootOutermost": true,
-      "install": "Download the release for your platform from https://github.com/elixir-lang/expert/releases and put `expert` on the PATH"
+      "install": "Download the release for your platform from https://github.com/expert-lsp/expert/releases and put `expert` on the PATH"
     },
     "elixir-ls": {
       "name": "ElixirLS",
