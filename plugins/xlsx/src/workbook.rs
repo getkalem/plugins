@@ -1122,6 +1122,16 @@ impl Workbook {
         true
     }
 
+    /// Undoes the last edit and forgets it, with no redo: a macro's run
+    /// stopped to ask the user is taken back this way.
+    pub fn rollback(&mut self) -> bool {
+        let Some(s) = self.undo.pop() else {
+            return false;
+        };
+        self.restore(s);
+        true
+    }
+
     /// Redoes the last undone edit; `false` when there is none.
     pub fn redo(&mut self) -> bool {
         let Some(s) = self.redo.pop() else {
@@ -1131,6 +1141,12 @@ impl Workbook {
         self.restore(s);
         self.undo.push(now);
         true
+    }
+
+    /// How many edits there are to undo: a host compares it with the count
+    /// at its last save to know whether the file is modified.
+    pub fn history_len(&self) -> usize {
+        self.undo.len()
     }
 
     /// Whether there is an edit to undo, and one to redo.

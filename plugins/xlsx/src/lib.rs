@@ -31,11 +31,13 @@ pub mod sheet;
 pub mod structure;
 pub mod styles;
 pub mod vba;
+pub mod viewer;
 pub mod workbook;
 pub mod xml;
 
 pub use cellref::{CellRef, Range};
 pub use sheet::{Cell, Formula, FormulaKind, Sheet, Value};
+pub use viewer::XlsxViewer;
 pub use workbook::{
     Comment, DefinedName, Error, Input, SheetInfo, SheetKind, Visibility, Workbook,
 };

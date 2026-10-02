@@ -617,6 +617,7 @@ dependencies = [
  "cfb",
  "crc32fast",
  "ironcalc_base",
+ "kalem-viewer",
  "miniz_oxide 0.9.1",
  "serde_json",
 ]
@@ -624,7 +625,7 @@ dependencies = [
 [[package]]
 name = "kalem-viewer"
 version = "0.0.1"
-source = "git+https://github.com/getkalem/kalem?branch=main#d5739c02f4b58f8d01eb4204fd6165c268925f6d"
+source = "git+https://github.com/getkalem/kalem?branch=main#fca3e0b3544b3344c56cec47a701855ad619a006"
 
 [[package]]
 name = "kamadak-exif"

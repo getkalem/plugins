@@ -38,6 +38,12 @@ pub trait MacroHost {
     fn workbook_name(&mut self) -> String {
         "Book1.xlsm".into()
     }
+
+    /// Whether the last dialog could not be answered now: the run stops
+    /// (see [`RunReport::stopped`]).
+    fn stopped(&self) -> bool {
+        false
+    }
 }
 
 /// A host that answers every question with its default: OK, the default
@@ -104,6 +110,8 @@ pub struct RunReport {
     pub changed: bool,
     /// `ThisWorkbook.Save` was called: the host saves.
     pub save_requested: bool,
+    /// The run stopped at a dialog the host could not answer yet.
+    pub stopped: bool,
 }
 
 /// Why a macro did not run or stopped.
@@ -225,6 +233,11 @@ pub fn run_macro(
             Ok(_) => Ok(report),
             // `End`.
             Err(e) if e.number == -1 && e.fatal => Ok(report),
+            // A dialog to be answered later.
+            Err(e) if e.number == -2 && e.fatal => Ok(RunReport {
+                stopped: true,
+                ..report
+            }),
             Err(e) => Err(Box::new((module, e, report))),
         }
     })();

@@ -1169,7 +1169,9 @@ pub fn get(it: &mut Interp<'_>, o: &Obj, m: &str, a: Vec<V>) -> R<V> {
                         Ok(String::new())
                     }
                 };
-                match it.host.input_box(&s(0)?, &s(1)?, &s(2)?) {
+                let answer = it.host.input_box(&s(0)?, &s(1)?, &s(2)?);
+                it.check_stopped()?;
+                match answer {
                     // Cancel returns False from Application.InputBox.
                     None => Ok(V::Bool(false)),
                     Some(t) => Ok(if has(&a, 7) && to_int(arg(&a, 7))? == 1 {

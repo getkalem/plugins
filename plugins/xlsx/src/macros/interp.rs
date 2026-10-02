@@ -171,6 +171,19 @@ impl<'a> Interp<'a> {
         }
     }
 
+    /// Stops the run when the host could not answer a dialog now.
+    pub(crate) fn check_stopped(&self) -> R<()> {
+        if self.host.stopped() {
+            return Err(RtError {
+                number: -2,
+                description: "waiting for an answer".into(),
+                line: self.line,
+                fatal: true,
+            });
+        }
+        Ok(())
+    }
+
     /// The module where the run is (or stopped).
     pub(crate) fn current_module(&self) -> String {
         self.modules
@@ -831,8 +844,10 @@ impl<'a> Interp<'a> {
                     Some(V::Missing) | None => "Microsoft Excel".to_owned(),
                     Some(v) => to_str(v)?,
                 };
+                let answer = self.host.msg_box(&prompt, buttons, &title);
+                self.check_stopped()?;
                 self.report.messages.push(prompt.clone());
-                V::Int(self.host.msg_box(&prompt, buttons, &title))
+                V::Int(answer)
             }
             "inputbox" => {
                 let a = self.named_args(f, args, &["prompt", "title", "default"])?;
@@ -842,11 +857,9 @@ impl<'a> Interp<'a> {
                         Some(v) => to_str(v),
                     }
                 };
-                V::Str(
-                    self.host
-                        .input_box(&s(0)?, &s(1)?, &s(2)?)
-                        .unwrap_or_default(),
-                )
+                let answer = self.host.input_box(&s(0)?, &s(1)?, &s(2)?);
+                self.check_stopped()?;
+                V::Str(answer.unwrap_or_default())
             }
             "createobject" => {
                 let a = self.arg_values(f, args)?;
