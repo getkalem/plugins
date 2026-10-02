@@ -1,0 +1,26 @@
+[package]
+name = "kalem-plugin-xlsx"
+description = "Excel workbooks (SpreadsheetML, ECMA-376) opened, edited and saved as themselves"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# cdylib is the component; rlib lets the tests link the crate.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cfb = "0.15.0"
+crc32fast = "1.5.2"
+ironcalc_base = "0.8.3"
+miniz_oxide = "0.9.1"
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true
