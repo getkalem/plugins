@@ -1,0 +1,87 @@
+{
+  "id": "org.kalem.elixir",
+  "name": "Elixir",
+  "version": "0.1.0",
+  "description": "Elixir, EEx and HEEx: highlighting, and the language server (Expert where installed, ElixirLS otherwise) for completion, hover, definition, diagnostics and formatting",
+  "api": "^0.1",
+  "activation": ["onLanguage:elixir", "onLanguage:eex", "onLanguage:heex"],
+  "permissions": ["subprocess"],
+  "syntaxes": [
+    "syntaxes/Elixir.sublime-syntax",
+    "syntaxes/Elixir (EEx).sublime-syntax",
+    "syntaxes/HTML (EEx).sublime-syntax",
+    "syntaxes/HTML (HEEx).sublime-syntax",
+    "syntaxes/SQL (Elixir).sublime-syntax"
+  ],
+  "syntaxBases": [
+    "syntaxes/bases/HTML.sublime-syntax",
+    "syntaxes/bases/HTML (Plain).sublime-syntax"
+  ],
+  "languages": [
+    {
+      "id": "elixir",
+      "name": "Elixir",
+      "syntax": "Elixir",
+      "extensions": ["ex", "exs"],
+      "filenames": ["mix.lock", ".formatter.exs", ".credo.exs", ".iex.exs"],
+      "shebangs": ["elixir", "iex", "mix"],
+      "comment": { "line": "#" },
+      "brackets": [["(", ")"], ["[", "]"], ["{", "}"], ["<<", ">>"]],
+      "servers": ["expert", "elixir-ls"]
+    },
+    {
+      "id": "eex",
+      "name": "EEx",
+      "syntax": "HTML (EEx)",
+      "extensions": ["eex", "html.eex", "leex", "html.leex"],
+      "comment": { "block": ["<%#", "%>"] },
+      "brackets": [["<%", "%>"], ["(", ")"], ["[", "]"], ["{", "}"]],
+      "servers": ["expert", "elixir-ls"]
+    },
+    {
+      "id": "heex",
+      "name": "HEEx",
+      "syntax": "HTML (HEEx)",
+      "extensions": ["heex", "html.heex"],
+      "comment": { "block": ["<%!--", "--%>"] },
+      "brackets": [["<%", "%>"], ["(", ")"], ["[", "]"], ["{", "}"]],
+      "servers": ["expert", "elixir-ls"]
+    }
+  ],
+  "servers": {
+    "expert": {
+      "name": "Expert",
+      "command": ["expert", "--stdio"],
+      "rootMarkers": ["mix.exs"],
+      "rootOutermost": true,
+      "install": "Download the release for your platform from https://github.com/elixir-lang/expert/releases and put `expert` on the PATH"
+    },
+    "elixir-ls": {
+      "name": "ElixirLS",
+      "command": ["elixir-ls"],
+      "candidates": [
+        "elixir-ls",
+        "language_server.sh",
+        "~/.elixir-ls/release/language_server.sh",
+        "~/.local/share/elixir-ls/language_server.sh"
+      ],
+      "rootMarkers": ["mix.exs"],
+      "rootOutermost": true,
+      "settings": {
+        "elixirLS": {
+          "dialyzerEnabled": true,
+          "fetchDeps": false,
+          "suggestSpecs": true,
+          "mixEnv": "test"
+        }
+      },
+      "install": "brew install elixir-ls, or download a release from https://github.com/elixir-lsp/elixir-ls/releases and unzip it to ~/.elixir-ls/release"
+    }
+  },
+  "commands": {
+    "format": ["mix", "format", "-"],
+    "test": ["mix", "test"],
+    "testAtPoint": ["mix", "test", "{file}:{line}"],
+    "run": ["mix", "run"]
+  }
+}

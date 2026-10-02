@@ -1,0 +1,81 @@
+# Elixir
+
+Elixir, EEx and HEEx for [Kalem](https://github.com/getkalem/kalem): highlighting, and a language server for completion, documentation, definitions, references, diagnostics and formatting.
+
+A language plugin is declarative (Kalem's D57): this folder holds a manifest, `plugin.json`, the Sublime syntaxes under `syntaxes/`, and nothing that runs inside Kalem. Kalem's core reads the manifest, adds the syntaxes to its highlighter and starts the language server through its one client.
+
+## What it gives
+
+| File types | Highlighting | Server |
+|---|---|---|
+| `.ex`, `.exs`, `mix.lock`, `.formatter.exs`, `#!/usr/bin/env elixir` | Elixir, with `~H` sigils as HEEx, `~L` and `~E` as EEx, `~r` as a string, Markdown in `@doc` | yes |
+| `.heex`, `.html.heex` | HTML (HEEx): components (`<.button>`, `<Module.comp>`), `{…}` and `<%= … %>` as Elixir | yes |
+| `.eex`, `.html.eex`, `.leex` | HTML (EEx) | yes |
+
+With a server running, in either of Kalem's editors:
+
+| Feature | Vim profile | Word-like profile | Command |
+|---|---|---|---|
+| Completion | as you type, `.` and `:` | as you type | |
+| Documentation at the cursor | `K`, `SPC c k` | | `code.documentation` |
+| Go to definition | `gd`, `SPC c d` | F12 | `code.definition` |
+| References | `gD`, `SPC c D` | Shift+F12 | `code.references` |
+| Problems of the file, of open files | `SPC c x`, `SPC c X` | | `code.problems`, `code.allProblems` |
+| Format the document | `SPC c f` | | `edit.formatDocument` |
+| The problem on the cursor's line, the server's progress | the status bar | the status bar | |
+
+Diagnostics are the compiler's, and dialyzer's and Credo's where the server runs them.
+
+## The server
+
+The first of these that is installed is used; set `server` to choose one.
+
+1. **Expert**, the Elixir team's language server: `expert --stdio` on the `PATH`. Releases: <https://github.com/elixir-lang/expert/releases>.
+2. **ElixirLS**: `elixir-ls` or `language_server.sh` on the `PATH`, or `~/.elixir-ls/release/language_server.sh`. `brew install elixir-ls`, or a release from <https://github.com/elixir-lsp/elixir-ls/releases> unzipped to `~/.elixir-ls/release`.
+
+Kalem never installs a server by itself. When none is found, the status bar says so with these instructions.
+
+The root is the outermost folder with a `mix.exs`, so an umbrella project is one workspace, and its applications under `apps/` are workspace folders of their own. A file outside a Mix project is served with its folder as the root.
+
+## Settings
+
+In Kalem's `settings.toml`:
+
+```toml
+[plugins."org.kalem.elixir"]
+server = "auto"            # "expert", "elixir-ls", or "off"
+
+# Merged over the server's own settings (sent as `workspace/configuration`).
+[plugins."org.kalem.elixir".settings.elixirLS]
+mixEnv = "dev"             # MIX_ENV for the server's builds; the plugin's default is "test"
+dialyzerEnabled = false
+fetchDeps = false
+
+# Another program for a server, with its arguments, and its environment.
+[plugins."org.kalem.elixir".servers.elixir-ls]
+command = ["/opt/elixir-ls/language_server.sh"]
+env = { ELS_INSTALL_PREFIX = "/opt/elixir-ls" }
+```
+
+`kalem lsp status FILE` shows what serves a file, and why nothing does. `kalem lsp check FILE…` prints a server's diagnostics without the editor. `kalem lsp ask hover FILE LINE:COL` asks a server one question.
+
+## Installing
+
+Until Kalem's plugin installer exists (its task T3.3), copy or link this folder into Kalem's plugin folder, or point `KALEM_PLUGIN_PATH` at `plugins/` of this repository:
+
+```sh
+mkdir -p ~/.config/kalem/plugins && ln -s "$PWD/plugins/elixir" ~/.config/kalem/plugins/elixir
+```
+
+## Not done
+
+- No embedded `iex`. Kalem ships no REPL (its D28); the terminal is one key away.
+- Running tests at the cursor (`mix test FILE:LINE`) and the project's tests: the manifest lists the commands, and the editor runs them when Kalem's project run and test keys land (its tasks T2.7i.8 and T3.8.4).
+- Rename, code actions, signature help and the server's own commands come with Kalem's task T3.8.2.
+- Regular expressions in `~r` are highlighted as strings: the PCRE syntax of the upstream package uses subroutine calls, which the pure-Rust regex engine of Kalem's highlighter does not have.
+
+## Sources and licenses
+
+- `syntaxes/*.sublime-syntax`: from [princemaple/elixir-sublime-syntax](https://github.com/princemaple/elixir-sublime-syntax) at `b63f8f0`, MIT (`syntaxes/LICENSE-elixir-sublime-syntax.txt`), unchanged.
+- `syntaxes/bases/HTML*.sublime-syntax`: from [sublimehq/Packages](https://github.com/sublimehq/Packages) at `b2bdd29`, under its permissive license (`syntaxes/bases/LICENSE-sublimehq-packages.txt`), unchanged. They are bases for `extends` only, not languages of their own, so Kalem's HTML keeps `.html` files.
+- `corpus/hello`: a Mix project for the tests, under this repository's license.

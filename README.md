@@ -2,12 +2,18 @@
 
 The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, Markdown and other plain-text formats. Every mode, file type, language pack, completer and exporter beyond Kalem's small core (Org, `.klm`, Markdown, CSV, LaTeX) is developed here as a plugin, never in the core (design document, sections 11.0 and 11.8).
 
-**Status: skeleton.** The plugin API (a WIT definition and the `kalem-plugin` bindings, Kalem's task T3.1.3) is not published yet. This repository holds the layout, the template, the conformance test and the CI so that the first plugin lands on a finished path.
+**Status: early.** The plugin API for components (a WIT definition and the `kalem-plugin` bindings, Kalem's task T3.1.3) is not published yet. Language plugins need no API: they are declarative, and Kalem loads them today.
+
+| Plugin | What it gives | Kind |
+|---|---|---|
+| [`elixir`](plugins/elixir) | Elixir, EEx and HEEx: highlighting, and Expert or ElixirLS for completion, documentation, definitions, references, diagnostics and formatting | language |
+| [`xlsx`](plugins/xlsx) | Excel workbooks opened, edited and saved as themselves | component |
 
 ## How a plugin is built and shipped
 
 - A plugin is a Rust crate under `plugins/NAME`, compiled to a WebAssembly component (`wasm32-wasip2`). Rust is the plugin language: the contract a plugin implements is the trait Kalem's own modes and completers implement.
 - **Source in, WASM out.** Compiled components are never committed. On a tag `NAME-vX.Y.Z` the release workflow builds the component from the tagged source, hashes it, signs it and publishes it as a release asset; `index.json` lists every published plugin and Kalem reads it as a static file.
+- **Language plugins are declarative** (Kalem's D57): a manifest whose `languages` and `servers` sections name file types, Sublime syntaxes and language servers, the syntax files, and settings. Kalem's core adds the syntaxes to its highlighter (resolving `extends`) and runs the servers through its one language server client; nothing of the plugin runs inside Kalem, so there is no component to build. Such a plugin is published as an archive of its folder, and `index.json` marks it `"kind": "declarative"`. Until Kalem's installer exists, a plugin folder is used from `~/.config/kalem/plugins/` or from the folders of `KALEM_PLUGIN_PATH`.
 - Kalem runs a plugin inside a sandbox: it sees only what the API grants, within a time and memory budget, and never touches the document text, only ranges and edits. The permissions a plugin needs are declared in its `plugin.json` and shown to the user before installing.
 
 ## Adding a plugin

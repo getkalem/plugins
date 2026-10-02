@@ -1,0 +1,25 @@
+[package]
+name = "kalem-plugin-elixir"
+description = "Elixir, EEx and HEEx for Kalem: highlighting, and Expert or ElixirLS as the language server"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# A language plugin is declarative (D57): a manifest, syntax files and
+# settings, read by Kalem's core, which runs the language server through its
+# one client. The crate holds the manifest and the conformance tests; it has
+# no component to build.
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = "1"
+# The highlighter Kalem uses, to check that the syntaxes load and compile.
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy", "yaml-load"] }
+
+[lints]
+workspace = true

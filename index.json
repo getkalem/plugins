@@ -2,6 +2,45 @@
   "schema": 1,
   "plugins": [
     {
+      "id": "org.kalem.elixir",
+      "name": "Elixir",
+      "version": "0.1.0",
+      "description": "Elixir, EEx and HEEx: highlighting, and the language server (Expert where installed, ElixirLS otherwise) for completion, hover, definition, diagnostics and formatting",
+      "api": "^0.1",
+      "permissions": [
+        "subprocess"
+      ],
+      "source": "https://github.com/getkalem/plugins/tree/main/plugins/elixir",
+      "download": null,
+      "sha256": null,
+      "kind": "declarative",
+      "languages": [
+        {
+          "id": "elixir",
+          "extensions": [
+            "ex",
+            "exs"
+          ]
+        },
+        {
+          "id": "eex",
+          "extensions": [
+            "eex",
+            "html.eex",
+            "leex",
+            "html.leex"
+          ]
+        },
+        {
+          "id": "heex",
+          "extensions": [
+            "heex",
+            "html.heex"
+          ]
+        }
+      ]
+    },
+    {
       "id": "org.kalem.xlsx",
       "name": "Excel workbooks",
       "version": "0.0.1",
