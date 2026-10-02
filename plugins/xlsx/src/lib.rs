@@ -21,6 +21,8 @@
 pub mod calc;
 pub mod cellref;
 pub mod formula;
+#[cfg(not(target_family = "wasm"))]
+pub mod legacy;
 pub mod numfmt;
 pub mod package;
 pub mod rels;

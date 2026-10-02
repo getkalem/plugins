@@ -19,6 +19,12 @@ crc32fast = "1.5.2"
 ironcalc_base = "0.8.3"
 miniz_oxide = "0.9.1"
 
+# `.xls`, `.xlsb` and `.ods` (shown only). calamine's zip pulls typed-path,
+# which does not build for wasm32-wasip2 on stable Rust yet; the bundled
+# (native) plugin has it, the component does not.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+calamine = "0.36.1"
+
 [dev-dependencies]
 serde_json = "1"
 

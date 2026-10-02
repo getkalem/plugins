@@ -66,17 +66,21 @@ def empty():
     wb.save("openpyxl-empty.xlsx")
 
 
-def via_libreoffice(src, dst):
+def via_libreoffice(src, dst, filter="xlsx:Calc MS Excel 2007 XML"):
     with tempfile.TemporaryDirectory() as out:
         subprocess.run(
-            ["soffice", "--headless", "--convert-to", "xlsx:Calc MS Excel 2007 XML", "--outdir", out, src],
+            ["soffice", "--headless", "--convert-to", filter, "--outdir", out, src],
             check=True,
             capture_output=True,
         )
-        os.replace(os.path.join(out, os.path.basename(src)), dst)
+        produced = os.path.splitext(os.path.basename(src))[0] + os.path.splitext(dst)[1]
+        os.replace(os.path.join(out, produced), dst)
 
 
 if __name__ == "__main__":
     budget()
     empty()
     via_libreoffice("openpyxl-budget.xlsx", "libreoffice-budget.xlsx")
+    # The formats shown but not written (T3.7.7).
+    via_libreoffice("libreoffice-budget.xlsx", "libreoffice-budget.xls", "xls:MS Excel 97")
+    via_libreoffice("libreoffice-budget.xlsx", "libreoffice-budget.ods", "ods")

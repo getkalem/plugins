@@ -182,9 +182,62 @@ fn show_vba(path: &Path) -> Res<()> {
     Ok(())
 }
 
+/// `.xls`, `.xlsb` and `.ods`: shown, never written.
+fn legacy(cmd: &str, path: &Path, arg: Option<&str>) -> Res<()> {
+    let wb = kalem_plugin_xlsx::legacy::LegacyWorkbook::open(std::fs::read(path)?)?;
+    match cmd {
+        "info" => {
+            println!("{} ({:?}, shown only)", path.display(), wb.format);
+            for (i, s) in wb.sheets.iter().enumerate() {
+                let used = s.used_range().map_or("empty".to_owned(), |r| r.to_string());
+                println!(
+                    "  {i}: {}{}: {used}",
+                    s.name,
+                    if s.hidden { " (hidden)" } else { "" }
+                );
+            }
+        }
+        "show" => {
+            let idx = match arg {
+                Some(n) => wb
+                    .sheets
+                    .iter()
+                    .position(|s| s.name == n)
+                    .ok_or(format!("no sheet {n}"))?,
+                None => 0,
+            };
+            for (r, row) in wb.grid(idx).iter().enumerate() {
+                println!("{:>4}| {}", r + 1, row.join(" | "));
+            }
+        }
+        "get" => {
+            let at = arg.ok_or("missing cell")?;
+            let (sheet, cell) = at
+                .rsplit_once('!')
+                .map_or((None, at), |(s, c)| (Some(s.trim_matches('\'')), c));
+            let idx = sheet
+                .map_or(Some(0), |n| wb.sheets.iter().position(|s| s.name == n))
+                .ok_or("no such sheet")?;
+            let cell = CellRef::parse(cell).ok_or("not a cell")?;
+            println!("shown:   {}", wb.display(idx, cell));
+            println!("entered: {}", wb.edit_text(idx, cell));
+        }
+        _ => return Err("this format is shown only: info, show and get".into()),
+    }
+    Ok(())
+}
+
 fn run(args: &[String]) -> Res<()> {
     let arg = |i: usize| args.get(i).map(String::as_str);
     let path = PathBuf::from(arg(1).ok_or("missing file")?);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(ext.as_str(), "xls" | "xlsb" | "ods") {
+        return legacy(arg(0).unwrap_or(""), &path, arg(2));
+    }
     match arg(0) {
         Some("info") => info(&path),
         Some("show") => show(&path, arg(2)),
