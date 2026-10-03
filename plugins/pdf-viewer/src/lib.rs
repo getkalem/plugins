@@ -102,8 +102,9 @@ pub struct PdfDocument {
     name: String,
     size: u64,
     encrypted: bool,
-    /// Pages' texts, extracted when first asked for.
-    texts: Mutex<HashMap<usize, String>>,
+    /// Pages' texts and their glyphs' boxes, extracted when first asked
+    /// for.
+    texts: Mutex<HashMap<usize, text::PageText>>,
     /// The last renders: page, scale, theme.
     renders: VecDeque<(usize, u32, Theme, Bitmap)>,
 }
@@ -253,7 +254,13 @@ impl ViewerDocument for PdfDocument {
     fn text(&self, unit: usize) -> String {
         self.extract(&[unit]);
         let texts = self.texts.lock().unwrap_or_else(|e| e.into_inner());
-        texts.get(&unit).cloned().unwrap_or_default()
+        texts.get(&unit).map(|t| t.text.clone()).unwrap_or_default()
+    }
+
+    fn text_rects(&self, unit: usize, range: std::ops::Range<usize>) -> Vec<[f32; 4]> {
+        self.extract(&[unit]);
+        let texts = self.texts.lock().unwrap_or_else(|e| e.into_inner());
+        texts.get(&unit).map(|t| t.rects(range)).unwrap_or_default()
     }
 
     fn search(&self, query: &str) -> Vec<(usize, std::ops::Range<usize>)> {
@@ -266,7 +273,7 @@ impl ViewerDocument for PdfDocument {
         let texts = self.texts.lock().unwrap_or_else(|e| e.into_inner());
         let mut found = Vec::new();
         for unit in units {
-            let Some(text) = texts.get(&unit) else {
+            let Some(text) = texts.get(&unit).map(|t| &t.text) else {
                 continue;
             };
             // The ranges are the text's: lower-casing keeps them only where

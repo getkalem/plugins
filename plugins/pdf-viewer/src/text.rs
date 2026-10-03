@@ -4,6 +4,8 @@
 //! where the baseline moves or the text goes back; a space goes where two
 //! glyphs stand further apart than a space would be.
 
+use std::ops::Range;
+
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
 use hayro::hayro_interpret::hayro_syntax::page::Page;
@@ -97,13 +99,69 @@ impl<'a> Device<'a> for Collector {
     }
 }
 
+/// A page's text and where it stands: each glyph's byte range of the
+/// text with its box in the page's pixels at scale 1 (x0, y0, x1, y1).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PageText {
+    pub(crate) text: String,
+    pub(crate) boxes: Vec<(Range<usize>, [f32; 4])>,
+}
+
+impl PageText {
+    /// The rectangles (x, y, width, height) of `range`: the boxes of the
+    /// glyphs in it, a line's run joined into one.
+    pub(crate) fn rects(&self, range: Range<usize>) -> Vec<[f32; 4]> {
+        let mut out: Vec<[f32; 4]> = Vec::new();
+        for (r, b) in &self.boxes {
+            if r.end <= range.start || r.start >= range.end {
+                continue;
+            }
+            let h = b[3] - b[1];
+            if let Some(last) = out.last_mut() {
+                let (lx1, ly0, lh) = (last[0] + last[2], last[1], last[3]);
+                // The same line, the next glyph: one rectangle.
+                if (b[1] - ly0).abs() < lh.max(h) * 0.5 && b[0] - lx1 < h && b[0] >= last[0] {
+                    let x1 = lx1.max(b[2]);
+                    let y0 = ly0.min(b[1]);
+                    let y1 = (ly0 + lh).max(b[3]);
+                    *last = [last[0], y0, x1 - last[0], y1 - y0];
+                    continue;
+                }
+            }
+            out.push([b[0], b[1], b[2] - b[0], b[3] - b[1]]);
+        }
+        out
+    }
+}
+
+/// A glyph's box: from its origin to where the next glyph starts, an em
+/// high from a little below the baseline.
+fn glyph_box(g: &Placed) -> [f32; 4] {
+    if flat(g) {
+        let (x0, x1) = (g.origin.x.min(g.end.x), g.origin.x.max(g.end.x));
+        return [
+            x0 as f32,
+            (g.origin.y - g.size * 0.8) as f32,
+            x1 as f32,
+            (g.origin.y + g.size * 0.2) as f32,
+        ];
+    }
+    let half = g.size * 0.5;
+    [
+        (g.origin.x.min(g.end.x) - half) as f32,
+        (g.origin.y.min(g.end.y) - half) as f32,
+        (g.origin.x.max(g.end.x) + half) as f32,
+        (g.origin.y.max(g.end.y) + half) as f32,
+    ]
+}
+
 /// The text of `page`, with fonts parsed once for the pages that share
 /// `cache`.
 pub(crate) fn page_text<'a>(
     page: &Page<'a>,
     settings: &InterpreterSettings,
     cache: &InterpreterCache<'a>,
-) -> String {
+) -> PageText {
     let (w, h) = page.render_dimensions();
     let area = Rect::new(0.0, 0.0, w as f64, h as f64);
     let mut ctx = Context::new(
@@ -209,7 +267,7 @@ impl Line {
 /// drawn in a row are gathered into runs, runs on one baseline that touch
 /// into lines, and the lines ordered top to bottom, a column at a time
 /// where consecutive rows of the page share a gutter.
-fn lay_out(glyphs: &[Placed]) -> String {
+fn lay_out(glyphs: &[Placed]) -> PageText {
     let mut runs: Vec<Vec<usize>> = Vec::new();
     for i in (0..glyphs.len()).filter(|&i| !cancelled_space(glyphs, i)) {
         let g = &glyphs[i];
@@ -234,20 +292,31 @@ fn lay_out(glyphs: &[Placed]) -> String {
         }
     }
     let rows = order(&lines, (0..lines.len()).collect(), 0);
-    let mut out = String::new();
+    let mut out = PageText::default();
     for row in rows {
-        let text: Vec<String> = row
+        let parts: Vec<PageText> = row
             .iter()
             .map(|&l| line_text(glyphs, &lines[l]))
-            .filter(|t| !t.is_empty())
+            .filter(|t| !t.text.is_empty())
             .collect();
-        if text.is_empty() {
+        if parts.is_empty() {
             continue;
         }
-        if !out.is_empty() {
-            out.push('\n');
+        if !out.text.is_empty() {
+            out.text.push('\n');
         }
-        out.push_str(&text.join(" "));
+        for (i, part) in parts.into_iter().enumerate() {
+            if i > 0 {
+                out.text.push(' ');
+            }
+            let at = out.text.len();
+            out.text.push_str(&part.text);
+            out.boxes.extend(
+                part.boxes
+                    .into_iter()
+                    .map(|(r, b)| (r.start + at..r.end + at, b)),
+            );
+        }
     }
     out
 }
@@ -384,12 +453,13 @@ fn band_rows(lines: &[Line], band: &[usize]) -> Vec<Vec<usize>> {
 /// A line's text: its glyphs left to right (in drawing order for text
 /// that is not flat), a glyph drawn twice over itself (fake bold) once,
 /// spaces where the glyphs stand apart.
-fn line_text(glyphs: &[Placed], line: &Line) -> String {
+fn line_text(glyphs: &[Placed], line: &Line) -> PageText {
     let mut ids = line.glyphs.clone();
     if line.flat {
         ids.sort_by(|&a, &b| glyphs[a].origin.x.total_cmp(&glyphs[b].origin.x));
     }
     let mut out = String::new();
+    let mut boxes = Vec::new();
     let mut prev: Option<&Placed> = None;
     for i in ids {
         let g = &glyphs[i];
@@ -411,11 +481,17 @@ fn line_text(glyphs: &[Placed], line: &Line) -> String {
                 out.push(' ');
             }
         } else {
+            let at = out.len();
             push_unligated(&mut out, &g.text);
+            boxes.push((at..out.len(), glyph_box(g)));
         }
         prev = Some(g);
     }
-    out.trim().to_string()
+    // Spaces are pushed only after text, so trimming the end keeps every
+    // range.
+    let len = out.trim_end().len();
+    out.truncate(len);
+    PageText { text: out, boxes }
 }
 
 /// Pushes `text` with the Latin ligatures spelled out, so that a search
@@ -459,7 +535,23 @@ mod tests {
             glyph(" ", 5.0, 24.0, 2.5),
             glyph("x", 7.5, 24.0, 5.0),
         ];
-        assert_eq!(lay_out(&glyphs), "ab c\nfi x");
+        assert_eq!(lay_out(&glyphs).text, "ab c\nfi x");
+    }
+
+    #[test]
+    fn a_range_has_its_rectangles() {
+        let glyphs = [
+            glyph("ab", 0.0, 10.0, 10.0),
+            glyph("c", 14.0, 10.0, 5.0),
+            glyph("de", 0.0, 24.0, 10.0),
+        ];
+        let t = lay_out(&glyphs);
+        assert_eq!(t.text, "ab c\nde");
+        // "b c" on the first line is one rectangle from b's glyph to c's
+        // (a glyph's box is whole: "ab" is one glyph); "c\nd" two.
+        assert_eq!(t.rects(1..4), [[0.0, 2.0, 19.0, 10.0]]);
+        assert_eq!(t.rects(3..6).len(), 2);
+        assert!(t.rects(4..5).is_empty(), "the line break has no box");
     }
 
     #[test]
@@ -469,7 +561,7 @@ mod tests {
             glyph(" ", 5.0, 10.0, 2.5),
             glyph("a", 5.0, 10.0, 5.0),
         ];
-        assert_eq!(lay_out(&glyphs), "ha");
+        assert_eq!(lay_out(&glyphs).text, "ha");
     }
 
     #[test]
@@ -480,7 +572,7 @@ mod tests {
             glyph("next", 0.0, 24.0, 20.0),
             glyph("_date", 18.0, 10.0, 29.0),
         ];
-        assert_eq!(lay_out(&glyphs), "The _date is\nnext");
+        assert_eq!(lay_out(&glyphs).text, "The _date is\nnext");
     }
 
     #[test]
@@ -491,7 +583,7 @@ mod tests {
             glyphs.push(glyph(&format!("L{row}"), 0.0, y, 100.0));
             glyphs.push(glyph(&format!("R{row}"), 120.0, y, 100.0));
         }
-        assert_eq!(lay_out(&glyphs), "Title\nL1\nL2\nL3\nR1\nR2\nR3");
+        assert_eq!(lay_out(&glyphs).text, "Title\nL1\nL2\nL3\nR1\nR2\nR3");
     }
 
     #[test]
@@ -502,7 +594,7 @@ mod tests {
             glyph("Age", 60.0, 10.0, 20.0),
             glyph("3", 60.0, 22.0, 5.0),
         ];
-        assert_eq!(lay_out(&glyphs), "Name Age\nBob 3");
+        assert_eq!(lay_out(&glyphs).text, "Name Age\nBob 3");
     }
 
     #[test]
@@ -516,6 +608,6 @@ mod tests {
             glyph("H", 0.0, 30.0, 7.0),
             glyph("H", 0.3, 30.0, 7.0),
         ];
-        assert_eq!(lay_out(&glyphs), "x2 y\nH");
+        assert_eq!(lay_out(&glyphs).text, "x2 y\nH");
     }
 }

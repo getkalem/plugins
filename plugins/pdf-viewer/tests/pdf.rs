@@ -228,6 +228,15 @@ fn text_search_and_links() {
     let hits = doc.search("SECOND");
     assert_eq!(hits, [(0, 12..18), (1, 0..6)]);
     assert_eq!(&doc.text(0)[12..18], "Second");
+    // "Hello" stands at x 72 on the baseline 92 pixels from the top, 24
+    // points high: one rectangle around it.
+    let r = doc.text_rects(0, 0..5);
+    assert_eq!(r.len(), 1, "{r:?}");
+    let [x, y, w, h] = r[0];
+    assert!((x - 72.0).abs() < 0.5, "{r:?}");
+    assert!(y < 92.0 && y + h > 92.0 && w > 40.0 && w < 80.0, "{r:?}");
+    // Two lines: two rectangles.
+    assert_eq!(doc.text_rects(0, 6..18).len(), 2);
 
     let links = doc.links(0);
     assert_eq!(links.len(), 2);
