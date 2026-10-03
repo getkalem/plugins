@@ -1900,6 +1900,324 @@ impl Workbook {
         Ok(())
     }
 
+    /// Runs `f` as one undo step (the batch the macros use), taken back
+    /// whole when it fails.
+    fn in_one_step(&mut self, f: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let r = f(self);
+        if own {
+            match &r {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        r
+    }
+
+    /// Sorts the rows of a range by column `key`, as Excel's Sort: numbers
+    /// first, then text (ignoring case), logical values and errors, empty
+    /// cells last either way; the first row stays when `header`. A row's
+    /// values, formats and formulas move together, a formula's relative
+    /// references shifted as a copy shifts them. One undo step.
+    pub fn sort_range(
+        &mut self,
+        idx: usize,
+        range: Range,
+        key: u32,
+        descending: bool,
+        header: bool,
+    ) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        if !(range.start.col..=range.end.col).contains(&key) {
+            return Err(Error::Refused(
+                "the sort column is outside the range".into(),
+            ));
+        }
+        let first = range.start.row + u32::from(header);
+        if first >= range.end.row {
+            return Ok(());
+        }
+        let body = Range {
+            start: CellRef::new(first, range.start.col),
+            end: range.end,
+        };
+        let model = &self.loaded[&idx].1;
+        let touches = |m: &Range| {
+            m.start.row <= body.end.row
+                && body.start.row <= m.end.row
+                && m.start.col <= body.end.col
+                && body.start.col <= m.end.col
+        };
+        if let Some(m) = model.merged.iter().find(|m| touches(m)) {
+            return Err(Error::Refused(format!(
+                "the merged cell {m} is in the range; unmerge it first"
+            )));
+        }
+        if model.cells.values().any(|c| matches!(&c.formula, Some(f) if matches!(f.kind, FormulaKind::Array { range: a } if touches(&a)))) {
+            return Err(Error::Refused("an array formula is in the range".into()));
+        }
+        // Each row: its key and its cells as entered, with their styles.
+        let mut rows = Vec::new();
+        for r in first..=range.end.row {
+            let k = self.value(idx, CellRef::new(r, key))?;
+            let mut cells = Vec::new();
+            for c in range.start.col..=range.end.col {
+                let at = CellRef::new(r, c);
+                let Some(cell) = self.loaded[&idx].1.cells.get(&at).cloned() else {
+                    continue;
+                };
+                let text = if cell.value != Value::Empty || cell.formula.is_some() {
+                    self.edit_text(idx, at)?
+                } else {
+                    String::new()
+                };
+                cells.push((c, text, cell.style));
+            }
+            rows.push((r, k, cells));
+        }
+        let rank = |v: &Value| match v {
+            Value::Number(_) => 0,
+            Value::Text(_) => 1,
+            Value::Bool(_) => 2,
+            Value::Error(_) => 3,
+            Value::Empty => 4,
+        };
+        rows.sort_by(|a, b| {
+            let (ra, rb) = (rank(&a.1), rank(&b.1));
+            // Empty cells last, ascending or descending.
+            if ra == 4 || rb == 4 {
+                return ra.cmp(&rb);
+            }
+            let o = ra.cmp(&rb).then_with(|| match (&a.1, &b.1) {
+                (Value::Number(x), Value::Number(y)) => {
+                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
+                }
+                (Value::Text(x), Value::Text(y)) => x.to_lowercase().cmp(&y.to_lowercase()),
+                (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+                (Value::Error(x), Value::Error(y)) => x.cmp(y),
+                _ => std::cmp::Ordering::Equal,
+            });
+            if descending { o.reverse() } else { o }
+        });
+        if rows
+            .iter()
+            .enumerate()
+            .all(|(i, row)| row.0 == first + i as u32)
+        {
+            return Ok(());
+        }
+        let date1904 = self.date1904;
+        self.in_one_step(|wb| {
+            let cleared: Vec<(CellRef, bool, u32)> = wb.loaded[&idx]
+                .1
+                .cells
+                .iter()
+                .filter(|(p, _)| body.contains(**p))
+                .map(|(p, c)| (*p, c.value != Value::Empty || c.formula.is_some(), c.style))
+                .collect();
+            for (p, filled, style) in cleared {
+                if filled {
+                    wb.set_input(idx, p, Input::Clear)?;
+                }
+                if style != 0 {
+                    wb.apply_style(idx, p, 0)?;
+                }
+            }
+            for (i, (old, _, cells)) in rows.into_iter().enumerate() {
+                let new = first + i as u32;
+                for (c, text, style) in cells {
+                    let at = CellRef::new(new, c);
+                    if let Some(f) = text.strip_prefix('=') {
+                        let moved = formula::shift(f, i64::from(new) - i64::from(old), 0);
+                        wb.set_input(idx, at, Input::Formula(moved))?;
+                    } else if !text.is_empty() {
+                        wb.set_input(idx, at, Input::parse(&text, date1904))?;
+                    }
+                    if style != 0 {
+                        wb.apply_style(idx, at, style)?;
+                    }
+                }
+            }
+            wb.batch_changed = true;
+            Ok(())
+        })
+    }
+
+    /// Puts an AutoFilter on a range (its first row the headers), as
+    /// Excel's Filter; `None` takes it off and shows the rows it hid.
+    pub fn set_filter(&mut self, idx: usize, range: Option<Range>) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        self.in_one_step(|wb| {
+            if let Some(old) = wb.loaded[&idx].1.auto_filter.clone() {
+                let text = wb.loaded[&idx].0.clone();
+                wb.replace_sheet_text(idx, splice(&text, vec![(old.span.clone(), String::new())]));
+                let shown: Vec<(u32, bool)> = (old.range.start.row + 1..=old.range.end.row)
+                    .map(|r| (r, false))
+                    .collect();
+                wb.set_rows_hidden(idx, &shown);
+            }
+            if let Some(range) = range {
+                let p = wb.loaded[&idx].1.prefix.clone();
+                let text = wb.loaded[&idx].0.clone();
+                let xml = format!("<{p}autoFilter ref=\"{range}\"/>");
+                wb.replace_sheet_text(idx, insert_top_level(&text, &AFTER_AUTO_FILTER, &xml));
+            }
+            wb.batch_changed = true;
+            Ok(())
+        })
+    }
+
+    /// Filters column `col` of the AutoFilter to the rows whose cell shows
+    /// one of `values` (an empty text for empty cells), or clears its filter
+    /// with `None`; the rows the filters hide get `hidden`, as Excel writes.
+    pub fn filter_column(
+        &mut self,
+        idx: usize,
+        col: u32,
+        values: Option<Vec<String>>,
+    ) -> Result<()> {
+        self.load(idx)?;
+        let Some(af) = self.loaded[&idx].1.auto_filter.clone() else {
+            return Err(Error::Refused(
+                "the sheet has no filter; turn it on first".into(),
+            ));
+        };
+        if !(af.range.start.col..=af.range.end.col).contains(&col) {
+            return Err(Error::Refused("the column is outside the filter".into()));
+        }
+        let col_id = col - af.range.start.col;
+        let p = self.loaded[&idx].1.prefix.clone();
+        let mut columns: Vec<crate::sheet::FilterColumn> = af
+            .columns
+            .iter()
+            .filter(|c| c.col_id != col_id)
+            .cloned()
+            .collect();
+        if let Some(vs) = values {
+            let blank = vs.iter().any(String::is_empty);
+            let shown: Vec<String> = vs.into_iter().filter(|v| !v.is_empty()).collect();
+            let mut raw = format!(
+                "<{p}filterColumn colId=\"{col_id}\"><{p}filters{}>",
+                if blank { " blank=\"1\"" } else { "" }
+            );
+            for v in &shown {
+                raw.push_str(&format!("<{p}filter val=\"{}\"/>", xml::escape(v)));
+            }
+            raw.push_str(&format!("</{p}filters></{p}filterColumn>"));
+            columns.push(crate::sheet::FilterColumn {
+                col_id,
+                values: Some(shown),
+                blank,
+                raw,
+            });
+            columns.sort_by_key(|c| c.col_id);
+        }
+        self.in_one_step(|wb| {
+            let inner: String = columns.iter().map(|c| c.raw.as_str()).collect();
+            let xml = if inner.is_empty() {
+                format!("<{p}autoFilter ref=\"{}\"/>", af.range)
+            } else {
+                format!(
+                    "<{p}autoFilter ref=\"{}\">{inner}</{p}autoFilter>",
+                    af.range
+                )
+            };
+            let text = wb.loaded[&idx].0.clone();
+            wb.replace_sheet_text(idx, splice(&text, vec![(af.span.clone(), xml)]));
+            // Which rows show: every filter of a known kind must let them.
+            let mut rows = Vec::new();
+            for r in af.range.start.row + 1..=af.range.end.row {
+                let mut show = true;
+                for c in columns.iter().filter(|c| c.values.is_some()) {
+                    let shown = wb.display(idx, CellRef::new(r, af.range.start.col + c.col_id))?;
+                    let ok = if shown.is_empty() {
+                        c.blank
+                    } else {
+                        c.values.as_ref().is_some_and(|v| v.contains(&shown))
+                    };
+                    if !ok {
+                        show = false;
+                        break;
+                    }
+                }
+                rows.push((r, !show));
+            }
+            wb.set_rows_hidden(idx, &rows);
+            wb.batch_changed = true;
+            Ok(())
+        })
+    }
+
+    /// Hides or shows rows (`<row hidden>`), making a `<row>` to hide one
+    /// that holds nothing.
+    fn set_rows_hidden(&mut self, idx: usize, rows: &[(u32, bool)]) {
+        let (text, model) = &self.loaded[&idx];
+        let mut splices = Vec::new();
+        let mut missing = Vec::new();
+        for &(r, hide) in rows {
+            match model.rows.get(&r) {
+                Some(row) if row.hidden != hide => {
+                    let tag = &text[row.start.clone()];
+                    let new = if hide {
+                        xml::set_attr(tag, "hidden", "1")
+                    } else {
+                        xml::remove_attr(tag, "hidden")
+                    };
+                    splices.push((row.start.clone(), new));
+                }
+                Some(_) => {}
+                None if hide => missing.push(r),
+                None => {}
+            }
+        }
+        if !splices.is_empty() {
+            let new = splice(text, splices);
+            self.replace_sheet_text(idx, new);
+        }
+        for r in missing {
+            let (text, model) = &self.loaded[&idx];
+            let p = &model.prefix;
+            let new_row = format!("<{p}row r=\"{}\" hidden=\"1\"/>", r + 1);
+            let Some((sd_start, sd_end)) = &model.sheet_data else {
+                return;
+            };
+            let splices = match sd_end {
+                None => {
+                    let tag = &text[sd_start.clone()];
+                    let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
+                    vec![(sd_start.clone(), format!("{open}>{new_row}</{p}sheetData>"))]
+                }
+                Some(_) => {
+                    let at = model
+                        .rows
+                        .range(..r)
+                        .next_back()
+                        .map_or(sd_start.end, |(_, row)| {
+                            row.end.as_ref().map_or(row.start.end, |e| e.end)
+                        });
+                    vec![(at..at, new_row)]
+                }
+            };
+            let new = splice(text, splices);
+            self.replace_sheet_text(idx, new);
+        }
+    }
+
     /// Clears the values and formulas of a range, formats kept, as Excel's
     /// Delete on a selection: one undo step.
     pub fn clear_range(&mut self, idx: usize, range: Range) -> Result<()> {
@@ -2345,6 +2663,70 @@ const AFTER_MERGE_CELLS: [&str; 24] = [
     "tableParts",
     "extLst",
 ];
+
+/// The worksheet's children that come after `<autoFilter>` in the schema.
+const AFTER_AUTO_FILTER: [&str; 28] = [
+    "sortState",
+    "dataConsolidate",
+    "customSheetViews",
+    "mergeCells",
+    "phoneticPr",
+    "conditionalFormatting",
+    "dataValidations",
+    "hyperlinks",
+    "printOptions",
+    "pageMargins",
+    "pageSetup",
+    "headerFooter",
+    "rowBreaks",
+    "colBreaks",
+    "customProperties",
+    "cellWatches",
+    "ignoredErrors",
+    "smartTags",
+    "drawing",
+    "legacyDrawing",
+    "legacyDrawingHF",
+    "drawingHF",
+    "picture",
+    "oleObjects",
+    "controls",
+    "webPublishItems",
+    "tableParts",
+    "extLst",
+];
+
+/// A sheet part with `xml` put among the worksheet's children before the
+/// first of `before`, or at its end.
+fn insert_top_level(text: &str, before: &[&str], xml: &str) -> String {
+    let mut r = Reader::new(text);
+    let mut depth = 0;
+    let mut at: Option<usize> = None;
+    let mut end: Option<usize> = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 1 && at.is_none() && before.contains(&tag.name) {
+                    at = Some(tag.span.start);
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { span, .. } => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(span.start);
+                }
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    match at.or(end) {
+        Some(p) => splice(text, vec![(p..p, xml.to_owned())]),
+        None => text.to_owned(),
+    }
+}
 
 /// A sheet part with a `<mergeCell ref>` added, `<mergeCells count>` kept
 /// right or made where the schema puts it.
