@@ -2464,6 +2464,22 @@ impl Workbook {
         };
         self.workbook_xml = splice(&self.workbook_xml, vec![edit]);
         self.write_pivot_cells(new, p, at)?;
+        // Columns as wide as their labels, as Excel fits a new table.
+        let width = p.cells.iter().map(Vec::len).max().unwrap_or(0);
+        for j in 0..width {
+            let chars = p
+                .cells
+                .iter()
+                .filter_map(|line| line.get(j).cloned().flatten())
+                .map(|c| match c {
+                    pivot::Out::Text(t) | pivot::Out::Error(t) => t.chars().count(),
+                    pivot::Out::Number(n) => format!("{n}").len(),
+                })
+                .max()
+                .unwrap_or(0);
+            let w = (chars as f64 + 2.0).clamp(8.43, 60.0);
+            self.set_col_width(new, at.col + j as u32, w)?;
+        }
         Ok(new)
     }
 
