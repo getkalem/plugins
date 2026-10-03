@@ -142,6 +142,8 @@ pub struct ChartDef {
     pub horizontal_title: Option<String>,
     /// The vertical axis's title.
     pub vertical_title: Option<String>,
+    /// Its legend's position (`b`, `t`, `l`, `r`, `tr`); `None` for none.
+    pub legend: Option<String>,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -232,6 +234,10 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             "scatterChart" => ChartKind::Scatter,
                             _ => ChartKind::Other,
                         };
+                    }
+                    "legend" if parent == "chart" => def.legend = Some("r".into()),
+                    "legendPos" if parent == "legend" => {
+                        def.legend = Some(tag.attr("val").map_or("r".into(), |v| v.into_owned()));
                     }
                     "autoTitleDeleted" if parent == "chart" => {
                         def.title_deleted =
@@ -532,6 +538,110 @@ pub fn axis_titled(text: &str, vertical: bool, title: Option<&str>) -> Option<St
         None => out.insert_str(at, &new),
     }
     Some(out)
+}
+
+/// A chart part with its legend at `pos` (`b`, `t`, `l`, `r`, `tr`), or
+/// without one: a legend there keeps its entries and formatting and only
+/// moves; a new one goes after the plot area, where the schema puts it.
+pub fn with_legend(text: &str, pos: Option<&str>) -> String {
+    let mut r = Reader::new(text);
+    let mut depth = 0;
+    let mut in_chart = false;
+    let mut prefix = String::new();
+    let (mut legend, mut legend_pos, mut legend_inner) = (None, None, None);
+    let mut after_plot = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 1 && tag.name == "chart" {
+                    in_chart = true;
+                    prefix = xml::prefix(tag.qname).to_owned();
+                } else if in_chart && depth == 2 && tag.name == "plotArea" {
+                    after_plot = Some(if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    });
+                    continue;
+                } else if in_chart && depth == 2 && tag.name == "legend" {
+                    let start = tag.span.start;
+                    if tag.empty {
+                        legend = Some(start..tag.span.end);
+                        continue;
+                    }
+                    legend_inner = Some(tag.span.end);
+                    // Its legendPos, if any.
+                    let mut d = 0;
+                    let mut end = text.len();
+                    while let Some(t2) = r.next_token() {
+                        match t2 {
+                            Token::Start(t3) => {
+                                if d == 0 && t3.name == "legendPos" {
+                                    let e = if t3.empty {
+                                        t3.span.end
+                                    } else {
+                                        r.skip_element()
+                                    };
+                                    legend_pos = Some(t3.span.start..e);
+                                    continue;
+                                }
+                                if !t3.empty {
+                                    d += 1;
+                                }
+                            }
+                            Token::End { span, .. } => {
+                                if d == 0 {
+                                    end = span.end;
+                                    break;
+                                }
+                                d -= 1;
+                            }
+                            Token::Text { .. } => {}
+                        }
+                    }
+                    legend = Some(start..end);
+                    continue;
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { name, .. } => {
+                depth -= 1;
+                if depth == 1 && name == "chart" {
+                    break;
+                }
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let p = &prefix;
+    let mut out = text.to_owned();
+    match (pos, legend) {
+        (None, Some(l)) => out.replace_range(l, ""),
+        (None, None) => {}
+        (Some(v), Some(l)) => match (legend_pos, legend_inner) {
+            (Some(lp), _) => out.replace_range(lp, &format!("<{p}legendPos val=\"{v}\"/>")),
+            (None, Some(inner)) => out.insert_str(inner, &format!("<{p}legendPos val=\"{v}\"/>")),
+            (None, None) => out.replace_range(
+                l,
+                &format!(
+                    "<{p}legend><{p}legendPos val=\"{v}\"/><{p}overlay val=\"0\"/></{p}legend>"
+                ),
+            ),
+        },
+        (Some(v), None) => {
+            if let Some(at) = after_plot {
+                out.insert_str(
+                    at,
+                    &format!(
+                        "<{p}legend><{p}legendPos val=\"{v}\"/><{p}overlay val=\"0\"/></{p}legend>"
+                    ),
+                );
+            }
+        }
+    }
+    out
 }
 
 /// An absolute reference to a range of a sheet, as charts write them.
@@ -886,6 +996,36 @@ mod tests {
         }
         let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
         assert!(axis_titled(&pie, false, Some("x")).is_none());
+    }
+
+    #[test]
+    fn legends_moved_added_and_removed() {
+        let s = NewSeries {
+            name: None,
+            cat: None,
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+        };
+        // One series: no legend to start with.
+        let x = chart_xml(ChartKind::Column, None, std::slice::from_ref(&s));
+        assert_eq!(parse_chart(&x, &[]).legend, None);
+        let y = with_legend(&x, Some("r"));
+        assert_eq!(parse_chart(&y, &[]).legend.as_deref(), Some("r"));
+        assert!(y.find("<c:legend>") > y.find("</c:plotArea>"));
+        assert!(y.find("<c:legend>") < y.find("<c:plotVisOnly"));
+        let z = with_legend(&y, Some("t"));
+        assert_eq!(z.matches("<c:legend>").count(), 1);
+        assert_eq!(parse_chart(&z, &[]).legend.as_deref(), Some("t"));
+        assert_eq!(parse_chart(&with_legend(&z, None), &[]).legend, None);
+        // Excel's legend, formatted and without a position: moved, kept.
+        let excel = r#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea/><c:legend><c:layout/><c:txPr>font</c:txPr></c:legend></c:chart></c:chartSpace>"#;
+        assert_eq!(parse_chart(excel, &[]).legend.as_deref(), Some("r"));
+        let m = with_legend(excel, Some("b"));
+        assert!(
+            m.contains(
+                "<c:legend><c:legendPos val=\"b\"/><c:layout/><c:txPr>font</c:txPr></c:legend>"
+            ),
+            "{m}"
+        );
     }
 
     #[test]

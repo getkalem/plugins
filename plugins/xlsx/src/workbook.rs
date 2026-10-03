@@ -2260,6 +2260,13 @@ impl Workbook {
                 stacked: def.stacked,
                 horizontal_title: def.horizontal_title.clone(),
                 vertical_title: def.vertical_title.clone(),
+                legend: def.legend.as_deref().map(|v| match v {
+                    "b" => kalem_viewer::LegendPosition::Bottom,
+                    "t" => kalem_viewer::LegendPosition::Top,
+                    "l" => kalem_viewer::LegendPosition::Left,
+                    "tr" => kalem_viewer::LegendPosition::TopRight,
+                    _ => kalem_viewer::LegendPosition::Right,
+                }),
                 ..kalem_viewer::Chart::default()
             });
         }
@@ -2543,6 +2550,49 @@ impl Workbook {
             title.map(str::trim).filter(|t| !t.is_empty()),
         )
         .ok_or_else(|| Error::Refused("This chart has no such axis".into()))?;
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Puts the legend of a sheet's chart (by its place among
+    /// [`Workbook::charts`]) at `position`, or takes it away. One undo step.
+    pub fn set_legend(
+        &mut self,
+        idx: usize,
+        index: usize,
+        position: Option<kalem_viewer::LegendPosition>,
+    ) -> Result<()> {
+        use kalem_viewer::LegendPosition as L;
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let pos = position.map(|p| match p {
+            L::Bottom => "b",
+            L::Top => "t",
+            L::Left => "l",
+            L::Right => "r",
+            L::TopRight => "tr",
+        });
+        let new = chart::with_legend(&old, pos);
         if new == old {
             return Ok(());
         }
