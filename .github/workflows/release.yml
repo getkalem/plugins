@@ -33,13 +33,18 @@ jobs:
           echo "asset=$asset" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-wasip2
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
       - name: Build the component from the tagged source
         run: |
-          cargo build --release --target wasm32-wasip2 -p "kalem-plugin-${{ steps.tag.outputs.name }}"
+          name="${{ steps.tag.outputs.name }}"
+          cargo build --release --target wasm32-unknown-unknown -p "kalem-plugin-$name"
           mkdir -p dist
-          built=$(ls target/wasm32-wasip2/release/*.wasm | head -1)
-          cp "$built" "dist/${{ steps.tag.outputs.asset }}"
+          # This plugin's module, not the first one of the folder.
+          built="target/wasm32-unknown-unknown/release/kalem_plugin_${name//-/_}.wasm"
+          wasm-tools component new "$built" -o "dist/${{ steps.tag.outputs.asset }}"
           (cd dist && sha256sum "${{ steps.tag.outputs.asset }}" > SHA256SUMS)
           cat dist/SHA256SUMS
       - uses: sigstore/cosign-installer@v3

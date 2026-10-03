@@ -6,5 +6,7 @@ The plugin API bindings (`kalem-plugin`, generated from the WIT definition) are 
 
 ```sh
 cargo test -p kalem-plugin-template
-cargo build --release --target wasm32-wasip2 -p kalem-plugin-template
+kalem plugin build template
 ```
+
+`kalem plugin new NAME`, run anywhere in this repository, copies this folder to `plugins/NAME` and renames it. `kalem plugin build DIR` compiles the crate for `wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown` once) and wraps the module as the component `main` names in `plugin.json`; CI does the same with `wasm-tools component new`. Built for `wasm32-wasip2` a component would import WASI interfaces, which Kalem does not grant.
