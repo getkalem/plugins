@@ -134,6 +134,8 @@ pub struct ChartDef {
     pub kind: ChartKind,
     /// Its title, when it has one of its own.
     pub title: Option<String>,
+    /// The automatic title (a single series' name) is turned off.
+    pub title_deleted: bool,
     /// Stacked bars or areas.
     pub stacked: bool,
     /// Its series, of its first plot.
@@ -225,6 +227,10 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             "scatterChart" => ChartKind::Scatter,
                             _ => ChartKind::Other,
                         };
+                    }
+                    "autoTitleDeleted" if parent == "chart" => {
+                        def.title_deleted =
+                            matches!(tag.attr("val").as_deref(), Some("1" | "true") | None);
                     }
                     "barDir" if in_plot && tag.attr("val").as_deref() == Some("bar") => {
                         def.kind = ChartKind::Bar;
@@ -331,6 +337,76 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
         def.title = Some(title);
     }
     def
+}
+
+/// A chart part with its title set to `title`, or taken away: the
+/// chart's own `<c:title>` and `<c:autoTitleDeleted>` written again as the
+/// first children of `<c:chart>`, everything else kept.
+pub fn titled(text: &str, title: Option<&str>) -> String {
+    const DRAWING: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    let mut r = Reader::new(text);
+    let mut depth = 0;
+    let mut chart_open: Option<(Span<usize>, String)> = None;
+    let mut drop: Vec<Span<usize>> = Vec::new();
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 1 && tag.name == "chart" && chart_open.is_none() {
+                    chart_open = Some((tag.span.clone(), xml::prefix(tag.qname).to_owned()));
+                } else if depth == 2
+                    && chart_open.is_some()
+                    && matches!(tag.name, "title" | "autoTitleDeleted")
+                {
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    drop.push(tag.span.start..end);
+                    continue;
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { name, .. } => {
+                depth -= 1;
+                if depth == 1 && name == "chart" {
+                    break;
+                }
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let Some((open, p)) = chart_open else {
+        return text.to_owned();
+    };
+    // The DrawingML prefix the part declares, or one declared here.
+    let a = text[..open.start].split("xmlns:").skip(1).find_map(|d| {
+        let (pfx, rest) = d.split_once("=\"")?;
+        (rest.split('"').next()? == DRAWING).then(|| pfx.to_owned())
+    });
+    let (a, decl) = match a {
+        Some(a) => (a, String::new()),
+        None => ("a".to_owned(), format!(" xmlns:a=\"{DRAWING}\"")),
+    };
+    let new = match title {
+        Some(t) => format!(
+            "<{p}title><{p}tx><{p}rich{decl}><{a}:bodyPr/><{a}:lstStyle/><{a}:p><{a}:r><{a}:t>{}</{a}:t></{a}:r></{a}:p></{p}rich></{p}tx><{p}overlay val=\"0\"/></{p}title><{p}autoTitleDeleted val=\"0\"/>",
+            xml::escape(t)
+        ),
+        None => format!("<{p}autoTitleDeleted val=\"1\"/>"),
+    };
+    let mut out = String::with_capacity(text.len() + new.len());
+    out.push_str(&text[..open.end]);
+    out.push_str(&new);
+    let mut at = open.end;
+    for d in drop {
+        out.push_str(&text[at..d.start]);
+        at = d.end;
+    }
+    out.push_str(&text[at..]);
+    out
 }
 
 /// An absolute reference to a range of a sheet, as charts write them.
@@ -623,6 +699,28 @@ mod tests {
             (a[0].from, a[0].to, a[0].rid.as_str()),
             ((1, 5), (15, 12), "rId1")
         );
+    }
+
+    #[test]
+    fn titles_set_and_removed() {
+        let s = NewSeries {
+            name: Some(("S!$B$1".into(), "Q1".into())),
+            cat: None,
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+        };
+        let x = chart_xml(ChartKind::Line, Some("Old"), std::slice::from_ref(&s));
+        let y = titled(&x, Some("New & better"));
+        let d = parse_chart(&y, &[]);
+        assert_eq!(d.title.as_deref(), Some("New & better"));
+        assert!(!d.title_deleted);
+        assert_eq!(y.matches("autoTitleDeleted").count(), 1);
+        let z = titled(&y, None);
+        let d = parse_chart(&z, &[]);
+        assert_eq!((d.title, d.title_deleted), (None, true));
+        assert_eq!(d.series.len(), 1, "the rest kept");
+        // A part without the DrawingML prefix declares it.
+        let bare = r#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea/></c:chart></c:chartSpace>"#;
+        assert!(titled(bare, Some("T")).contains("<c:rich xmlns:a="));
     }
 
     #[test]

@@ -683,6 +683,18 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_chart_title(
+        &mut self,
+        unit: usize,
+        index: usize,
+        title: Option<String>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_chart_title(unit, index, title.as_deref())
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1643,6 +1655,13 @@ mod tests {
         assert_eq!(d.charts(0)[before].anchor, [20, 1, 30, 6]);
         assert!(d.undo().unwrap());
         assert_eq!(d.charts(0)[before].anchor, [0, 4, 14, 11]);
+        // Retitled, then untitled: no series name put in its place.
+        d.set_chart_title(0, before, Some("Costs".into())).unwrap();
+        assert_eq!(d.charts(0)[before].title.as_deref(), Some("Costs"));
+        d.set_chart_title(0, before, None).unwrap();
+        assert_eq!(d.charts(0)[before].title, None);
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        assert_eq!(d.charts(0)[before].title.as_deref(), Some("Spending"));
         // Removed, then back with undo.
         d.delete_chart(0, before).unwrap();
         assert_eq!(d.charts(0).len(), before);

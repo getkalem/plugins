@@ -2244,6 +2244,9 @@ impl Workbook {
             out.push(kalem_viewer::Chart {
                 kind: def.kind,
                 title: def.title.clone().or_else(|| {
+                    if def.title_deleted {
+                        return None;
+                    }
                     // One series and no title: Excel shows the series' name.
                     (series.len() == 1 && !series[0].name.is_empty())
                         .then(|| series[0].name.clone())
@@ -2468,6 +2471,36 @@ impl Workbook {
             &drawing,
             format!("{}{new}{}", &text[..a.span.start], &text[a.span.end..]).into_bytes(),
         );
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Sets or removes the title of a sheet's chart (by its place among
+    /// [`Workbook::charts`]). One undo step.
+    pub fn set_chart_title(&mut self, idx: usize, index: usize, title: Option<&str>) -> Result<()> {
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let new = chart::titled(&old, title.map(str::trim).filter(|t| !t.is_empty()));
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
         self.generation += 1;
         match snapshot {
             Some(s) => {
