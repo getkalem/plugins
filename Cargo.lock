@@ -840,7 +840,7 @@ dependencies = [
 [[package]]
 name = "kalem-viewer"
 version = "0.0.1"
-source = "git+https://github.com/getkalem/kalem?branch=main#8c816275fdcea147c08fa06543ba653a78943a7d"
+source = "git+https://github.com/getkalem/kalem?branch=main#0ff69f19cbc28aa9bb1d2eb34ab0169f223e5e45"
 
 [[package]]
 name = "kamadak-exif"

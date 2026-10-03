@@ -1521,7 +1521,19 @@ impl Workbook {
     /// A copy of the `<xf>` at `style` with `numFmtId` set, appended to
     /// `cellXfs`; reused when asked again.
     fn style_with_numfmt(&mut self, style: u32, fmt: u32) -> Result<u32> {
-        if let Some(&s) = self.derived_styles.get(&(style, fmt)) {
+        self.derive_style(style, fmt, |src| {
+            // The start tag of the copied `<xf>` gets the format.
+            let tag_end = src.find('>').map_or(src.len(), |p| p + 1);
+            let mut head = xml::set_attr(&src[..tag_end], "numFmtId", &fmt.to_string());
+            head = xml::set_attr(&head, "applyNumberFormat", "1");
+            format!("{head}{}", &src[tag_end..])
+        })
+    }
+
+    /// A copy of the `<xf>` at `style` changed by `edit`, appended to
+    /// `cellXfs`; reused when asked again with the same `key`.
+    fn derive_style(&mut self, style: u32, key: u32, edit: impl Fn(&str) -> String) -> Result<u32> {
+        if let Some(&s) = self.derived_styles.get(&(style, key)) {
             return Ok(s);
         }
         let Some(part) = self.styles_part.clone() else {
@@ -1574,21 +1586,70 @@ impl Workbook {
             },
             |s| xml_text[s].to_owned(),
         );
-        // The start tag of the copied `<xf>` gets the format.
-        let tag_end = src.find('>').map_or(src.len(), |p| p + 1);
-        let mut head = xml::set_attr(&src[..tag_end], "numFmtId", &fmt.to_string());
-        head = xml::set_attr(&head, "applyNumberFormat", "1");
-        let copy = format!("{head}{}", &src[tag_end..]);
+        let copy = edit(&src);
         let new_open = xml::set_attr(&xml_text[open.clone()], "count", &(count + 1).to_string());
         let out = splice(
             &xml_text,
             vec![(open, new_open), (close.start..close.start, copy)],
         );
         self.styles_xml = Some(out.clone());
-        let fresh = styles::parse(&out, &self.theme);
-        self.styles = fresh;
-        self.derived_styles.insert((style, fmt), count);
+        self.styles = styles::parse(&out, &self.theme);
+        self.derived_styles.insert((style, key), count);
         Ok(count)
+    }
+
+    /// Turns wrapping of a cell's text on or off, as Excel's Wrap Text: the
+    /// cell gets a copy of its `<xf>` with `<alignment wrapText>`.
+    pub fn set_wrap(&mut self, idx: usize, at: CellRef, wrap: bool) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let old = self.loaded[&idx].1.cells.get(&at).cloned();
+        let style = old.as_ref().map_or(0, |c| c.style);
+        if self.styles.get(style).wrap == wrap {
+            return Ok(());
+        }
+        // Keys past any number format id: one for on, one for off.
+        let key = if wrap { u32::MAX } else { u32::MAX - 1 };
+        let new_style = self.derive_style(style, key, |src| with_wrap(src, wrap))?;
+        let (text, model) = &self.loaded[&idx];
+        let splices = match &old {
+            Some(c) => {
+                let el = &text[c.span.clone()];
+                let tag_end = el.find('>').map_or(el.len(), |p| p + 1);
+                let head = if new_style == 0 {
+                    xml::remove_attr(&el[..tag_end], "s")
+                } else {
+                    xml::set_attr(&el[..tag_end], "s", &new_style.to_string())
+                };
+                vec![(c.span.start..c.span.start + tag_end, head)]
+            }
+            None => {
+                let p = &model.prefix;
+                insert_cell(
+                    text,
+                    model,
+                    at,
+                    format!("<{p}c r=\"{at}\" s=\"{new_style}\"/>"),
+                )?
+            }
+        };
+        let new = splice(text, splices);
+        let model = sheet::parse(&new, &self.strings, self.date1904);
+        self.loaded.insert(idx, (new, model));
+        if !self.dirty_sheets.contains(&idx) {
+            self.dirty_sheets.push(idx);
+        }
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
     }
 
     fn set_full_calc_on_load(&mut self) {
@@ -1824,6 +1885,31 @@ fn col_width_text(text: &str, col: u32, width: f64) -> String {
             }
             None => text.to_owned(),
         },
+    }
+}
+
+/// An `<xf>` element with its text wrapping set: `wrapText` on its
+/// `<alignment>`, which is made, first of its children, when there is none.
+fn with_wrap(src: &str, wrap: bool) -> String {
+    let tag_end = src.find('>').map_or(src.len(), |p| p + 1);
+    let head = xml::set_attr(&src[..tag_end], "applyAlignment", "1");
+    let name_end = head[1..]
+        .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
+        .map_or(head.len(), |p| p + 1);
+    let p = xml::prefix(&head[1..name_end]).to_owned();
+    let flag = if wrap { "1" } else { "0" };
+    let rest = &src[tag_end..];
+    if let Some(a) = rest.find(&format!("<{p}alignment")) {
+        let a_end = rest[a..].find('>').map_or(rest.len(), |e| a + e + 1);
+        let tag = xml::set_attr(&rest[a..a_end], "wrapText", flag);
+        return format!("{head}{}{tag}{}", &rest[..a], &rest[a_end..]);
+    }
+    let alignment = format!("<{p}alignment wrapText=\"{flag}\"/>");
+    if head.ends_with("/>") {
+        let open = head[..head.len() - 2].trim_end();
+        format!("{open}>{alignment}</{p}xf>")
+    } else {
+        format!("{head}{alignment}{rest}")
     }
 }
 
@@ -2121,6 +2207,25 @@ mod tests {
                 Some(&Value::Text("a&b".into()))
             ),
             "<c r=\"A1\" t=\"str\"><f>\"a\"</f><v>a&amp;b</v></c>"
+        );
+    }
+
+    #[test]
+    fn wrap_in_xf() {
+        assert_eq!(
+            with_wrap(r#"<xf numFmtId="0" fontId="1"/>"#, true),
+            r#"<xf numFmtId="0" fontId="1" applyAlignment="1"><alignment wrapText="1"/></xf>"#
+        );
+        assert_eq!(
+            with_wrap(
+                r#"<x:xf numFmtId="0"><x:alignment horizontal="center"/><x:protection/></x:xf>"#,
+                true
+            ),
+            r#"<x:xf numFmtId="0" applyAlignment="1"><x:alignment horizontal="center" wrapText="1"/><x:protection/></x:xf>"#
+        );
+        assert_eq!(
+            with_wrap(r#"<xf><protection locked="0"/></xf>"#, false),
+            r#"<xf applyAlignment="1"><alignment wrapText="0"/><protection locked="0"/></xf>"#
         );
     }
 

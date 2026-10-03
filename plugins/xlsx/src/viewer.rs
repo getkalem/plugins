@@ -369,6 +369,7 @@ impl ViewerDocument for XlsxDoc {
                     color: style.color.map(rgb),
                     fill: style.fill.map(rgb),
                     align,
+                    wrap: style.wrap,
                     formula,
                     note: notes.contains(&at),
                 },
@@ -420,6 +421,13 @@ impl ViewerDocument for XlsxDoc {
         .map_err(err)?;
         self.notes.clear();
         Ok(self.all_units())
+    }
+
+    fn set_wrap(&mut self, unit: usize, row: u32, col: u32, wrap: bool) -> Result<Vec<usize>> {
+        self.book()
+            .set_wrap(unit, CellRef::new(row, col), wrap)
+            .map_err(err)?;
+        Ok(vec![unit])
     }
 
     fn set_row_height(&mut self, unit: usize, row: u32, height: f32) -> Result<Vec<usize>> {
@@ -718,6 +726,26 @@ mod tests {
         assert_eq!(s.rows[&20].height, Some(8.5));
         assert!(d.undo().unwrap() && d.undo().unwrap());
         assert!(!d.grid(0).unwrap().heights.contains(&(2, 30.0)));
+    }
+
+    #[test]
+    fn wrap_text_is_a_style() {
+        let mut d = open("libreoffice-budget.xlsx");
+        // A cell with a style (bold, filled) and an empty one.
+        d.set_wrap(0, 0, 1, true).unwrap();
+        d.set_wrap(0, 9, 9, true).unwrap();
+        let c = d.grid_cells(0, 0..1, 1..2).remove(0).2;
+        assert!(c.wrap && c.bold && c.fill.is_some(), "{c:?}");
+        assert!(d.grid_cells(0, 9..10, 9..10)[0].2.wrap);
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        let s = wb.sheet(0).unwrap().cells[&CellRef::new(0, 1)].style;
+        assert!(wb.style(s).wrap && wb.style(s).bold);
+        d.set_wrap(0, 0, 1, false).unwrap();
+        assert!(!d.grid_cells(0, 0..1, 1..2).remove(0).2.wrap);
+        assert!(d.undo().unwrap() && d.undo().unwrap() && d.undo().unwrap());
+        assert!(!d.grid_cells(0, 0..1, 1..2).remove(0).2.wrap);
+        // Undone past the save: different from the file on disk.
+        assert!(d.modified());
     }
 
     #[test]
