@@ -122,6 +122,33 @@ pub struct Sheet {
     pub(crate) prefix: String,
     /// The sheet's code name (`<sheetPr codeName>`), its name in VBA.
     pub code_name: Option<String>,
+    /// The sheet's AutoFilter.
+    pub auto_filter: Option<AutoFilter>,
+}
+
+/// A sheet's AutoFilter (`<autoFilter>`, 18.3.1.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutoFilter {
+    /// The range, its first row the headers.
+    pub range: Range,
+    /// Its columns' filters, by column within the range.
+    pub columns: Vec<FilterColumn>,
+    /// The element's bytes in the part.
+    pub(crate) span: Span<usize>,
+}
+
+/// One column's filter.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FilterColumn {
+    /// The column within the range, from 0.
+    pub col_id: u32,
+    /// The values shown (`<filters><filter val>`), when it is that kind.
+    pub values: Option<Vec<String>>,
+    /// Empty cells shown too (`<filters blank="1">`).
+    pub blank: bool,
+    /// The element as written, kept for kinds not edited here (custom,
+    /// top ten, dynamic, color).
+    pub(crate) raw: String,
 }
 
 fn number(s: &str) -> Option<f64> {
@@ -420,6 +447,81 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                             in_array_of: None,
                         },
                     );
+                }
+                "autoFilter" if sheet.sheet_data.is_some() => {
+                    let range = tag.attr("ref").and_then(|v| Range::parse(&v));
+                    let start = tag.span.start;
+                    let mut columns = Vec::new();
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        let mut end = text.len();
+                        while let Some(t) = r.next_token() {
+                            match t {
+                                Token::Start(fc) if fc.name == "filterColumn" => {
+                                    let col_id =
+                                        fc.attr("colId").and_then(|v| v.parse().ok()).unwrap_or(0);
+                                    let fc_start = fc.span.start;
+                                    let mut values: Option<Vec<String>> = None;
+                                    let mut blank = false;
+                                    let fc_end = if fc.empty {
+                                        fc.span.end
+                                    } else {
+                                        let mut e = text.len();
+                                        while let Some(t) = r.next_token() {
+                                            match t {
+                                                Token::Start(f) if f.name == "filters" => {
+                                                    blank = f
+                                                        .attr("blank")
+                                                        .as_deref()
+                                                        .is_some_and(|v| v == "1" || v == "true");
+                                                    values = Some(Vec::new());
+                                                }
+                                                Token::Start(f) if f.name == "filter" => {
+                                                    if let (Some(vs), Some(v)) =
+                                                        (values.as_mut(), f.attr("val"))
+                                                    {
+                                                        vs.push(v.into_owned());
+                                                    }
+                                                }
+                                                Token::End {
+                                                    name: "filterColumn",
+                                                    span,
+                                                } => {
+                                                    e = span.end;
+                                                    break;
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        e
+                                    };
+                                    columns.push(FilterColumn {
+                                        col_id,
+                                        values,
+                                        blank,
+                                        raw: text[fc_start..fc_end].to_owned(),
+                                    });
+                                }
+                                Token::End {
+                                    name: "autoFilter",
+                                    span,
+                                } => {
+                                    end = span.end;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        end
+                    };
+                    if let Some(range) = range {
+                        sheet.auto_filter = Some(AutoFilter {
+                            range,
+                            columns,
+                            span: start..end,
+                        });
+                    }
                 }
                 "mergeCell" => {
                     if let Some(rg) = tag.attr("ref").and_then(|v| Range::parse(&v)) {

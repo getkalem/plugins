@@ -316,6 +316,24 @@ impl ViewerDocument for XlsxDoc {
                 .filter_map(|(i, r)| r.height.map(|h| (*i, h as f32)))
                 .collect(),
             default_height: sheet.default_row_height.unwrap_or(15.0) as f32,
+            filter: sheet.auto_filter.as_ref().map(|f| {
+                [
+                    f.range.start.row,
+                    f.range.start.col,
+                    f.range.end.row,
+                    f.range.end.col,
+                ]
+            }),
+            filtered: sheet
+                .auto_filter
+                .as_ref()
+                .map(|f| {
+                    f.columns
+                        .iter()
+                        .map(|c| f.range.start.col + c.col_id)
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 
@@ -452,6 +470,44 @@ impl ViewerDocument for XlsxDoc {
             .map_err(err)?;
         self.notes.clear();
         Ok(self.all_units())
+    }
+
+    fn sort_range(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        key: u32,
+        descending: bool,
+        header: bool,
+    ) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .sort_range(unit, r, key, descending, header)
+            .map_err(err)?;
+        self.notes.clear();
+        Ok(self.all_units())
+    }
+
+    fn set_filter(&mut self, unit: usize, range: Option<[u32; 4]>) -> Result<Vec<usize>> {
+        let r = range.map(|r| crate::cellref::Range {
+            start: CellRef::new(r[0], r[1]),
+            end: CellRef::new(r[2], r[3]),
+        });
+        self.book().set_filter(unit, r).map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn filter_column(
+        &mut self,
+        unit: usize,
+        col: u32,
+        values: Option<Vec<String>>,
+    ) -> Result<Vec<usize>> {
+        self.book().filter_column(unit, col, values).map_err(err)?;
+        Ok(vec![unit])
     }
 
     fn move_cells_between(
@@ -862,6 +918,60 @@ mod tests {
         assert!(d.undo().unwrap());
         assert_eq!(d.cell_input(0, 2, 3), "=B3+C3");
         assert_eq!(d.cell_input(1, 9, 2), "");
+    }
+
+    #[test]
+    fn sorting_rows() {
+        let mut d = open("libreoffice-budget.xlsx");
+        // A1:D4 by Q1 (B), the header kept: Travel 0, Food 431.5, Rent 1200.
+        d.sort_range(0, [0, 0, 3, 3], 1, false, true).unwrap();
+        let names: Vec<String> = (1..4).map(|r| d.cell_input(0, r, 0)).collect();
+        assert_eq!(names, ["Travel", "Food", "Rent"]);
+        assert_eq!(d.cell_input(0, 0, 0), "Item");
+        // Each row's formula moved with it, reading its own row.
+        assert_eq!(d.cell_input(0, 1, 3), "=B2+C2");
+        assert_eq!(d.grid_cells(0, 1..2, 3..4)[0].2.text, "950.00");
+        assert_eq!(
+            d.grid_cells(0, 3..4, 1..2)[0].2.text,
+            "1,200.00",
+            "formats move too"
+        );
+        d.sort_range(0, [0, 0, 3, 3], 0, true, true).unwrap();
+        let names: Vec<String> = (1..4).map(|r| d.cell_input(0, r, 0)).collect();
+        assert_eq!(names, ["Travel", "Rent", "Food"]);
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        assert_eq!(d.cell_input(0, 1, 0), "Rent");
+    }
+
+    #[test]
+    fn filtering_rows() {
+        let mut d = open("libreoffice-budget.xlsx");
+        d.set_filter(0, Some([0, 0, 3, 3])).unwrap();
+        assert_eq!(d.grid(0).unwrap().filter, Some([0, 0, 3, 3]));
+        // Q2 (C) to 512.25 and 950.00: Rent's row hides.
+        d.filter_column(0, 2, Some(vec!["512.25".into(), "950.00".into()]))
+            .unwrap();
+        let g = d.grid(0).unwrap();
+        assert_eq!(g.hidden_rows, vec![1]);
+        assert_eq!(g.filtered, vec![2]);
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        let s = wb.sheet(0).unwrap();
+        assert!(s.rows[&1].hidden);
+        let af = s.auto_filter.clone().unwrap();
+        assert_eq!(
+            af.columns[0].values.as_deref(),
+            Some(&["512.25".to_string(), "950.00".into()][..])
+        );
+        // Cleared: shown again; the filter off.
+        d.filter_column(0, 2, None).unwrap();
+        assert!(d.grid(0).unwrap().hidden_rows.is_empty());
+        d.filter_column(0, 0, Some(vec!["Food".into()])).unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![1, 3]);
+        d.set_filter(0, None).unwrap();
+        let g = d.grid(0).unwrap();
+        assert!(g.filter.is_none() && g.hidden_rows.is_empty());
+        assert!(d.undo().unwrap());
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![1, 3]);
     }
 
     #[test]
