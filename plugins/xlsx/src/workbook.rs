@@ -8,7 +8,7 @@ use std::ops::Range as Span;
 
 use crate::calc::{self, Engine};
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW, Range};
-use crate::formula::Op;
+use crate::formula::{self, Op};
 use crate::numfmt;
 use crate::package::{Package, PackageError};
 use crate::rels::{self, Rel, kind};
@@ -1704,6 +1704,172 @@ impl Workbook {
             }
         }
         result
+    }
+
+    /// Moves a range's cells to start at `to`, as Excel's Cut and Paste:
+    /// values, formulas (their text as it was) and formats go, the cells
+    /// left are empty, and every formula that referred to the moved cells,
+    /// on any sheet and in defined names, points at their new place. One
+    /// undo step. Merged cells and array formulas in the way are refused.
+    pub fn move_range(&mut self, idx: usize, src: Range, to: CellRef) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let (rows, cols) = (src.end.row - src.start.row, src.end.col - src.start.col);
+        if to.row + rows >= MAX_ROW || to.col + cols >= MAX_COL {
+            return Err(Error::Refused(
+                "the cells would go past the end of the sheet".into(),
+            ));
+        }
+        let dest = Range {
+            start: to,
+            end: CellRef::new(to.row + rows, to.col + cols),
+        };
+        if dest == src {
+            return Ok(());
+        }
+        let model = &self.loaded[&idx].1;
+        let touches = |m: &Range, r: &Range| {
+            m.start.row <= r.end.row
+                && r.start.row <= m.end.row
+                && m.start.col <= r.end.col
+                && r.start.col <= m.end.col
+        };
+        if let Some(m) = model
+            .merged
+            .iter()
+            .find(|m| touches(m, &src) || touches(m, &dest))
+        {
+            return Err(Error::Refused(format!(
+                "the merged cell {m} is in the way; unmerge it first"
+            )));
+        }
+        for c in model.cells.values() {
+            if let Some(f) = &c.formula
+                && let FormulaKind::Array { range: a } = f.kind
+                && (touches(&a, &src) || touches(&a, &dest))
+            {
+                return Err(Error::Refused(format!(
+                    "the array formula over {a} is in the way"
+                )));
+            }
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = self.move_inner(idx, src, dest);
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                    return result;
+                }
+            }
+        }
+        result?;
+        // Formulas that referred to the moved cells follow them.
+        let name = self.sheets[idx].name.clone();
+        let (dr, dc) = (
+            i64::from(dest.start.row) - i64::from(src.start.row),
+            i64::from(dest.start.col) - i64::from(src.start.col),
+        );
+        let indices: Vec<usize> = self.loaded.keys().copied().collect();
+        for i in indices {
+            let own_name = self.sheets[i].name.clone();
+            let text = &self.loaded[&i].0;
+            let new = structure::map_formula_texts(text, |f| {
+                formula::move_refs(f, &name, Some(&own_name), src, dr, dc)
+            });
+            if new != *text {
+                self.replace_sheet_text(i, new);
+            }
+        }
+        let wb = structure::map_formula_texts(&self.workbook_xml, |f| {
+            formula::move_refs(f, &name, None, src, dr, dc)
+        });
+        if wb != self.workbook_xml {
+            self.workbook_xml = wb;
+            self.reread_defined_names();
+        }
+        // The engine reads the new texts; the cells it was trusted for keep
+        // its trust where they went, and get its results: a formula that
+        // read the moved cells had been computed while they were away.
+        let (sr, sc) = (src.start.row, src.start.col);
+        let trusted: HashSet<(usize, CellRef)> = std::mem::take(&mut self.trusted)
+            .into_iter()
+            .map(|(s, p)| {
+                if s == idx && src.contains(p) {
+                    (
+                        s,
+                        CellRef::new(dest.start.row + p.row - sr, dest.start.col + p.col - sc),
+                    )
+                } else {
+                    (s, p)
+                }
+            })
+            .collect();
+        self.engine = None;
+        self.computed.clear();
+        self.ensure_engine()?;
+        self.trusted.extend(trusted);
+        let after = std::mem::take(&mut self.computed);
+        let cells = self.formula_cells();
+        let before: HashMap<(usize, CellRef), Value> = cells
+            .iter()
+            .map(|&(s, p)| ((s, p), self.loaded[&s].1.cells[&p].value.clone()))
+            .collect();
+        self.write_results(&before, after, &cells, &[]);
+        Ok(())
+    }
+
+    fn move_inner(&mut self, idx: usize, src: Range, dest: Range) -> Result<()> {
+        // Every source cell, as entered, with its style.
+        let mut moved = Vec::new();
+        for (p, c) in self.loaded[&idx].1.cells.clone() {
+            if src.contains(p) {
+                let text = if c.value != Value::Empty || c.formula.is_some() {
+                    self.edit_text(idx, p)?
+                } else {
+                    String::new()
+                };
+                moved.push((p.row - src.start.row, p.col - src.start.col, text, c.style));
+            }
+        }
+        // The source and the destination emptied, styles too.
+        let cleared: Vec<(CellRef, bool, u32)> = self.loaded[&idx]
+            .1
+            .cells
+            .iter()
+            .filter(|(p, _)| src.contains(**p) || dest.contains(**p))
+            .map(|(p, c)| (*p, c.value != Value::Empty || c.formula.is_some(), c.style))
+            .collect();
+        for (p, filled, style) in cleared {
+            if filled {
+                self.set_input(idx, p, Input::Clear)?;
+            }
+            if style != 0 {
+                self.apply_style(idx, p, 0)?;
+            }
+        }
+        let date1904 = self.date1904;
+        for (dr, dc, text, style) in moved {
+            let at = CellRef::new(dest.start.row + dr, dest.start.col + dc);
+            if !text.is_empty() {
+                self.set_input(idx, at, Input::parse(&text, date1904))?;
+            }
+            if style != 0 {
+                self.apply_style(idx, at, style)?;
+            }
+        }
+        self.batch_changed = true;
+        Ok(())
     }
 
     /// Clears the values and formulas of a range, formats kept, as Excel's

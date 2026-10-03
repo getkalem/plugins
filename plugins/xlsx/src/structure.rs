@@ -302,6 +302,24 @@ pub fn rewrite_formulas(src: &str, op: Op, op_sheet: &str, sheet: &str) -> Strin
     out.finish()
 }
 
+/// Every formula of a sheet part (`<f>`, conditional formats' and
+/// validations') passed through `f`.
+pub fn map_formula_texts(src: &str, f: impl Fn(&str) -> String) -> String {
+    let mut out = Out::new(src);
+    let mut r = Reader::new(src);
+    while let Some(t) = r.next_token() {
+        let Token::Start(tag) = t else { continue };
+        if matches!(
+            tag.name,
+            "f" | "formula" | "formula1" | "formula2" | "definedName"
+        ) {
+            let (s, c, _) = content(src, &mut r, &tag);
+            adjust_text(&mut out, src, s, c, &f);
+        }
+    }
+    out.finish()
+}
+
 /// `workbook.xml`: the defined names' formulas.
 pub fn rewrite_defined_names(src: &str, op: Op, op_sheet: &str, sheet_names: &[String]) -> String {
     let mut out = Out::new(src);

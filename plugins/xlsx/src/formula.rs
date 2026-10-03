@@ -485,6 +485,46 @@ pub fn adjust(formula: &str, op: Op, op_sheet: &str, formula_sheet: Option<&str>
     })
 }
 
+/// A formula of `formula_sheet` after the cells of `range` on `op_sheet`
+/// moved by `rows` and `cols`, as Excel's Cut and Paste: references wholly
+/// inside the range follow the cells, absolute ones too; others stay.
+pub fn move_refs(
+    formula: &str,
+    op_sheet: &str,
+    formula_sheet: Option<&str>,
+    range: Range,
+    rows: i64,
+    cols: i64,
+) -> String {
+    let inside = |e: &End| match (e.row, e.col) {
+        (Some((r, _)), Some((c, _))) => range.contains(CellRef::new(r, c)),
+        _ => false,
+    };
+    let moved = |e: End| -> Option<End> {
+        let (r, ar) = e.row?;
+        let (c, ac) = e.col?;
+        Some(End {
+            row: Some((add(r, rows, MAX_ROW)?, ar)),
+            col: Some((add(c, cols, MAX_COL)?, ac)),
+        })
+    };
+    map_refs(formula, |ctx, r| {
+        if ctx.elsewhere {
+            return Some(r);
+        }
+        match ctx.sheet.or(formula_sheet) {
+            Some(s) if s.eq_ignore_ascii_case(op_sheet) && inside(&r.start) && inside(&r.end) => {
+                Some(Reference {
+                    start: moved(r.start)?,
+                    end: moved(r.end)?,
+                    single: r.single,
+                })
+            }
+            _ => Some(r),
+        }
+    })
+}
+
 /// A space-separated list of ranges (`sqref`) after `op`; ranges deleted
 /// whole drop out.
 pub fn adjust_sqref(sqref: &str, op: Op) -> String {
@@ -524,6 +564,17 @@ mod tests {
     #[test]
     fn off_the_sheet_is_ref_error() {
         assert_eq!(shift("A1+B2", -1, 0), "#REF!+B1");
+    }
+
+    #[test]
+    fn moved_cells_are_followed() {
+        let r = Range::parse("B2:C3").unwrap();
+        // Wholly inside: follows; partly or outside: stays.
+        assert_eq!(
+            move_refs("B2+$C$3+SUM(B2:C3)+SUM(A1:C3)+D4", "S", Some("S"), r, 5, 1),
+            "C7+$D$8+SUM(C7:D8)+SUM(A1:C3)+D4"
+        );
+        assert_eq!(move_refs("S!B2+T!B2", "S", Some("T"), r, 1, 0), "S!B3+T!B2");
     }
 
     #[test]
