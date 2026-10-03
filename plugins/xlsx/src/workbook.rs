@@ -1663,6 +1663,51 @@ impl Workbook {
         }
     }
 
+    /// Clears the values and formulas of a range, formats kept, as Excel's
+    /// Delete on a selection: one undo step.
+    pub fn clear_range(&mut self, idx: usize, range: Range) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let filled: Vec<CellRef> = self.loaded[&idx]
+            .1
+            .cells
+            .iter()
+            .filter(|(p, c)| {
+                range.contains(**p) && (c.value != Value::Empty || c.formula.is_some())
+            })
+            .map(|(p, _)| *p)
+            .collect();
+        if filled.is_empty() {
+            return Ok(());
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let mut result = Ok(());
+        for at in filled {
+            result = self.set_input(idx, at, Input::Clear);
+            if result.is_err() {
+                break;
+            }
+        }
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Merges a range into one cell, as Excel's Merge Cells (and Merge &
     /// Center with `center`): the other cells' values are cleared, as Excel
     /// clears them, and a `<mergeCell>` is written. One undo step.

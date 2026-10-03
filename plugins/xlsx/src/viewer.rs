@@ -423,6 +423,15 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn clear_cells(&mut self, unit: usize, range: [u32; 4]) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book().clear_range(unit, r).map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn merge_cells(&mut self, unit: usize, range: [u32; 4], center: bool) -> Result<Vec<usize>> {
         let r = crate::cellref::Range {
             start: CellRef::new(range[0], range[1]),
@@ -762,6 +771,24 @@ mod tests {
         assert!(!d.grid_cells(0, 0..1, 1..2).remove(0).2.wrap);
         // Undone past the save: different from the file on disk.
         assert!(d.modified());
+    }
+
+    #[test]
+    fn clearing_a_range() {
+        let mut d = open("libreoffice-budget.xlsx");
+        // B2:C3: four numbers, gone in one step, their formats kept.
+        d.clear_cells(0, [1, 1, 2, 2]).unwrap();
+        assert_eq!(d.cell_input(0, 1, 1), "");
+        assert_eq!(d.cell_input(0, 2, 2), "");
+        assert_eq!(d.grid_cells(0, 1..2, 3..4)[0].2.text, "0.00");
+        d.set_cell(0, 1, 1, "5").unwrap();
+        assert_eq!(
+            d.grid_cells(0, 1..2, 1..2)[0].2.text,
+            "5.00",
+            "the format stayed"
+        );
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        assert_eq!(d.cell_input(0, 2, 2), "512.25");
     }
 
     #[test]
