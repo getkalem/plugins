@@ -339,3 +339,126 @@ fn structural_edits_excel_refuses() {
         Err(Error::Refused(_))
     ));
 }
+
+#[test]
+fn conditional_formats_written_evaluated_and_cleared() {
+    use kalem_plugin_xlsx::cellref::Range;
+    use kalem_plugin_xlsx::conditional::Evaluator;
+    use kalem_viewer::{CompareOp, CondRule, CondStyle};
+    for f in ["openpyxl-budget.xlsx", "libreoffice-budget.xlsx"] {
+        let mut wb = Workbook::open(corpus(f)).unwrap();
+        let col_b = Range::parse("B2:B5").unwrap();
+        let red = CondStyle {
+            fill: Some([0xFF, 0xC7, 0xCE]),
+            color: Some([0x9C, 0x00, 0x06]),
+            bold: false,
+        };
+        let rule = CondRule::Compare {
+            op: CompareOp::Greater,
+            value: "1000".into(),
+            value2: None,
+        };
+        wb.add_conditional_format(0, col_b, &rule, &red).unwrap();
+        wb.add_conditional_format(
+            0,
+            Range::parse("C2:C5").unwrap(),
+            &CondRule::DataBar([0x63, 0x8E, 0xC6]),
+            &CondStyle::default(),
+        )
+        .unwrap();
+        // Saved and read again, as Excel would read it.
+        let mut wb = Workbook::open(wb.save().unwrap()).unwrap();
+        let formats = wb.conditional_formats(0).unwrap();
+        assert_eq!(formats.len(), 2, "{f}");
+        // The newest rule comes first.
+        assert_eq!(formats[1].rules[0].priority, 1, "{f}");
+        assert_eq!(formats[0].rules[0].priority, 2, "{f}");
+        let dxfs = wb.dxfs().to_vec();
+        let mut ev = Evaluator::new(formats);
+        let b2 = ev.result(at("B2"), &mut wb, 0, &dxfs);
+        assert_eq!(b2.fill, Some(0xFFC7CE), "{f}");
+        assert_eq!(b2.color, Some(0x9C0006), "{f}");
+        assert_eq!(ev.result(at("B3"), &mut wb, 0, &dxfs).fill, None, "{f}");
+        let bars: Vec<u16> = ["C2", "C3", "C4", "C5"]
+            .iter()
+            .filter_map(|c| ev.result(at(c), &mut wb, 0, &dxfs).bar.map(|b| b.0))
+            .collect();
+        assert!(bars.contains(&1000) && bars.contains(&100), "{f}: {bars:?}");
+        // Clearing the column B cell's formats leaves the bars.
+        assert!(
+            wb.clear_conditional_formats(0, Some(Range::parse("B3").unwrap()))
+                .unwrap()
+        );
+        assert_eq!(wb.conditional_formats(0).unwrap().len(), 1, "{f}");
+        assert!(
+            !wb.clear_conditional_formats(0, Some(Range::parse("A1").unwrap()))
+                .unwrap()
+        );
+        assert!(wb.undo());
+        assert_eq!(wb.conditional_formats(0).unwrap().len(), 2, "{f}");
+        assert!(wb.clear_conditional_formats(0, None).unwrap());
+        assert!(wb.conditional_formats(0).unwrap().is_empty(), "{f}");
+    }
+}
+
+#[test]
+fn color_scales_formulas_and_text_rules() {
+    use kalem_plugin_xlsx::cellref::Range;
+    use kalem_plugin_xlsx::conditional::Evaluator;
+    use kalem_viewer::{CondRule, CondStyle};
+    let mut wb = Workbook::open(corpus("openpyxl-budget.xlsx")).unwrap();
+    let green = CondStyle {
+        fill: Some([0xC6, 0xEF, 0xCE]),
+        color: None,
+        bold: true,
+    };
+    wb.add_conditional_format(
+        0,
+        Range::parse("B2:B5").unwrap(),
+        &CondRule::ColorScale(vec![[0xF8, 0x69, 0x6B], [0x63, 0xBE, 0x7B]]),
+        &CondStyle::default(),
+    )
+    .unwrap();
+    // A formula written for the first cell and moved for the others.
+    wb.add_conditional_format(
+        0,
+        Range::parse("A2:A5").unwrap(),
+        &CondRule::Formula("=B2>1000".into()),
+        &green,
+    )
+    .unwrap();
+    let text = wb.display(0, at("A3")).unwrap();
+    let piece: String = text.chars().take(3).collect();
+    wb.add_conditional_format(
+        0,
+        Range::parse("A3").unwrap(),
+        &CondRule::TextContains(piece),
+        &green,
+    )
+    .unwrap();
+    let formats = wb.conditional_formats(0).unwrap();
+    let dxfs = wb.dxfs().to_vec();
+    let mut ev = Evaluator::new(formats);
+    let values: Vec<f64> = ["B2", "B3", "B4", "B5"]
+        .iter()
+        .filter_map(|c| match wb.value(0, at(c)).unwrap() {
+            Value::Number(n) => Some(n),
+            _ => None,
+        })
+        .collect();
+    let max = values.iter().copied().fold(f64::MIN, f64::max);
+    let min = values.iter().copied().fold(f64::MAX, f64::min);
+    for (c, v) in ["B2", "B3", "B4", "B5"].iter().zip(&values) {
+        let fill = ev.result(at(c), &mut wb, 0, &dxfs).fill;
+        if *v == max {
+            assert_eq!(fill, Some(0x63BE7B));
+        } else if *v == min {
+            assert_eq!(fill, Some(0xF8696B));
+        } else {
+            assert!(fill.is_some());
+        }
+    }
+    let a2 = ev.result(at("A2"), &mut wb, 0, &dxfs);
+    assert_eq!((a2.fill, a2.bold), (Some(0xC6EFCE), Some(true)));
+    assert_eq!(ev.result(at("A3"), &mut wb, 0, &dxfs).bold, Some(true));
+}

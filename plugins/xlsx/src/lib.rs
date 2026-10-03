@@ -20,6 +20,7 @@
 
 pub mod calc;
 pub mod cellref;
+pub mod conditional;
 pub mod formula;
 #[cfg(not(target_family = "wasm"))]
 pub mod legacy;
