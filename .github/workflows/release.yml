@@ -54,7 +54,7 @@ jobs:
           cosign sign-blob --yes "${{ steps.tag.outputs.asset }}" \
             --bundle "${{ steps.tag.outputs.asset }}.sigstore.json"
       - name: GitHub release with the component, its hash and its signature
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ${{ github.ref_name }}
           files: |
