@@ -7,10 +7,10 @@
 use std::collections::HashMap;
 
 use kalem_viewer::{
-    Align, Bitmap, CompareOp, CondRule, CondStyle, Detection, ErrorStyle, FileHandle, GridCell,
-    GridEdit, GridLayout, InfoField, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, PivotSpec,
-    RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation,
-    ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
+    Align, Bitmap, Chart, ChartKind, CompareOp, CondRule, CondStyle, Detection, ErrorStyle,
+    FileHandle, GridCell, GridEdit, GridLayout, InfoField, MacroEntry, MacroOutcome, MacroQuestion,
+    MacroUi, PivotSpec, RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind,
+    Validation, ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -96,6 +96,7 @@ impl Viewer for XlsxViewer {
             saved_at: 0,
             notes: HashMap::new(),
             cf: HashMap::new(),
+            charts: HashMap::new(),
             name: file.name().to_owned(),
         }))
     }
@@ -112,6 +113,8 @@ struct XlsxDoc {
     /// Each sheet's conditional formats and what they made of its cells,
     /// at the workbook's generation they were read.
     cf: HashMap<usize, (u64, crate::conditional::Evaluator)>,
+    /// Each sheet's charts, at the generation they were read.
+    charts: HashMap<usize, (u64, Vec<Chart>)>,
     name: String,
 }
 
@@ -636,6 +639,43 @@ impl ViewerDocument for XlsxDoc {
         self.book()
             .unmerge_cells(unit, CellRef::new(row, col))
             .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn charts(&mut self, unit: usize) -> Vec<Chart> {
+        if !self.worksheet(unit) {
+            return Vec::new();
+        }
+        let generation = self.book().generation();
+        if let Some((g, c)) = self.charts.get(&unit)
+            && *g == generation
+        {
+            return c.clone();
+        }
+        let c = self.book().charts(unit).unwrap_or_default();
+        self.charts.insert(unit, (generation, c.clone()));
+        c
+    }
+
+    fn insert_chart(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        kind: ChartKind,
+        title: Option<String>,
+    ) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .insert_chart(unit, r, kind, title.as_deref())
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
+        self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
     }
 
@@ -1555,6 +1595,47 @@ mod tests {
                 d.save().unwrap().bytes,
             )
             .unwrap();
+        }
+    }
+
+    #[test]
+    fn charts() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let before = d.charts(0).len();
+        // Q1 and Q2 by item: two series, four categories.
+        d.insert_chart(0, [0, 0, 4, 2], ChartKind::Column, Some("Spending".into()))
+            .unwrap();
+        let charts = d.charts(0);
+        assert_eq!(charts.len(), before + 1);
+        let c = charts.last().unwrap();
+        assert_eq!(c.kind, ChartKind::Column);
+        assert_eq!(c.title.as_deref(), Some("Spending"));
+        assert_eq!(c.series.len(), 2);
+        assert_eq!(c.series[0].name, "Q1");
+        assert_eq!(c.categories.len(), 4);
+        assert_eq!(c.series[0].values[0], Some(1200.0));
+        assert_eq!(c.anchor, [0, 4, 14, 11]);
+        // Values follow the cells.
+        d.set_cell(0, 1, 1, "5000").unwrap();
+        assert_eq!(
+            d.charts(0).last().unwrap().series[0].values[0],
+            Some(5000.0)
+        );
+        // A sheet with no drawing gets one; a pie takes one series.
+        d.insert_chart(1, [0, 0, 3, 0], ChartKind::Pie, None)
+            .unwrap();
+        assert_eq!(d.charts(1).len(), 1);
+        let bytes = d.save().unwrap().bytes;
+        let mut wb = Workbook::open(bytes.clone()).unwrap();
+        assert_eq!(wb.charts(0).unwrap().len(), before + 1);
+        assert_eq!(wb.charts(1).unwrap()[0].kind, ChartKind::Pie);
+        // Removed, then back with undo.
+        d.delete_chart(0, before).unwrap();
+        assert_eq!(d.charts(0).len(), before);
+        assert!(d.undo().unwrap());
+        assert_eq!(d.charts(0).len(), before + 1);
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-chart-test.xlsx"), bytes).unwrap();
         }
     }
 }

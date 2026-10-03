@@ -8,6 +8,7 @@ use std::ops::Range as Span;
 
 use crate::calc::{self, Engine};
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW, Range};
+use crate::chart;
 use crate::conditional;
 use crate::formula::{self, Op};
 use crate::numfmt;
@@ -2101,6 +2102,383 @@ impl Workbook {
             return Ok(());
         }
         self.replace_sheet_text(idx, new);
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// A sheet's drawing part, if it has one.
+    fn sheet_drawing(&self, idx: usize) -> Option<String> {
+        let part = &self.sheets.get(idx)?.part;
+        let text = self.pkg.part(&rels::rels_path(part)).ok()?;
+        rels::parse(&String::from_utf8_lossy(&text))
+            .into_iter()
+            .find(|r| r.kind == "drawing" && !r.external)
+            .map(|r| rels::resolve(part, &r.target))
+    }
+
+    /// The part a drawing's relationship names.
+    fn rel_target(&self, source: &str, rid: &str) -> Option<String> {
+        let text = self.pkg.part(&rels::rels_path(source)).ok()?;
+        rels::parse(&String::from_utf8_lossy(&text))
+            .into_iter()
+            .find(|r| r.id == rid && !r.external)
+            .map(|r| rels::resolve(source, &r.target))
+    }
+
+    /// The sheet and range a chart's reference names (`Sheet1!$B$2:$B$5`).
+    fn chart_range(&self, f: &str) -> Option<(usize, Range)> {
+        let f = f.trim().trim_start_matches('(').trim_end_matches(')');
+        if f.contains(',') {
+            return None;
+        }
+        let (sheet, r) = f.rsplit_once('!')?;
+        let sheet = sheet.trim_matches('\'').replace("''", "'");
+        Some((
+            self.sheet_index(&sheet)?,
+            Range::parse(&r.replace('$', ""))?,
+        ))
+    }
+
+    fn range_texts(&mut self, idx: usize, r: Range) -> Vec<String> {
+        let mut out = Vec::new();
+        for row in r.start.row..=r.end.row.min(r.start.row + 9999) {
+            for col in r.start.col..=r.end.col.min(r.start.col + 999) {
+                out.push(
+                    self.display(idx, CellRef::new(row, col))
+                        .unwrap_or_default(),
+                );
+            }
+        }
+        out
+    }
+
+    fn range_numbers(&mut self, idx: usize, r: Range) -> Vec<Option<f64>> {
+        let mut out = Vec::new();
+        for row in r.start.row..=r.end.row.min(r.start.row + 9999) {
+            for col in r.start.col..=r.end.col.min(r.start.col + 999) {
+                out.push(match self.value(idx, CellRef::new(row, col)) {
+                    Ok(Value::Number(n)) => Some(n),
+                    _ => None,
+                });
+            }
+        }
+        out
+    }
+
+    /// A sheet's charts as they read now: their values from the cells they
+    /// name, else from what the file cached.
+    pub fn charts(&mut self, idx: usize) -> Result<Vec<kalem_viewer::Chart>> {
+        let Some(drawing) = self.sheet_drawing(idx) else {
+            return Ok(Vec::new());
+        };
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let mut out = Vec::new();
+        for a in chart::parse_drawing(&text) {
+            let Some(part) = self.rel_target(&drawing, &a.rid) else {
+                continue;
+            };
+            let Ok(bytes) = self.pkg.part(&part) else {
+                continue;
+            };
+            let def = chart::parse_chart(&String::from_utf8_lossy(&bytes), &self.theme);
+            let mut categories = Vec::new();
+            let mut series = Vec::new();
+            for s in &def.series {
+                let (name_r, cat_r, val_r) = (
+                    s.name.0.as_deref().and_then(|f| self.chart_range(f)),
+                    s.cat.0.as_deref().and_then(|f| self.chart_range(f)),
+                    s.val.0.as_deref().and_then(|f| self.chart_range(f)),
+                );
+                let name = match name_r {
+                    Some((i, r)) => self
+                        .range_texts(
+                            i,
+                            Range {
+                                start: r.start,
+                                end: r.start,
+                            },
+                        )
+                        .join(""),
+                    None => s.name.1.clone(),
+                };
+                let cats = match cat_r {
+                    Some((i, r)) => self.range_texts(i, r),
+                    None => s.cat.1.clone(),
+                };
+                let x: Vec<Option<f64>> = if def.kind == kalem_viewer::ChartKind::Scatter {
+                    match cat_r {
+                        Some((i, r)) => self.range_numbers(i, r),
+                        None => s.cat.1.iter().map(|v| v.trim().parse().ok()).collect(),
+                    }
+                } else {
+                    Vec::new()
+                };
+                let values = match val_r {
+                    Some((i, r)) => self.range_numbers(i, r),
+                    None => s.val.1.clone(),
+                };
+                if categories.is_empty() {
+                    categories = cats;
+                }
+                series.push(kalem_viewer::ChartSeries {
+                    name,
+                    values,
+                    x,
+                    color: s.color.map(|c| [(c >> 16) as u8, (c >> 8) as u8, c as u8]),
+                });
+            }
+            out.push(kalem_viewer::Chart {
+                kind: def.kind,
+                title: def.title.clone().or_else(|| {
+                    // One series and no title: Excel shows the series' name.
+                    (series.len() == 1 && !series[0].name.is_empty())
+                        .then(|| series[0].name.clone())
+                }),
+                categories,
+                series,
+                anchor: [a.from.0, a.from.1, a.to.0, a.to.1],
+                stacked: def.stacked,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Inserts a chart of a range beside it, as Excel's Insert Chart: the
+    /// series in its columns, or its rows when it is wider than tall; a
+    /// first row or column of text names them and the categories. One
+    /// undo step.
+    pub fn insert_chart(
+        &mut self,
+        idx: usize,
+        range: Range,
+        kind: kalem_viewer::ChartKind,
+        title: Option<&str>,
+    ) -> Result<()> {
+        use kalem_viewer::ChartKind;
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let sheet = self.sheets[idx].name.clone();
+        let is_text = |wb: &mut Self, r: u32, c: u32| {
+            matches!(wb.value(idx, CellRef::new(r, c)), Ok(Value::Text(_)))
+        };
+        let is_empty = |wb: &mut Self, r: u32, c: u32| {
+            matches!(wb.value(idx, CellRef::new(r, c)), Ok(Value::Empty))
+        };
+        let (r0, c0, r1, c1) = (
+            range.start.row,
+            range.start.col,
+            range.end.row,
+            range.end.col,
+        );
+        let corner_empty = is_empty(self, r0, c0);
+        let header_row =
+            r1 > r0 && (corner_empty || ((c0 + 1).max(c0)..=c1).any(|c| is_text(self, r0, c)));
+        let label_col = c1 > c0
+            && kind != ChartKind::Scatter
+            && (corner_empty || ((r0 + 1)..=r1).any(|r| is_text(self, r, c0)));
+        let data_r0 = r0 + u32::from(header_row);
+        let data_c0 = c0 + u32::from(label_col || (kind == ChartKind::Scatter && c1 > c0));
+        if data_r0 > r1 || data_c0 > c1 {
+            return Err(Error::Refused(
+                "A chart needs numbers under or beside its labels".into(),
+            ));
+        }
+        let rect = |a: (u32, u32), b: (u32, u32)| Range {
+            start: CellRef::new(a.0, a.1),
+            end: CellRef::new(b.0, b.1),
+        };
+        let in_rows = kind != ChartKind::Scatter && (c1 - data_c0) > (r1 - data_r0);
+        let mut series = Vec::new();
+        let lines: Vec<u32> = if in_rows {
+            (data_r0..=r1).collect()
+        } else {
+            (data_c0..=c1).collect()
+        };
+        for line in lines {
+            let (val_r, name_at, cat_r) = if in_rows {
+                (
+                    rect((line, data_c0), (line, c1)),
+                    label_col.then_some((line, c0)),
+                    header_row.then(|| rect((r0, data_c0), (r0, c1))),
+                )
+            } else {
+                (
+                    rect((data_r0, line), (r1, line)),
+                    header_row.then_some((r0, line)),
+                    (label_col || (kind == ChartKind::Scatter && c1 > c0))
+                        .then(|| rect((data_r0, c0), (r1, c0))),
+                )
+            };
+            let name = match name_at {
+                Some((r, c)) => {
+                    let text = self.display(idx, CellRef::new(r, c))?;
+                    Some((chart::reference(&sheet, rect((r, c), (r, c))), text))
+                }
+                None => None,
+            };
+            let cat = match cat_r {
+                Some(cr) => {
+                    let texts = self.range_texts(idx, cr);
+                    Some((
+                        chart::reference(&sheet, cr),
+                        texts,
+                        kind == ChartKind::Scatter,
+                    ))
+                }
+                None => None,
+            };
+            let values = self.range_numbers(idx, val_r);
+            series.push(chart::NewSeries {
+                name,
+                cat,
+                val: (chart::reference(&sheet, val_r), values),
+            });
+        }
+        if series.iter().all(|s| s.val.1.iter().all(Option::is_none)) {
+            return Err(Error::Refused("A chart needs numbers to draw".into()));
+        }
+        if matches!(kind, ChartKind::Pie | ChartKind::Doughnut) {
+            series.truncate(1);
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let chart_part = self.free_part("xl/charts/chart");
+        self.add_part(
+            &chart_part,
+            chart::chart_xml(kind, title, &series),
+            "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
+        )?;
+        let from = (r0, c1 + 2);
+        let to = (r0 + 14, c1 + 9);
+        let sheet_part = self.sheets[idx].part.clone();
+        match self.sheet_drawing(idx) {
+            Some(drawing) => {
+                let rid = self.add_rel(&drawing, "chart", &chart_part)?;
+                let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+                let prefix = text
+                    .find("wsDr")
+                    .and_then(|i| text[..i].rfind('<').map(|s| text[s + 1..i].to_owned()))
+                    .unwrap_or_default();
+                let anchor =
+                    chart::anchor_xml(&prefix, from, to, chart::max_shape_id(&text) + 1, &rid);
+                let close = text.rfind("</").unwrap_or(text.len());
+                self.pkg.set_part(
+                    &drawing,
+                    format!("{}{anchor}{}", &text[..close], &text[close..]).into_bytes(),
+                );
+            }
+            None => {
+                let drawing = self.free_part("xl/drawings/drawing");
+                // The relationship first, so the drawing can name the chart.
+                self.pkg.set_part(&drawing, Vec::new());
+                let rid = self.add_rel(&drawing, "chart", &chart_part)?;
+                let anchor = chart::anchor_xml("xdr:", from, to, 2, &rid);
+                self.pkg.remove_part(&drawing);
+                self.add_part(
+                    &drawing,
+                    chart::drawing_xml(&anchor),
+                    "application/vnd.openxmlformats-officedocument.drawing+xml",
+                )?;
+                let sheet_rid = self.add_rel(&sheet_part, "drawing", &drawing)?;
+                let (text, model) = &self.loaded[&idx];
+                let p = model.prefix.clone();
+                let head = &text[..text
+                    .find("<sheetData")
+                    .or_else(|| text.find("sheetData"))
+                    .unwrap_or(text.len())];
+                let rp = head.split("xmlns:").skip(1).find_map(|d| {
+                    let (pfx, rest) = d.split_once("=\"")?;
+                    rest.split('"')
+                        .next()
+                        .filter(|u| u.ends_with("officeDocument/2006/relationships"))
+                        .map(|_| pfx.to_owned())
+                });
+                let el = match rp {
+                    Some(rp) => format!("<{p}drawing {rp}:id=\"{sheet_rid}\"/>"),
+                    None => format!(
+                        "<{p}drawing xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"{sheet_rid}\"/>"
+                    ),
+                };
+                let new = insert_top_level(
+                    text,
+                    &[
+                        "legacyDrawing",
+                        "legacyDrawingHF",
+                        "drawingHF",
+                        "picture",
+                        "oleObjects",
+                        "controls",
+                        "webPublishItems",
+                        "tableParts",
+                        "extLst",
+                    ],
+                    &el,
+                );
+                self.replace_sheet_text(idx, new);
+            }
+        }
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Removes a sheet's chart (by its place among [`Workbook::charts`]):
+    /// its anchor, its part and what hangs on it. One undo step.
+    pub fn delete_chart(&mut self, idx: usize, index: usize) -> Result<()> {
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let anchors: Vec<chart::Anchor> = chart::parse_drawing(&text)
+            .into_iter()
+            .filter(|a| self.rel_target(&drawing, &a.rid).is_some())
+            .collect();
+        let a = anchors
+            .get(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?
+            .clone();
+        let chart_part = self.rel_target(&drawing, &a.rid).expect("checked above");
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(
+            &drawing,
+            format!("{}{}", &text[..a.span.start], &text[a.span.end..]).into_bytes(),
+        );
+        let drawing_rels = rels::rels_path(&drawing);
+        let rels_text = text_of(self.pkg.part(&drawing_rels)?, &drawing_rels)?;
+        self.pkg
+            .set_part(&drawing_rels, rels::remove(&rels_text, &a.rid).into_bytes());
+        // The chart and the parts only it uses (its style and colors).
+        let mut gone = vec![chart_part.clone()];
+        let chart_rels = rels::rels_path(&chart_part);
+        if let Ok(b) = self.pkg.part(&chart_rels) {
+            for r in rels::parse(&String::from_utf8_lossy(&b)) {
+                if !r.external && matches!(r.kind.as_str(), "chartStyle" | "chartColorStyle") {
+                    gone.push(rels::resolve(&chart_part, &r.target));
+                }
+            }
+            self.pkg.remove_part(&chart_rels);
+        }
+        let ct = "[Content_Types].xml";
+        let mut types = text_of(self.pkg.part(ct)?, ct)?;
+        for part in gone {
+            self.pkg.remove_part(&part);
+            types = rels::remove_override(&types, &part);
+        }
+        self.pkg.set_part(ct, types.into_bytes());
+        self.generation += 1;
         match snapshot {
             Some(s) => {
                 self.undo.push(s);
