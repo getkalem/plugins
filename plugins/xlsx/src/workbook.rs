@@ -1154,6 +1154,39 @@ impl Workbook {
         (!self.undo.is_empty(), !self.redo.is_empty())
     }
 
+    /// Sets a column's width in characters of the default font's digit,
+    /// as Excel's autofit and drag do: the `<col>` covering it is split so
+    /// that only this column changes, and gets `customWidth`.
+    pub fn set_col_width(&mut self, idx: usize, col: u32, width: f64) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        if !(0.0..=255.0).contains(&width) || col >= MAX_COL {
+            return Err(Error::Refused(
+                "a column is 0 to 255 characters wide".into(),
+            ));
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let text = self.loaded[&idx].0.clone();
+        let new = col_width_text(&text, col + 1, width);
+        if new != text {
+            let model = sheet::parse(&new, &self.strings, self.date1904);
+            self.loaded.insert(idx, (new, model));
+            if !self.dirty_sheets.contains(&idx) {
+                self.dirty_sheets.push(idx);
+            }
+            match snapshot {
+                Some(s) => {
+                    self.undo.push(s);
+                    self.redo.clear();
+                }
+                None => self.batch_changed = true,
+            }
+        }
+        Ok(())
+    }
+
     /// Inserts `n` empty rows before row `at` (zero-based).
     pub fn insert_rows(&mut self, idx: usize, at: u32, n: u32) -> Result<()> {
         self.structural(idx, Op::InsertRows { at, n })
@@ -1636,6 +1669,105 @@ impl Workbook {
     }
 }
 
+/// A sheet part with column `col` (one-based) `width` wide: its `<col>`
+/// split around it, or a new one, `<cols>` made where the schema puts it.
+fn col_width_text(text: &str, col: u32, width: f64) -> String {
+    let w = format!("{}", (width * 100.0).round() / 100.0);
+    let mut r = Reader::new(text);
+    let mut cols_start: Option<(Span<usize>, bool, String)> = None;
+    let mut cols_end: Option<usize> = None;
+    let mut entries: Vec<(Span<usize>, u32, u32)> = Vec::new();
+    // Where `<cols>` goes when there is none: before `<sheetData>`.
+    let mut sheet_data: Option<(usize, String)> = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) if tag.name == "cols" => {
+                cols_start = Some((
+                    tag.span.clone(),
+                    tag.empty,
+                    xml::prefix(tag.qname).to_owned(),
+                ));
+            }
+            Token::Start(tag)
+                if tag.name == "col" && cols_start.is_some() && cols_end.is_none() =>
+            {
+                let end = if tag.empty {
+                    tag.span.end
+                } else {
+                    r.skip_element()
+                };
+                let get = |k| tag.attr(k).and_then(|v| v.parse::<u32>().ok());
+                if let (Some(a), Some(b)) = (get("min"), get("max")) {
+                    entries.push((tag.span.start..end, a, b));
+                }
+            }
+            Token::End { name: "cols", span } => cols_end = Some(span.start),
+            Token::Start(tag) if tag.name == "sheetData" => {
+                sheet_data = Some((tag.span.start, xml::prefix(tag.qname).to_owned()));
+                break;
+            }
+            _ => {}
+        }
+    }
+    let set = |tag: &str| -> String {
+        let t = xml::set_attr(tag, "width", &w);
+        xml::set_attr(&t, "customWidth", "1")
+    };
+    match (cols_start, cols_end) {
+        (Some((open, false, prefix)), Some(close)) => {
+            if let Some((span, a, b)) = entries
+                .iter()
+                .find(|(_, a, b)| (*a..=*b).contains(&col))
+                .cloned()
+            {
+                // Split `a..=b` into before, the column, after, each a copy.
+                let el = &text[span.clone()];
+                let tag_end = el.find('>').map_or(el.len(), |p| p + 1);
+                let (head, rest) = el.split_at(tag_end);
+                let piece = |lo: u32, hi: u32, width: bool| -> String {
+                    let h = xml::set_attr(head, "min", &lo.to_string());
+                    let h = xml::set_attr(&h, "max", &hi.to_string());
+                    let h = if width { set(&h) } else { h };
+                    format!("{h}{rest}")
+                };
+                let mut out = String::new();
+                if a < col {
+                    out.push_str(&piece(a, col - 1, false));
+                }
+                out.push_str(&piece(col, col, true));
+                if col < b {
+                    out.push_str(&piece(col + 1, b, false));
+                }
+                return splice(text, vec![(span, out)]);
+            }
+            let new = set(&format!("<{prefix}col min=\"{col}\" max=\"{col}\"/>"));
+            let at = entries
+                .iter()
+                .find(|(_, a, _)| *a > col)
+                .map_or(close, |(s, _, _)| s.start);
+            let _ = open;
+            splice(text, vec![(at..at, new)])
+        }
+        (Some((open, true, prefix)), _) => {
+            let new = set(&format!("<{prefix}col min=\"{col}\" max=\"{col}\"/>"));
+            splice(
+                text,
+                vec![(open, format!("<{prefix}cols>{new}</{prefix}cols>"))],
+            )
+        }
+        _ => match sheet_data {
+            Some((at, prefix)) => {
+                let new = set(&format!("<{prefix}col min=\"{col}\" max=\"{col}\"/>"));
+                splice(
+                    text,
+                    vec![(at..at, format!("<{prefix}cols>{new}</{prefix}cols>"))],
+                )
+            }
+            None => text.to_owned(),
+        },
+    }
+}
+
 /// Applies non-overlapping replacements to a text.
 fn splice(text: &str, mut edits: Vec<(Span<usize>, String)>) -> String {
     edits.sort_by_key(|(s, _)| std::cmp::Reverse((s.start, s.end)));
@@ -1930,6 +2062,24 @@ mod tests {
                 Some(&Value::Text("a&b".into()))
             ),
             "<c r=\"A1\" t=\"str\"><f>\"a\"</f><v>a&amp;b</v></c>"
+        );
+    }
+
+    #[test]
+    fn column_widths() {
+        let none = "<worksheet><sheetFormatPr/><sheetData/></worksheet>";
+        assert_eq!(
+            col_width_text(none, 2, 20.5),
+            r#"<worksheet><sheetFormatPr/><cols><col min="2" max="2" width="20.5" customWidth="1"/></cols><sheetData/></worksheet>"#
+        );
+        let some = r#"<x:worksheet><x:cols><x:col min="1" max="4" width="9" style="3"/><x:col min="8" max="8" width="5"/></x:cols><x:sheetData/></x:worksheet>"#;
+        assert_eq!(
+            col_width_text(some, 2, 12.0),
+            r#"<x:worksheet><x:cols><x:col min="1" max="1" width="9" style="3"/><x:col min="2" max="2" width="12" style="3" customWidth="1"/><x:col min="3" max="4" width="9" style="3"/><x:col min="8" max="8" width="5"/></x:cols><x:sheetData/></x:worksheet>"#
+        );
+        assert_eq!(
+            col_width_text(some, 6, 7.0),
+            r#"<x:worksheet><x:cols><x:col min="1" max="4" width="9" style="3"/><x:col min="6" max="6" width="7" customWidth="1"/><x:col min="8" max="8" width="5"/></x:cols><x:sheetData/></x:worksheet>"#
         );
     }
 

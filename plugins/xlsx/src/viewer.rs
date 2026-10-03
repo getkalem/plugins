@@ -416,6 +416,13 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn set_col_width(&mut self, unit: usize, col: u32, width: f32) -> Result<Vec<usize>> {
+        self.book()
+            .set_col_width(unit, col, f64::from(width))
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn has_history(&self) -> bool {
         true
     }
@@ -661,6 +668,21 @@ mod tests {
         assert!(!d.modified());
         let mut again = Workbook::open(out.bytes).unwrap();
         assert_eq!(again.display(0, CellRef::new(1, 1)).unwrap(), "1,300.00");
+    }
+
+    #[test]
+    fn column_widths_are_edits() {
+        let mut d = open("libreoffice-budget.xlsx");
+        d.set_col_width(0, 1, 20.0).unwrap();
+        assert_eq!(d.grid(0).unwrap().widths[1], 20.0);
+        // Column A keeps its width.
+        assert_eq!(d.grid(0).unwrap().widths[0], 18.0);
+        assert!(d.modified());
+        let saved = d.save().unwrap().bytes;
+        let mut wb = Workbook::open(saved).unwrap();
+        assert_eq!(wb.sheet(0).unwrap().col_width(1), Some(20.0));
+        assert!(d.undo().unwrap());
+        assert_ne!(d.grid(0).unwrap().widths.get(1).copied(), Some(20.0));
     }
 
     #[test]
