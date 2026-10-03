@@ -7,6 +7,7 @@ The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, M
 | Plugin | What it gives | Kind |
 |---|---|---|
 | [`elixir`](plugins/elixir) | Elixir, EEx and HEEx: highlighting, and Expert or ElixirLS for completion, documentation, definitions, references, diagnostics and formatting | language |
+| [`pdf-viewer`](plugins/pdf-viewer) | PDF files shown page by page with their outline, page labels, links and text | component |
 | [`xlsx`](plugins/xlsx) | Excel workbooks opened, edited and saved as themselves | component |
 
 ## How a plugin is built and shipped

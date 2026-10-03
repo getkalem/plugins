@@ -1,0 +1,11 @@
+{
+  "id": "org.kalem.pdf-viewer",
+  "name": "PDF viewer",
+  "version": "0.0.1",
+  "description": "Shows PDF files (ISO 32000) page by page with their outline, page labels and links; search, copy and the terminal read the pages' text",
+  "main": "dist/pdf-viewer.wasm",
+  "api": "^0.1",
+  "activation": ["onOpen:*.pdf"],
+  "permissions": [],
+  "opens": [".pdf"]
+}

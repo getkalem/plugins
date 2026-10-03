@@ -52,6 +52,17 @@
       "sha256": null
     },
     {
+      "id": "org.kalem.pdf-viewer",
+      "name": "PDF viewer",
+      "version": "0.0.1",
+      "description": "Shows PDF files (ISO 32000) page by page with their outline, page labels and links; search, copy and the terminal read the pages' text",
+      "api": "^0.1",
+      "permissions": [],
+      "source": "https://github.com/getkalem/plugins/tree/main/plugins/pdf-viewer",
+      "download": null,
+      "sha256": null
+    },
+    {
       "id": "org.kalem.xlsx",
       "name": "Excel workbooks",
       "version": "0.0.1",
