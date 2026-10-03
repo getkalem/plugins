@@ -138,6 +138,10 @@ pub struct ChartDef {
     pub title_deleted: bool,
     /// Stacked bars or areas.
     pub stacked: bool,
+    /// The horizontal axis's title.
+    pub horizontal_title: Option<String>,
+    /// The vertical axis's title.
+    pub vertical_title: Option<String>,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }

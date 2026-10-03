@@ -2255,6 +2255,8 @@ impl Workbook {
                 series,
                 anchor: [a.from.0, a.from.1, a.to.0, a.to.1],
                 stacked: def.stacked,
+                horizontal_title: def.horizontal_title.clone(),
+                vertical_title: def.vertical_title.clone(),
             });
         }
         Ok(out)
