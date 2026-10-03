@@ -423,6 +423,22 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn merge_cells(&mut self, unit: usize, range: [u32; 4], center: bool) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book().merge_cells(unit, r, center).map_err(err)?;
+        Ok(self.all_units())
+    }
+
+    fn unmerge_cells(&mut self, unit: usize, row: u32, col: u32) -> Result<Vec<usize>> {
+        self.book()
+            .unmerge_cells(unit, CellRef::new(row, col))
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn set_wrap(&mut self, unit: usize, row: u32, col: u32, wrap: bool) -> Result<Vec<usize>> {
         self.book()
             .set_wrap(unit, CellRef::new(row, col), wrap)
@@ -746,6 +762,36 @@ mod tests {
         assert!(!d.grid_cells(0, 0..1, 1..2).remove(0).2.wrap);
         // Undone past the save: different from the file on disk.
         assert!(d.modified());
+    }
+
+    #[test]
+    fn merging_cells() {
+        let mut d = open("libreoffice-budget.xlsx");
+        // B2:C3 holds four numbers: only B2's stays, centered; one undo step.
+        d.merge_cells(0, [1, 1, 2, 2], true).unwrap();
+        let g = d.grid(0).unwrap();
+        assert!(g.merged.contains(&[1, 1, 2, 2]), "{:?}", g.merged);
+        assert_eq!(d.cell_input(0, 1, 1), "1200");
+        assert_eq!(d.cell_input(0, 1, 2), "");
+        assert_eq!(d.cell_input(0, 2, 1), "");
+        assert_eq!(d.grid_cells(0, 1..2, 1..2)[0].2.align, Align::Center);
+        // The sums follow the cleared cells.
+        assert_eq!(d.grid_cells(0, 4..5, 1..2)[0].2.text, "1,200.00");
+        // Overlapping an existing merge is refused.
+        assert!(d.merge_cells(0, [0, 5, 1, 6], false).is_err());
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert!(
+            wb.sheet(0)
+                .unwrap()
+                .merged
+                .iter()
+                .any(|m| m.to_string() == "B2:C3")
+        );
+        d.unmerge_cells(0, 2, 2).unwrap();
+        assert!(!d.grid(0).unwrap().merged.contains(&[1, 1, 2, 2]));
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        assert_eq!(d.cell_input(0, 1, 2), "1200");
+        assert!(!d.grid(0).unwrap().merged.contains(&[1, 1, 2, 2]));
     }
 
     #[test]

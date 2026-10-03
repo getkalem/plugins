@@ -1614,8 +1614,22 @@ impl Workbook {
         // Keys past any number format id: one for on, one for off.
         let key = if wrap { u32::MAX } else { u32::MAX - 1 };
         let new_style = self.derive_style(style, key, |src| with_wrap(src, wrap))?;
+        self.apply_style(idx, at, new_style)?;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Gives a cell the style `new_style`: its `s`, or a `<c>` made to
+    /// carry it. No undo step of its own.
+    fn apply_style(&mut self, idx: usize, at: CellRef, new_style: u32) -> Result<()> {
         let (text, model) = &self.loaded[&idx];
-        let splices = match &old {
+        let splices = match model.cells.get(&at) {
             Some(c) => {
                 let el = &text[c.span.clone()];
                 let tag_end = el.find('>').map_or(el.len(), |p| p + 1);
@@ -1637,11 +1651,114 @@ impl Workbook {
             }
         };
         let new = splice(text, splices);
+        self.replace_sheet_text(idx, new);
+        Ok(())
+    }
+
+    fn replace_sheet_text(&mut self, idx: usize, new: String) {
         let model = sheet::parse(&new, &self.strings, self.date1904);
         self.loaded.insert(idx, (new, model));
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);
         }
+    }
+
+    /// Merges a range into one cell, as Excel's Merge Cells (and Merge &
+    /// Center with `center`): the other cells' values are cleared, as Excel
+    /// clears them, and a `<mergeCell>` is written. One undo step.
+    pub fn merge_cells(&mut self, idx: usize, range: Range, center: bool) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        if range.start == range.end {
+            return Err(Error::Refused("select more than one cell to merge".into()));
+        }
+        let model = &self.loaded[&idx].1;
+        let overlaps = |m: &Range| {
+            m.start.row <= range.end.row
+                && range.start.row <= m.end.row
+                && m.start.col <= range.end.col
+                && range.start.col <= m.end.col
+        };
+        if let Some(m) = model.merged.iter().find(|m| overlaps(m)) {
+            return Err(Error::Refused(format!(
+                "{range} overlaps the merged cell {m}; unmerge it first"
+            )));
+        }
+        for c in model.cells.values() {
+            if let Some(f) = &c.formula
+                && let FormulaKind::Array { range: a } = f.kind
+                && overlaps(&a)
+            {
+                return Err(Error::Refused(format!(
+                    "{range} holds part of the array formula over {a}"
+                )));
+            }
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = self.merge_inner(idx, range, center);
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn merge_inner(&mut self, idx: usize, range: Range, center: bool) -> Result<()> {
+        // Only the first cell's value stays.
+        let others: Vec<CellRef> = self.loaded[&idx]
+            .1
+            .cells
+            .iter()
+            .filter(|(p, c)| {
+                range.contains(**p)
+                    && **p != range.start
+                    && (c.value != Value::Empty || c.formula.is_some())
+            })
+            .map(|(p, _)| *p)
+            .collect();
+        for at in others {
+            self.set_input(idx, at, Input::Clear)?;
+        }
+        if center {
+            let style = self.loaded[&idx]
+                .1
+                .cells
+                .get(&range.start)
+                .map_or(0, |c| c.style);
+            let new_style = self.derive_style(style, u32::MAX - 2, |src| {
+                with_alignment(src, "horizontal", "center")
+            })?;
+            self.apply_style(idx, range.start, new_style)?;
+        }
+        let new = add_merge(&self.loaded[&idx].0, &range.to_string());
+        self.replace_sheet_text(idx, new);
+        self.batch_changed = true;
+        Ok(())
+    }
+
+    /// Splits the merged range holding `at` back into cells, as Excel's
+    /// Unmerge Cells; the values stay where they are.
+    pub fn unmerge_cells(&mut self, idx: usize, at: CellRef) -> Result<()> {
+        self.load(idx)?;
+        let Some(m) = self.loaded[&idx].1.merge_at(at) else {
+            return Err(Error::Refused(format!("{at} is not in a merged cell")));
+        };
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let new = remove_merge(&self.loaded[&idx].0, m);
+        self.replace_sheet_text(idx, new);
         match snapshot {
             Some(s) => {
                 self.undo.push(s);
@@ -1891,26 +2008,164 @@ fn col_width_text(text: &str, col: u32, width: f64) -> String {
 /// An `<xf>` element with its text wrapping set: `wrapText` on its
 /// `<alignment>`, which is made, first of its children, when there is none.
 fn with_wrap(src: &str, wrap: bool) -> String {
+    with_alignment(src, "wrapText", if wrap { "1" } else { "0" })
+}
+
+/// An `<xf>` element with one attribute of its `<alignment>` set, the
+/// `<alignment>` made, first of its children, when there is none.
+fn with_alignment(src: &str, attr: &str, value: &str) -> String {
     let tag_end = src.find('>').map_or(src.len(), |p| p + 1);
     let head = xml::set_attr(&src[..tag_end], "applyAlignment", "1");
     let name_end = head[1..]
         .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
         .map_or(head.len(), |p| p + 1);
     let p = xml::prefix(&head[1..name_end]).to_owned();
-    let flag = if wrap { "1" } else { "0" };
     let rest = &src[tag_end..];
     if let Some(a) = rest.find(&format!("<{p}alignment")) {
         let a_end = rest[a..].find('>').map_or(rest.len(), |e| a + e + 1);
-        let tag = xml::set_attr(&rest[a..a_end], "wrapText", flag);
+        let tag = xml::set_attr(&rest[a..a_end], attr, value);
         return format!("{head}{}{tag}{}", &rest[..a], &rest[a_end..]);
     }
-    let alignment = format!("<{p}alignment wrapText=\"{flag}\"/>");
+    let alignment = format!("<{p}alignment {attr}=\"{}\"/>", xml::escape(value));
     if head.ends_with("/>") {
         let open = head[..head.len() - 2].trim_end();
         format!("{open}>{alignment}</{p}xf>")
     } else {
         format!("{head}{alignment}{rest}")
     }
+}
+
+/// The worksheet's children that come after `<mergeCells>` in the schema
+/// (CT_Worksheet): a new `<mergeCells>` goes before the first of them.
+const AFTER_MERGE_CELLS: [&str; 24] = [
+    "phoneticPr",
+    "conditionalFormatting",
+    "dataValidations",
+    "hyperlinks",
+    "printOptions",
+    "pageMargins",
+    "pageSetup",
+    "headerFooter",
+    "rowBreaks",
+    "colBreaks",
+    "customProperties",
+    "cellWatches",
+    "ignoredErrors",
+    "smartTags",
+    "drawing",
+    "legacyDrawing",
+    "legacyDrawingHF",
+    "drawingHF",
+    "picture",
+    "oleObjects",
+    "controls",
+    "webPublishItems",
+    "tableParts",
+    "extLst",
+];
+
+/// A sheet part with a `<mergeCell ref>` added, `<mergeCells count>` kept
+/// right or made where the schema puts it.
+fn add_merge(text: &str, range: &str) -> String {
+    let mut r = Reader::new(text);
+    let mut depth = 0;
+    let mut prefix = String::new();
+    let mut before: Option<usize> = None;
+    let mut end_of_sheet: Option<usize> = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 0 {
+                    prefix = xml::prefix(tag.qname).to_owned();
+                }
+                if depth == 1 && tag.name == "mergeCells" {
+                    let count = tag
+                        .attr("count")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0)
+                        + 1;
+                    let open = xml::set_attr(&text[tag.span.clone()], "count", &count.to_string());
+                    let item = format!("<{prefix}mergeCell ref=\"{range}\"/>");
+                    if tag.empty {
+                        let o = open.trim_end_matches("/>").trim_end();
+                        return splice(
+                            text,
+                            vec![(tag.span.clone(), format!("{o}>{item}</{prefix}mergeCells>"))],
+                        );
+                    }
+                    let end = r.skip_element();
+                    let close = text[..end].rfind('<').unwrap_or(end);
+                    return splice(text, vec![(tag.span.clone(), open), (close..close, item)]);
+                }
+                if depth == 1 && before.is_none() && AFTER_MERGE_CELLS.contains(&tag.name) {
+                    before = Some(tag.span.start);
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { span, .. } => {
+                depth -= 1;
+                if depth == 0 {
+                    end_of_sheet = Some(span.start);
+                }
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let Some(at) = before.or(end_of_sheet) else {
+        return text.to_owned();
+    };
+    let block = format!(
+        "<{prefix}mergeCells count=\"1\"><{prefix}mergeCell ref=\"{range}\"/></{prefix}mergeCells>"
+    );
+    splice(text, vec![(at..at, block)])
+}
+
+/// A sheet part without the `<mergeCell>` of `range`; `<mergeCells>` goes
+/// when it was the last one, since the schema wants at least one.
+fn remove_merge(text: &str, range: Range) -> String {
+    let mut r = Reader::new(text);
+    let mut block: Option<(Span<usize>, Span<usize>, u32)> = None;
+    let mut item: Option<Span<usize>> = None;
+    let mut items = 0;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) if tag.name == "mergeCells" && !tag.empty => {
+                block = Some((tag.span.clone(), 0..0, 0));
+            }
+            Token::Start(tag) if tag.name == "mergeCell" && block.is_some() => {
+                let end = if tag.empty {
+                    tag.span.end
+                } else {
+                    r.skip_element()
+                };
+                items += 1;
+                if tag.attr("ref").and_then(|v| Range::parse(&v)) == Some(range) {
+                    item = Some(tag.span.start..end);
+                }
+            }
+            Token::End {
+                name: "mergeCells",
+                span,
+            } => {
+                if let Some(b) = block.as_mut() {
+                    b.1 = span;
+                    b.2 = items;
+                }
+                break;
+            }
+            _ => {}
+        }
+    }
+    let (Some((open, close, n)), Some(item)) = (block, item) else {
+        return text.to_owned();
+    };
+    if n <= 1 {
+        return splice(text, vec![(open.start..close.end, String::new())]);
+    }
+    let new_open = xml::set_attr(&text[open.clone()], "count", &(n - 1).to_string());
+    splice(text, vec![(open, new_open), (item, String::new())])
 }
 
 /// Applies non-overlapping replacements to a text.
@@ -2207,6 +2462,30 @@ mod tests {
                 Some(&Value::Text("a&b".into()))
             ),
             "<c r=\"A1\" t=\"str\"><f>\"a\"</f><v>a&amp;b</v></c>"
+        );
+    }
+
+    #[test]
+    fn merges_written_and_removed() {
+        let sheet = r#"<worksheet><sheetData/><pageMargins left="0.7"/></worksheet>"#;
+        let one = add_merge(sheet, "A1:B2");
+        assert_eq!(
+            one,
+            r#"<worksheet><sheetData/><mergeCells count="1"><mergeCell ref="A1:B2"/></mergeCells><pageMargins left="0.7"/></worksheet>"#
+        );
+        let two = add_merge(&one, "D4:E4");
+        assert!(two.contains(r#"<mergeCells count="2"><mergeCell ref="A1:B2"/><mergeCell ref="D4:E4"/></mergeCells>"#), "{two}");
+        let back = remove_merge(&two, Range::parse("D4:E4").unwrap());
+        assert_eq!(back, one);
+        assert_eq!(remove_merge(&one, Range::parse("A1:B2").unwrap()), sheet);
+        let bare = r#"<x:worksheet><x:sheetData/></x:worksheet>"#;
+        assert_eq!(
+            add_merge(bare, "C1:C3"),
+            r#"<x:worksheet><x:sheetData/><x:mergeCells count="1"><x:mergeCell ref="C1:C3"/></x:mergeCells></x:worksheet>"#
+        );
+        assert_eq!(
+            with_alignment(r#"<xf numFmtId="0"/>"#, "horizontal", "center"),
+            r#"<xf numFmtId="0" applyAlignment="1"><alignment horizontal="center"/></xf>"#
         );
     }
 
