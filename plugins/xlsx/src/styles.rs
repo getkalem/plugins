@@ -61,6 +61,94 @@ pub struct Styles {
     pub cell: Vec<CellStyle>,
     /// Whether each cell format shows dates.
     date: Vec<bool>,
+    /// The differential formats (`<dxfs>`) conditional formats apply.
+    pub dxfs: Vec<Dxf>,
+    /// The theme's colors, for the colors of conditional formats.
+    pub theme: Vec<Rgb>,
+}
+
+/// A differential format (`<dxf>`, 18.8.14): what a conditional format
+/// changes of a cell's look; `None` leaves it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Dxf {
+    /// Bold.
+    pub bold: Option<bool>,
+    /// Italic.
+    pub italic: Option<bool>,
+    /// Underlined.
+    pub underline: Option<bool>,
+    /// Struck through.
+    pub strike: Option<bool>,
+    /// Text color.
+    pub color: Option<Rgb>,
+    /// Fill color.
+    pub fill: Option<Rgb>,
+}
+
+/// The `<dxfs>` of a style sheet. A dxf's fill is its pattern's background
+/// color (`bgColor`), as Excel writes solid fills of differential formats,
+/// else its foreground color.
+pub fn parse_dxfs(xml: &str, theme: &[Rgb]) -> Vec<Dxf> {
+    let mut out = Vec::new();
+    let mut r = Reader::new(xml);
+    let mut in_dxfs = false;
+    let mut cur: Option<Dxf> = None;
+    let mut in_font = false;
+    let mut fg: Option<Rgb> = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => match tag.name {
+                "dxfs" if !tag.empty => in_dxfs = true,
+                "dxf" if in_dxfs => {
+                    if tag.empty {
+                        out.push(Dxf::default());
+                    } else {
+                        cur = Some(Dxf::default());
+                        fg = None;
+                    }
+                }
+                "font" if cur.is_some() => in_font = !tag.empty,
+                "b" | "i" | "u" | "strike" if in_font => {
+                    let v = Some(flag(&tag));
+                    if let Some(d) = cur.as_mut() {
+                        match tag.name {
+                            "b" => d.bold = v,
+                            "i" => d.italic = v,
+                            "u" => d.underline = v,
+                            _ => d.strike = v,
+                        }
+                    }
+                }
+                "color" if in_font => {
+                    if let Some(d) = cur.as_mut() {
+                        d.color = color(&tag, theme);
+                    }
+                }
+                "bgColor" if cur.is_some() => {
+                    if let Some(d) = cur.as_mut() {
+                        d.fill = color(&tag, theme);
+                    }
+                }
+                "fgColor" if cur.is_some() => fg = color(&tag, theme),
+                _ => {}
+            },
+            Token::End { name, .. } => match name {
+                "font" => in_font = false,
+                "dxf" => {
+                    if let Some(mut d) = cur.take() {
+                        if d.fill.is_none() {
+                            d.fill = fg;
+                        }
+                        out.push(d);
+                    }
+                }
+                "dxfs" => break,
+                _ => {}
+            },
+            Token::Text { .. } => {}
+        }
+    }
+    out
 }
 
 impl Styles {
@@ -150,7 +238,9 @@ fn apply_tint(c: Rgb, tint: f64) -> Rgb {
     ch(16) | ch(8) | ch(0)
 }
 
-fn color(tag: &crate::xml::Tag<'_>, theme: &[Rgb]) -> Option<Rgb> {
+/// A `<color>`-like tag's RGB: `rgb`, a theme color with its tint, or an
+/// indexed color.
+pub(crate) fn color(tag: &crate::xml::Tag<'_>, theme: &[Rgb]) -> Option<Rgb> {
     let tint: f64 = tag.attr("tint").and_then(|t| t.parse().ok()).unwrap_or(0.0);
     let base = if let Some(rgb) = tag.attr("rgb") {
         let h = rgb.trim();
@@ -338,6 +428,8 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
             Token::Text { .. } => {}
         }
     }
+    styles.dxfs = parse_dxfs(xml, theme);
+    styles.theme = theme.to_vec();
     styles
 }
 
@@ -371,6 +463,18 @@ mod tests {
         assert_eq!(c.align.as_deref(), Some("center"));
         assert_eq!(s.get(2).num_fmt, "#,##0.00");
         assert_eq!(s.get(0).size, Some(11.0));
+    }
+
+    #[test]
+    fn differential_formats() {
+        let xml = r#"<styleSheet><dxfs count="2"><dxf><font><b/><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf><dxf><fill><patternFill patternType="solid"><fgColor theme="1"/></patternFill></fill></dxf></dxfs></styleSheet>"#;
+        let d = parse_dxfs(xml, &[0xFFFFFF, 0x000000]);
+        assert_eq!(d.len(), 2);
+        assert_eq!(
+            (d[0].bold, d[0].color, d[0].fill),
+            (Some(true), Some(0x9C0006), Some(0xFFC7CE))
+        );
+        assert_eq!(d[1].fill, Some(0x000000));
     }
 
     #[test]

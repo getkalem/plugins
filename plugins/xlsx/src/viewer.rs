@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 
 use kalem_viewer::{
-    Align, Bitmap, Detection, FileHandle, GridCell, GridEdit, GridLayout, InfoField, MacroEntry,
-    MacroOutcome, MacroQuestion, MacroUi, RenderRequest, Rendered, Result, SaveOutput, Structure,
-    Unit, UnitKind, Viewer, ViewerDocument, ViewerError,
+    Align, Bitmap, CondRule, CondStyle, Detection, FileHandle, GridCell, GridEdit, GridLayout,
+    InfoField, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, RenderRequest, Rendered, Result,
+    SaveOutput, Structure, Unit, UnitKind, Viewer, ViewerDocument, ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -94,6 +94,7 @@ impl Viewer for XlsxViewer {
             wb: std::sync::Mutex::new(wb),
             saved_at: 0,
             notes: HashMap::new(),
+            cf: HashMap::new(),
             name: file.name().to_owned(),
         }))
     }
@@ -107,6 +108,9 @@ struct XlsxDoc {
     saved_at: usize,
     /// Each sheet's notes, read once.
     notes: HashMap<usize, HashMap<CellRef, String>>,
+    /// Each sheet's conditional formats and what they made of its cells,
+    /// at the workbook's generation they were read.
+    cf: HashMap<usize, (u64, crate::conditional::Evaluator)>,
     name: String,
 }
 
@@ -207,6 +211,83 @@ impl XlsxDoc {
             .sheets()
             .get(unit)
             .is_some_and(|s| s.kind == SheetKind::Worksheet)
+    }
+
+    /// Puts what the sheet's conditional formats make of the cells in
+    /// view into `out`, adding the empty cells they color.
+    fn conditional(
+        &mut self,
+        unit: usize,
+        rows: &std::ops::Range<u32>,
+        cols: &std::ops::Range<u32>,
+        out: &mut Vec<(u32, u32, GridCell)>,
+    ) {
+        let generation = self.book().generation();
+        let mut ev = match self.cf.remove(&unit) {
+            Some((g, ev)) if g == generation => ev,
+            _ => match self.book().conditional_formats(unit) {
+                Ok(f) => crate::conditional::Evaluator::new(f),
+                Err(_) => return,
+            },
+        };
+        if ev.is_empty() {
+            self.cf.insert(unit, (generation, ev));
+            return;
+        }
+        let dxfs = self.book().dxfs().to_vec();
+        let mut index: HashMap<(u32, u32), usize> = out
+            .iter()
+            .enumerate()
+            .map(|(i, (r, c, _))| ((*r, *c), i))
+            .collect();
+        // The empty cells too, where a rule may color them; not past a
+        // screenful, so a whole-column rule stays cheap.
+        let empties: Vec<CellRef> = if ev.colors_empty() {
+            rows.clone()
+                .take(200)
+                .flat_map(|r| cols.clone().take(60).map(move |c| CellRef::new(r, c)))
+                .filter(|p| !index.contains_key(&(p.row, p.col)) && ev.touches(*p))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for at in empties {
+            index.insert((at.row, at.col), out.len());
+            out.push((at.row, at.col, GridCell::default()));
+        }
+        let mut unused = Vec::new();
+        for (&(row, col), &i) in &index {
+            let at = CellRef::new(row, col);
+            if !ev.touches(at) {
+                continue;
+            }
+            let r = ev.result(at, self.book(), unit, &dxfs);
+            let cell = &mut out[i].2;
+            if r == crate::conditional::CfResult::default() {
+                if cell == &GridCell::default() {
+                    unused.push(i);
+                }
+                continue;
+            }
+            cell.bold = r.bold.unwrap_or(cell.bold);
+            cell.italic = r.italic.unwrap_or(cell.italic);
+            cell.underline = r.underline.unwrap_or(cell.underline);
+            cell.strike = r.strike.unwrap_or(cell.strike);
+            if let Some(c) = r.color {
+                cell.color = Some(rgb(c));
+            }
+            if let Some(c) = r.fill {
+                cell.fill = Some(rgb(c));
+            }
+            cell.bar = r.bar.map(|(w, c)| (w, rgb(c)));
+            cell.icon = r.icon.map(|(g, c)| (g, rgb(c)));
+        }
+        // Empty cells no rule colored are not shown.
+        unused.sort_unstable();
+        for i in unused.into_iter().rev() {
+            out.swap_remove(i);
+        }
+        self.cf.insert(unit, (generation, ev));
     }
 
     fn notes(&mut self, unit: usize) -> &HashMap<CellRef, String> {
@@ -390,9 +471,12 @@ impl ViewerDocument for XlsxDoc {
                     wrap: style.wrap,
                     formula,
                     note: notes.contains(&at),
+                    bar: None,
+                    icon: None,
                 },
             ));
         }
+        self.conditional(unit, &rows, &cols, &mut out);
         // Notes on cells that hold nothing still show their mark.
         for at in notes {
             if rows.contains(&at.row)
@@ -552,6 +636,39 @@ impl ViewerDocument for XlsxDoc {
             .unmerge_cells(unit, CellRef::new(row, col))
             .map_err(err)?;
         Ok(vec![unit])
+    }
+
+    fn add_conditional_format(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        rule: CondRule,
+        style: CondStyle,
+    ) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .add_conditional_format(unit, r, &rule, &style)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn clear_conditional_formats(
+        &mut self,
+        unit: usize,
+        range: Option<[u32; 4]>,
+    ) -> Result<Vec<usize>> {
+        let r = range.map(|r| crate::cellref::Range {
+            start: CellRef::new(r[0], r[1]),
+            end: CellRef::new(r[2], r[3]),
+        });
+        let any = self
+            .book()
+            .clear_conditional_formats(unit, r)
+            .map_err(err)?;
+        Ok(if any { vec![unit] } else { Vec::new() })
     }
 
     fn set_wrap(&mut self, unit: usize, row: u32, col: u32, wrap: bool) -> Result<Vec<usize>> {
@@ -1105,5 +1222,54 @@ mod tests {
         assert!(d.undo().unwrap());
         assert_eq!(d.cell_input(0, 8, 0), "");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn conditional_formats_color_the_grid() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let rule = CondRule::Formula("=ROW()=7".into());
+        let style = CondStyle {
+            fill: Some([1, 2, 3]),
+            color: None,
+            bold: true,
+        };
+        d.add_conditional_format(0, [1, 0, 9, 3], rule, style)
+            .unwrap();
+        d.add_conditional_format(
+            0,
+            [1, 2, 4, 2],
+            CondRule::IconSet("3Arrows".into()),
+            CondStyle::default(),
+        )
+        .unwrap();
+        let cells = d.grid_cells(0, 0..20, 0..6);
+        let get = |r: u32, c: u32| {
+            cells
+                .iter()
+                .find(|(a, b, _)| (*a, *b) == (r, c))
+                .map(|x| x.2.clone())
+        };
+        // An empty cell the formula colors is in the grid; others are not.
+        let empty = get(6, 3).unwrap();
+        assert_eq!((empty.fill, empty.bold), (Some([1, 2, 3]), true));
+        assert!(get(8, 3).is_none_or(|c| c.fill.is_none()));
+        assert!(get(1, 2).unwrap().icon.is_some());
+        assert_eq!(
+            d.clear_conditional_formats(0, Some([15, 5, 15, 5]))
+                .unwrap(),
+            Vec::<usize>::new()
+        );
+        assert_eq!(d.clear_conditional_formats(0, None).unwrap(), vec![0]);
+        assert!(
+            d.grid_cells(0, 0..20, 0..6)
+                .iter()
+                .all(|(_, _, c)| c.icon.is_none())
+        );
+        assert!(d.undo().unwrap());
+        assert!(
+            d.grid_cells(0, 0..20, 0..6)
+                .iter()
+                .any(|(_, _, c)| c.icon.is_some())
+        );
     }
 }

@@ -8,6 +8,7 @@ use std::ops::Range as Span;
 
 use crate::calc::{self, Engine};
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW, Range};
+use crate::conditional;
 use crate::formula::{self, Op};
 use crate::numfmt;
 use crate::package::{Package, PackageError};
@@ -299,6 +300,8 @@ pub struct Workbook {
     batch_edited: Vec<(usize, CellRef)>,
     /// Whether the batch changed anything.
     batch_changed: bool,
+    /// Counts the changes to sheet texts, for what is computed from them.
+    generation: u64,
 }
 
 /// What an edit changes, kept whole for undo: the package's bytes are
@@ -395,6 +398,7 @@ impl Workbook {
             loaded: HashMap::new(),
             dirty_sheets: Vec::new(),
             derived_styles: HashMap::new(),
+            generation: 0,
             styles_xml: None,
             theme,
             has_vba,
@@ -815,6 +819,7 @@ impl Workbook {
             let new_text = splice(text, splices);
             let model = sheet::parse(&new_text, &self.strings, self.date1904);
             self.loaded.insert(sheet_idx, (new_text, model));
+            self.generation += 1;
             if !self.dirty_sheets.contains(&sheet_idx) {
                 self.dirty_sheets.push(sheet_idx);
             }
@@ -1066,6 +1071,7 @@ impl Workbook {
         let new_text = splice(text, splices);
         let model = sheet::parse(&new_text, &self.strings, self.date1904);
         self.loaded.insert(idx, (new_text, model));
+        self.generation += 1;
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);
         }
@@ -1107,6 +1113,7 @@ impl Workbook {
         self.styles = s.styles;
         self.trusted = s.trusted;
         self.computed = s.computed;
+        self.generation += 1;
         // The engine holds the cells as they were; it is built again when needed.
         self.engine = None;
     }
@@ -1200,6 +1207,7 @@ impl Workbook {
         let new = splice(text, splices);
         let model = sheet::parse(&new, &self.strings, self.date1904);
         self.loaded.insert(idx, (new, model));
+        self.generation += 1;
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);
         }
@@ -1232,6 +1240,7 @@ impl Workbook {
         if new != text {
             let model = sheet::parse(&new, &self.strings, self.date1904);
             self.loaded.insert(idx, (new, model));
+            self.generation += 1;
             if !self.dirty_sheets.contains(&idx) {
                 self.dirty_sheets.push(idx);
             }
@@ -1409,6 +1418,7 @@ impl Workbook {
             if new != *text {
                 let model = sheet::parse(&new, &self.strings, self.date1904);
                 self.loaded.insert(i, (new, model));
+                self.generation += 1;
                 if !self.dirty_sheets.contains(&i) {
                     self.dirty_sheets.push(i);
                 }
@@ -1655,9 +1665,211 @@ impl Workbook {
         Ok(())
     }
 
+    /// Counts the changes to sheet texts: what was computed from a sheet
+    /// at one count holds until it moves.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The differential formats of `styles.xml`, which conditional formats name.
+    pub fn dxfs(&self) -> &[styles::Dxf] {
+        &self.styles.dxfs
+    }
+
+    /// A worksheet's conditional formats.
+    pub fn conditional_formats(&mut self, idx: usize) -> Result<Vec<conditional::CondFormat>> {
+        self.load(idx)?;
+        Ok(conditional::parse(&self.loaded[&idx].0, &self.theme))
+    }
+
+    /// Adds a conditional format to `range`, as Excel's Conditional
+    /// Formatting menu: the new rule comes first, before the sheet's others.
+    pub fn add_conditional_format(
+        &mut self,
+        idx: usize,
+        range: Range,
+        rule: &kalem_viewer::CondRule,
+        style: &kalem_viewer::CondStyle,
+    ) -> Result<()> {
+        use kalem_viewer::CondRule;
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let highlights = !matches!(
+            rule,
+            CondRule::ColorScale(_) | CondRule::DataBar(_) | CondRule::IconSet(_)
+        );
+        let dxf = if highlights {
+            Some(self.add_dxf(&conditional::dxf_xml(style))?)
+        } else {
+            None
+        };
+        let (text, model) = &self.loaded[&idx];
+        let p = model.prefix.clone();
+        // Every rule already there moves one place down.
+        let mut r = Reader::new(text);
+        let mut splices = Vec::new();
+        while let Some(t) = r.next_token() {
+            if let Token::Start(tag) = t
+                && tag.name == "cfRule"
+                && let Some(n) = tag.attr("priority").and_then(|v| v.parse::<i64>().ok())
+            {
+                let head = xml::set_attr(&text[tag.span.clone()], "priority", &(n + 1).to_string());
+                splices.push((tag.span.clone(), head));
+            }
+        }
+        let shifted = splice(text, splices);
+        let block = format!(
+            "<{p}conditionalFormatting sqref=\"{range}\">{}</{p}conditionalFormatting>",
+            conditional::rule_xml(&p, rule, dxf, range.start)
+        );
+        let new = insert_top_level(&shifted, &AFTER_MERGE_CELLS[2..], &block);
+        self.replace_sheet_text(idx, new);
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Takes away the conditional formats of the ranges that meet `range`,
+    /// or all of the sheet's; `false` when there were none.
+    pub fn clear_conditional_formats(&mut self, idx: usize, range: Option<Range>) -> Result<bool> {
+        let formats = self.conditional_formats(idx)?;
+        let meets = |a: &Range| {
+            range.is_none_or(|b| {
+                a.start.row <= b.end.row
+                    && b.start.row <= a.end.row
+                    && a.start.col <= b.end.col
+                    && b.start.col <= a.end.col
+            })
+        };
+        let text = &self.loaded[&idx].0;
+        let mut splices = Vec::new();
+        for f in &formats {
+            if !f.ranges.iter().any(&meets) {
+                continue;
+            }
+            let kept: Vec<String> = f
+                .ranges
+                .iter()
+                .filter(|r| !meets(r))
+                .map(ToString::to_string)
+                .collect();
+            if kept.is_empty() {
+                splices.push((f.span.clone(), String::new()));
+            } else {
+                let el = &text[f.span.clone()];
+                let tag_end = el.find('>').map_or(el.len(), |p| p + 1);
+                let head = xml::set_attr(&el[..tag_end], "sqref", &kept.join(" "));
+                splices.push((f.span.start..f.span.start + tag_end, head));
+            }
+        }
+        if splices.is_empty() {
+            return Ok(false);
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let new = splice(text, splices);
+        self.replace_sheet_text(idx, new);
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(true)
+    }
+
+    /// Appends a `<dxf>` to `styles.xml`, making `<dxfs>` where the schema
+    /// puts it; its index.
+    fn add_dxf(&mut self, dxf: &str) -> Result<u32> {
+        let Some(part) = self.styles_part.clone() else {
+            return Err(Error::Refused("the workbook has no styles part".into()));
+        };
+        let text = match &self.styles_xml {
+            Some(t) => t.clone(),
+            None => text_of(self.pkg.part(&part)?, &part)?,
+        };
+        let mut r = Reader::new(&text);
+        let mut depth = 0;
+        let mut prefix = String::new();
+        let mut before: Option<usize> = None;
+        let mut end: Option<usize> = None;
+        let mut out: Option<String> = None;
+        let count = self.styles.dxfs.len() as u32;
+        while let Some(t) = r.next_token() {
+            match t {
+                Token::Start(tag) => {
+                    if depth == 0 {
+                        prefix = xml::prefix(tag.qname).to_owned();
+                    }
+                    if depth == 1 && tag.name == "dxfs" {
+                        let open = xml::set_attr(
+                            &text[tag.span.clone()],
+                            "count",
+                            &(count + 1).to_string(),
+                        );
+                        let item = with_prefix(dxf, &prefix);
+                        out = Some(if tag.empty {
+                            let o = open.trim_end_matches("/>").trim_end();
+                            splice(
+                                &text,
+                                vec![(tag.span.clone(), format!("{o}>{item}</{prefix}dxfs>"))],
+                            )
+                        } else {
+                            let e = r.skip_element();
+                            let close = text[..e].rfind('<').unwrap_or(e);
+                            splice(&text, vec![(tag.span.clone(), open), (close..close, item)])
+                        });
+                        break;
+                    }
+                    if depth == 1
+                        && before.is_none()
+                        && matches!(tag.name, "tableStyles" | "colors" | "extLst")
+                    {
+                        before = Some(tag.span.start);
+                    }
+                    if !tag.empty {
+                        depth += 1;
+                    }
+                }
+                Token::End { span, .. } => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(span.start);
+                    }
+                }
+                Token::Text { .. } => {}
+            }
+        }
+        let out = match out {
+            Some(o) => o,
+            None => {
+                let at = before
+                    .or(end)
+                    .ok_or_else(|| Error::Refused("styles.xml has no styleSheet".into()))?;
+                let block = format!(
+                    "<{prefix}dxfs count=\"1\">{}</{prefix}dxfs>",
+                    with_prefix(dxf, &prefix)
+                );
+                splice(&text, vec![(at..at, block)])
+            }
+        };
+        self.styles = styles::parse(&out, &self.theme);
+        self.styles_xml = Some(out);
+        Ok(count)
+    }
+
     fn replace_sheet_text(&mut self, idx: usize, new: String) {
         let model = sheet::parse(&new, &self.strings, self.date1904);
         self.loaded.insert(idx, (new, model));
+        self.generation += 1;
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);
         }
@@ -2695,6 +2907,17 @@ const AFTER_AUTO_FILTER: [&str; 28] = [
     "tableParts",
     "extLst",
 ];
+
+/// Unprefixed markup with every element name given `prefix`.
+fn with_prefix(markup: &str, prefix: &str) -> String {
+    if prefix.is_empty() {
+        return markup.to_owned();
+    }
+    markup
+        .replace("</", "\u{0}")
+        .replace('<', &format!("<{prefix}"))
+        .replace('\u{0}', &format!("</{prefix}"))
+}
 
 /// A sheet part with `xml` put among the worksheet's children before the
 /// first of `before`, or at its end.
