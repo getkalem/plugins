@@ -7,10 +7,11 @@
 use std::collections::HashMap;
 
 use kalem_viewer::{
-    Align, Bitmap, Chart, ChartKind, CompareOp, CondRule, CondStyle, Detection, ErrorStyle,
-    FileHandle, GridCell, GridEdit, GridLayout, InfoField, MacroEntry, MacroOutcome, MacroQuestion,
-    MacroUi, PivotSpec, RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind,
-    Validation, ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
+    Align, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule, CondStyle, Detection,
+    ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, InfoField, MacroEntry, MacroOutcome,
+    MacroQuestion, MacroUi, PivotSpec, RenderRequest, Rendered, Result, SaveOutput, Structure,
+    Unit, UnitKind, Validation, ValidationError, ValidationKind, Viewer, ViewerDocument,
+    ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -691,6 +692,19 @@ impl ViewerDocument for XlsxDoc {
     ) -> Result<Vec<usize>> {
         self.book()
             .set_chart_title(unit, index, title.as_deref())
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_axis_title(
+        &mut self,
+        unit: usize,
+        index: usize,
+        axis: ChartAxis,
+        title: Option<String>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_axis_title(unit, index, axis == ChartAxis::Vertical, title.as_deref())
             .map_err(err)?;
         Ok(vec![unit])
     }
@@ -1662,6 +1676,23 @@ mod tests {
         assert_eq!(d.charts(0)[before].title, None);
         assert!(d.undo().unwrap() && d.undo().unwrap());
         assert_eq!(d.charts(0)[before].title.as_deref(), Some("Spending"));
+        // Axis titles, saved as Excel reads them.
+        d.set_axis_title(0, before, ChartAxis::Horizontal, Some("Item".into()))
+            .unwrap();
+        d.set_axis_title(0, before, ChartAxis::Vertical, Some("TRY".into()))
+            .unwrap();
+        let c = &d.charts(0)[before];
+        assert_eq!(
+            (c.horizontal_title.as_deref(), c.vertical_title.as_deref()),
+            (Some("Item"), Some("TRY"))
+        );
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert_eq!(
+            wb.charts(0).unwrap()[before].vertical_title.as_deref(),
+            Some("TRY")
+        );
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        assert_eq!(d.charts(0)[before].vertical_title, None);
         // Removed, then back with undo.
         d.delete_chart(0, before).unwrap();
         assert_eq!(d.charts(0).len(), before);

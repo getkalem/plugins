@@ -2257,6 +2257,8 @@ impl Workbook {
                 stacked: def.stacked,
                 horizontal_title: def.horizontal_title.clone(),
                 vertical_title: def.vertical_title.clone(),
+                // Fields the contract may gain later start empty.
+                ..kalem_viewer::Chart::default()
             });
         }
         Ok(out)
@@ -2498,6 +2500,47 @@ impl Workbook {
             .ok_or_else(|| Error::Refused("No such chart".into()))?;
         let old = text_of(self.pkg.part(&part)?, &part)?;
         let new = chart::titled(&old, title.map(str::trim).filter(|t| !t.is_empty()));
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Sets or removes the title of an axis of a sheet's chart (by its
+    /// place among [`Workbook::charts`]). One undo step.
+    pub fn set_axis_title(
+        &mut self,
+        idx: usize,
+        index: usize,
+        vertical: bool,
+        title: Option<&str>,
+    ) -> Result<()> {
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let new = chart::axis_titled(
+            &old,
+            vertical,
+            title.map(str::trim).filter(|t| !t.is_empty()),
+        )
+        .ok_or_else(|| Error::Refused("This chart has no such axis".into()))?;
         if new == old {
             return Ok(());
         }

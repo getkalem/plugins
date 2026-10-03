@@ -208,6 +208,7 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     let mut ser: Option<SeriesDef> = None;
     let mut title = String::new();
     let mut title_ref: Option<String> = None;
+    let (mut axis_title, mut axis_pos) = (String::new(), String::new());
     while let Some(t) = r.next_token() {
         match t {
             Token::Start(tag) => {
@@ -279,7 +280,10 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                                     .map(|v| v.trim().parse().ok())
                                     .collect();
                             }
-                        } else if within("title") && title.is_empty() {
+                        } else if within("title")
+                            && title.is_empty()
+                            && !stack.iter().any(|s| s.ends_with("Ax"))
+                        {
                             title = points.into_iter().map(|p| p.1).collect();
                         }
                         continue;
@@ -293,14 +297,19 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     }
                     "t" if !tag.empty => {
                         let v = r.text_until_end("t").0;
-                        // The chart's own title, not an axis's.
-                        if ser.is_none()
-                            && stack.iter().any(|s| s == "title")
-                            && !stack.iter().any(|s| s.ends_with("Ax"))
-                        {
-                            title.push_str(&v);
+                        let in_axis = stack.iter().any(|s| s.ends_with("Ax"));
+                        // The chart's own title, or an axis's.
+                        if ser.is_none() && stack.iter().any(|s| s == "title") {
+                            if in_axis {
+                                axis_title.push_str(&v);
+                            } else {
+                                title.push_str(&v);
+                            }
                         }
                         continue;
+                    }
+                    "axPos" if parent.ends_with("Ax") => {
+                        axis_pos = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
                     }
                     "srgbClr" | "schemeClr" => {
                         let in_fill = stack.iter().any(|s| s == "spPr")
@@ -325,6 +334,18 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
             }
             Token::End { name, .. } => {
                 stack.pop();
+                if name.ends_with("Ax") && stack.last().is_some_and(|s| s == "plotArea") {
+                    let t = std::mem::take(&mut axis_title);
+                    if !t.trim().is_empty() {
+                        let slot = if matches!(axis_pos.as_str(), "l" | "r") {
+                            &mut def.vertical_title
+                        } else {
+                            &mut def.horizontal_title
+                        };
+                        slot.get_or_insert(t);
+                    }
+                    axis_pos.clear();
+                }
                 if name == "ser" && in_plot {
                     if let Some(s) = ser.take() {
                         def.series.push(s);
@@ -411,6 +432,106 @@ pub fn titled(text: &str, title: Option<&str>) -> String {
     }
     out.push_str(&text[at..]);
     out
+}
+
+/// A chart part with the title of its horizontal (`vertical` false) or
+/// vertical axis set, or taken away; `None` when the chart has no such
+/// axis (a pie). The axis's `<c:title>` goes where the schema puts it,
+/// after its position and gridlines.
+pub fn axis_titled(text: &str, vertical: bool, title: Option<&str>) -> Option<String> {
+    const DRAWING: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    // The axis found: its prefix, its title's bytes, where a title goes.
+    let mut found: Option<(String, Option<Span<usize>>, usize)> = None;
+    let mut cur: Option<(String, Option<Span<usize>>, usize, bool)> = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                let parent = stack.last().map(String::as_str).unwrap_or("");
+                if parent == "plotArea" && tag.name.ends_with("Ax") && !tag.empty {
+                    cur = Some((xml::prefix(tag.qname).to_owned(), None, tag.span.end, false));
+                } else if parent.ends_with("Ax")
+                    && let Some(c) = cur.as_mut()
+                {
+                    match tag.name {
+                        "axPos" => {
+                            c.3 = matches!(tag.attr("val").as_deref(), Some("l" | "r")) == vertical;
+                        }
+                        "title" => {
+                            let end = if tag.empty {
+                                tag.span.end
+                            } else {
+                                r.skip_element()
+                            };
+                            c.1 = Some(tag.span.start..end);
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    if matches!(
+                        tag.name,
+                        "axId"
+                            | "scaling"
+                            | "delete"
+                            | "axPos"
+                            | "majorGridlines"
+                            | "minorGridlines"
+                    ) {
+                        c.2 = end;
+                    }
+                    continue;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { name, .. } => {
+                stack.pop();
+                if name.ends_with("Ax")
+                    && let Some(c) = cur.take()
+                    && c.3
+                    && found.is_none()
+                {
+                    found = Some((c.0, c.1, c.2));
+                }
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let (p, old, at) = found?;
+    let a = text.split("xmlns:").skip(1).find_map(|d| {
+        let (pfx, rest) = d.split_once("=\"")?;
+        (rest.split('"').next()? == DRAWING).then(|| pfx.to_owned())
+    });
+    let (a, decl) = match a {
+        Some(a) => (a, String::new()),
+        None => ("a".to_owned(), format!(" xmlns:a=\"{DRAWING}\"")),
+    };
+    let rot = if vertical {
+        " rot=\"-5400000\" vert=\"horz\""
+    } else {
+        ""
+    };
+    let new = title.map_or(String::new(), |t| {
+        format!(
+            "<{p}title><{p}tx><{p}rich{decl}><{a}:bodyPr{rot}/><{a}:lstStyle/><{a}:p><{a}:r><{a}:t>{}</{a}:t></{a}:r></{a}:p></{p}rich></{p}tx><{p}overlay val=\"0\"/></{p}title>",
+            xml::escape(t)
+        )
+    });
+    // The old title sits after `at` when there is one: take it out, then
+    // put the new one in its place.
+    let mut out = text.to_owned();
+    match old {
+        Some(o) => out.replace_range(o, &new),
+        None => out.insert_str(at, &new),
+    }
+    Some(out)
 }
 
 /// An absolute reference to a range of a sheet, as charts write them.
@@ -725,6 +846,46 @@ mod tests {
         // A part without the DrawingML prefix declares it.
         let bare = r#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea/></c:chart></c:chartSpace>"#;
         assert!(titled(bare, Some("T")).contains("<c:rich xmlns:a="));
+    }
+
+    #[test]
+    fn axis_titles_set_and_removed() {
+        let s = NewSeries {
+            name: None,
+            cat: Some(("S!$A$2:$A$3".into(), vec!["a".into(), "b".into()], false)),
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+        };
+        for kind in [ChartKind::Column, ChartKind::Bar, ChartKind::Scatter] {
+            let x = chart_xml(kind, None, std::slice::from_ref(&s));
+            let y = axis_titled(&x, false, Some("Month")).unwrap();
+            let y = axis_titled(&y, true, Some("Sales")).unwrap();
+            let d = parse_chart(&y, &[]);
+            assert_eq!(d.horizontal_title.as_deref(), Some("Month"), "{kind:?}");
+            assert_eq!(d.vertical_title.as_deref(), Some("Sales"), "{kind:?}");
+            assert_eq!(d.title, None, "not the chart's own title");
+            // Set again: replaced, not added.
+            let z = axis_titled(&y, true, Some("Revenue")).unwrap();
+            assert_eq!(z.matches("<c:title>").count(), 2);
+            assert_eq!(
+                parse_chart(&z, &[]).vertical_title.as_deref(),
+                Some("Revenue")
+            );
+            let z = axis_titled(&z, false, None).unwrap();
+            let d = parse_chart(&z, &[]);
+            assert_eq!(
+                (d.horizontal_title, d.vertical_title.as_deref()),
+                (None, Some("Revenue"))
+            );
+            // The title after the axis's position and gridlines.
+            let ax = &y[y.find("<c:valAx>").unwrap()..];
+            let ax = &ax[..ax.find("</c:valAx>").unwrap()];
+            if ax.contains("<c:title>") {
+                assert!(ax.find("<c:title>") > ax.find("<c:axPos"), "{ax}");
+                assert!(ax.find("<c:title>") < ax.find("<c:numFmt"), "{ax}");
+            }
+        }
+        let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
+        assert!(axis_titled(&pie, false, Some("x")).is_none());
     }
 
     #[test]
