@@ -2241,6 +2241,9 @@ impl Workbook {
                     color: s.color.map(|c| [(c >> 16) as u8, (c >> 8) as u8, c as u8]),
                 });
             }
+            // Fields the contract gains later start empty instead of
+            // breaking the build of Kalem's pinned revision.
+            #[allow(clippy::needless_update)]
             out.push(kalem_viewer::Chart {
                 kind: def.kind,
                 title: def.title.clone().or_else(|| {
@@ -2257,7 +2260,6 @@ impl Workbook {
                 stacked: def.stacked,
                 horizontal_title: def.horizontal_title.clone(),
                 vertical_title: def.vertical_title.clone(),
-                // Fields the contract may gain later start empty.
                 ..kalem_viewer::Chart::default()
             });
         }
