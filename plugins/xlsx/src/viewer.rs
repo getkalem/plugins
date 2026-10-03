@@ -674,6 +674,15 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn move_chart(&mut self, unit: usize, index: usize, anchor: [u32; 4]) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(anchor[0].min(anchor[2]), anchor[1].min(anchor[3])),
+            end: CellRef::new(anchor[0].max(anchor[2]), anchor[1].max(anchor[3])),
+        };
+        self.book().move_chart(unit, index, r).map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1629,6 +1638,11 @@ mod tests {
         let mut wb = Workbook::open(bytes.clone()).unwrap();
         assert_eq!(wb.charts(0).unwrap().len(), before + 1);
         assert_eq!(wb.charts(1).unwrap()[0].kind, ChartKind::Pie);
+        // Moved and resized, then back with undo.
+        d.move_chart(0, before, [20, 1, 30, 6]).unwrap();
+        assert_eq!(d.charts(0)[before].anchor, [20, 1, 30, 6]);
+        assert!(d.undo().unwrap());
+        assert_eq!(d.charts(0)[before].anchor, [0, 4, 14, 11]);
         // Removed, then back with undo.
         d.delete_chart(0, before).unwrap();
         assert_eq!(d.charts(0).len(), before);

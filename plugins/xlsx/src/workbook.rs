@@ -2443,6 +2443,42 @@ impl Workbook {
         Ok(())
     }
 
+    /// Moves or resizes a sheet's chart (by its place among
+    /// [`Workbook::charts`]) to cover `to`'s cells. One undo step.
+    pub fn move_chart(&mut self, idx: usize, index: usize, to: Range) -> Result<()> {
+        if to.end.row >= MAX_ROW || to.end.col >= MAX_COL {
+            return Err(Error::Refused("A chart stays inside the sheet".into()));
+        }
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let a = chart::parse_drawing(&text)
+            .into_iter()
+            .filter(|a| self.rel_target(&drawing, &a.rid).is_some())
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let new = chart::moved_anchor(
+            &text[a.span.clone()],
+            (to.start.row, to.start.col),
+            (to.end.row, to.end.col),
+        );
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(
+            &drawing,
+            format!("{}{new}{}", &text[..a.span.start], &text[a.span.end..]).into_bytes(),
+        );
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
     /// Removes a sheet's chart (by its place among [`Workbook::charts`]):
     /// its anchor, its part and what hangs on it. One undo step.
     pub fn delete_chart(&mut self, idx: usize, index: usize) -> Result<()> {

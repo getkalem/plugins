@@ -497,6 +497,71 @@ pub fn anchor_xml(p: &str, from: (u32, u32), to: (u32, u32), id: u32, rid: &str)
     )
 }
 
+/// An anchor element moved to cover cells `from` to `to` (inclusive): a
+/// two-cell anchor, whatever it was, its frame and the rest kept.
+pub fn moved_anchor(el: &str, from: (u32, u32), to: (u32, u32)) -> String {
+    let mut r = Reader::new(el);
+    let mut depth = 0;
+    let (mut head, mut prefix, mut attrs) = (0..0, String::new(), String::new());
+    let mut drop: Vec<Span<usize>> = Vec::new();
+    let mut close = el.len();
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 0 {
+                    head = tag.span.clone();
+                    prefix = xml::prefix(tag.qname).to_owned();
+                    if tag.name == "twoCellAnchor" {
+                        // `editAs` and the like stay.
+                        let open = &el[tag.span.clone()];
+                        let name_end = open.find(char::is_whitespace).unwrap_or(open.len());
+                        attrs = open[name_end..]
+                            .trim_end_matches('>')
+                            .trim_end_matches('/')
+                            .to_owned();
+                    }
+                } else if depth == 1 && matches!(tag.name, "from" | "to" | "ext" | "pos") {
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    drop.push(tag.span.start..end);
+                    continue;
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { span, .. } => {
+                depth -= 1;
+                if depth == 0 {
+                    close = span.start;
+                }
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let mut body = String::new();
+    let mut at = head.end;
+    for d in drop {
+        body.push_str(&el[at..d.start]);
+        at = d.end;
+    }
+    body.push_str(&el[at..close]);
+    let p = &prefix;
+    let cell = |name: &str, (row, col): (u32, u32)| {
+        format!(
+            "<{p}{name}><{p}col>{col}</{p}col><{p}colOff>0</{p}colOff><{p}row>{row}</{p}row><{p}rowOff>0</{p}rowOff></{p}{name}>"
+        )
+    };
+    format!(
+        "<{p}twoCellAnchor{attrs}>{}{}{body}</{p}twoCellAnchor>",
+        cell("from", from),
+        cell("to", (to.0 + 1, to.1 + 1))
+    )
+}
+
 /// A new drawing part holding one anchor.
 pub fn drawing_xml(anchor: &str) -> String {
     format!(
