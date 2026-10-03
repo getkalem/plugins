@@ -1154,6 +1154,65 @@ impl Workbook {
         (!self.undo.is_empty(), !self.redo.is_empty())
     }
 
+    /// Sets a row's height in points, as a drag of its edge in Excel: the
+    /// `<row>` gets `ht` and `customHeight`, made when the row holds nothing.
+    pub fn set_row_height(&mut self, idx: usize, row: u32, height: f64) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        if !(0.0..=409.0).contains(&height) || row >= MAX_ROW {
+            return Err(Error::Refused("a row is 0 to 409 points high".into()));
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let (text, model) = &self.loaded[&idx];
+        let ht = format!("{}", (height * 100.0).round() / 100.0);
+        let p = model.prefix.clone();
+        let splices = match model.rows.get(&row) {
+            Some(r) => {
+                let tag = xml::set_attr(&text[r.start.clone()], "ht", &ht);
+                vec![(r.start.clone(), xml::set_attr(&tag, "customHeight", "1"))]
+            }
+            None => {
+                let new_row = format!("<{p}row r=\"{}\" ht=\"{ht}\" customHeight=\"1\"/>", row + 1);
+                let Some((sd_start, sd_end)) = &model.sheet_data else {
+                    return Err(Error::Refused("the sheet part has no sheetData".into()));
+                };
+                match sd_end {
+                    None => {
+                        let tag = &text[sd_start.clone()];
+                        let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
+                        vec![(sd_start.clone(), format!("{open}>{new_row}</{p}sheetData>"))]
+                    }
+                    Some(_) => {
+                        let at = model
+                            .rows
+                            .range(..row)
+                            .next_back()
+                            .map_or(sd_start.end, |(_, r)| {
+                                r.end.as_ref().map_or(r.start.end, |e| e.end)
+                            });
+                        vec![(at..at, new_row)]
+                    }
+                }
+            }
+        };
+        let new = splice(text, splices);
+        let model = sheet::parse(&new, &self.strings, self.date1904);
+        self.loaded.insert(idx, (new, model));
+        if !self.dirty_sheets.contains(&idx) {
+            self.dirty_sheets.push(idx);
+        }
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
     /// Sets a column's width in characters of the default font's digit,
     /// as Excel's autofit and drag do: the `<col>` covering it is split so
     /// that only this column changes, and gets `customWidth`.

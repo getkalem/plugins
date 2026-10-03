@@ -310,6 +310,12 @@ impl ViewerDocument for XlsxDoc {
                 .collect(),
             frozen: sheet.frozen.unwrap_or((0, 0)),
             editable: true,
+            heights: sheet
+                .rows
+                .iter()
+                .filter_map(|(i, r)| r.height.map(|h| (*i, h as f32)))
+                .collect(),
+            default_height: sheet.default_row_height.unwrap_or(15.0) as f32,
         })
     }
 
@@ -414,6 +420,13 @@ impl ViewerDocument for XlsxDoc {
         .map_err(err)?;
         self.notes.clear();
         Ok(self.all_units())
+    }
+
+    fn set_row_height(&mut self, unit: usize, row: u32, height: f32) -> Result<Vec<usize>> {
+        self.book()
+            .set_row_height(unit, row, f64::from(height))
+            .map_err(err)?;
+        Ok(vec![unit])
     }
 
     fn set_col_width(&mut self, unit: usize, col: u32, width: f32) -> Result<Vec<usize>> {
@@ -683,6 +696,28 @@ mod tests {
         assert_eq!(wb.sheet(0).unwrap().col_width(1), Some(20.0));
         assert!(d.undo().unwrap());
         assert_ne!(d.grid(0).unwrap().widths.get(1).copied(), Some(20.0));
+    }
+
+    #[test]
+    fn row_heights_are_edits() {
+        let mut d = open("libreoffice-budget.xlsx");
+        assert_eq!(d.grid(0).unwrap().default_height, 15.0);
+        // A row that exists, and one past the data.
+        d.set_row_height(0, 2, 30.0).unwrap();
+        d.set_row_height(0, 20, 8.5).unwrap();
+        let g = d.grid(0).unwrap();
+        assert!(
+            g.heights.contains(&(2, 30.0)) && g.heights.contains(&(20, 8.5)),
+            "{:?}",
+            g.heights
+        );
+        assert_eq!(d.cell_input(0, 2, 0), "Food");
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        let s = wb.sheet(0).unwrap();
+        assert_eq!(s.rows[&2].height, Some(30.0));
+        assert_eq!(s.rows[&20].height, Some(8.5));
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        assert!(!d.grid(0).unwrap().heights.contains(&(2, 30.0)));
     }
 
     #[test]
