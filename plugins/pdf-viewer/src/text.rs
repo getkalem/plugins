@@ -134,6 +134,32 @@ impl PageText {
     }
 }
 
+impl PageText {
+    /// The glyph at (`x`, `y`), else the nearest on the point's line (a
+    /// drag past a line's end selects to its end), else the nearest of
+    /// all: its byte range and box (x, y, width, height).
+    pub(crate) fn at(&self, x: f32, y: f32) -> Option<(Range<usize>, [f32; 4])> {
+        let gap = |b: &[f32; 4]| {
+            let dx = (b[0] - x).max(x - b[2]).max(0.0);
+            let dy = (b[1] - y).max(y - b[3]).max(0.0);
+            (dx, dy)
+        };
+        let on_line = self
+            .boxes
+            .iter()
+            .filter(|(_, b)| y >= b[1] && y <= b[3])
+            .min_by(|(_, a), (_, b)| gap(a).0.total_cmp(&gap(b).0));
+        let (r, b) = on_line.or_else(|| {
+            self.boxes.iter().min_by(|(_, a), (_, b)| {
+                let (ax, ay) = gap(a);
+                let (bx, by) = gap(b);
+                ax.hypot(ay).total_cmp(&bx.hypot(by))
+            })
+        })?;
+        Some((r.clone(), [b[0], b[1], b[2] - b[0], b[3] - b[1]]))
+    }
+}
+
 /// A glyph's box: from its origin to where the next glyph starts, an em
 /// high from a little below the baseline.
 fn glyph_box(g: &Placed) -> [f32; 4] {
@@ -552,6 +578,23 @@ mod tests {
         assert_eq!(t.rects(1..4), [[0.0, 2.0, 19.0, 10.0]]);
         assert_eq!(t.rects(3..6).len(), 2);
         assert!(t.rects(4..5).is_empty(), "the line break has no box");
+    }
+
+    #[test]
+    fn the_glyph_at_a_point() {
+        let glyphs = [
+            glyph("a", 0.0, 10.0, 5.0),
+            glyph("b", 5.0, 10.0, 5.0),
+            glyph("c", 0.0, 24.0, 5.0),
+        ];
+        let t = lay_out(&glyphs);
+        assert_eq!(t.text, "ab\nc");
+        assert_eq!(t.at(6.0, 8.0).map(|a| a.0), Some(1..2));
+        // Past the line's end: its last glyph.
+        assert_eq!(t.at(90.0, 8.0).map(|a| a.0), Some(1..2));
+        // Between the lines: the nearest.
+        assert_eq!(t.at(1.0, 30.0).map(|a| a.0), Some(3..4));
+        assert!(PageText::default().at(0.0, 0.0).is_none());
     }
 
     #[test]

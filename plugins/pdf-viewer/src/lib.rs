@@ -257,6 +257,12 @@ impl ViewerDocument for PdfDocument {
         texts.get(&unit).map(|t| t.text.clone()).unwrap_or_default()
     }
 
+    fn text_at(&self, unit: usize, x: f32, y: f32) -> Option<(std::ops::Range<usize>, [f32; 4])> {
+        self.extract(&[unit]);
+        let texts = self.texts.lock().unwrap_or_else(|e| e.into_inner());
+        texts.get(&unit)?.at(x, y)
+    }
+
     fn text_rects(&self, unit: usize, range: std::ops::Range<usize>) -> Vec<[f32; 4]> {
         self.extract(&[unit]);
         let texts = self.texts.lock().unwrap_or_else(|e| e.into_inner());

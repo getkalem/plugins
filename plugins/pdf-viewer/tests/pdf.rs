@@ -237,6 +237,12 @@ fn text_search_and_links() {
     assert!(y < 92.0 && y + h > 92.0 && w > 40.0 && w < 80.0, "{r:?}");
     // Two lines: two rectangles.
     assert_eq!(doc.text_rects(0, 6..18).len(), 2);
+    // The glyph under a point of "World" (x 72 + about 70, on its line):
+    // a letter of it; a point right of the line, its last letter.
+    let (r, _) = doc.text_at(0, 150.0, 85.0).expect("a glyph");
+    assert!((6..11).contains(&r.start), "{r:?}");
+    let (r, _) = doc.text_at(0, 600.0, 85.0).expect("a glyph");
+    assert_eq!(r, 10..11);
 
     let links = doc.links(0);
     assert_eq!(links.len(), 2);
