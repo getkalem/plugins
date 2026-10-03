@@ -2267,6 +2267,12 @@ impl Workbook {
                     "tr" => kalem_viewer::LegendPosition::TopRight,
                     _ => kalem_viewer::LegendPosition::Right,
                 }),
+                labels: kalem_viewer::DataLabels {
+                    value: def.labels.0,
+                    category: def.labels.1,
+                    series: def.labels.2,
+                    percent: def.labels.3,
+                },
                 ..kalem_viewer::Chart::default()
             });
         }
@@ -2593,6 +2599,50 @@ impl Workbook {
             L::TopRight => "tr",
         });
         let new = chart::with_legend(&old, pos);
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Sets what the data labels of a sheet's chart (by its place among
+    /// [`Workbook::charts`]) show, every series alike. One undo step.
+    pub fn set_data_labels(
+        &mut self,
+        idx: usize,
+        index: usize,
+        labels: kalem_viewer::DataLabels,
+    ) -> Result<()> {
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let kind = chart::parse_chart(&old, &self.theme).kind;
+        let pie = matches!(
+            kind,
+            kalem_viewer::ChartKind::Pie | kalem_viewer::ChartKind::Doughnut
+        );
+        let new = chart::with_labels(
+            &old,
+            (labels.value, labels.category, labels.series, labels.percent),
+            pie,
+        );
         if new == old {
             return Ok(());
         }

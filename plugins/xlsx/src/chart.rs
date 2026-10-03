@@ -144,6 +144,8 @@ pub struct ChartDef {
     pub vertical_title: Option<String>,
     /// Its legend's position (`b`, `t`, `l`, `r`, `tr`); `None` for none.
     pub legend: Option<String>,
+    /// Its data labels: value, category, series, percent.
+    pub labels: (bool, bool, bool, bool),
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -234,6 +236,18 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             "scatterChart" => ChartKind::Scatter,
                             _ => ChartKind::Other,
                         };
+                    }
+                    "showVal" | "showCatName" | "showSerName" | "showPercent"
+                        if parent == "dLbls" && in_plot =>
+                    {
+                        if matches!(tag.attr("val").as_deref(), Some("1" | "true") | None) {
+                            match name {
+                                "showVal" => def.labels.0 = true,
+                                "showCatName" => def.labels.1 = true,
+                                "showSerName" => def.labels.2 = true,
+                                _ => def.labels.3 = true,
+                            }
+                        }
                     }
                     "legend" if parent == "chart" => def.legend = Some("r".into()),
                     "legendPos" if parent == "legend" => {
@@ -644,6 +658,103 @@ pub fn with_legend(text: &str, pos: Option<&str>) -> String {
     out
 }
 
+/// A chart part whose series all show `labels` (value, category, series,
+/// percent; the percent only for a pie or doughnut), or no labels when
+/// all are off: each series' `<c:dLbls>` written again where the schema
+/// puts it, the plot's own one taken away.
+pub fn with_labels(text: &str, labels: (bool, bool, bool, bool), pie: bool) -> String {
+    const AFTER: [&str; 10] = [
+        "trendline",
+        "errBars",
+        "cat",
+        "val",
+        "xVal",
+        "yVal",
+        "smooth",
+        "shape",
+        "bubbleSize",
+        "extLst",
+    ];
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut edits: Vec<(Span<usize>, String)> = Vec::new();
+    let any = labels.0 || labels.1 || labels.2 || (labels.3 && pie);
+    let b = |v: bool| u8::from(v);
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                let parent = stack.last().map(String::as_str).unwrap_or("");
+                if tag.name == "dLbls" && parent.ends_with("Chart") {
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    edits.push((tag.span.start..end, String::new()));
+                    continue;
+                }
+                if tag.name == "ser" && parent.ends_with("Chart") && !tag.empty {
+                    let p = xml::prefix(tag.qname).to_owned();
+                    let mut at: Option<usize> = None;
+                    let mut close = text.len();
+                    while let Some(t2) = r.next_token() {
+                        match t2 {
+                            Token::Start(c) => {
+                                let end = if c.empty {
+                                    c.span.end
+                                } else {
+                                    r.skip_element()
+                                };
+                                if c.name == "dLbls" {
+                                    edits.push((c.span.start..end, String::new()));
+                                } else if at.is_none() && AFTER.contains(&c.name) {
+                                    at = Some(c.span.start);
+                                }
+                            }
+                            Token::End { span, .. } => {
+                                close = span.start;
+                                break;
+                            }
+                            Token::Text { .. } => {}
+                        }
+                    }
+                    if any {
+                        let at = at.unwrap_or(close);
+                        edits.push((
+                            at..at,
+                            format!(
+                                "<{p}dLbls><{p}showLegendKey val=\"0\"/><{p}showVal val=\"{}\"/><{p}showCatName val=\"{}\"/><{p}showSerName val=\"{}\"/><{p}showPercent val=\"{}\"/><{p}showBubbleSize val=\"0\"/></{p}dLbls>",
+                                b(labels.0),
+                                b(labels.1),
+                                b(labels.2),
+                                b(labels.3 && pie)
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    edits.sort_by_key(|e| e.0.start);
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    for (span, new) in edits {
+        out.push_str(&text[at..span.start]);
+        out.push_str(&new);
+        at = span.end;
+    }
+    out.push_str(&text[at..]);
+    out
+}
+
 /// An absolute reference to a range of a sheet, as charts write them.
 pub fn reference(sheet: &str, r: crate::cellref::Range) -> String {
     let abs = |c: crate::cellref::CellRef| {
@@ -1026,6 +1137,51 @@ mod tests {
             ),
             "{m}"
         );
+    }
+
+    #[test]
+    fn data_labels_on_and_off() {
+        let s = NewSeries {
+            name: Some(("S!$B$1".into(), "Q1".into())),
+            cat: Some(("S!$A$2:$A$3".into(), vec!["a".into(), "b".into()], false)),
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+        };
+        for kind in [
+            ChartKind::Column,
+            ChartKind::Line,
+            ChartKind::Pie,
+            ChartKind::Scatter,
+        ] {
+            let x = chart_xml(kind, None, &[s.clone(), s.clone()]);
+            let pie = kind == ChartKind::Pie;
+            let y = with_labels(&x, (true, false, false, true), pie);
+            let d = parse_chart(&y, &[]);
+            assert_eq!(d.labels, (true, false, false, pie), "{kind:?}");
+            assert_eq!(y.matches("<c:dLbls>").count(), 2, "one a series");
+            // Before the categories and values, as the schema asks.
+            let ser = &y[y.find("<c:ser>").unwrap()..y.find("</c:ser>").unwrap()];
+            let v = ser
+                .find("<c:cat>")
+                .or_else(|| ser.find("<c:xVal>"))
+                .unwrap();
+            assert!(ser.find("<c:dLbls>").unwrap() < v, "{ser}");
+            // Again: replaced; off: gone.
+            let z = with_labels(&y, (false, true, true, false), pie);
+            assert_eq!(parse_chart(&z, &[]).labels, (false, true, true, false));
+            assert_eq!(
+                z.matches("<c:dLbls>").count(),
+                y.matches("<c:dLbls>").count()
+            );
+            let off = with_labels(&z, (false, false, false, false), pie);
+            assert!(!off.contains("dLbls"));
+            assert_eq!(parse_chart(&off, &[]).series.len(), 2);
+        }
+        // The plot's own labels count, and go when set per series.
+        let plot = r#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea><c:barChart><c:ser><c:val/></c:ser><c:dLbls><c:showVal val="1"/></c:dLbls></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        assert!(parse_chart(plot, &[]).labels.0);
+        let set = with_labels(plot, (false, true, false, false), false);
+        assert_eq!(set.matches("<c:dLbls>").count(), 1);
+        assert_eq!(parse_chart(&set, &[]).labels, (false, true, false, false));
     }
 
     #[test]
