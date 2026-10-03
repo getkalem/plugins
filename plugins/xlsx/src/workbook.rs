@@ -1663,6 +1663,49 @@ impl Workbook {
         }
     }
 
+    /// Enters rows of texts from `at` on, each as typed, as Excel's Paste of
+    /// text: one undo step; a cell Excel would refuse (inside a merged
+    /// cell, part of an array) refuses the whole paste.
+    pub fn set_cells(&mut self, idx: usize, at: CellRef, values: &[Vec<String>]) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let rows = values.len() as u32;
+        let cols = values.iter().map(Vec::len).max().unwrap_or(0) as u32;
+        if at.row + rows > MAX_ROW || at.col + cols > MAX_COL {
+            return Err(Error::Refused(
+                "the pasted cells go past the end of the sheet".into(),
+            ));
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let mut result = Ok(());
+        'rows: for (i, line) in values.iter().enumerate() {
+            for (j, v) in line.iter().enumerate() {
+                result = self.set_cell(idx, CellRef::new(at.row + i as u32, at.col + j as u32), v);
+                if result.is_err() {
+                    break 'rows;
+                }
+            }
+        }
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Clears the values and formulas of a range, formats kept, as Excel's
     /// Delete on a selection: one undo step.
     pub fn clear_range(&mut self, idx: usize, range: Range) -> Result<()> {

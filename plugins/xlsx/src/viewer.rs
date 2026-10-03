@@ -423,6 +423,19 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn set_cells(
+        &mut self,
+        unit: usize,
+        row: u32,
+        col: u32,
+        values: &[Vec<String>],
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_cells(unit, CellRef::new(row, col), values)
+            .map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn clear_cells(&mut self, unit: usize, range: [u32; 4]) -> Result<Vec<usize>> {
         let r = crate::cellref::Range {
             start: CellRef::new(range[0], range[1]),
@@ -771,6 +784,29 @@ mod tests {
         assert!(!d.grid_cells(0, 0..1, 1..2).remove(0).2.wrap);
         // Undone past the save: different from the file on disk.
         assert!(d.modified());
+    }
+
+    #[test]
+    fn pasting_rows() {
+        let mut d = open("libreoffice-budget.xlsx");
+        let rows = vec![
+            vec!["Books".to_string(), "1,000.50".into(), "=B8*2".into()],
+            vec!["Tea".into(), "20".into()],
+        ];
+        d.set_cells(0, 7, 0, &rows).unwrap();
+        assert_eq!(d.cell_input(0, 7, 0), "Books");
+        assert_eq!(d.cell_input(0, 7, 1), "1000.5");
+        assert_eq!(d.grid_cells(0, 7..8, 2..3)[0].2.text, "2001");
+        assert_eq!(d.cell_input(0, 8, 1), "20");
+        // One step.
+        assert!(d.undo().unwrap());
+        assert_eq!(d.cell_input(0, 7, 0), "");
+        // Into part of a merged cell: refused whole, nothing written.
+        assert!(
+            d.set_cells(0, 0, 4, &[vec!["a".into(), "b".into(), "c".into()]])
+                .is_err()
+        );
+        assert_eq!(d.cell_input(0, 0, 4), "");
     }
 
     #[test]
