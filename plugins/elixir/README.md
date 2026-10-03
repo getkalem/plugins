@@ -63,11 +63,9 @@ env = { ELS_INSTALL_PREFIX = "/opt/elixir-ls" }
 
 ## Installing
 
-Until Kalem's plugin installer exists (its task T3.3), copy or link this folder into Kalem's plugin folder, or point `KALEM_PLUGIN_PATH` at `plugins/` of this repository:
+From Kalem: the Kalem menu's **Install Plugin…**, then `elixir` (or this folder's link, `https://github.com/getkalem/plugins/tree/main/plugins/elixir`). **Browse Plugins** lists it too. Kalem shows what the plugin is and which programs it may run before installing, and the open Elixir files are highlighted and served at once. On the command line: `kalem plugin install elixir`.
 
-```sh
-mkdir -p ~/.config/kalem/plugins && ln -s "$PWD/plugins/elixir" ~/.config/kalem/plugins/elixir
-```
+To work on the plugin itself, point Kalem at this repository's `plugins/` folder instead: `KALEM_PLUGIN_PATH=$PWD/plugins kalem`.
 
 ## Not done
 
