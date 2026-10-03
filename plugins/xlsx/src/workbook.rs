@@ -307,6 +307,9 @@ pub struct Workbook {
     generation: u64,
     /// Each sheet's data validations, at the generation they were read.
     validations: HashMap<usize, (u64, Vec<validation::DataValidation>)>,
+    /// The sheets found to hold no formula without its result, at the
+    /// generation they were looked at.
+    complete: HashMap<usize, u64>,
 }
 
 /// What an edit changes, kept whole for undo: the package's bytes are
@@ -406,6 +409,7 @@ impl Workbook {
             derived_styles: HashMap::new(),
             generation: 0,
             validations: HashMap::new(),
+            complete: HashMap::new(),
             styles_xml: None,
             theme,
             has_vba,
@@ -601,7 +605,7 @@ impl Workbook {
     /// Builds the engine when a sheet holds formulas stored without results
     /// (openpyxl writes them so), so that the grid shows their values.
     fn compute_missing(&mut self, idx: usize) -> Result<()> {
-        if self.engine.is_some() {
+        if self.engine.is_some() || self.complete.get(&idx) == Some(&self.generation) {
             return Ok(());
         }
         let missing = self.loaded[&idx]
@@ -611,6 +615,10 @@ impl Workbook {
             .any(|c| c.formula.is_some() && c.value == Value::Empty);
         if missing {
             self.ensure_engine()?;
+        } else {
+            // Looked at once until the sheet changes: the grid asks for
+            // every cell it shows.
+            self.complete.insert(idx, self.generation);
         }
         Ok(())
     }
