@@ -7,9 +7,10 @@
 use std::collections::HashMap;
 
 use kalem_viewer::{
-    Align, Bitmap, CondRule, CondStyle, Detection, FileHandle, GridCell, GridEdit, GridLayout,
-    InfoField, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, RenderRequest, Rendered, Result,
-    SaveOutput, Structure, Unit, UnitKind, Viewer, ViewerDocument, ViewerError,
+    Align, Bitmap, CompareOp, CondRule, CondStyle, Detection, ErrorStyle, FileHandle, GridCell,
+    GridEdit, GridLayout, InfoField, MacroEntry, MacroOutcome, MacroQuestion, MacroUi,
+    RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation,
+    ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -636,6 +637,151 @@ impl ViewerDocument for XlsxDoc {
             .unmerge_cells(unit, CellRef::new(row, col))
             .map_err(err)?;
         Ok(vec![unit])
+    }
+
+    fn validation(&mut self, unit: usize, row: u32, col: u32) -> Option<Validation> {
+        let at = CellRef::new(row, col);
+        let dv = self.book().validation_at(unit, at).ok()??;
+        let kind = match dv.kind.as_str() {
+            "whole" => ValidationKind::Whole,
+            "decimal" => ValidationKind::Decimal,
+            "list" => ValidationKind::List,
+            "date" => ValidationKind::Date,
+            "time" => ValidationKind::Time,
+            "textLength" => ValidationKind::TextLength,
+            "custom" => ValidationKind::Custom,
+            _ => ValidationKind::Any,
+        };
+        let op = match dv.operator.as_str() {
+            "greaterThan" => CompareOp::Greater,
+            "lessThan" => CompareOp::Less,
+            "greaterThanOrEqual" => CompareOp::GreaterOrEqual,
+            "lessThanOrEqual" => CompareOp::LessOrEqual,
+            "equal" => CompareOp::Equal,
+            "notEqual" => CompareOp::NotEqual,
+            "notBetween" => CompareOp::NotBetween,
+            _ => CompareOp::Between,
+        };
+        // A value as typed: a number as it is, anything else a formula.
+        let typed = |f: &str| {
+            if f.trim().parse::<f64>().is_ok() {
+                f.trim().to_owned()
+            } else {
+                format!("={f}")
+            }
+        };
+        let value = match (&dv.formula1, kind) {
+            (Some(f), ValidationKind::List) => {
+                crate::validation::literal_list(f).map_or_else(|| format!("={f}"), |l| l.join(","))
+            }
+            (Some(f), ValidationKind::Custom) => format!("={f}"),
+            (Some(f), _) => typed(f),
+            (None, _) => String::new(),
+        };
+        let list = if kind == ValidationKind::List {
+            self.book().list_values(unit, &dv, at)
+        } else {
+            Vec::new()
+        };
+        let style = match dv.error_style.as_str() {
+            "warning" => ErrorStyle::Warning,
+            "information" => ErrorStyle::Information,
+            _ => ErrorStyle::Stop,
+        };
+        Some(Validation {
+            kind,
+            op,
+            value,
+            value2: dv.formula2.as_deref().map(typed),
+            allow_blank: dv.allow_blank,
+            dropdown: dv.dropdown,
+            prompt: (dv.show_input && !(dv.prompt.is_empty() && dv.prompt_title.is_empty()))
+                .then(|| (dv.prompt_title.clone(), dv.prompt.clone())),
+            error: dv
+                .show_error
+                .then(|| (style, dv.error_title.clone(), dv.error.clone())),
+            list,
+        })
+    }
+
+    fn set_validation(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        validation: Option<Validation>,
+    ) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .set_validation(unit, r, validation.as_ref())
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn check_input(
+        &mut self,
+        unit: usize,
+        row: u32,
+        col: u32,
+        input: &str,
+    ) -> Option<ValidationError> {
+        let dv = self
+            .book()
+            .check_entry(unit, CellRef::new(row, col), input)
+            .ok()??;
+        let style = match dv.error_style.as_str() {
+            "warning" => ErrorStyle::Warning,
+            "information" => ErrorStyle::Information,
+            _ => ErrorStyle::Stop,
+        };
+        Some(ValidationError {
+            style,
+            title: dv.error_title,
+            message: if dv.error.is_empty() {
+                "This value doesn't match the data validation restrictions defined for this cell."
+                    .into()
+            } else {
+                dv.error
+            },
+        })
+    }
+
+    fn invalid_cells(
+        &mut self,
+        unit: usize,
+        rows: std::ops::Range<u32>,
+        cols: std::ops::Range<u32>,
+    ) -> Vec<(u32, u32)> {
+        if !self.worksheet(unit) {
+            return Vec::new();
+        }
+        let Ok(dvs) = self.book().validations(unit) else {
+            return Vec::new();
+        };
+        let dvs: Vec<_> = dvs.into_iter().filter(|d| d.kind != "none").collect();
+        if dvs.is_empty() {
+            return Vec::new();
+        }
+        let positions: Vec<CellRef> = match self.book().sheet(unit) {
+            Ok(s) => s
+                .cells
+                .range(CellRef::new(rows.start, 0)..CellRef::new(rows.end, 0))
+                .map(|(p, _)| *p)
+                .filter(|p| cols.contains(&p.col))
+                .collect(),
+            Err(_) => return Vec::new(),
+        };
+        let mut out = Vec::new();
+        for at in positions {
+            if let Some(dv) = dvs.iter().find(|d| d.covers(at))
+                && !self.book().accepts(unit, at, dv).unwrap_or(true)
+            {
+                out.push((at.row, at.col));
+            }
+        }
+        out
     }
 
     fn add_conditional_format(
@@ -1271,5 +1417,72 @@ mod tests {
                 .iter()
                 .any(|(_, _, c)| c.icon.is_some())
         );
+    }
+
+    #[test]
+    fn data_validation() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let list = Validation {
+            kind: ValidationKind::List,
+            value: "Food, Rent ,Travel".into(),
+            prompt: Some(("Item".into(), "Pick one".into())),
+            ..Validation::default()
+        };
+        d.set_validation(0, [1, 0, 4, 0], Some(list)).unwrap();
+        let v = d.validation(0, 2, 0).unwrap();
+        assert_eq!(v.list, ["Food", "Rent", "Travel"]);
+        assert_eq!(v.value, "Food,Rent,Travel");
+        assert_eq!(v.prompt, Some(("Item".into(), "Pick one".into())));
+        assert!(d.validation(0, 5, 0).is_none());
+        assert!(d.check_input(0, 1, 0, "rent").is_none());
+        let e = d.check_input(0, 1, 0, "Cinema").unwrap();
+        assert_eq!(e.style, ErrorStyle::Stop);
+        // Checking left the cell and the history as they were.
+        let before = d.cell_input(0, 1, 0);
+        assert!(d.check_input(0, 1, 0, "Cinema").is_some());
+        assert_eq!(d.cell_input(0, 1, 0), before);
+        assert!(!d.redo().unwrap_or(false));
+        // Whole numbers over 1000 in B2:B5, a warning.
+        let whole = Validation {
+            kind: ValidationKind::Whole,
+            op: CompareOp::Greater,
+            value: "1000".into(),
+            error: Some((ErrorStyle::Warning, "Small".into(), "Under 1000".into())),
+            ..Validation::default()
+        };
+        d.set_validation(0, [1, 1, 4, 1], Some(whole)).unwrap();
+        let e = d.check_input(0, 2, 1, "5").unwrap();
+        assert_eq!(
+            (e.style, e.message.as_str()),
+            (ErrorStyle::Warning, "Under 1000")
+        );
+        assert!(d.check_input(0, 2, 1, "1500").is_none());
+        assert!(d.check_input(0, 2, 1, "1500.5").is_some());
+        // The cells already there that break it, circled.
+        let bad = d.invalid_cells(0, 0..10, 0..4);
+        assert!(bad.iter().all(|(_, c)| *c == 1 || *c == 0), "{bad:?}");
+        // A list from a range, read through the cells.
+        let from_range = Validation {
+            kind: ValidationKind::List,
+            value: "=$A$2:$A$4".into(),
+            ..Validation::default()
+        };
+        d.set_validation(0, [7, 3, 7, 3], Some(from_range)).unwrap();
+        let names: Vec<String> = (1..4).map(|r| d.cell_input(0, r, 0)).collect();
+        assert_eq!(d.validation(0, 7, 3).unwrap().list, names);
+        // Saved and read again: Excel's markup, one block.
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert_eq!(wb.validations(0).unwrap().len(), 3);
+        // Cleared from part of a range: the rest kept.
+        d.set_validation(0, [2, 0, 2, 0], None).unwrap();
+        assert!(d.validation(0, 2, 0).is_none());
+        assert!(d.validation(0, 3, 0).is_some() && d.validation(0, 1, 0).is_some());
+        d.set_validation(0, [0, 0, 20, 5], None).unwrap();
+        let text = String::from_utf8(d.save().unwrap().bytes).unwrap_or_default();
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert!(wb.validations(0).unwrap().is_empty());
+        let _ = text;
+        assert!(d.undo().unwrap());
+        assert!(d.validation(0, 3, 0).is_some());
     }
 }

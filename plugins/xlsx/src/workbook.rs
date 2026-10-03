@@ -16,6 +16,7 @@ use crate::rels::{self, Rel, kind};
 use crate::sheet::{self, Cell, FormulaKind, Sheet, Value};
 use crate::structure;
 use crate::styles::{self, CellStyle, Styles};
+use crate::validation;
 use crate::xml::{self, Reader, Token};
 
 /// An error opening, editing or saving a workbook.
@@ -302,6 +303,8 @@ pub struct Workbook {
     batch_changed: bool,
     /// Counts the changes to sheet texts, for what is computed from them.
     generation: u64,
+    /// Each sheet's data validations, at the generation they were read.
+    validations: HashMap<usize, (u64, Vec<validation::DataValidation>)>,
 }
 
 /// What an edit changes, kept whole for undo: the package's bytes are
@@ -399,6 +402,7 @@ impl Workbook {
             dirty_sheets: Vec::new(),
             derived_styles: HashMap::new(),
             generation: 0,
+            validations: HashMap::new(),
             styles_xml: None,
             theme,
             has_vba,
@@ -1786,6 +1790,323 @@ impl Workbook {
         Ok(true)
     }
 
+    /// A worksheet's data validations.
+    pub fn validations(&mut self, idx: usize) -> Result<Vec<validation::DataValidation>> {
+        self.load(idx)?;
+        if let Some((g, v)) = self.validations.get(&idx)
+            && *g == self.generation
+        {
+            return Ok(v.clone());
+        }
+        let v = validation::parse(&self.loaded[&idx].0);
+        self.validations.insert(idx, (self.generation, v.clone()));
+        Ok(v)
+    }
+
+    /// The data validation of a cell, if any.
+    pub fn validation_at(
+        &mut self,
+        idx: usize,
+        at: CellRef,
+    ) -> Result<Option<validation::DataValidation>> {
+        Ok(self.validations(idx)?.into_iter().find(|v| v.covers(at)))
+    }
+
+    /// A list validation's values as they read now: its own, or the cells
+    /// of the range (or the defined name) it names, each once.
+    pub fn list_values(
+        &mut self,
+        idx: usize,
+        dv: &validation::DataValidation,
+        at: CellRef,
+    ) -> Vec<String> {
+        let Some(f) = &dv.formula1 else {
+            return Vec::new();
+        };
+        if let Some(l) = validation::literal_list(f) {
+            return l;
+        }
+        let mut f = f.trim().trim_start_matches('=').to_owned();
+        if let Some(d) = self
+            .defined_names
+            .iter()
+            .filter(|d| d.name.eq_ignore_ascii_case(&f))
+            .min_by_key(|d| d.local_sheet != Some(idx))
+        {
+            f = d.refers_to.trim_start_matches('=').to_owned();
+        }
+        let moved = conditional::moved(&f, dv.first(), at);
+        let (sheet, reference) = match moved.rsplit_once('!') {
+            Some((s, r)) => (
+                self.sheet_index(&s.trim_matches('\'').replace("''", "'")),
+                r,
+            ),
+            None => (Some(idx), moved.as_str()),
+        };
+        let (Some(si), Some(range)) = (sheet, Range::parse(&reference.replace('$', ""))) else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = Vec::new();
+        for row in range.start.row..=range.end.row.min(range.start.row + 999) {
+            for col in range.start.col..=range.end.col.min(range.start.col + 99) {
+                let t = self.display(si, CellRef::new(row, col)).unwrap_or_default();
+                if !t.is_empty() && !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+        }
+        out
+    }
+
+    /// A validation's bound for a cell: a number, or a formula's value.
+    fn validation_bound(
+        &mut self,
+        idx: usize,
+        f: &str,
+        first: CellRef,
+        at: CellRef,
+    ) -> Option<f64> {
+        let t = f.trim().trim_start_matches('=');
+        if let Ok(n) = t.parse::<f64>() {
+            return Some(n);
+        }
+        match self
+            .evaluate_formula(idx, &conditional::moved(t, first, at))
+            .ok()
+            .flatten()?
+        {
+            Value::Number(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// Whether a cell's value is one its validation accepts; blank cells
+    /// are, as Excel neither checks a cleared cell nor circles a blank one.
+    pub fn accepts(
+        &mut self,
+        idx: usize,
+        at: CellRef,
+        dv: &validation::DataValidation,
+    ) -> Result<bool> {
+        let value = self.value(idx, at)?;
+        let shown = self.display(idx, at)?;
+        if value == Value::Empty || shown.is_empty() {
+            return Ok(true);
+        }
+        let first = dv.first();
+        let number = match dv.kind.as_str() {
+            "none" => return Ok(true),
+            "list" => {
+                let items = self.list_values(idx, dv, at);
+                let n = match value {
+                    Value::Number(n) => Some(n),
+                    _ => None,
+                };
+                return Ok(items.iter().any(|i| {
+                    i.trim().eq_ignore_ascii_case(shown.trim())
+                        || i.to_lowercase() == shown.to_lowercase()
+                        || n.is_some_and(|n| i.trim().parse::<f64>() == Ok(n))
+                }));
+            }
+            "custom" => {
+                let f = dv.formula1.clone().unwrap_or_default();
+                let v = self.evaluate_formula(
+                    idx,
+                    &conditional::moved(f.trim_start_matches('='), first, at),
+                )?;
+                return Ok(match v {
+                    Some(Value::Bool(b)) => b,
+                    Some(Value::Number(n)) => n != 0.0,
+                    _ => false,
+                });
+            }
+            "textLength" => shown.chars().count() as f64,
+            kind => match value {
+                Value::Number(n) if kind != "whole" || n.fract() == 0.0 => n,
+                _ => return Ok(false),
+            },
+        };
+        let a = dv
+            .formula1
+            .clone()
+            .and_then(|f| self.validation_bound(idx, &f, first, at));
+        let b = dv
+            .formula2
+            .clone()
+            .and_then(|f| self.validation_bound(idx, &f, first, at));
+        let Some(a) = a else {
+            return Ok(true);
+        };
+        Ok(match dv.operator.as_str() {
+            "greaterThan" => number > a,
+            "lessThan" => number < a,
+            "greaterThanOrEqual" => number >= a,
+            "lessThanOrEqual" => number <= a,
+            "equal" => number == a,
+            "notEqual" => number != a,
+            op => {
+                let b = b.unwrap_or(a);
+                let inside = number >= a.min(b) && number <= a.max(b);
+                inside == (op != "notBetween")
+            }
+        })
+    }
+
+    /// The validation an entry breaks if typed into a cell, as Excel checks
+    /// it on Enter: tried, read, and taken back, the history kept.
+    pub fn check_entry(
+        &mut self,
+        idx: usize,
+        at: CellRef,
+        entry: &str,
+    ) -> Result<Option<validation::DataValidation>> {
+        let Some(dv) = self.validation_at(idx, at)? else {
+            return Ok(None);
+        };
+        if dv.kind == "none" || !dv.show_error || entry.is_empty() || self.batch.is_some() {
+            return Ok(None);
+        }
+        let redo = std::mem::take(&mut self.redo);
+        let tried = self.set_cell(idx, at, entry);
+        let accepted = match tried {
+            Ok(()) => {
+                let ok = self.accepts(idx, at, &dv);
+                self.rollback();
+                ok
+            }
+            Err(e) => Err(e),
+        };
+        self.redo = redo;
+        Ok((!accepted?).then_some(dv))
+    }
+
+    /// Sets the data validation of a range, or removes it: what its cells
+    /// had goes, the rest of each validation's ranges kept. One undo step.
+    pub fn set_validation(
+        &mut self,
+        idx: usize,
+        range: Range,
+        v: Option<&kalem_viewer::Validation>,
+    ) -> Result<()> {
+        use kalem_viewer::{CompareOp, ValidationKind};
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        // The formulas first: a value that is not one refuses the edit.
+        let number = |s: &str, date1904: bool| -> Result<String> {
+            let t = s.trim();
+            if let Some(f) = t.strip_prefix('=') {
+                return Ok(f.to_owned());
+            }
+            match Input::parse(t, date1904) {
+                Input::Number(n, _) => Ok(format!("{n}")),
+                _ => Err(Error::Refused(format!("Not a number, date or time: {t}"))),
+            }
+        };
+        let formulas = match v {
+            None => (None, None),
+            Some(v) => match v.kind {
+                ValidationKind::Any => (None, None),
+                ValidationKind::Custom => (
+                    Some(v.value.trim().trim_start_matches('=').to_owned()),
+                    None,
+                ),
+                ValidationKind::List => {
+                    let t = v.value.trim();
+                    if let Some(f) = t.strip_prefix('=') {
+                        (Some(f.to_owned()), None)
+                    } else {
+                        let items: Vec<&str> = t
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|i| !i.is_empty())
+                            .collect();
+                        let joined = items.join(",");
+                        if items.is_empty() || joined.chars().count() > 255 {
+                            return Err(Error::Refused(
+                                "A list takes values separated by commas, 255 characters at most"
+                                    .into(),
+                            ));
+                        }
+                        (Some(format!("\"{}\"", joined.replace('"', "\"\""))), None)
+                    }
+                }
+                _ => {
+                    let two = matches!(v.op, CompareOp::Between | CompareOp::NotBetween);
+                    let second = match (&v.value2, two) {
+                        (Some(s), true) => Some(number(s, self.date1904)?),
+                        (None, true) => {
+                            return Err(Error::Refused("Between takes two values".into()));
+                        }
+                        _ => None,
+                    };
+                    (Some(number(&v.value, self.date1904)?), second)
+                }
+            },
+        };
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let (text, model) = &self.loaded[&idx];
+        let p = model.prefix.clone();
+        let mut splices = Vec::new();
+        for dv in validation::parse(text) {
+            if !dv
+                .ranges
+                .iter()
+                .any(|r| validation::subtract(*r, range) != vec![*r])
+            {
+                continue;
+            }
+            let kept: Vec<String> = dv
+                .ranges
+                .iter()
+                .flat_map(|r| validation::subtract(*r, range))
+                .map(|r| validation::range_text(&r))
+                .collect();
+            if kept.is_empty() {
+                splices.push((dv.span.clone(), String::new()));
+                continue;
+            }
+            let Some(sq) = dv.sqref_span.clone() else {
+                continue;
+            };
+            let el = &text[sq.clone()];
+            let new = if el.contains("sqref=") {
+                xml::set_attr(el, "sqref", &kept.join(" "))
+            } else {
+                // The x14 form's `<xm:sqref>` element.
+                let open = el.find('>').map_or(0, |i| i + 1);
+                let close = el.rfind("</").unwrap_or(el.len());
+                format!("{}{}{}", &el[..open], kept.join(" "), &el[close..])
+            };
+            splices.push((sq, new));
+        }
+        let mut new = splice(text, splices);
+        if let Some(v) = v {
+            let el = validation::element(
+                &p,
+                v,
+                formulas.0.as_deref(),
+                formulas.1.as_deref(),
+                &validation::range_text(&range),
+            );
+            new = add_validation(&new, &p, &el);
+        }
+        let new = tidy_validations(&new);
+        if new == self.loaded[&idx].0 {
+            return Ok(());
+        }
+        self.replace_sheet_text(idx, new);
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
     /// Appends a `<dxf>` to `styles.xml`, making `<dxfs>` where the schema
     /// puts it; its index.
     fn add_dxf(&mut self, dxf: &str) -> Result<u32> {
@@ -2908,6 +3229,113 @@ const AFTER_AUTO_FILTER: [&str; 28] = [
     "extLst",
 ];
 
+/// A sheet part with a `<dataValidation>` added to the sheet's
+/// `<dataValidations>`, made where the schema puts it when missing.
+fn add_validation(text: &str, p: &str, el: &str) -> String {
+    let mut r = Reader::new(text);
+    let mut depth = 0;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 1 && tag.name == "dataValidations" {
+                    if tag.empty {
+                        let o = text[tag.span.clone()]
+                            .trim_end_matches("/>")
+                            .trim_end()
+                            .to_owned();
+                        return splice(
+                            text,
+                            vec![(tag.span.clone(), format!("{o}>{el}</{p}dataValidations>"))],
+                        );
+                    }
+                    let end = r.skip_element();
+                    let close = text[..end].rfind('<').unwrap_or(end);
+                    return splice(text, vec![(close..close, el.to_owned())]);
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { .. } => depth -= 1,
+            Token::Text { .. } => {}
+        }
+    }
+    let block = format!("<{p}dataValidations count=\"1\">{el}</{p}dataValidations>");
+    insert_top_level(text, &AFTER_MERGE_CELLS[3..], &block)
+}
+
+/// A sheet part with each `<dataValidations>` counting its children, and
+/// gone when it has none: in the x14 form its `<ext>` goes too, and the
+/// `<extLst>` when that was its only extension.
+fn tidy_validations(text: &str) -> String {
+    let mut r = Reader::new(text);
+    let mut stack: Vec<(String, usize)> = Vec::new();
+    let mut block: Option<(Span<usize>, usize)> = None;
+    let mut ext_empty = false;
+    let (mut exts, mut emptied) = (0, Vec::new());
+    let mut edits: Vec<(Span<usize>, String)> = Vec::new();
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if tag.name == "dataValidation"
+                    && let Some(b) = block.as_mut()
+                {
+                    b.1 += 1;
+                }
+                if tag.empty {
+                    if tag.name == "dataValidations" {
+                        edits.push((tag.span.clone(), String::new()));
+                    }
+                    continue;
+                }
+                if tag.name == "dataValidations" {
+                    block = Some((tag.span.clone(), 0));
+                }
+                stack.push((tag.name.to_owned(), tag.span.start));
+            }
+            Token::End { name, span } => {
+                let Some((_, start)) = stack.pop() else {
+                    continue;
+                };
+                let parent = stack.last().map(|(p, _)| p.as_str());
+                match name {
+                    "dataValidations" => {
+                        if let Some((open, n)) = block.take() {
+                            if n > 0 {
+                                let head =
+                                    xml::set_attr(&text[open.clone()], "count", &n.to_string());
+                                edits.push((open, head));
+                            } else if parent == Some("ext") {
+                                ext_empty = true;
+                            } else {
+                                edits.push((start..span.end, String::new()));
+                            }
+                        }
+                    }
+                    "ext" if parent == Some("extLst") => {
+                        exts += 1;
+                        if std::mem::take(&mut ext_empty) {
+                            emptied.push(start..span.end);
+                        }
+                    }
+                    "extLst" => {
+                        if exts > 0 && emptied.len() == exts {
+                            edits.push((start..span.end, String::new()));
+                            emptied.clear();
+                        } else {
+                            edits.extend(emptied.drain(..).map(|s| (s, String::new())));
+                        }
+                        exts = 0;
+                    }
+                    _ => {}
+                }
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    splice(text, edits)
+}
+
 /// Unprefixed markup with every element name given `prefix`.
 fn with_prefix(markup: &str, prefix: &str) -> String {
     if prefix.is_empty() {
@@ -3424,5 +3852,28 @@ mod tests {
             "<row r=\"1\" spans=\"1:3\">"
         );
         assert_eq!(widen_spans("<row r=\"1\">", 9), "<row r=\"1\">");
+    }
+
+    #[test]
+    fn validation_blocks_tidied() {
+        let x14 = r#"<worksheet><sheetData/><dataValidations count="5"><dataValidation sqref="A1"/></dataValidations><pageMargins/><extLst><ext uri="a"><x14:dataValidations count="1"></x14:dataValidations></ext></extLst></worksheet>"#;
+        assert_eq!(
+            tidy_validations(x14),
+            r#"<worksheet><sheetData/><dataValidations count="1"><dataValidation sqref="A1"/></dataValidations><pageMargins/></worksheet>"#
+        );
+        let two = r#"<worksheet><dataValidations count="1"></dataValidations><extLst><ext uri="a"><x14:dataValidations/></ext><ext uri="b"><y/></ext></extLst></worksheet>"#;
+        assert_eq!(
+            tidy_validations(two),
+            r#"<worksheet><extLst><ext uri="a"></ext><ext uri="b"><y/></ext></extLst></worksheet>"#
+        );
+        let added = add_validation(
+            "<worksheet><sheetData/><hyperlinks/></worksheet>",
+            "",
+            "<dataValidation/>",
+        );
+        assert_eq!(
+            added,
+            r#"<worksheet><sheetData/><dataValidations count="1"><dataValidation/></dataValidations><hyperlinks/></worksheet>"#
+        );
     }
 }

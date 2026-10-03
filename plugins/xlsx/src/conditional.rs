@@ -267,7 +267,7 @@ fn number(v: &Value) -> Option<f64> {
 /// A formula for the range's first cell, as read from another cell: moved
 /// by the offset, and `ROW()` and `COLUMN()` made that cell's, since the
 /// engine computes it elsewhere.
-fn moved(formula: &str, first: CellRef, at: CellRef) -> String {
+pub(crate) fn moved(formula: &str, first: CellRef, at: CellRef) -> String {
     let f = crate::formula::shift(
         formula,
         i64::from(at.row) - i64::from(first.row),

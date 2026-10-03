@@ -31,6 +31,7 @@ pub mod rels;
 pub mod sheet;
 pub mod structure;
 pub mod styles;
+pub mod validation;
 pub mod vba;
 pub mod viewer;
 pub mod workbook;
