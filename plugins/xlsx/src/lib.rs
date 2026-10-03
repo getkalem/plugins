@@ -27,6 +27,7 @@ pub mod legacy;
 pub mod macros;
 pub mod numfmt;
 pub mod package;
+pub mod pivot;
 pub mod rels;
 pub mod sheet;
 pub mod structure;

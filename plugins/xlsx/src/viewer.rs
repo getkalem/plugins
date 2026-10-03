@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use kalem_viewer::{
     Align, Bitmap, CompareOp, CondRule, CondStyle, Detection, ErrorStyle, FileHandle, GridCell,
-    GridEdit, GridLayout, InfoField, MacroEntry, MacroOutcome, MacroQuestion, MacroUi,
+    GridEdit, GridLayout, InfoField, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, PivotSpec,
     RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation,
     ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
@@ -639,6 +639,24 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn insert_pivot(&mut self, unit: usize, spec: PivotSpec) -> Result<usize> {
+        let r = spec.range;
+        let range = crate::cellref::Range {
+            start: CellRef::new(r[0], r[1]),
+            end: CellRef::new(r[2], r[3]),
+        };
+        let layout = crate::pivot::Layout {
+            rows: spec.rows.iter().map(|&f| f as usize).collect(),
+            cols: spec.cols.iter().map(|&f| f as usize).collect(),
+            values: spec.values.iter().map(|&(f, a)| (f as usize, a)).collect(),
+        };
+        self.book().insert_pivot(unit, range, &layout).map_err(err)
+    }
+
+    fn refresh_pivots(&mut self) -> Result<Vec<usize>> {
+        self.book().refresh_pivots().map_err(err)
+    }
+
     fn validation(&mut self, unit: usize, row: u32, col: u32) -> Option<Validation> {
         let at = CellRef::new(row, col);
         let dv = self.book().validation_at(unit, at).ok()??;
@@ -1009,6 +1027,7 @@ impl ViewerDocument for LegacyDoc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalem_viewer::Aggregate;
 
     struct Yes;
 
@@ -1484,5 +1503,58 @@ mod tests {
         let _ = text;
         assert!(d.undo().unwrap());
         assert!(d.validation(0, 3, 0).is_some());
+    }
+
+    #[test]
+    fn pivot_tables() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let sheets = d.structure().units.len();
+        // Item by Q1, over A1:C5.
+        let spec = PivotSpec {
+            range: [0, 0, 4, 2],
+            rows: vec![0],
+            cols: vec![],
+            values: vec![(1, Aggregate::Sum), (2, Aggregate::Max)],
+        };
+        let unit = d.insert_pivot(0, spec).unwrap();
+        assert_eq!(unit, sheets);
+        assert_eq!(d.structure().units.len(), sheets + 1);
+        assert_eq!(d.cell_input(unit, 2, 0), "Row Labels");
+        assert_eq!(d.cell_input(unit, 2, 1), "Sum of Q1");
+        let last = (3..20)
+            .find(|&r| d.cell_input(unit, r, 0) == "Grand Total")
+            .unwrap();
+        assert_eq!(last, 3 + 4, "four items, then the total");
+        let bytes = d.save().unwrap().bytes;
+        let wb = Workbook::open(bytes).unwrap();
+        assert_eq!(wb.pivot_tables().len(), 1);
+        assert_eq!(wb.sheets()[unit].name, "Pivot1");
+        // A source value changed, then Refresh All.
+        d.set_cell(0, 1, 1, "=1000000").unwrap();
+        let total = d.cell_input(unit, last, 1);
+        assert_eq!(d.refresh_pivots().unwrap(), vec![unit]);
+        assert_ne!(d.cell_input(unit, last, 1), total);
+        assert!(d.undo().unwrap());
+        assert_eq!(d.cell_input(unit, last, 1), total);
+        // Undone, the new sheet goes too.
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        assert_eq!(d.structure().units.len(), sheets);
+        // Rows by item and columns by Q2, counted.
+        let spec = PivotSpec {
+            range: [0, 0, 4, 2],
+            rows: vec![0],
+            cols: vec![2],
+            values: vec![(1, Aggregate::Count)],
+        };
+        let unit = d.insert_pivot(0, spec).unwrap();
+        assert_eq!(d.cell_input(unit, 2, 1), "Column Labels");
+        assert_eq!(d.cell_input(unit, 3, 0), "Row Labels");
+        if let Ok(dir) = std::env::var("KALEM_PIVOT_OUT") {
+            std::fs::write(
+                format!("{dir}/kalem-pivot-test.xlsx"),
+                d.save().unwrap().bytes,
+            )
+            .unwrap();
+        }
     }
 }

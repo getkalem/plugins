@@ -12,6 +12,7 @@ use crate::conditional;
 use crate::formula::{self, Op};
 use crate::numfmt;
 use crate::package::{Package, PackageError};
+use crate::pivot;
 use crate::rels::{self, Rel, kind};
 use crate::sheet::{self, Cell, FormulaKind, Sheet, Value};
 use crate::structure;
@@ -312,6 +313,7 @@ pub struct Workbook {
 #[derive(Clone)]
 struct Snapshot {
     pkg: Package,
+    sheets: Vec<SheetInfo>,
     workbook_xml: String,
     workbook_rels: Vec<Rel>,
     defined_names: Vec<DefinedName>,
@@ -1092,6 +1094,7 @@ impl Workbook {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             pkg: self.pkg.clone(),
+            sheets: self.sheets.clone(),
             workbook_xml: self.workbook_xml.clone(),
             workbook_rels: self.workbook_rels.clone(),
             defined_names: self.defined_names.clone(),
@@ -1107,6 +1110,7 @@ impl Workbook {
 
     fn restore(&mut self, s: Snapshot) {
         self.pkg = s.pkg;
+        self.sheets = s.sheets;
         self.workbook_xml = s.workbook_xml;
         self.workbook_rels = s.workbook_rels;
         self.defined_names = s.defined_names;
@@ -2104,6 +2108,531 @@ impl Workbook {
             }
             None => self.batch_changed = true,
         }
+        Ok(())
+    }
+
+    /// The relationship type URL of `kind`, in the namespace the
+    /// workbook's own relationships use (transitional or strict).
+    fn rel_type(&self, kind: &str) -> String {
+        let rels_path = rels::rels_path(&self.workbook_part);
+        let text = self
+            .pkg
+            .part(&rels_path)
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let base = text
+            .split("Type=\"")
+            .skip(1)
+            .filter_map(|t| t.split('"').next())
+            .find_map(|t| t.strip_suffix("/worksheet"))
+            .unwrap_or("http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+        format!("{base}/{kind}")
+    }
+
+    /// Adds a relationship from `source` to `target` (a part name); its id.
+    fn add_rel(&mut self, source: &str, kind: &str, target: &str) -> Result<String> {
+        let rels_path = rels::rels_path(source);
+        let text = if self.pkg.contains(&rels_path) {
+            text_of(self.pkg.part(&rels_path)?, &rels_path)?
+        } else {
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>".to_string()
+        };
+        let used: Vec<String> = rels::parse(&text).into_iter().map(|r| r.id).collect();
+        let id = (1..)
+            .map(|n| format!("rId{n}"))
+            .find(|i| !used.contains(i))
+            .expect("a free id");
+        // The target relative to the source's folder.
+        let dir = source.rsplit_once('/').map_or("", |(d, _)| d);
+        let from: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+        let to: Vec<&str> = target.split('/').collect();
+        let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+        let mut rel: Vec<&str> = vec![".."; from.len() - common];
+        rel.extend(&to[common..]);
+        let item = format!(
+            "<Relationship Id=\"{id}\" Type=\"{}\" Target=\"{}\"/>",
+            self.rel_type(kind),
+            rel.join("/")
+        );
+        let close = text.rfind("</").unwrap_or(text.len());
+        let new = format!("{}{item}{}", &text[..close], &text[close..]);
+        self.pkg.set_part(&rels_path, new.into_bytes());
+        if source == self.workbook_part {
+            self.workbook_rels.push(Rel {
+                id: id.clone(),
+                kind: kind.to_owned(),
+                target: rel.join("/"),
+                external: false,
+            });
+        }
+        Ok(id)
+    }
+
+    /// Puts a new part into the package with its content type.
+    fn add_part(&mut self, name: &str, text: String, content_type: &str) -> Result<()> {
+        self.pkg.set_part(name, text.into_bytes());
+        let ct = "[Content_Types].xml";
+        let types = text_of(self.pkg.part(ct)?, ct)?;
+        let item = format!("<Override PartName=\"/{name}\" ContentType=\"{content_type}\"/>");
+        let close = types.rfind("</").unwrap_or(types.len());
+        self.pkg.set_part(
+            ct,
+            format!("{}{item}{}", &types[..close], &types[close..]).into_bytes(),
+        );
+        Ok(())
+    }
+
+    /// A part name not in the package: `{stem}{n}.xml`.
+    fn free_part(&self, stem: &str) -> String {
+        (1..)
+            .map(|n| format!("{stem}{n}.xml"))
+            .find(|p| !self.pkg.contains(p))
+            .expect("a free name")
+    }
+
+    /// The prefix the workbook part gives the relationships namespace, or
+    /// the declaration to put on an element that needs it.
+    fn r_prefix(&self) -> (String, String) {
+        const NS: &str = "officeDocument/2006/relationships";
+        let head_end = self
+            .workbook_xml
+            .find("<sheets")
+            .unwrap_or(self.workbook_xml.len());
+        let head = &self.workbook_xml[..head_end];
+        for part in head.split("xmlns:").skip(1) {
+            if let Some((p, rest)) = part.split_once("=\"")
+                && rest.split('"').next().is_some_and(|u| u.ends_with(NS))
+            {
+                return (p.to_owned(), String::new());
+            }
+        }
+        (
+            "r".into(),
+            " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\""
+                .into(),
+        )
+    }
+
+    /// Adds an empty worksheet after the others, as Excel's New Sheet; its
+    /// index. Its name is `stem` and the first free number.
+    pub fn add_sheet(&mut self, stem: &str) -> Result<usize> {
+        let name = (1..)
+            .map(|n| format!("{stem}{n}"))
+            .find(|n| self.sheet_index(n).is_none())
+            .expect("a free name");
+        let part = self.free_part("xl/worksheets/sheet");
+        let main = self
+            .workbook_xml
+            .split("xmlns=\"")
+            .nth(1)
+            .and_then(|t| t.split('"').next())
+            .unwrap_or("http://schemas.openxmlformats.org/spreadsheetml/2006/main")
+            .to_owned();
+        let text = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<worksheet xmlns=\"{main}\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><dimension ref=\"A1\"/><sheetViews><sheetView workbookViewId=\"0\"/></sheetViews><sheetFormatPr defaultRowHeight=\"15\"/><sheetData/><pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/></worksheet>"
+        );
+        self.add_part(
+            &part,
+            text,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
+        )?;
+        let wb_part = self.workbook_part.clone();
+        let rid = self.add_rel(&wb_part, kind::WORKSHEET, &part)?;
+        // Its `<sheet>`, with the next sheetId.
+        let mut r = Reader::new(&self.workbook_xml);
+        let (mut max_id, mut close, mut prefix) = (0u32, None, String::new());
+        while let Some(t) = r.next_token() {
+            match t {
+                Token::Start(tag) if tag.name == "sheet" => {
+                    prefix = xml::prefix(tag.qname).to_owned();
+                    max_id = max_id.max(
+                        tag.attr("sheetId")
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(0),
+                    );
+                }
+                Token::End {
+                    name: "sheets",
+                    span,
+                } => {
+                    close = Some(span.start);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let close =
+            close.ok_or_else(|| Error::Refused("the workbook part has no <sheets>".into()))?;
+        let (rp, decl) = self.r_prefix();
+        let item = format!(
+            "<{prefix}sheet name=\"{}\" sheetId=\"{}\"{decl} {rp}:id=\"{rid}\"/>",
+            xml::escape(&name),
+            max_id + 1
+        );
+        self.workbook_xml = splice(&self.workbook_xml, vec![(close..close, item)]);
+        self.sheets.push(SheetInfo {
+            name,
+            kind: SheetKind::Worksheet,
+            visibility: Visibility::Visible,
+            part,
+        });
+        // The engine is built again with the new sheet.
+        self.engine = None;
+        self.generation += 1;
+        Ok(self.sheets.len() - 1)
+    }
+
+    /// A range's records for a pivot table: its first row names the fields.
+    fn pivot_source(&mut self, idx: usize, range: Range) -> Result<pivot::Source> {
+        if range.start.row >= range.end.row {
+            return Err(Error::Refused(
+                "A pivot table needs a header row and rows under it".into(),
+            ));
+        }
+        let mut src = pivot::Source::default();
+        for col in range.start.col..=range.end.col {
+            let name = self.display(idx, CellRef::new(range.start.row, col))?;
+            if name.trim().is_empty() {
+                return Err(Error::Refused(format!(
+                    "The field in column {} has no name: a pivot table needs a name for each",
+                    crate::cellref::column_name(col)
+                )));
+            }
+            src.names.push(name);
+        }
+        for row in range.start.row + 1..=range.end.row {
+            let mut values = Vec::new();
+            let mut shown = Vec::new();
+            for col in range.start.col..=range.end.col {
+                let at = CellRef::new(row, col);
+                values.push(self.value(idx, at)?);
+                shown.push(self.display(idx, at)?);
+            }
+            src.rows.push(values);
+            src.shown.push(shown);
+        }
+        Ok(src)
+    }
+
+    /// Writes a computed pivot table's cells from `at` on.
+    fn write_pivot_cells(&mut self, idx: usize, p: &pivot::Pivot, at: CellRef) -> Result<()> {
+        for (i, line) in p.cells.iter().enumerate() {
+            for (j, cell) in line.iter().enumerate() {
+                let input = match cell {
+                    Some(pivot::Out::Text(t)) => Input::Text(t.clone()),
+                    Some(pivot::Out::Number(n)) => Input::Number(*n, None),
+                    Some(pivot::Out::Error(e)) => Input::Error(e.clone()),
+                    None => continue,
+                };
+                self.set_input(
+                    idx,
+                    CellRef::new(at.row + i as u32, at.col + j as u32),
+                    input,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Inserts a pivot table of `range` on a new sheet, at A3 as Excel puts
+    /// it: the cache, its records and the table written as Excel writes
+    /// them. One undo step; the new sheet's index.
+    pub fn insert_pivot(
+        &mut self,
+        idx: usize,
+        range: Range,
+        layout: &pivot::Layout,
+    ) -> Result<usize> {
+        self.load(idx)?;
+        let src = self.pivot_source(idx, range)?;
+        let p = pivot::compute(&src, layout).map_err(Error::Refused)?;
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = self.insert_pivot_inner(idx, range, &src, &p);
+        if own {
+            match &result {
+                Ok(_) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn insert_pivot_inner(
+        &mut self,
+        idx: usize,
+        range: Range,
+        src: &pivot::Source,
+        p: &pivot::Pivot,
+    ) -> Result<usize> {
+        let sheet_name = self.sheets[idx].name.clone();
+        let new = self.add_sheet("Pivot")?;
+        self.batch_changed = true;
+        let cache_id = self.next_cache_id();
+        let at = CellRef::new(2, 0);
+        let def_part = self.free_part("xl/pivotCache/pivotCacheDefinition");
+        let rec_part = self.free_part("xl/pivotCache/pivotCacheRecords");
+        let table_part = self.free_part("xl/pivotTables/pivotTable");
+        let rec_rid = "rId1";
+        self.add_part(
+            &def_part,
+            pivot::cache_definition(p, src, &sheet_name, range, rec_rid),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml",
+        )?;
+        self.add_rel(&def_part, "pivotCacheRecords", &rec_part)?;
+        self.add_part(
+            &rec_part,
+            pivot::cache_records(p, src),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml",
+        )?;
+        let name = (1..)
+            .map(|n| format!("PivotTable{n}"))
+            .find(|n| !self.pivot_names().contains(n))
+            .expect("a free name");
+        self.add_part(
+            &table_part,
+            pivot::table_definition(p, src, &name, cache_id, at, "PivotStyleLight16"),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml",
+        )?;
+        self.add_rel(&table_part, "pivotCacheDefinition", &def_part)?;
+        let sheet_part = self.sheets[new].part.clone();
+        self.add_rel(&sheet_part, "pivotTable", &table_part)?;
+        // The cache in the workbook part.
+        let wb_part = self.workbook_part.clone();
+        let rid = self.add_rel(&wb_part, "pivotCacheDefinition", &def_part)?;
+        let (rp, decl) = self.r_prefix();
+        let mut r = Reader::new(&self.workbook_xml);
+        let (mut depth, mut prefix, mut list_end, mut before, mut end) =
+            (0, String::new(), None, None, None);
+        while let Some(t) = r.next_token() {
+            match t {
+                Token::Start(tag) => {
+                    if depth == 0 {
+                        prefix = xml::prefix(tag.qname).to_owned();
+                    }
+                    if depth == 1 && tag.name == "pivotCaches" && !tag.empty {
+                        let e = r.skip_element();
+                        list_end = Some(self.workbook_xml[..e].rfind('<').unwrap_or(e));
+                        continue;
+                    }
+                    if depth == 1
+                        && before.is_none()
+                        && matches!(
+                            tag.name,
+                            "smartTagPr"
+                                | "smartTagTypes"
+                                | "webPublishing"
+                                | "fileRecoveryPr"
+                                | "webPublishObjects"
+                                | "extLst"
+                        )
+                    {
+                        before = Some(tag.span.start);
+                    }
+                    if !tag.empty {
+                        depth += 1;
+                    }
+                }
+                Token::End { span, .. } => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(span.start);
+                    }
+                }
+                Token::Text { .. } => {}
+            }
+        }
+        let item = format!("<{prefix}pivotCache cacheId=\"{cache_id}\"{decl} {rp}:id=\"{rid}\"/>");
+        let edit = match list_end {
+            Some(e) => (e..e, item),
+            None => {
+                let at = before.or(end).unwrap_or(self.workbook_xml.len());
+                (
+                    at..at,
+                    format!("<{prefix}pivotCaches>{item}</{prefix}pivotCaches>"),
+                )
+            }
+        };
+        self.workbook_xml = splice(&self.workbook_xml, vec![edit]);
+        self.write_pivot_cells(new, p, at)?;
+        Ok(new)
+    }
+
+    fn next_cache_id(&self) -> u32 {
+        let mut r = Reader::new(&self.workbook_xml);
+        let mut max = 0;
+        while let Some(t) = r.next_token() {
+            if let Token::Start(tag) = t
+                && tag.name == "pivotCache"
+            {
+                max = max.max(
+                    tag.attr("cacheId")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0),
+                );
+            }
+        }
+        max + 1
+    }
+
+    fn pivot_names(&self) -> Vec<String> {
+        self.pkg
+            .names()
+            .into_iter()
+            .filter(|n| n.contains("pivotTables/") && n.ends_with(".xml"))
+            .filter_map(|n| self.pkg.part(&n).ok())
+            .filter_map(|b| String::from_utf8(b).ok())
+            .map(|t| pivot::parse_table(&t).name)
+            .collect()
+    }
+
+    /// Each worksheet's pivot tables: the sheet and the table's part.
+    pub fn pivot_tables(&self) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        for (i, s) in self.sheets.iter().enumerate() {
+            let rels_path = rels::rels_path(&s.part);
+            let Ok(text) = self.pkg.part(&rels_path) else {
+                continue;
+            };
+            for r in rels::parse(&String::from_utf8_lossy(&text)) {
+                if r.kind == "pivotTable" && !r.external {
+                    out.push((i, rels::resolve(&s.part, &r.target)));
+                }
+            }
+        }
+        out
+    }
+
+    /// Computes every pivot table again from its source, as Excel's
+    /// Refresh All: its cache, records, table and cells rewritten, in
+    /// compact form. One undo step; the sheets that changed. A table Kalem
+    /// cannot compute (report filters, grouped or calculated fields, a
+    /// source outside the workbook) refuses the whole refresh.
+    pub fn refresh_pivots(&mut self) -> Result<Vec<usize>> {
+        let tables = self.pivot_tables();
+        if tables.is_empty() {
+            return Err(Error::Refused("This workbook has no pivot tables".into()));
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let mut changed = Vec::new();
+        let mut result = Ok(());
+        for (idx, part) in tables {
+            result = self.refresh_pivot(idx, &part);
+            if result.is_err() {
+                break;
+            }
+            changed.push(idx);
+        }
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result.map(|()| changed)
+    }
+
+    fn refresh_pivot(&mut self, idx: usize, table_part: &str) -> Result<()> {
+        let text = text_of(self.pkg.part(table_part)?, table_part)?;
+        let t = pivot::parse_table(&text);
+        let refuse = |why: &str| Error::Refused(format!("{}: {why}", t.name));
+        if t.pages > 0 {
+            return Err(refuse(
+                "Kalem does not refresh a pivot table with report filters yet",
+            ));
+        }
+        let table_rels = rels::rels_path(table_part);
+        let def_part = rels::parse(&text_of(self.pkg.part(&table_rels)?, &table_rels)?)
+            .into_iter()
+            .find(|r| r.kind == "pivotCacheDefinition")
+            .map(|r| rels::resolve(table_part, &r.target))
+            .ok_or_else(|| refuse("its cache is missing"))?;
+        let def = text_of(self.pkg.part(&def_part)?, &def_part)?;
+        let (sheet, range, names, rec_rid) = pivot::parse_cache(&def)
+            .ok_or_else(|| refuse("its source or its fields are not ones Kalem computes"))?;
+        let src_idx = self
+            .sheet_index(&sheet)
+            .ok_or_else(|| refuse("its source sheet is gone"))?;
+        let src = self.pivot_source(src_idx, range)?;
+        // The table's fields by name, in the source as it is now.
+        let by_name = |f: usize| -> Result<usize> {
+            let name = names.get(f).ok_or_else(|| refuse("a field is missing"))?;
+            src.names
+                .iter()
+                .position(|n| n.eq_ignore_ascii_case(name))
+                .ok_or_else(|| refuse(&format!("the field {name} is no longer in the source")))
+        };
+        let layout = pivot::Layout {
+            rows: t.rows.iter().map(|f| by_name(*f)).collect::<Result<_>>()?,
+            cols: t.cols.iter().map(|f| by_name(*f)).collect::<Result<_>>()?,
+            values: t
+                .values
+                .iter()
+                .map(|(f, a)| by_name(*f).map(|x| (x, *a)))
+                .collect::<Result<_>>()?,
+        };
+        let p = pivot::compute(&src, &layout).map_err(|e| refuse(&e))?;
+        let at = t.location.map_or(CellRef::new(2, 0), |l| l.start);
+        let style = if t.style.is_empty() {
+            "PivotStyleLight16"
+        } else {
+            t.style.as_str()
+        };
+        // The records part: the one the cache names, or a new one.
+        let def_rels = rels::rels_path(&def_part);
+        let rec_part = rec_rid.as_ref().and_then(|rid| {
+            let rels_text = self.pkg.part(&def_rels).ok()?;
+            rels::parse(&String::from_utf8_lossy(&rels_text))
+                .into_iter()
+                .find(|r| &r.id == rid)
+                .map(|r| rels::resolve(&def_part, &r.target))
+        });
+        let (rec_part, rec_rid) = match (rec_part, rec_rid) {
+            (Some(p), Some(rid)) => (p, rid),
+            _ => {
+                let part = self.free_part("xl/pivotCache/pivotCacheRecords");
+                self.add_part(
+                    &part,
+                    String::new(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml",
+                )?;
+                let rid = self.add_rel(&def_part, "pivotCacheRecords", &part)?;
+                (part, rid)
+            }
+        };
+        self.pkg.set_part(
+            &def_part,
+            pivot::cache_definition(&p, &src, &sheet, range, &rec_rid).into_bytes(),
+        );
+        self.pkg
+            .set_part(&rec_part, pivot::cache_records(&p, &src).into_bytes());
+        self.pkg.set_part(
+            table_part,
+            pivot::table_definition(&p, &src, &t.name, t.cache_id, at, style).into_bytes(),
+        );
+        if let Some(old) = t.location {
+            self.clear_range(idx, old)?;
+        }
+        self.write_pivot_cells(idx, &p, at)?;
+        self.batch_changed = true;
         Ok(())
     }
 
