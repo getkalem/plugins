@@ -115,6 +115,32 @@ pub fn map_refs(
     formula: &str,
     mut f: impl FnMut(&Context<'_>, Reference) -> Option<Reference>,
 ) -> String {
+    map_refs_ex(formula, |c, r| f(c, r).map(|r| (None, r)))
+}
+
+/// A sheet's name as a formula writes it before `!`: quoted when it is not
+/// a plain word, or when it reads as a cell.
+pub fn quote_sheet(name: &str) -> String {
+    let plain = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && parse_cell_word(name).is_none()
+        && parse_row_word(name).is_none();
+    if plain {
+        name.to_owned()
+    } else {
+        format!("'{}'", name.replace('\'', "''"))
+    }
+}
+
+/// As [`map_refs`], `f` also giving the sheet the reference is to be
+/// qualified with (`Some`), written before it in place of its own.
+pub fn map_refs_ex(
+    formula: &str,
+    mut f: impl FnMut(&Context<'_>, Reference) -> Option<(Option<String>, Reference)>,
+) -> String {
     let chars: Vec<(usize, char)> = formula.char_indices().collect();
     let mut out = String::with_capacity(formula.len() + 8);
     let word_at = |i: usize| -> usize {
@@ -144,6 +170,8 @@ pub fn map_refs(
         (j + 1).min(chars.len())
     };
     let mut sheet: Option<String> = None;
+    // Where the sheet prefix written before the coming reference starts.
+    let mut qual_start: Option<usize> = None;
     let mut elsewhere = false;
     let mut after_bracket = false;
     let mut i = 0;
@@ -160,8 +188,10 @@ pub fn map_refs(
             '\'' => {
                 let end = quoted_end(i, '\'');
                 let text = slice(i, end);
+                let start = out.len();
                 out.push_str(text);
                 if chars.get(end).is_some_and(|n| n.1 == '!') {
+                    qual_start = Some(start);
                     let inner = &text[1..text.len().saturating_sub(1)];
                     // A quoted `[1]Sheet` or `Sheet1:Sheet3` points elsewhere.
                     elsewhere = was_after_bracket || inner.starts_with('[') || inner.contains(':');
@@ -205,6 +235,7 @@ pub fn map_refs(
                     continue;
                 }
                 if next == Some('!') {
+                    qual_start = Some(out.len());
                     out.push_str(w);
                     out.push('!');
                     elsewhere = was_after_bracket;
@@ -216,6 +247,7 @@ pub fn map_refs(
                 if next == Some(':') && j + 1 < chars.len() && is_word(chars[j + 1].1) {
                     let k = word_at(j + 1);
                     if chars.get(k).is_some_and(|c| c.1 == '!') {
+                        qual_start = Some(out.len());
                         out.push_str(slice(i, k + 1));
                         sheet = Some(slice(i, k).to_owned());
                         elsewhere = true;
@@ -224,6 +256,17 @@ pub fn map_refs(
                     }
                 }
                 let ctx_sheet = sheet.take();
+                let qs = qual_start.take();
+                let emit = |out: &mut String, q: Option<String>, r: &Reference| {
+                    if let Some(q) = q {
+                        if let Some(qs) = qs {
+                            out.truncate(qs);
+                        }
+                        out.push_str(&quote_sheet(&q));
+                        out.push('!');
+                    }
+                    out.push_str(&write_reference(r));
+                };
                 let ctx = Context {
                     sheet: ctx_sheet.as_deref(),
                     elsewhere: std::mem::take(&mut elsewhere),
@@ -251,7 +294,7 @@ pub fn map_refs(
                                 single: false,
                             },
                         ) {
-                            Some(r) => out.push_str(&write_reference(&r)),
+                            Some((q, r)) => emit(&mut out, q, &r),
                             None => out.push_str("#REF!"),
                         }
                         i = k;
@@ -267,7 +310,7 @@ pub fn map_refs(
                             single: true,
                         },
                     ) {
-                        Some(r) => out.push_str(&write_reference(&r)),
+                        Some((q, r)) => emit(&mut out, q, &r),
                         None => out.push_str("#REF!"),
                     },
                     None => out.push_str(w),
@@ -525,6 +568,65 @@ pub fn move_refs(
     })
 }
 
+/// A formula of `formula_sheet` after the cells of `range` on `from` moved
+/// to `to`, `rows` and `cols` away: references wholly inside the range now
+/// name `to`'s cells, qualified with its name.
+pub fn move_refs_between(
+    formula: &str,
+    from: &str,
+    to: &str,
+    formula_sheet: Option<&str>,
+    range: Range,
+    rows: i64,
+    cols: i64,
+) -> String {
+    let inside = |e: &End| match (e.row, e.col) {
+        (Some((r, _)), Some((c, _))) => range.contains(CellRef::new(r, c)),
+        _ => false,
+    };
+    let moved = |e: End| -> Option<End> {
+        let (r, ar) = e.row?;
+        let (c, ac) = e.col?;
+        Some(End {
+            row: Some((add(r, rows, MAX_ROW)?, ar)),
+            col: Some((add(c, cols, MAX_COL)?, ac)),
+        })
+    };
+    map_refs_ex(formula, |ctx, r| {
+        if ctx.elsewhere {
+            return Some((None, r));
+        }
+        match ctx.sheet.or(formula_sheet) {
+            Some(s) if s.eq_ignore_ascii_case(from) && inside(&r.start) && inside(&r.end) => {
+                Some((
+                    Some(to.to_owned()),
+                    Reference {
+                        start: moved(r.start)?,
+                        end: moved(r.end)?,
+                        single: r.single,
+                    },
+                ))
+            }
+            _ => Some((None, r)),
+        }
+    })
+}
+
+/// A formula of `sheet` with its unqualified references qualified with
+/// `sheet`: what it means when it moves to another sheet.
+pub fn qualify_refs(formula: &str, sheet: &str) -> String {
+    map_refs_ex(formula, |ctx, r| {
+        Some((
+            if ctx.sheet.is_none() && !ctx.elsewhere {
+                Some(sheet.to_owned())
+            } else {
+                None
+            },
+            r,
+        ))
+    })
+}
+
 /// A space-separated list of ranges (`sqref`) after `op`; ranges deleted
 /// whole drop out.
 pub fn adjust_sqref(sqref: &str, op: Op) -> String {
@@ -564,6 +666,33 @@ mod tests {
     #[test]
     fn off_the_sheet_is_ref_error() {
         assert_eq!(shift("A1+B2", -1, 0), "#REF!+B1");
+    }
+
+    #[test]
+    fn moved_to_another_sheet() {
+        let r = Range::parse("B3:C3").unwrap();
+        assert_eq!(
+            move_refs_between(
+                "B3+C3+D3+'Sheet 1'!B3",
+                "Sheet 1",
+                "Data",
+                Some("Sheet 1"),
+                r,
+                7,
+                6
+            ),
+            "Data!H10+Data!I10+D3+Data!H10"
+        );
+        assert_eq!(
+            move_refs_between("Sheet1!B3", "Sheet1", "My Data", None, r, 0, 0),
+            "'My Data'!B3"
+        );
+        assert_eq!(
+            qualify_refs("A1*2+Other!B2+SUM(A1:A3)", "Sheet 1"),
+            "'Sheet 1'!A1*2+Other!B2+SUM('Sheet 1'!A1:A3)"
+        );
+        assert_eq!(quote_sheet("AB1"), "'AB1'");
+        assert_eq!(quote_sheet("Data_2"), "Data_2");
     }
 
     #[test]

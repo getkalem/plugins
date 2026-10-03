@@ -1712,9 +1712,26 @@ impl Workbook {
     /// on any sheet and in defined names, points at their new place. One
     /// undo step. Merged cells and array formulas in the way are refused.
     pub fn move_range(&mut self, idx: usize, src: Range, to: CellRef) -> Result<()> {
-        self.load(idx)?;
-        if self.sheets[idx].kind != SheetKind::Worksheet {
-            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        self.move_range_to(idx, src, idx, to)
+    }
+
+    /// Moves a range's cells from sheet `from` to start at `to` on sheet
+    /// `into`, as Excel's Cut on one sheet and Paste on another: as
+    /// [`Workbook::move_range`], the formulas that read the cells now
+    /// naming `into`, and the moved formulas' own references qualified
+    /// with `from`, the sheet they meant.
+    pub fn move_range_to(
+        &mut self,
+        from: usize,
+        src: Range,
+        into: usize,
+        to: CellRef,
+    ) -> Result<()> {
+        for i in [from, into] {
+            self.load(i)?;
+            if self.sheets[i].kind != SheetKind::Worksheet {
+                return Err(Error::NotAWorksheet(self.sheets[i].name.clone()));
+            }
         }
         let (rows, cols) = (src.end.row - src.start.row, src.end.col - src.start.col);
         if to.row + rows >= MAX_ROW || to.col + cols >= MAX_COL {
@@ -1726,40 +1743,38 @@ impl Workbook {
             start: to,
             end: CellRef::new(to.row + rows, to.col + cols),
         };
-        if dest == src {
+        if from == into && dest == src {
             return Ok(());
         }
-        let model = &self.loaded[&idx].1;
         let touches = |m: &Range, r: &Range| {
             m.start.row <= r.end.row
                 && r.start.row <= m.end.row
                 && m.start.col <= r.end.col
                 && r.start.col <= m.end.col
         };
-        if let Some(m) = model
-            .merged
-            .iter()
-            .find(|m| touches(m, &src) || touches(m, &dest))
-        {
-            return Err(Error::Refused(format!(
-                "the merged cell {m} is in the way; unmerge it first"
-            )));
-        }
-        for c in model.cells.values() {
-            if let Some(f) = &c.formula
-                && let FormulaKind::Array { range: a } = f.kind
-                && (touches(&a, &src) || touches(&a, &dest))
-            {
+        for (i, area) in [(from, src), (into, dest)] {
+            let model = &self.loaded[&i].1;
+            if let Some(m) = model.merged.iter().find(|m| touches(m, &area)) {
                 return Err(Error::Refused(format!(
-                    "the array formula over {a} is in the way"
+                    "the merged cell {m} is in the way; unmerge it first"
                 )));
+            }
+            for c in model.cells.values() {
+                if let Some(f) = &c.formula
+                    && let FormulaKind::Array { range: a } = f.kind
+                    && touches(&a, &area)
+                {
+                    return Err(Error::Refused(format!(
+                        "the array formula over {a} is in the way"
+                    )));
+                }
             }
         }
         let own = self.batch.is_none();
         if own {
             self.begin_batch()?;
         }
-        let result = self.move_inner(idx, src, dest);
+        let result = self.move_inner(from, src, into, dest);
         if own {
             match &result {
                 Ok(()) => {
@@ -1775,25 +1790,31 @@ impl Workbook {
         }
         result?;
         // Formulas that referred to the moved cells follow them.
-        let name = self.sheets[idx].name.clone();
+        let (src_name, dest_name) = (
+            self.sheets[from].name.clone(),
+            self.sheets[into].name.clone(),
+        );
         let (dr, dc) = (
             i64::from(dest.start.row) - i64::from(src.start.row),
             i64::from(dest.start.col) - i64::from(src.start.col),
         );
+        let follow = |f: &str, sheet: Option<&str>| {
+            if from == into {
+                formula::move_refs(f, &src_name, sheet, src, dr, dc)
+            } else {
+                formula::move_refs_between(f, &src_name, &dest_name, sheet, src, dr, dc)
+            }
+        };
         let indices: Vec<usize> = self.loaded.keys().copied().collect();
         for i in indices {
             let own_name = self.sheets[i].name.clone();
             let text = &self.loaded[&i].0;
-            let new = structure::map_formula_texts(text, |f| {
-                formula::move_refs(f, &name, Some(&own_name), src, dr, dc)
-            });
+            let new = structure::map_formula_texts(text, |f| follow(f, Some(&own_name)));
             if new != *text {
                 self.replace_sheet_text(i, new);
             }
         }
-        let wb = structure::map_formula_texts(&self.workbook_xml, |f| {
-            formula::move_refs(f, &name, None, src, dr, dc)
-        });
+        let wb = structure::map_formula_texts(&self.workbook_xml, |f| follow(f, None));
         if wb != self.workbook_xml {
             self.workbook_xml = wb;
             self.reread_defined_names();
@@ -1805,9 +1826,9 @@ impl Workbook {
         let trusted: HashSet<(usize, CellRef)> = std::mem::take(&mut self.trusted)
             .into_iter()
             .map(|(s, p)| {
-                if s == idx && src.contains(p) {
+                if s == from && src.contains(p) {
                     (
-                        s,
+                        into,
                         CellRef::new(dest.start.row + p.row - sr, dest.start.col + p.col - sc),
                     )
                 } else {
@@ -1829,43 +1850,50 @@ impl Workbook {
         Ok(())
     }
 
-    fn move_inner(&mut self, idx: usize, src: Range, dest: Range) -> Result<()> {
-        // Every source cell, as entered, with its style.
+    fn move_inner(&mut self, from: usize, src: Range, into: usize, dest: Range) -> Result<()> {
+        let from_name = self.sheets[from].name.clone();
+        // Every source cell, as entered, with its style; a formula going to
+        // another sheet keeps meaning the cells of the sheet it was on.
         let mut moved = Vec::new();
-        for (p, c) in self.loaded[&idx].1.cells.clone() {
+        for (p, c) in self.loaded[&from].1.cells.clone() {
             if src.contains(p) {
-                let text = if c.value != Value::Empty || c.formula.is_some() {
-                    self.edit_text(idx, p)?
+                let mut text = if c.value != Value::Empty || c.formula.is_some() {
+                    self.edit_text(from, p)?
                 } else {
                     String::new()
                 };
+                if from != into && c.formula.is_some() {
+                    text = format!("={}", formula::qualify_refs(&text[1..], &from_name));
+                }
                 moved.push((p.row - src.start.row, p.col - src.start.col, text, c.style));
             }
         }
         // The source and the destination emptied, styles too.
-        let cleared: Vec<(CellRef, bool, u32)> = self.loaded[&idx]
-            .1
-            .cells
-            .iter()
-            .filter(|(p, _)| src.contains(**p) || dest.contains(**p))
-            .map(|(p, c)| (*p, c.value != Value::Empty || c.formula.is_some(), c.style))
-            .collect();
-        for (p, filled, style) in cleared {
-            if filled {
-                self.set_input(idx, p, Input::Clear)?;
-            }
-            if style != 0 {
-                self.apply_style(idx, p, 0)?;
+        for (i, area) in [(from, src), (into, dest)] {
+            let cleared: Vec<(CellRef, bool, u32)> = self.loaded[&i]
+                .1
+                .cells
+                .iter()
+                .filter(|(p, _)| area.contains(**p))
+                .map(|(p, c)| (*p, c.value != Value::Empty || c.formula.is_some(), c.style))
+                .collect();
+            for (p, filled, style) in cleared {
+                if filled {
+                    self.set_input(i, p, Input::Clear)?;
+                }
+                if style != 0 {
+                    self.apply_style(i, p, 0)?;
+                }
             }
         }
         let date1904 = self.date1904;
         for (dr, dc, text, style) in moved {
             let at = CellRef::new(dest.start.row + dr, dest.start.col + dc);
             if !text.is_empty() {
-                self.set_input(idx, at, Input::parse(&text, date1904))?;
+                self.set_input(into, at, Input::parse(&text, date1904))?;
             }
             if style != 0 {
-                self.apply_style(idx, at, style)?;
+                self.apply_style(into, at, style)?;
             }
         }
         self.batch_changed = true;

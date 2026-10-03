@@ -454,6 +454,25 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn move_cells_between(
+        &mut self,
+        from: usize,
+        range: [u32; 4],
+        to: usize,
+        row: u32,
+        col: u32,
+    ) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .move_range_to(from, r, to, CellRef::new(row, col))
+            .map_err(err)?;
+        self.notes.clear();
+        Ok(self.all_units())
+    }
+
     fn clear_cells(&mut self, unit: usize, range: [u32; 4]) -> Result<Vec<usize>> {
         let r = crate::cellref::Range {
             start: CellRef::new(range[0], range[1]),
@@ -825,6 +844,24 @@ mod tests {
         assert_eq!(d.cell_input(0, 1, 3), "=B2+C2");
         // A merged cell in the way is refused.
         assert!(d.move_cells(0, [1, 1, 1, 1], 0, 5).is_err());
+    }
+
+    #[test]
+    fn moving_cells_to_another_sheet() {
+        let mut d = open("libreoffice-budget.xlsx");
+        // Budget!B3:D3 (Food: Q1, Q2 and its total =B3+C3) to Dates!C10.
+        d.move_cells_between(0, [2, 1, 2, 3], 1, 9, 2).unwrap();
+        assert_eq!(d.cell_input(0, 2, 1), "");
+        assert_eq!(d.cell_input(1, 9, 2), "431.5");
+        // The moved formula names the cells it read: they moved with it.
+        assert_eq!(d.cell_input(1, 9, 4), "=Dates!C10+Dates!D10");
+        assert_eq!(d.grid_cells(1, 9..10, 4..5)[0].2.text, "943.75");
+        // Budget's sums now read Dates where the cells went.
+        assert_eq!(d.cell_input(0, 4, 3), "=SUM(D2:D4)");
+        assert_eq!(d.grid_cells(0, 4..5, 3..4)[0].2.text, "3,350.00");
+        assert!(d.undo().unwrap());
+        assert_eq!(d.cell_input(0, 2, 3), "=B3+C3");
+        assert_eq!(d.cell_input(1, 9, 2), "");
     }
 
     #[test]
