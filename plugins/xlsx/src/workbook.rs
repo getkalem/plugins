@@ -305,6 +305,9 @@ pub struct Workbook {
     batch_changed: bool,
     /// A data table's own cells being written, past the guard on them.
     filling_table: bool,
+    /// How sheets are shown, as set since opening: written when saving,
+    /// untouched by undo.
+    views: HashMap<usize, ViewRaw>,
     /// Counts the changes to sheet texts, for what is computed from them.
     generation: u64,
     /// Each sheet's data validations, at the generation they were read.
@@ -428,6 +431,7 @@ impl Workbook {
             batch_edited: Vec::new(),
             batch_changed: false,
             filling_table: false,
+            views: HashMap::new(),
         };
         wb.read_workbook_part();
         Ok(wb)
@@ -6442,7 +6446,17 @@ impl Workbook {
     fn staged(&self) -> Package {
         let mut pkg = self.pkg.clone();
         for &i in &self.dirty_sheets {
-            pkg.set_part(&self.sheets[i].part, self.loaded[&i].0.clone().into_bytes());
+            if !self.views.contains_key(&i) {
+                pkg.set_part(&self.sheets[i].part, self.loaded[&i].0.clone().into_bytes());
+            }
+        }
+        for (&i, v) in &self.views {
+            if let Some((text, model)) = self.loaded.get(&i) {
+                let new = views::apply(text, &model.prefix, v);
+                if new != *text || self.dirty_sheets.contains(&i) {
+                    pkg.set_part(&self.sheets[i].part, new.into_bytes());
+                }
+            }
         }
         if let (Some(part), Some(text)) = (&self.styles_part, &self.styles_xml) {
             pkg.set_part(part, text.clone().into_bytes());
@@ -6619,6 +6633,12 @@ fn frozen_text(text: &str, p: &str, rows: u32, cols: u32) -> String {
             CellRef::new(rows, cols)
         )
     };
+    with_pane(text, p, pane)
+}
+
+/// A sheet part whose first view has `pane` (none when empty) in place
+/// of its pane and the selections of its panes.
+fn with_pane(text: &str, p: &str, pane: String) -> String {
     let mut r = Reader::new(text);
     while let Some(t) = r.next_token() {
         let Token::Start(tag) = t else { continue };
@@ -7551,6 +7571,8 @@ mod sheet_ops;
 mod sparklines;
 pub use sparklines::Spark;
 mod tables;
+mod views;
+pub use views::{SplitRaw, ViewRaw};
 mod threads;
 pub use threads::{Thread, ThreadEntry};
 mod whatif;

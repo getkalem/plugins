@@ -29,6 +29,62 @@ fn err(e: impl std::fmt::Display) -> ViewerError {
     ViewerError(e.to_string())
 }
 
+/// The headings' height and width in twips, as Excel counts them in a
+/// split's sizes.
+const HEAD_TWIPS: (f64, f64) = (300.0, 400.0);
+
+/// A row's height and a column's width in twips.
+fn row_twips(l: &GridLayout, r: u32) -> f64 {
+    let pt = l
+        .heights
+        .iter()
+        .find(|(i, _)| *i == r)
+        .map_or(l.default_height, |(_, h)| *h);
+    f64::from(pt) * 20.0
+}
+
+fn col_twips(l: &GridLayout, c: u32) -> f64 {
+    let w = l.widths.get(c as usize).copied().unwrap_or(l.default_width);
+    // Characters as pixels (`7 × width + 5`), pixels as points.
+    f64::from(w * 7.0 + 5.0) * 0.75 * 20.0
+}
+
+/// A split's top pane rows and left pane columns, from its sizes.
+fn split_cells(l: &GridLayout, s: &crate::workbook::SplitRaw, headings: bool) -> (u32, u32) {
+    let (hy, hx) = if headings { HEAD_TWIPS } else { (0.0, 0.0) };
+    let count = |room: f64, from: u32, size: &dyn Fn(u32) -> f64| -> u32 {
+        if room <= 0.0 {
+            return 0;
+        }
+        let (mut used, mut n) = (0.0, 0);
+        while used + size(from + n) / 2.0 < room && n < 500 {
+            used += size(from + n);
+            n += 1;
+        }
+        n.max(1)
+    };
+    (
+        count(s.y - hy, s.top_left.row, &|r| row_twips(l, r)),
+        count(s.x - hx, s.top_left.col, &|c| col_twips(l, c)),
+    )
+}
+
+/// A split's sizes in twips, from its rows and columns.
+fn split_twips(l: &GridLayout, [rows, cols, top, left]: [u32; 4], headings: bool) -> (f64, f64) {
+    let (hy, hx) = if headings { HEAD_TWIPS } else { (0.0, 0.0) };
+    let y = if rows == 0 {
+        0.0
+    } else {
+        hy + (top..top + rows).map(|r| row_twips(l, r)).sum::<f64>()
+    };
+    let x = if cols == 0 {
+        0.0
+    } else {
+        hx + (left..left + cols).map(|c| col_twips(l, c)).sum::<f64>()
+    };
+    (y, x)
+}
+
 fn rgb(c: u32) -> [u8; 3] {
     [(c >> 16) as u8, (c >> 8) as u8, c as u8]
 }
@@ -97,6 +153,7 @@ impl Viewer for XlsxViewer {
         Ok(Box::new(XlsxDoc {
             wb: std::sync::Mutex::new(wb),
             saved_at: 0,
+            view_changed: false,
             notes: HashMap::new(),
             cf: HashMap::new(),
             charts: HashMap::new(),
@@ -112,6 +169,8 @@ struct XlsxDoc {
     wb: std::sync::Mutex<Workbook>,
     /// The history's length when last saved.
     saved_at: usize,
+    /// A sheet's view settings changed since the last save.
+    view_changed: bool,
     /// Each sheet's notes, read once.
     notes: HashMap<usize, HashMap<CellRef, String>>,
     /// Each sheet's conditional formats and what they made of its cells,
@@ -943,6 +1002,54 @@ impl ViewerDocument for XlsxDoc {
             }
         }
         out
+    }
+
+    fn sheet_view(&mut self, unit: usize) -> kalem_viewer::SheetView {
+        let raw = self.book().view_raw(unit);
+        let split = raw.split.and_then(|sp| {
+            let l = self.grid(unit)?;
+            let (rows, cols) = split_cells(&l, &sp, raw.headings);
+            (rows > 0 || cols > 0).then_some([rows, cols, sp.top_left.row, sp.top_left.col])
+        });
+        kalem_viewer::SheetView {
+            zoom: raw.zoom,
+            gridlines: raw.gridlines,
+            headings: raw.headings,
+            page_break_preview: raw.preview,
+            split,
+        }
+    }
+
+    fn set_sheet_view(&mut self, unit: usize, view: kalem_viewer::SheetView) -> Result<Vec<usize>> {
+        if !(10..=400).contains(&view.zoom) {
+            return Err(ViewerError("The zoom is 10% to 400%".into()));
+        }
+        let split = match view.split {
+            Some([rows, cols, top, left]) if rows > 0 || cols > 0 => {
+                let l = self
+                    .grid(unit)
+                    .ok_or_else(|| ViewerError("Not a sheet".into()))?;
+                let (y, x) = split_twips(&l, [rows, cols, top, left], view.headings);
+                Some(crate::workbook::SplitRaw {
+                    y,
+                    x,
+                    top_left: CellRef::new(top, left),
+                    pane_top_left: CellRef::new(top + rows, left + cols),
+                })
+            }
+            _ => None,
+        };
+        let raw = crate::workbook::ViewRaw {
+            zoom: view.zoom,
+            gridlines: view.gridlines,
+            headings: view.headings,
+            preview: view.page_break_preview,
+            split,
+        };
+        if self.book().set_view_raw(unit, raw).map_err(err)? {
+            self.view_changed = true;
+        }
+        Ok(vec![unit])
     }
 
     fn tab_color(&mut self, unit: usize) -> Option<[u8; 3]> {
@@ -2000,12 +2107,15 @@ impl ViewerDocument for XlsxDoc {
 
     fn modified(&self) -> bool {
         let wb = self.locked();
-        wb.history_len() != self.saved_at || (self.saved_at == 0 && wb.is_dirty())
+        self.view_changed
+            || wb.history_len() != self.saved_at
+            || (self.saved_at == 0 && wb.is_dirty())
     }
 
     fn save(&mut self) -> Result<SaveOutput> {
         let bytes = self.book().save().map_err(err)?;
         self.saved_at = self.book().history_len();
+        self.view_changed = false;
         Ok(SaveOutput {
             bytes,
             losses: Vec::new(),
@@ -4366,5 +4476,41 @@ mod tests {
             assert!(d.undo().unwrap());
         }
         assert_eq!(d.threads(0)[0].comments.len(), 1);
+    }
+
+    #[test]
+    fn sheet_views() {
+        use kalem_viewer::SheetView;
+        let mut d = open("openpyxl-budget.xlsx");
+        assert_eq!(d.sheet_view(0), SheetView::default());
+        assert!(!d.modified());
+        let v = SheetView {
+            zoom: 150,
+            gridlines: false,
+            headings: false,
+            page_break_preview: true,
+            split: Some([3, 2, 4, 1]),
+        };
+        d.set_sheet_view(0, v).unwrap();
+        assert_eq!(d.sheet_view(0), v);
+        // An edit to save, which undo leaves alone.
+        assert!(d.modified());
+        d.set_cell(0, 0, 10, "x").unwrap();
+        assert!(d.undo().unwrap());
+        assert_eq!(d.sheet_view(0), v);
+        let saved = d.save().unwrap().bytes;
+        assert!(!d.modified());
+        let mut back = crate::Workbook::open(saved).unwrap();
+        let raw = back.view_raw(0);
+        assert_eq!(
+            (raw.zoom, raw.gridlines, raw.headings, raw.preview),
+            (150, false, false, true)
+        );
+        assert!(raw.split.is_some());
+        // Back to normal; the frozen pane the file had is kept meanwhile.
+        d.set_sheet_view(0, SheetView::default()).unwrap();
+        let mut back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert_eq!(back.view_raw(0), crate::workbook::ViewRaw::default());
+        assert_eq!(back.sheet(0).unwrap().frozen, Some((1, 0)));
     }
 }
