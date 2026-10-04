@@ -4344,6 +4344,39 @@ impl Workbook {
         }
     }
 
+    /// Enters texts into scattered cells, each as typed, in one undo step
+    /// (Flash Fill's results); a cell Excel would refuse refuses them all.
+    pub fn set_cell_list(&mut self, idx: usize, cells: &[(CellRef, String)]) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let mut result = Ok(());
+        for (at, v) in cells {
+            result = self.set_cell(idx, *at, v);
+            if result.is_err() {
+                break;
+            }
+        }
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Enters rows of texts from `at` on, each as typed, as Excel's Paste of
     /// text: one undo step; a cell Excel would refuse (inside a merged
     /// cell, part of an array) refuses the whole paste.

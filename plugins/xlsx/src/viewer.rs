@@ -568,6 +568,15 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn set_cell_list(&mut self, unit: usize, cells: &[(u32, u32, String)]) -> Result<Vec<usize>> {
+        let cells: Vec<(CellRef, String)> = cells
+            .iter()
+            .map(|(r, c, v)| (CellRef::new(*r, *c), v.clone()))
+            .collect();
+        self.book().set_cell_list(unit, &cells).map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn move_cells(
         &mut self,
         unit: usize,
@@ -2172,6 +2181,18 @@ mod tests {
         assert!(d.undo().unwrap());
         assert_eq!(d.cell_input(0, 0, 4), "");
         assert!(d.fill(0, [9, 1, 10, 1], [9, 1, 12, 3], true).is_err());
+        // Scattered cells in one undo step.
+        let cells = vec![(30, 0, "a".to_string()), (32, 1, "b".to_string())];
+        d.set_cell_list(0, &cells).unwrap();
+        assert_eq!(
+            (d.cell_input(0, 30, 0), d.cell_input(0, 32, 1)),
+            ("a".into(), "b".into())
+        );
+        assert!(d.undo().unwrap());
+        assert_eq!(
+            (d.cell_input(0, 30, 0), d.cell_input(0, 32, 1)),
+            (String::new(), String::new())
+        );
         // The user's own list goes round.
         d.set_fill_lists(vec![vec!["Low".into(), "Mid".into(), "High".into()]]);
         d.set_cell(0, 20, 0, "Mid").unwrap();
