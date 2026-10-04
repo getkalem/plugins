@@ -550,6 +550,19 @@ impl ViewerDocument for XlsxDoc {
             .unwrap_or_default()
     }
 
+    fn edit_sheets(&mut self, edit: kalem_viewer::SheetEdit) -> Result<usize> {
+        let shown = self.book().edit_sheets(&edit).map_err(err)?;
+        // What was kept by sheet number.
+        self.notes.clear();
+        self.cf.clear();
+        self.charts.clear();
+        Ok(shown)
+    }
+
+    fn hidden_units(&mut self) -> Vec<usize> {
+        self.book().hidden_sheets()
+    }
+
     fn range_numbers(&mut self, unit: usize, range: [u32; 4]) -> (Vec<f64>, usize) {
         let r = crate::Range {
             start: CellRef::new(range[0], range[1]),
@@ -2487,5 +2500,60 @@ mod tests {
         // Empty cells are not counted; a whole column is quick.
         assert_eq!(d.range_numbers(0, [10, 10, 20, 20]), (Vec::new(), 0));
         assert_eq!(d.range_numbers(0, [0, 1, 1_048_575, 1]).1, 5);
+    }
+
+    #[test]
+    fn sheets_edited() {
+        use kalem_viewer::SheetEdit;
+        let mut d = open("openpyxl-budget.xlsx");
+        let names = |d: &mut Box<dyn ViewerDocument>| -> Vec<String> {
+            d.structure().units.into_iter().map(|u| u.label).collect()
+        };
+        let first = names(&mut d);
+        assert_eq!(first[0], "Budget");
+        // A formula on another sheet naming Budget follows its new name.
+        d.edit_sheets(SheetEdit::Insert(1)).unwrap();
+        let n = names(&mut d);
+        assert_eq!(n.len(), first.len() + 1);
+        assert_eq!(n[1], "Sheet1");
+        d.set_cell(1, 0, 0, "=Budget!D2*2").unwrap();
+        d.edit_sheets(SheetEdit::Rename(0, "Bütçe 2026".into()))
+            .unwrap();
+        assert_eq!(d.cell_input(1, 0, 0), "='Bütçe 2026'!D2*2");
+        assert_eq!(d.grid_cells(1, 0..1, 0..1)[0].2.text, "4800");
+        // Names Excel refuses.
+        for bad in ["", "a/b", "Sheet1", "'x", &"x".repeat(32)] {
+            assert!(
+                d.edit_sheets(SheetEdit::Rename(0, bad.into())).is_err(),
+                "{bad}"
+            );
+        }
+        // Moved last: the formula still finds it.
+        let last = names(&mut d).len() - 1;
+        d.edit_sheets(SheetEdit::Move(0, last)).unwrap();
+        assert_eq!(names(&mut d)[last], "Bütçe 2026");
+        assert_eq!(d.grid_cells(0, 0..1, 0..1)[0].2.text, "4800");
+        // Hidden and shown again; the last visible sheet cannot be hidden.
+        let hidden = d.hidden_units();
+        d.edit_sheets(SheetEdit::Hide(0, true)).unwrap();
+        assert!(d.hidden_units().contains(&0));
+        d.edit_sheets(SheetEdit::Hide(0, false)).unwrap();
+        assert_eq!(d.hidden_units(), hidden);
+        // Deleted: the formula naming it becomes #REF!.
+        d.edit_sheets(SheetEdit::Delete(last)).unwrap();
+        assert_eq!(names(&mut d).len(), first.len());
+        assert_eq!(d.cell_input(0, 0, 0), "=#REF!D2*2");
+        // Saved and read again as Excel would; each change undone in turn.
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-sheets-test.xlsx"), &saved).unwrap();
+        }
+        let wb = Workbook::open(saved).unwrap();
+        assert_eq!(wb.sheets()[0].name, "Sheet1");
+        for _ in 0..7 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(names(&mut d), first);
+        assert_eq!(d.grid_cells(0, 1..2, 3..4)[0].2.text, "2,400.00");
     }
 }
