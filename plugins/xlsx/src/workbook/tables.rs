@@ -515,7 +515,7 @@ impl Workbook {
     }
 
     /// A sheet's relationship taken away.
-    fn remove_rel_of(&mut self, source: &str, rid: &str) -> Result<()> {
+    pub(crate) fn remove_rel_of(&mut self, source: &str, rid: &str) -> Result<()> {
         let path = rels::rels_path(source);
         let text = text_of(self.pkg.part(&path)?, &path)?;
         let mut r = Reader::new(&text);
@@ -539,7 +539,7 @@ impl Workbook {
     }
 
     /// A part out of the package and its content types.
-    fn remove_part_and_type(&mut self, name: &str) -> Result<()> {
+    pub(crate) fn remove_part_and_type(&mut self, name: &str) -> Result<()> {
         self.pkg.remove_part(name);
         let ct = "[Content_Types].xml";
         let types = text_of(self.pkg.part(ct)?, ct)?;

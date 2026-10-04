@@ -212,7 +212,7 @@ impl Workbook {
     }
 
     /// A part name not in the package: `{stem}{n}.{ext}`.
-    fn free_part_ext(&self, stem: &str, ext: &str) -> String {
+    pub(crate) fn free_part_ext(&self, stem: &str, ext: &str) -> String {
         (1..)
             .map(|n| format!("{stem}{n}.{ext}"))
             .find(|p| !self.pkg.contains(p))
@@ -220,7 +220,7 @@ impl Workbook {
     }
 
     /// A content type for files ending in `.ext`, when the package has none.
-    fn ensure_default_type(&mut self, ext: &str, content_type: &str) -> Result<()> {
+    pub(crate) fn ensure_default_type(&mut self, ext: &str, content_type: &str) -> Result<()> {
         let ct = "[Content_Types].xml";
         let types = text_of(self.pkg.part(ct)?, ct)?;
         if types.contains(&format!("Extension=\"{ext}\"")) {

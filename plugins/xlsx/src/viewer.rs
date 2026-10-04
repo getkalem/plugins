@@ -620,6 +620,68 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn drawings(&mut self, unit: usize) -> Vec<kalem_viewer::Drawing> {
+        self.book().drawings(unit)
+    }
+
+    fn drawing_image(&mut self, unit: usize, index: usize) -> Option<Vec<u8>> {
+        self.book().drawing_image(unit, index)
+    }
+
+    fn insert_picture(
+        &mut self,
+        unit: usize,
+        anchor: [u32; 4],
+        bytes: &[u8],
+        extension: &str,
+    ) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(anchor[0], anchor[1]),
+            end: CellRef::new(anchor[2], anchor[3]),
+        };
+        self.book()
+            .insert_picture(unit, r, bytes, extension)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn insert_shape(
+        &mut self,
+        unit: usize,
+        anchor: [u32; 4],
+        preset: &str,
+        text: &str,
+        text_box: bool,
+    ) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(anchor[0], anchor[1]),
+            end: CellRef::new(anchor[2], anchor[3]),
+        };
+        self.book()
+            .insert_shape(unit, r, preset, text, text_box)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn move_drawing(&mut self, unit: usize, index: usize, anchor: [u32; 4]) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(anchor[0], anchor[1]),
+            end: CellRef::new(anchor[2], anchor[3]),
+        };
+        self.book().move_drawing(unit, index, r).map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_shape_text(&mut self, unit: usize, index: usize, text: &str) -> Result<Vec<usize>> {
+        self.book().set_shape_text(unit, index, text).map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn delete_drawing(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
+        self.book().delete_drawing(unit, index).map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn tables(&mut self, unit: usize) -> Vec<kalem_viewer::TableInfo> {
         self.book()
             .sheet_tables(unit)
@@ -3703,6 +3765,73 @@ mod tests {
             (d.cell_input(0, 9, 0), d.cell_input(0, 9, 1)),
             (String::new(), String::new())
         );
-        assert!(!d.conditional_ranges(0).is_empty() || d.conditional_ranges(0).is_empty());
+        // A conditional format's range is among the sheet's.
+        let rule = CondRule::Formula("=TRUE".into());
+        let style = CondStyle {
+            fill: Some([1, 2, 3]),
+            color: None,
+            bold: false,
+        };
+        d.add_conditional_format(0, [2, 2, 5, 3], rule, style)
+            .unwrap();
+        assert!(d.conditional_ranges(0).contains(&[2, 2, 5, 3]));
+    }
+
+    #[test]
+    fn pictures_and_shapes() {
+        use kalem_viewer::DrawingKind;
+        let mut d = open("openpyxl-budget.xlsx");
+        let charts = d.charts(0).len();
+        // A PNG of one pixel.
+        let png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0,
+            0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89, 0, 0, 0, 13, 0x49, 0x44,
+            0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0, 0x1F, 0, 5, 0, 1, 0xFF, 0x89,
+            0x99, 0x3D, 0x1D, 0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        d.insert_picture(0, [10, 1, 14, 3], &png, "png").unwrap();
+        d.insert_shape(0, [10, 5, 12, 7], "ellipse", "Hedef\n2026", false)
+            .unwrap();
+        d.insert_shape(0, [15, 1, 16, 4], "rect", "Not: taslak", true)
+            .unwrap();
+        let all = d.drawings(0);
+        assert_eq!(all.len(), 3);
+        assert_eq!(
+            (all[0].kind.clone(), all[0].anchor),
+            (DrawingKind::Picture, [10, 1, 14, 3])
+        );
+        assert_eq!(d.drawing_image(0, 0).unwrap(), png);
+        let DrawingKind::Shape {
+            preset,
+            text,
+            text_box,
+            fill,
+            ..
+        } = all[1].kind.clone()
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (preset.as_str(), text.as_str(), text_box, fill),
+            ("ellipse", "Hedef\n2026", false, Some([0x44, 0x72, 0xC4]))
+        );
+        // Moved, its text changed; the picture deleted.
+        d.move_drawing(0, 1, [20, 5, 23, 8]).unwrap();
+        d.set_shape_text(0, 1, "Yeni").unwrap();
+        let s = &d.drawings(0)[1];
+        assert_eq!(s.anchor, [20, 5, 23, 8]);
+        assert!(matches!(&s.kind, DrawingKind::Shape { text, .. } if text == "Yeni"));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-pictures-test.xlsx"), &saved).unwrap();
+        }
+        d.delete_drawing(0, 0).unwrap();
+        assert_eq!(d.drawings(0).len(), 2);
+        // The charts are still the charts.
+        assert_eq!(d.charts(0).len(), charts);
+        for _ in 0..6 {
+            assert!(d.undo().unwrap());
+        }
+        assert!(d.drawings(0).is_empty());
     }
 }

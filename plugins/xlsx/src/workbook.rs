@@ -7521,6 +7521,7 @@ mod notes;
 mod outline;
 pub use outline::Outline;
 mod page;
+mod pictures;
 mod protection;
 mod sheet_ops;
 mod tables;
