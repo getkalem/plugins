@@ -128,6 +128,8 @@ pub struct SeriesDef {
     pub val: (Option<String>, Vec<Option<f64>>),
     /// Its fill or line color.
     pub color: Option<Rgb>,
+    /// Points with colors of their own: point, color.
+    pub points: Vec<(usize, Rgb)>,
 }
 
 /// A chart part as Kalem reads it.
@@ -218,6 +220,7 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     let mut title = String::new();
     let mut title_ref: Option<String> = None;
     let (mut axis_title, mut axis_pos) = (String::new(), String::new());
+    let mut point: Option<(Option<usize>, Option<Rgb>)> = None;
     let mut axis_scale: Scale = (None, None, None, false);
     // Each value axis: its side and scale.
     let mut value_axes: Vec<(String, Scale)> = Vec::new();
@@ -350,6 +353,26 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     "axPos" if parent.ends_with("Ax") => {
                         axis_pos = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
                     }
+                    "dPt" if ser.is_some() && !tag.empty => point = Some((None, None)),
+                    "idx" if parent == "dPt" => {
+                        if let Some(pt) = point.as_mut() {
+                            pt.0 = tag.attr("val").and_then(|v| v.parse::<usize>().ok());
+                        }
+                    }
+                    "srgbClr" | "schemeClr"
+                        if point.as_ref().is_some_and(|p| p.1.is_none())
+                            && stack.iter().any(|s| s == "spPr")
+                            && !stack.iter().any(|s| s == "ln") =>
+                    {
+                        let v = tag.attr("val").unwrap_or_default();
+                        if let Some(pt) = point.as_mut() {
+                            pt.1 = if name == "srgbClr" {
+                                u32::from_str_radix(&v, 16).ok()
+                            } else {
+                                scheme(&v, theme)
+                            };
+                        }
+                    }
                     "srgbClr" | "schemeClr" => {
                         // A scatter chart's points take the marker's fill.
                         let in_fill = if def.kind == ChartKind::Scatter {
@@ -378,6 +401,12 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
             }
             Token::End { name, .. } => {
                 stack.pop();
+                if name == "dPt"
+                    && let Some((Some(i), Some(c))) = point.take()
+                    && let Some(s) = ser.as_mut()
+                {
+                    s.points.push((i, c));
+                }
                 if name.ends_with("Ax") && stack.last().is_some_and(|s| s == "plotArea") {
                     let sc = std::mem::take(&mut axis_scale);
                     if name == "valAx" {
@@ -1155,6 +1184,137 @@ pub fn with_series_color(
     Some(out)
 }
 
+/// A chart part with point `point` of series `series` (a pie's slice)
+/// given `color`, or its series' again (`None`): the point's `<c:dPt>`
+/// written, in the order of the points, or taken away. `None` when there
+/// is no such series.
+pub fn with_point_color(
+    text: &str,
+    series: usize,
+    point: usize,
+    color: Option<Rgb>,
+) -> Option<String> {
+    const DRAWING: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut found = None;
+    let mut n = 0;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                let parent = stack.last().map(String::as_str).unwrap_or("");
+                if tag.name == "ser" && parent.ends_with("Chart") {
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    if n == series {
+                        found = Some((tag.span.start..end, xml::prefix(tag.qname).to_owned()));
+                        break;
+                    }
+                    n += 1;
+                    continue;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let (span, p) = found?;
+    let a = text.split("xmlns:").skip(1).find_map(|d| {
+        let (pfx, rest) = d.split_once("=\"")?;
+        (rest.split('"').next()? == DRAWING).then(|| pfx.to_owned())
+    });
+    let (a, decl) = match a {
+        Some(a) => (a, String::new()),
+        None => ("a".to_owned(), format!(" xmlns:a=\"{DRAWING}\"")),
+    };
+    let fill = color
+        .map(|c| format!("<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>"));
+    let ser = &text[span.clone()];
+    let (ser_text, open_end, close, kids) = open_up(ser);
+    let idx_of = |el: &str| -> Option<usize> {
+        el.split("idx val=\"")
+            .nth(1)?
+            .split('"')
+            .next()?
+            .parse()
+            .ok()
+    };
+    let mut out = String::from(&ser_text[..open_end]);
+    let mut placed = fill.is_none();
+    let new_point = |fill: &str| {
+        format!(
+            "<{p}dPt><{p}idx val=\"{point}\"/><{p}bubble3D val=\"0\"/><{p}spPr>{fill}</{p}spPr></{p}dPt>"
+        )
+    };
+    // Children the points come after, and the point's place among them.
+    let before_points = [
+        "idx",
+        "order",
+        "tx",
+        "spPr",
+        "invertIfNegative",
+        "pictureOptions",
+        "marker",
+        "explosion",
+    ];
+    let last_head = kids
+        .iter()
+        .rposition(|k| before_points.contains(&k.0.as_str()));
+    for (i, (name, sp)) in kids.iter().enumerate() {
+        let el = &ser_text[sp.clone()];
+        if name == "dPt" {
+            match idx_of(el) {
+                Some(k) if k == point => {
+                    if let Some(f) = &fill {
+                        let spr = match child(el, "spPr") {
+                            Some(spr) => {
+                                set_child(spr, &FILLS, f, &["xfrm", "custGeom", "prstGeom"])
+                            }
+                            None => format!("<{p}spPr>{f}</{p}spPr>"),
+                        };
+                        out.push_str(&set_child(
+                            el,
+                            &["spPr"],
+                            &spr,
+                            &["idx", "invertIfNegative", "marker", "bubble3D", "explosion"],
+                        ));
+                        placed = true;
+                    }
+                    continue;
+                }
+                Some(k) if k > point && !placed => {
+                    out.push_str(&new_point(fill.as_deref().unwrap_or("")));
+                    placed = true;
+                }
+                _ => {}
+            }
+        } else if !placed && !before_points.contains(&name.as_str()) && name != "dPt" {
+            out.push_str(&new_point(fill.as_deref().unwrap_or("")));
+            placed = true;
+        }
+        out.push_str(el);
+        if !placed && Some(i) == last_head && kids.get(i + 1).is_none_or(|k| k.0 != "dPt") {
+            out.push_str(&new_point(fill.as_deref().unwrap_or("")));
+            placed = true;
+        }
+    }
+    if !placed {
+        out.push_str(&new_point(fill.as_deref().unwrap_or("")));
+    }
+    out.push_str(&ser_text[close..]);
+    let mut whole = text.to_owned();
+    whole.replace_range(span, &out);
+    Some(whole)
+}
+
 /// An absolute reference to a range of a sheet, as charts write them.
 pub fn reference(sheet: &str, r: crate::cellref::Range) -> String {
     let abs = |c: crate::cellref::CellRef| {
@@ -1687,6 +1847,52 @@ mod tests {
         let y = with_series_color(excel, 0, Some(0xFF0000), ChartKind::Column).unwrap();
         assert!(y.contains(r#"<c:spPr><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></c:spPr>"#), "{y}");
         assert!(with_series_color(excel, 3, Some(1), ChartKind::Column).is_none());
+    }
+
+    #[test]
+    fn slice_colors_set_ordered_and_cleared() {
+        let s = NewSeries {
+            name: None,
+            cat: Some((
+                "S!$A$2:$A$4".into(),
+                vec!["a".into(), "b".into(), "c".into()],
+                false,
+            )),
+            val: ("S!$B$2:$B$4".into(), vec![Some(1.0), Some(2.0), Some(3.0)]),
+            color: None,
+        };
+        let x = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
+        let y = with_point_color(&x, 0, 2, Some(0xFF0000)).unwrap();
+        let y = with_point_color(&y, 0, 0, Some(0x00FF00)).unwrap();
+        let d = parse_chart(&y, &[]);
+        assert_eq!(d.series[0].points, vec![(0, 0x00FF00), (2, 0xFF0000)]);
+        // In the order of the points, before the categories.
+        let ser = &y[y.find("<c:ser>").unwrap()..];
+        assert!(ser.find("idx val=\"0\"/><c:bubble3D") < ser.find("idx val=\"2\"/><c:bubble3D"));
+        assert!(ser.rfind("<c:dPt>") < ser.find("<c:cat>"));
+        assert!(ser.find("<c:dPt>") > ser.find("<c:order"));
+        // Recolored in place; cleared.
+        let z = with_point_color(&y, 0, 2, Some(0x0000FF)).unwrap();
+        assert_eq!(
+            parse_chart(&z, &[]).series[0].points,
+            vec![(0, 0x00FF00), (2, 0x0000FF)]
+        );
+        assert_eq!(z.matches("<c:dPt>").count(), 2);
+        let z = with_point_color(&z, 0, 0, None).unwrap();
+        assert_eq!(parse_chart(&z, &[]).series[0].points, vec![(2, 0x0000FF)]);
+        // The middle one between them.
+        let m = with_point_color(&y, 0, 1, Some(0x111111)).unwrap();
+        let pts: Vec<usize> = parse_chart(&m, &[]).series[0]
+            .points
+            .iter()
+            .map(|p| p.0)
+            .collect();
+        assert_eq!(pts, [0, 1, 2]);
+        assert!(
+            m.find("idx val=\"1\"/><c:bubble3D").unwrap()
+                < m.find("idx val=\"2\"/><c:bubble3D").unwrap()
+        );
+        assert!(with_point_color(&x, 4, 0, Some(1)).is_none());
     }
 
     #[test]

@@ -761,6 +761,20 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_point_color(
+        &mut self,
+        unit: usize,
+        index: usize,
+        series: usize,
+        point: usize,
+        color: Option<[u8; 3]>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_point_color(unit, index, series, point, color)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1843,6 +1857,34 @@ mod tests {
             d.set_series_color(0, before, 0, Some([0, 0, 0])).is_err(),
             "a pie"
         );
+        // Its second slice red, kept through a change of kind, then its
+        // series' color again.
+        d.set_point_color(0, before, 0, 1, Some([0xFF, 0, 0]))
+            .unwrap();
+        assert_eq!(
+            d.charts(0)[before].series[0].point_colors,
+            vec![(1, [0xFF, 0, 0])]
+        );
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(
+                format!("{dir}/kalem-slice-test.xlsx"),
+                d.save().unwrap().bytes,
+            )
+            .unwrap();
+        }
+        assert!(
+            d.set_point_color(0, before, 0, 99, Some([1, 1, 1]))
+                .is_err()
+        );
+        d.set_chart_kind(0, before, ChartKind::Doughnut).unwrap();
+        assert_eq!(
+            d.charts(0)[before].series[0].point_colors,
+            vec![(1, [0xFF, 0, 0])]
+        );
+        assert!(d.undo().unwrap());
+        d.set_point_color(0, before, 0, 1, None).unwrap();
+        assert!(d.charts(0)[before].series[0].point_colors.is_empty());
+        assert!(d.undo().unwrap() && d.undo().unwrap());
         for _ in 0..8 {
             assert!(d.undo().unwrap());
         }
