@@ -550,6 +550,29 @@ impl ViewerDocument for XlsxDoc {
             .unwrap_or_default()
     }
 
+    fn paste_cells(
+        &mut self,
+        from: (usize, [u32; 4]),
+        to: (usize, u32, u32),
+        kind: kalem_viewer::PasteKind,
+        transpose: bool,
+    ) -> Result<Vec<usize>> {
+        let r = from.1;
+        let src = crate::Range {
+            start: CellRef::new(r[0], r[1]),
+            end: CellRef::new(r[2], r[3]),
+        };
+        self.book()
+            .paste_cells(
+                (from.0, src),
+                (to.0, CellRef::new(to.1, to.2)),
+                kind,
+                transpose,
+            )
+            .map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn formula_functions(&mut self) -> Vec<(String, String)> {
         crate::functions::list()
     }
@@ -2696,5 +2719,44 @@ mod tests {
         }
         assert_eq!(d.cell_note(0, 1, 0), first);
         assert!(d.cell_note(0, 2, 2).is_none());
+    }
+
+    #[test]
+    fn paste_special() {
+        use kalem_viewer::PasteKind;
+        let mut d = open("openpyxl-budget.xlsx");
+        let text = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .first()
+                .map(|x| x.2.text.clone())
+                .unwrap_or_default()
+        };
+        let d2 = d.cell_input(0, 1, 3);
+        assert!(d2.starts_with('='), "{d2}");
+        // Values: D2's result, not its formula.
+        d.paste_cells((0, [1, 1, 1, 3]), (0, 9, 5), PasteKind::Values, false)
+            .unwrap();
+        assert_eq!(d.cell_input(0, 9, 7), "2400");
+        // Formulas: D2's, moved down eight rows (to empty cells: 0).
+        d.paste_cells((0, [1, 3, 1, 3]), (0, 9, 3), PasteKind::Formulas, false)
+            .unwrap();
+        let moved = d.cell_input(0, 9, 3);
+        assert!(moved.contains("10") && !moved.contains('2'), "{moved}");
+        // Formats: B2's number format on F12.
+        d.paste_cells((0, [1, 1, 1, 1]), (0, 11, 5), PasteKind::Formats, false)
+            .unwrap();
+        d.set_cell(0, 11, 5, "5").unwrap();
+        assert_eq!(text(&mut d, 11, 5), "5.00");
+        // Transposed: the header row down column A from A20.
+        d.paste_cells((0, [0, 0, 0, 3]), (0, 19, 0), PasteKind::All, true)
+            .unwrap();
+        let col: Vec<String> = (19..23).map(|r| text(&mut d, r, 0)).collect();
+        assert_eq!(col, ["Item", "Q1", "Q2", "Total"]);
+        // Each paste one undo step.
+        for _ in 0..5 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(d.cell_input(0, 9, 7), "");
+        assert_eq!(text(&mut d, 19, 0), "");
     }
 }

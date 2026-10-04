@@ -2064,6 +2064,113 @@ impl Workbook {
         result
     }
 
+    /// Pastes cells as Excel's Paste Special does: all of them, their
+    /// values, their formats or their formulas (moved as copied formulas
+    /// move), rows turned into columns when `transpose`. One undo step.
+    pub fn paste_cells(
+        &mut self,
+        from: (usize, Range),
+        to: (usize, CellRef),
+        kind: kalem_viewer::PasteKind,
+        transpose: bool,
+    ) -> Result<()> {
+        use kalem_viewer::PasteKind;
+        let ((si, src), (di, at)) = (from, to);
+        for i in [si, di] {
+            self.load(i)?;
+            if self.sheets[i].kind != SheetKind::Worksheet {
+                return Err(Error::NotAWorksheet(self.sheets[i].name.clone()));
+            }
+        }
+        let (h, w) = (
+            src.end.row - src.start.row + 1,
+            src.end.col - src.start.col + 1,
+        );
+        let (dh, dw) = if transpose { (w, h) } else { (h, w) };
+        if u64::from(h) * u64::from(w) > 200_000 {
+            return Err(Error::Refused("Paste 200,000 cells at most".into()));
+        }
+        if at.row + dh > MAX_ROW || at.col + dw > MAX_COL {
+            return Err(Error::Refused(
+                "The cells would go past the sheet's edge".into(),
+            ));
+        }
+        // What the source has, read whole before anything is written: the
+        // source and the cells pasted to may overlap.
+        let mut items = Vec::new();
+        for r in src.start.row..=src.end.row {
+            for c in src.start.col..=src.end.col {
+                let pos = CellRef::new(r, c);
+                let cell = self.loaded[&si].1.cells.get(&pos).cloned();
+                let value = self.value(si, pos)?;
+                let style = cell
+                    .as_ref()
+                    .map_or_else(|| self.row_or_col_style(si, pos), |c| c.style);
+                let formula = cell.and_then(|c| c.formula.map(|f| f.text));
+                let (dr, dc) = (r - src.start.row, c - src.start.col);
+                let dest = if transpose {
+                    CellRef::new(at.row + dc, at.col + dr)
+                } else {
+                    CellRef::new(at.row + dr, at.col + dc)
+                };
+                items.push((pos, dest, value, formula, style));
+            }
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = (|| -> Result<()> {
+            for (pos, dest, value, formula, style) in items {
+                let constant = match value {
+                    Value::Number(v) => Input::Number(v, None),
+                    Value::Text(t) => Input::Text(t),
+                    Value::Bool(b) => Input::Bool(b),
+                    Value::Error(e) => Input::Error(e),
+                    Value::Empty => Input::Clear,
+                };
+                let input = match (kind, formula) {
+                    (PasteKind::Formats, _) => None,
+                    (PasteKind::Values, _) => Some(constant),
+                    (_, Some(f)) => Some(Input::Formula(formula::shift(
+                        &f,
+                        i64::from(dest.row) - i64::from(pos.row),
+                        i64::from(dest.col) - i64::from(pos.col),
+                    ))),
+                    (_, None) => Some(constant),
+                };
+                if let Some(input) = input {
+                    self.set_input(di, dest, input)?;
+                }
+                if matches!(kind, PasteKind::All | PasteKind::Formats) {
+                    let now = self.loaded[&di]
+                        .1
+                        .cells
+                        .get(&dest)
+                        .map_or_else(|| self.row_or_col_style(di, dest), |c| c.style);
+                    if now != style {
+                        self.apply_style(di, dest, style)?;
+                    }
+                }
+            }
+            Ok(())
+        })();
+        self.batch_changed = true;
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Turns wrapping of a cell's text on or off, as Excel's Wrap Text: the
     /// cell gets a copy of its `<xf>` with `<alignment wrapText>`.
     pub fn set_wrap(&mut self, idx: usize, at: CellRef, wrap: bool) -> Result<()> {
