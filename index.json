@@ -48,8 +48,8 @@
       "api": "^0.1",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/image-viewer",
-      "download": null,
-      "sha256": null
+      "download": "https://github.com/getkalem/plugins/releases/download/image-viewer-v0.0.1/image-viewer.wasm",
+      "sha256": "0e2945d89883c6e0ebd64a9d9db29a5333ccc71819725f7abb31669cf639fd28"
     },
     {
       "id": "org.kalem.pdf-viewer",
