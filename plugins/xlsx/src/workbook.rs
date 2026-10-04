@@ -2182,6 +2182,13 @@ impl Workbook {
     /// A sheet's charts as they read now: their values from the cells they
     /// name, else from what the file cached.
     pub fn charts(&mut self, idx: usize) -> Result<Vec<kalem_viewer::Chart>> {
+        let axis_font = |f: &chart::Font| kalem_viewer::AxisFont {
+            size: f.size,
+            bold: f.bold,
+            italic: f.italic,
+            color: f.color.map(|c| [(c >> 16) as u8, (c >> 8) as u8, c as u8]),
+            face: f.face.clone(),
+        };
         let paint = |f: chart::Fill| match f {
             chart::Fill::Auto => kalem_viewer::Paint::Automatic,
             chart::Fill::None => kalem_viewer::Paint::None,
@@ -2301,6 +2308,8 @@ impl Workbook {
                 plot_background: paint(def.plot_background),
                 plot_border: paint(def.plot_border),
                 axis_format: def.axis_format.clone(),
+                horizontal_font: axis_font(&def.horizontal_font),
+                vertical_font: axis_font(&def.vertical_font),
                 gridlines: kalem_viewer::Gridlines {
                     horizontal_major: def.gridlines.0,
                     horizontal_minor: def.gridlines.1,
@@ -2893,6 +2902,24 @@ impl Workbook {
         {
             new = x;
         }
+        // Axis fonts go with their axis's role, as the titles do.
+        let (cat_font, val_font) = if def.kind == K::Bar {
+            (&def.vertical_font, &def.horizontal_font)
+        } else {
+            (&def.horizontal_font, &def.vertical_font)
+        };
+        let (h_font, v_font) = if kind == K::Bar {
+            (val_font, cat_font)
+        } else {
+            (cat_font, val_font)
+        };
+        for (vertical, f) in [(false, h_font), (true, v_font)] {
+            if !f.is_default()
+                && let Some(x) = chart::with_axis_font(&new, vertical, f)
+            {
+                new = x;
+            }
+        }
         if (def.background, def.border) != (chart::Fill::Auto, chart::Fill::Auto) {
             new = chart::with_chart_area(&new, def.background, def.border);
         }
@@ -3242,6 +3269,55 @@ impl Workbook {
             .filter(|f| !f.is_empty() && *f != "General");
         let new = chart::with_axis_format(&old, format, scatter)
             .ok_or_else(|| Error::Refused("This chart has no value axis".into()))?;
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Sets the font of an axis's labels of a sheet's chart (by its place
+    /// among [`Workbook::charts`]). One undo step.
+    pub fn set_axis_font(
+        &mut self,
+        idx: usize,
+        index: usize,
+        vertical: bool,
+        font: &kalem_viewer::AxisFont,
+    ) -> Result<()> {
+        if font.size.is_some_and(|s| !(1.0..=400.0).contains(&s)) {
+            return Err(Error::Refused("A font is 1 to 400 points".into()));
+        }
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let f = chart::Font {
+            size: font.size,
+            bold: font.bold,
+            italic: font.italic,
+            color: font
+                .color
+                .map(|[r, g, b]| (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)),
+            face: font.face.clone().filter(|f| !f.trim().is_empty()),
+        };
+        let new = chart::with_axis_font(&old, vertical, &f)
+            .ok_or_else(|| Error::Refused("This chart has no such axis".into()))?;
         if new == old {
             return Ok(());
         }

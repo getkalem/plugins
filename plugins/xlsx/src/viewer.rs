@@ -7,10 +7,10 @@
 use std::collections::HashMap;
 
 use kalem_viewer::{
-    Align, AxisScale, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule, CondStyle,
-    DataLabels, Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, Gridlines,
-    InfoField, LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, Paint, PivotSpec,
-    RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation,
+    Align, AxisFont, AxisScale, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule,
+    CondStyle, DataLabels, Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout,
+    Gridlines, InfoField, LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, Paint,
+    PivotSpec, RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation,
     ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
 
@@ -828,6 +828,19 @@ impl ViewerDocument for XlsxDoc {
     ) -> Result<Vec<usize>> {
         self.book()
             .set_axis_format(unit, index, format.as_deref())
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_axis_font(
+        &mut self,
+        unit: usize,
+        index: usize,
+        axis: ChartAxis,
+        font: AxisFont,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_axis_font(unit, index, axis == ChartAxis::Vertical, &font)
             .map_err(err)?;
         Ok(vec![unit])
     }
@@ -1899,6 +1912,28 @@ mod tests {
             d.charts(0)[before].axis_format.as_deref(),
             Some("#,##0 \"TL\"")
         );
+        // Its category labels bold and blue, kept by the change of kind
+        // (on a bar chart's vertical axis).
+        let bold = AxisFont {
+            bold: true,
+            color: Some([0x1F, 0x4E, 0x79]),
+            ..AxisFont::default()
+        };
+        d.set_axis_font(0, before, ChartAxis::Horizontal, bold.clone())
+            .unwrap();
+        assert_eq!(d.charts(0)[before].horizontal_font, bold);
+        assert!(
+            d.set_axis_font(
+                0,
+                before,
+                ChartAxis::Vertical,
+                AxisFont {
+                    size: Some(0.0),
+                    ..AxisFont::default()
+                }
+            )
+            .is_err()
+        );
         // Q2 colored red, kept by the change of kind below.
         d.set_series_color(0, before, 1, Some([0xFF, 0, 0]))
             .unwrap();
@@ -1920,6 +1955,10 @@ mod tests {
         assert_eq!((bar.background, bar.border), (was.background, was.border));
         assert_eq!(bar.plot_background, was.plot_background);
         assert_eq!(bar.axis_format, was.axis_format);
+        assert_eq!(
+            bar.vertical_font, was.horizontal_font,
+            "the categories' font"
+        );
         assert_eq!(
             bar.gridlines,
             Gridlines {

@@ -23,6 +23,28 @@ pub enum Fill {
     Color(Rgb),
 }
 
+/// The font of an axis's labels; all unset, the style's.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Font {
+    /// Size in points.
+    pub size: Option<f32>,
+    /// Bold.
+    pub bold: bool,
+    /// Italic.
+    pub italic: bool,
+    /// Color.
+    pub color: Option<Rgb>,
+    /// Typeface.
+    pub face: Option<String>,
+}
+
+impl Font {
+    /// Whether nothing is set.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// A chart's place in a drawing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Anchor {
@@ -181,6 +203,10 @@ pub struct ChartDef {
     pub gridlines: (bool, bool, bool, bool),
     /// The value axis's own number format, when not the cells'.
     pub axis_format: Option<String>,
+    /// The horizontal axis's labels' font.
+    pub horizontal_font: Font,
+    /// The vertical axis's labels' font.
+    pub vertical_font: Font,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -249,6 +275,7 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     let mut title_ref: Option<String> = None;
     let (mut axis_title, mut axis_pos) = (String::new(), String::new());
     let mut axis_grid = (false, false);
+    let mut axis_font = Font::default();
     let mut point: Option<(Option<usize>, Option<Rgb>)> = None;
     let mut point_explosion: Option<u32> = None;
     let mut axis_scale: Scale = (None, None, None, false);
@@ -428,6 +455,37 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             _ => {}
                         }
                     }
+                    // An axis's labels' font.
+                    "defRPr" | "latin" | "srgbClr" | "schemeClr"
+                        if stack.len() >= 4
+                            && stack[3].ends_with("Ax")
+                            && stack.iter().any(|s| s == "txPr")
+                            && (name == "defRPr" || stack.iter().any(|s| s == "defRPr")) =>
+                    {
+                        let flag = |k: &str| tag.attr(k).is_some_and(|v| v == "1" || v == "true");
+                        match name {
+                            "defRPr" => {
+                                axis_font.size = tag
+                                    .attr("sz")
+                                    .and_then(|v| v.parse::<f32>().ok())
+                                    .map(|v| v / 100.0);
+                                axis_font.bold = flag("b");
+                                axis_font.italic = flag("i");
+                            }
+                            "latin" => {
+                                axis_font.face = tag.attr("typeface").map(|v| v.into_owned())
+                            }
+                            _ if parent == "solidFill" => {
+                                let v = tag.attr("val").unwrap_or_default();
+                                axis_font.color = if name == "srgbClr" {
+                                    u32::from_str_radix(&v, 16).ok()
+                                } else {
+                                    scheme(&v, theme)
+                                };
+                            }
+                            _ => {}
+                        }
+                    }
                     "dPt" if ser.is_some() && !tag.empty => point = Some((None, None)),
                     "explosion" if parent == "ser" || parent == "dPt" => {
                         let v = tag
@@ -504,6 +562,17 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                 if name.ends_with("Ax") && stack.last().is_some_and(|s| s == "plotArea") {
                     // An axis's gridlines run across it.
                     let (major, minor) = std::mem::take(&mut axis_grid);
+                    let font = std::mem::take(&mut axis_font);
+                    if name != "serAx" {
+                        let slot = if matches!(axis_pos.as_str(), "l" | "r") {
+                            &mut def.vertical_font
+                        } else {
+                            &mut def.horizontal_font
+                        };
+                        if slot.is_default() {
+                            *slot = font;
+                        }
+                    }
                     if name != "serAx" {
                         if matches!(axis_pos.as_str(), "l" | "r") {
                             def.gridlines.0 |= major;
@@ -1789,6 +1858,106 @@ pub fn with_axis_format(text: &str, format: Option<&str>, scatter: bool) -> Opti
     Some(out)
 }
 
+/// A chart part with the labels of its horizontal (`vertical` false) or
+/// vertical axis in `font`: the axis's `<c:txPr>` written again where the
+/// schema puts it (its text body's rotation kept), or taken away for the
+/// default font. `None` when the chart has no such axis.
+pub fn with_axis_font(text: &str, vertical: bool, font: &Font) -> Option<String> {
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut found = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if tag.name.ends_with("Ax")
+                    && tag.name != "serAx"
+                    && stack.last().is_some_and(|s| s == "plotArea")
+                    && !tag.empty
+                {
+                    let start = tag.span.start;
+                    let p = xml::prefix(tag.qname).to_owned();
+                    let end = r.skip_element();
+                    let side = matches!(
+                        child(&text[start..end], "axPos").and_then(|a| a
+                            .split("val=\"")
+                            .nth(1)?
+                            .split('"')
+                            .next()),
+                        Some("l" | "r")
+                    );
+                    if side == vertical && found.is_none() {
+                        found = Some((start..end, p));
+                    }
+                    continue;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let (span, p) = found?;
+    let el = &text[span.clone()];
+    let (a, decl) = drawing_prefix(text);
+    let tx = if font.is_default() {
+        String::new()
+    } else {
+        let body = child(el, "txPr")
+            .and_then(|t| child(t, "bodyPr"))
+            .map_or_else(|| format!("<{a}:bodyPr{decl}/>"), str::to_owned);
+        let mut attrs = String::new();
+        if let Some(sz) = font.size {
+            attrs.push_str(&format!(" sz=\"{}\"", (sz * 100.0).round() as u32));
+        }
+        attrs.push_str(&format!(
+            " b=\"{}\" i=\"{}\"",
+            u8::from(font.bold),
+            u8::from(font.italic)
+        ));
+        let mut inner = String::new();
+        if let Some(c) = font.color {
+            inner.push_str(&format!(
+                "<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>"
+            ));
+        }
+        if let Some(face) = &font.face {
+            inner.push_str(&format!(
+                "<{a}:latin{decl} typeface=\"{}\"/>",
+                xml::escape(face)
+            ));
+        }
+        format!(
+            "<{p}txPr>{body}<{a}:lstStyle{decl}/><{a}:p{decl}><{a}:pPr><{a}:defRPr{attrs}>{inner}</{a}:defRPr></{a}:pPr><{a}:endParaRPr lang=\"en-US\"/></{a}:p></{p}txPr>"
+        )
+    };
+    let new = set_child(
+        el,
+        &["txPr"],
+        &tx,
+        &[
+            "axId",
+            "scaling",
+            "delete",
+            "axPos",
+            "majorGridlines",
+            "minorGridlines",
+            "title",
+            "numFmt",
+            "majorTickMark",
+            "minorTickMark",
+            "tickLblPos",
+            "spPr",
+        ],
+    );
+    let mut out = text.to_owned();
+    out.replace_range(span, &new);
+    Some(out)
+}
+
 /// An absolute reference to a range of a sheet, as charts write them.
 pub fn reference(sheet: &str, r: crate::cellref::Range) -> String {
     let abs = |c: crate::cellref::CellRef| {
@@ -2583,6 +2752,69 @@ mod tests {
         assert!(ax.find("formatCode=\"0%\"") < ax.find("<c:majorTickMark"));
         let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
         assert!(with_axis_format(&pie, Some("0"), false).is_none());
+    }
+
+    #[test]
+    fn axis_fonts() {
+        let s = NewSeries {
+            name: None,
+            cat: Some(("S!$A$2:$A$3".into(), vec!["a".into(), "b".into()], false)),
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
+        };
+        let x = chart_xml(ChartKind::Column, None, std::slice::from_ref(&s));
+        let font = Font {
+            size: Some(12.0),
+            bold: true,
+            italic: false,
+            color: Some(0x1F4E79),
+            face: Some("Arial".into()),
+        };
+        let y = with_axis_font(&x, true, &font).unwrap();
+        let d = parse_chart(&y, &[]);
+        assert_eq!(d.vertical_font, font);
+        assert!(d.horizontal_font.is_default());
+        assert!(
+            d.series[0].color.is_none() && d.title.is_none(),
+            "nothing else read"
+        );
+        // Where the schema puts it: after the tick labels' position, before
+        // the crossing axis.
+        let ax = &y[y.find("<c:valAx>").unwrap()..];
+        assert!(ax.find("<c:tickLblPos") < ax.find("<c:txPr>"));
+        assert!(ax.find("<c:txPr>") < ax.find("<c:crossAx"));
+        let z = with_axis_font(
+            &y,
+            false,
+            &Font {
+                italic: true,
+                ..Font::default()
+            },
+        )
+        .unwrap();
+        assert!(parse_chart(&z, &[]).horizontal_font.italic);
+        let back = with_axis_font(&z, true, &Font::default()).unwrap();
+        assert!(parse_chart(&back, &[]).vertical_font.is_default());
+        assert_eq!(
+            back.matches("<c:txPr>").count(),
+            1,
+            "the horizontal axis's stays"
+        );
+        // Excel's turned labels keep their turn.
+        let excel = r#"<c:chartSpace xmlns:c="c" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:catAx><c:axId val="1"/><c:axPos val="b"/><c:tickLblPos val="nextTo"/><c:txPr><a:bodyPr rot="-2700000"/><a:p/></c:txPr><c:crossAx val="2"/></c:catAx></c:plotArea></c:chart></c:chartSpace>"#;
+        let e = with_axis_font(
+            excel,
+            false,
+            &Font {
+                bold: true,
+                ..Font::default()
+            },
+        )
+        .unwrap();
+        assert!(e.contains(r#"<c:txPr><a:bodyPr rot="-2700000"/>"#), "{e}");
+        assert!(parse_chart(&e, &[]).horizontal_font.bold);
+        let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
+        assert!(with_axis_font(&pie, true, &font).is_none());
     }
 
     #[test]
