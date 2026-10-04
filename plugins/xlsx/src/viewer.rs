@@ -660,6 +660,11 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn recalculate(&mut self) -> Result<Vec<usize>> {
+        self.book().recalculate().map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn set_note(
         &mut self,
         unit: usize,
@@ -2980,5 +2985,21 @@ mod tests {
             assert!(d.undo().unwrap());
         }
         assert_eq!(d.defined_names(), before);
+    }
+
+    #[test]
+    fn calculate_now() {
+        let mut d = open("openpyxl-budget.xlsx");
+        d.set_cell(0, 9, 1, "=RAND()").unwrap();
+        let first = d.cell_input(0, 9, 1);
+        assert_eq!(first, "=RAND()");
+        let value =
+            |d: &mut Box<dyn ViewerDocument>| d.grid_cells(0, 9..10, 1..2)[0].2.text.clone();
+        let a = value(&mut d);
+        d.recalculate().unwrap();
+        let b = value(&mut d);
+        assert_ne!(a, b, "a new random number");
+        // Other results stay.
+        assert_eq!(d.grid_cells(0, 1..2, 3..4)[0].2.text, "2,400.00");
     }
 }

@@ -133,17 +133,8 @@ impl Workbook {
         self.pkg
             .set_part(&part, self.workbook_xml.clone().into_bytes());
         self.reread_defined_names();
-        // Formulas naming it computed again, their results written as an
-        // edit writes them.
-        self.engine = None;
-        self.ensure_engine()?;
-        self.trusted = trusted;
-        let after = std::mem::take(&mut self.computed);
-        let cells = self.formula_cells();
-        self.write_results(&before, after, &cells, &[]);
-        self.complete.clear();
-        self.scratch.clear();
-        self.generation += 1;
+        // Formulas naming it computed again.
+        self.compute_again(&before, trusted)?;
         match snapshot {
             Some(s) => {
                 self.undo.push(s);
@@ -152,5 +143,37 @@ impl Workbook {
             None => self.batch_changed = true,
         }
         Ok(())
+    }
+}
+
+impl Workbook {
+    /// Every formula computed by a new engine, the results written as an
+    /// edit writes them: stored ones the old engine reproduced (`trusted`,
+    /// against `before`) replaced, the others dropped.
+    pub(crate) fn compute_again(
+        &mut self,
+        before: &HashMap<(usize, CellRef), Value>,
+        trusted: HashSet<(usize, CellRef)>,
+    ) -> Result<()> {
+        self.engine = None;
+        self.ensure_engine()?;
+        self.trusted = trusted;
+        let after = std::mem::take(&mut self.computed);
+        let cells = self.formula_cells();
+        self.write_results(before, after, &cells, &[]);
+        self.complete.clear();
+        self.scratch.clear();
+        self.generation += 1;
+        Ok(())
+    }
+
+    /// Calculate Now: every formula computed again (the volatile ones,
+    /// `NOW` and `RAND`, give new results).
+    pub fn recalculate(&mut self) -> Result<()> {
+        self.flush()?;
+        self.ensure_engine()?;
+        let before = self.computed.clone();
+        let trusted = self.trusted.clone();
+        self.compute_again(&before, trusted)
     }
 }
