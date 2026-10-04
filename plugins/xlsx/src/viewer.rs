@@ -339,6 +339,49 @@ impl XlsxDoc {
     }
 }
 
+impl XlsxDoc {
+    /// Tables drawn in their style: the header row filled and bold, the
+    /// data rows banded, the total row bold; a cell's own fill and font
+    /// color first. Empty cells of a table get its look too.
+    fn table_look(
+        &mut self,
+        unit: usize,
+        rows: &std::ops::Range<u32>,
+        cols: &std::ops::Range<u32>,
+        out: &mut Vec<(u32, u32, GridCell)>,
+    ) {
+        let tables = self.book().sheet_tables(unit);
+        for t in tables {
+            let (h, text, band) = crate::workbook::style_colors(&t.style);
+            let r = t.range;
+            for row in r.start.row.max(rows.start)..=r.end.row.min(rows.end.saturating_sub(1)) {
+                for col in r.start.col.max(cols.start)..=r.end.col.min(cols.end.saturating_sub(1)) {
+                    if !out.iter().any(|x| x.0 == row && x.1 == col) {
+                        out.push((row, col, GridCell::default()));
+                    }
+                }
+            }
+            let data_start = r.start.row + u32::from(t.header);
+            for (row, col, cell) in out.iter_mut() {
+                if !(r.start.row..=r.end.row).contains(row)
+                    || !(r.start.col..=r.end.col).contains(col)
+                {
+                    continue;
+                }
+                if t.header && *row == r.start.row {
+                    cell.fill = cell.fill.or(Some(h));
+                    cell.color = cell.color.or(Some(text));
+                    cell.bold = true;
+                } else if t.totals && *row == r.end.row {
+                    cell.bold = true;
+                } else if t.stripes && (*row - data_start) % 2 == 0 {
+                    cell.fill = cell.fill.or(Some(band));
+                }
+            }
+        }
+    }
+}
+
 impl ViewerDocument for XlsxDoc {
     fn structure(&self) -> Structure {
         units(self.locked().sheets().iter().map(|s| {
@@ -448,6 +491,50 @@ impl ViewerDocument for XlsxDoc {
         })
     }
 
+    fn tables(&mut self, unit: usize) -> Vec<kalem_viewer::TableInfo> {
+        self.book()
+            .sheet_tables(unit)
+            .into_iter()
+            .map(|t| kalem_viewer::TableInfo {
+                name: t.name,
+                range: [
+                    t.range.start.row,
+                    t.range.start.col,
+                    t.range.end.row,
+                    t.range.end.col,
+                ],
+                totals: t.totals,
+                style: t.style,
+            })
+            .collect()
+    }
+
+    fn create_table(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        header: bool,
+        style: &str,
+    ) -> Result<String> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .create_table(unit, r, header, style)
+            .map_err(err)
+    }
+
+    fn set_table_totals(&mut self, unit: usize, name: &str, on: bool) -> Result<Vec<usize>> {
+        self.book().set_table_totals(unit, name, on).map_err(err)?;
+        Ok(self.all_units())
+    }
+
+    fn remove_table(&mut self, unit: usize, name: &str) -> Result<Vec<usize>> {
+        self.book().remove_table(unit, name).map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn grid_cells(
         &mut self,
         unit: usize,
@@ -524,6 +611,7 @@ impl ViewerDocument for XlsxDoc {
                 },
             ));
         }
+        self.table_look(unit, &rows, &cols, &mut out);
         self.conditional(unit, &rows, &cols, &mut out);
         // Notes on cells that hold nothing still show their mark.
         for at in notes {
@@ -3182,5 +3270,47 @@ mod tests {
         if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
             std::fs::write(format!("{dir}/kalem-filters-test.xlsx"), &saved).unwrap();
         }
+    }
+
+    #[test]
+    fn tables_made() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // A1:D4 a table: its headers, banding, a name.
+        let name = d.create_table(0, [0, 0, 3, 3], true, "").unwrap();
+        assert_eq!(name, "Table1");
+        let t = d.tables(0);
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].range, [0, 0, 3, 3]);
+        let a1 = d.grid_cells(0, 0..1, 0..1).remove(0).2;
+        assert!(a1.bold && a1.fill == Some([0x44, 0x72, 0xC4]), "{a1:?}");
+        assert_eq!(
+            d.grid_cells(0, 1..2, 2..3)[0].2.fill,
+            Some([0xD9, 0xE1, 0xF2])
+        );
+        // A structured reference computes.
+        d.set_cell(0, 9, 9, "=SUM(Table1[Q1])").unwrap();
+        assert_eq!(d.grid_cells(0, 9..10, 9..10)[0].2.text, "1631.5");
+        // A row typed under it: it grows, the sum with it.
+        d.set_cell(0, 4, 0, "Extra").unwrap();
+        assert_eq!(d.tables(0)[0].range, [0, 0, 4, 3]);
+        d.set_cell(0, 4, 1, "100").unwrap();
+        assert_eq!(d.grid_cells(0, 9..10, 9..10)[0].2.text, "1731.5");
+        // A total row; then taken away.
+        d.set_cell(0, 5, 0, "").unwrap();
+        let err = d.set_table_totals(0, "Table1", true);
+        assert!(err.is_ok(), "{err:?}");
+        assert_eq!(d.cell_input(0, 5, 0), "Total");
+        assert_eq!(d.cell_input(0, 5, 3), "=SUBTOTAL(109,Table1[Total])");
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-table-test.xlsx"), &saved).unwrap();
+        }
+        d.set_table_totals(0, "Table1", false).unwrap();
+        assert_eq!(d.cell_input(0, 5, 0), "");
+        // Turned into a range: the formula's reference made plain.
+        d.remove_table(0, "Table1").unwrap();
+        assert!(d.tables(0).is_empty());
+        assert_eq!(d.cell_input(0, 9, 9), "=SUM($B$2:$B$5)");
+        assert_eq!(d.grid_cells(0, 9..10, 9..10)[0].2.text, "1731.5");
     }
 }

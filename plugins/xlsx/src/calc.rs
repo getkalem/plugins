@@ -21,6 +21,23 @@ use crate::cellref::CellRef;
 use crate::sheet::{FormulaKind, Sheet, Value};
 
 /// A workbook's cells as the engine holds them.
+/// A table as the engine reads structured references through it.
+#[derive(Debug, Clone)]
+pub struct EngineTable {
+    /// Its name.
+    pub name: String,
+    /// The workbook sheet it is on.
+    pub sheet: usize,
+    /// Its range in A1 notation, header and total rows included.
+    pub reference: String,
+    /// Its columns' names.
+    pub columns: Vec<String>,
+    /// It has a header row.
+    pub header: bool,
+    /// It has a total row.
+    pub totals: bool,
+}
+
 pub struct Engine {
     model: Model<'static>,
     /// The engine's sheet index of each workbook sheet, `None` for chart sheets.
@@ -70,6 +87,7 @@ impl Engine {
     pub fn load(
         sheets: &[(String, Option<&Sheet>)],
         names: &[(String, Option<usize>, String)],
+        tables: &[EngineTable],
     ) -> Result<Self, String> {
         let mut model = Model::new_empty("workbook", "en", "UTC", "en")?;
         let mut map = Vec::new();
@@ -93,6 +111,44 @@ impl Engine {
             // engine cannot read are left out; formulas using them compute
             // #NAME? and are not trusted.
             let _ = model.new_defined_name(name, scope, formula.trim_start_matches('='));
+        }
+        // Tables before the formulas, so that their structured references
+        // parse: the model made again from a workbook that has them.
+        if !tables.is_empty() {
+            let mut wb = model.workbook.clone();
+            for t in tables {
+                let Some((sheet_name, _)) = sheets.get(t.sheet) else {
+                    continue;
+                };
+                let columns = t
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| ironcalc_base::types::TableColumn {
+                        id: i as u32 + 1,
+                        name: n.clone(),
+                        ..Default::default()
+                    })
+                    .collect();
+                wb.tables.insert(
+                    t.name.clone(),
+                    ironcalc_base::types::Table {
+                        name: t.name.clone(),
+                        display_name: t.name.clone(),
+                        sheet_name: sheet_name.clone(),
+                        reference: t.reference.clone(),
+                        totals_row_count: u32::from(t.totals),
+                        header_row_count: u32::from(t.header),
+                        header_row_dxf_id: None,
+                        data_dxf_id: None,
+                        totals_row_dxf_id: None,
+                        columns,
+                        style_info: Default::default(),
+                        has_filters: true,
+                    },
+                );
+            }
+            model = Model::from_workbook(wb, "en")?;
         }
         for ((_, sheet), idx) in sheets.iter().zip(&map) {
             let (Some(sheet), Some(idx)) = (sheet, idx) else {
@@ -259,7 +315,7 @@ mod tests {
             ("Rate".to_owned(), None, "Data!$A$1".to_owned()),
             ("Twice".to_owned(), None, "Data!$A$1*2".to_owned()),
         ];
-        let mut e = Engine::load(&sheets, &names).unwrap();
+        let mut e = Engine::load(&sheets, &names, &[]).unwrap();
         let cells = [
             (0, CellRef::new(0, 1)),
             (0, CellRef::new(0, 2)),

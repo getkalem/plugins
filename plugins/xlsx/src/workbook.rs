@@ -698,7 +698,20 @@ impl Workbook {
             .map(|n| (n.name.clone(), n.local_sheet, n.refers_to.clone()))
             .collect();
         let cells = self.formula_cells();
-        let mut engine = match Engine::load(&sheets, &names) {
+        let tables: Vec<calc::EngineTable> = self
+            .tables()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| calc::EngineTable {
+                name: t.name,
+                sheet: t.sheet,
+                reference: t.range.to_string(),
+                columns: t.columns,
+                header: t.header,
+                totals: t.totals,
+            })
+            .collect();
+        let mut engine = match Engine::load(&sheets, &names, &tables) {
             Ok(e) => e,
             Err(e) => {
                 self.engine = Some(Err(e));
@@ -1019,18 +1032,32 @@ impl Workbook {
     /// Types an entry into a cell, as typing it in Excel and pressing Enter.
     pub fn set_cell(&mut self, idx: usize, at: CellRef, entry: &str) -> Result<()> {
         let input = Input::parse(entry, self.date1904);
-        if !(matches!(&input, Input::Text(t) if t.contains('\n'))) {
+        // Text with a line break (Alt+Enter) is wrapped, as Excel does; an
+        // entry right under a table makes it grow. In the entry's undo step.
+        let wraps = matches!(&input, Input::Text(t) if t.contains('\n'));
+        let grows = !matches!(input, Input::Clear)
+            && self.sheet_tables(idx).iter().any(|t| {
+                !t.totals
+                    && at.row == t.range.end.row + 1
+                    && (t.range.start.col..=t.range.end.col).contains(&at.col)
+            });
+        if !wraps && !grows {
             return self.set_input(idx, at, input);
         }
-        // Text with a line break (Alt+Enter): wrapped, as Excel does, in
-        // the same undo step.
         let own = self.batch.is_none();
         if own {
             self.begin_batch()?;
         }
-        let result = self
-            .set_input(idx, at, input)
-            .and_then(|()| self.set_wrap(idx, at, true));
+        let result = (|| -> Result<()> {
+            self.set_input(idx, at, input)?;
+            if wraps {
+                self.set_wrap(idx, at, true)?;
+            }
+            if grows {
+                self.grow_table(idx, at)?;
+            }
+            Ok(())
+        })();
         self.batch_changed = true;
         if own {
             match &result {
@@ -7433,6 +7460,8 @@ mod links;
 mod names;
 mod notes;
 mod sheet_ops;
+mod tables;
+pub use tables::{TableDef, style_colors};
 
 #[cfg(test)]
 mod tests {
