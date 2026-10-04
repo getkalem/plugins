@@ -2852,6 +2852,53 @@ impl Workbook {
         Ok(())
     }
 
+    /// Gives a series of a sheet's chart (by its place among
+    /// [`Workbook::charts`]) a color, or the theme's again. One undo step.
+    pub fn set_series_color(
+        &mut self,
+        idx: usize,
+        index: usize,
+        series: usize,
+        color: Option<[u8; 3]>,
+    ) -> Result<()> {
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let kind = chart::parse_chart(&old, &self.theme).kind;
+        if matches!(
+            kind,
+            kalem_viewer::ChartKind::Pie | kalem_viewer::ChartKind::Doughnut
+        ) {
+            return Err(Error::Refused(
+                "A pie's slices each take a color of their own, not the series'".into(),
+            ));
+        }
+        let rgb = color.map(|[r, g, b]| (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b));
+        let new = chart::with_series_color(&old, series, rgb, kind)
+            .ok_or_else(|| Error::Refused("No such series".into()))?;
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
     /// Removes a sheet's chart (by its place among [`Workbook::charts`]):
     /// its anchor, its part and what hangs on it. One undo step.
     pub fn delete_chart(&mut self, idx: usize, index: usize) -> Result<()> {

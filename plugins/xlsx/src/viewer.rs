@@ -748,6 +748,19 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_series_color(
+        &mut self,
+        unit: usize,
+        index: usize,
+        series: usize,
+        color: Option<[u8; 3]>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_series_color(unit, index, series, color)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1781,6 +1794,11 @@ mod tests {
         assert_eq!(wb.charts(0).unwrap()[before].scale, scale);
         assert!(d.undo().unwrap());
         assert_eq!(d.charts(0)[before].scale, AxisScale::default());
+        // Q2 colored red, kept by the change of kind below.
+        d.set_series_color(0, before, 1, Some([0xFF, 0, 0]))
+            .unwrap();
+        assert_eq!(d.charts(0)[before].series[1].color, Some([0xFF, 0, 0]));
+        assert_eq!(d.charts(0)[before].series[0].color, None);
         // Made a bar chart: the series, title, legend, labels and scale
         // kept, the category axis's title going to the side with the
         // categories; then a line chart; undone.
@@ -1821,7 +1839,11 @@ mod tests {
         }
         let mut wb = Workbook::open(pie).unwrap();
         assert_eq!(wb.charts(0).unwrap()[before].kind, ChartKind::Pie);
-        for _ in 0..7 {
+        assert!(
+            d.set_series_color(0, before, 0, Some([0, 0, 0])).is_err(),
+            "a pie"
+        );
+        for _ in 0..8 {
             assert!(d.undo().unwrap());
         }
         assert_eq!(d.charts(0)[before].kind, ChartKind::Column);

@@ -351,8 +351,13 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                         axis_pos = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
                     }
                     "srgbClr" | "schemeClr" => {
-                        let in_fill = stack.iter().any(|s| s == "spPr")
-                            && !stack.iter().any(|s| s == "dPt" || s == "marker");
+                        // A scatter chart's points take the marker's fill.
+                        let in_fill = if def.kind == ChartKind::Scatter {
+                            stack.iter().any(|s| s == "marker") && stack.iter().any(|s| s == "spPr")
+                        } else {
+                            stack.iter().any(|s| s == "spPr")
+                                && !stack.iter().any(|s| s == "dPt" || s == "marker")
+                        };
                         if let Some(s) = ser.as_mut()
                             && s.color.is_none()
                             && in_fill
@@ -941,6 +946,215 @@ pub fn with_scale(text: &str, scale: Scale, scatter: bool) -> Option<String> {
     Some(whole)
 }
 
+/// The fills of DrawingML, any one of which an element has.
+const FILLS: [&str; 6] = [
+    "noFill",
+    "solidFill",
+    "gradFill",
+    "blipFill",
+    "pattFill",
+    "grpFill",
+];
+
+/// An element's direct children (name and bytes), where its content
+/// starts and where its end tag starts; an empty element is opened up.
+fn open_up(el: &str) -> (String, usize, usize, Vec<(String, Span<usize>)>) {
+    let mut r = Reader::new(el);
+    let mut out = el.to_owned();
+    let (mut open_end, mut close) = (0, el.len());
+    let mut kids = Vec::new();
+    let mut depth = 0;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 0 {
+                    if tag.empty {
+                        // `<x a="1"/>` → `<x a="1"></x>`.
+                        let head = el[..tag.span.end].trim_end_matches("/>").trim_end();
+                        out = format!("{head}></{}>", tag.qname);
+                        let open_end = head.len() + 1;
+                        return (out, open_end, open_end, Vec::new());
+                    }
+                    open_end = tag.span.end;
+                    depth = 1;
+                    continue;
+                }
+                let end = if tag.empty {
+                    tag.span.end
+                } else {
+                    r.skip_element()
+                };
+                kids.push((tag.name.to_owned(), tag.span.start..end));
+            }
+            Token::End { span, .. } => {
+                close = span.start;
+                break;
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    (out, open_end, close, kids)
+}
+
+/// An element with its direct child `name` replaced by `new` (or taken
+/// out when `new` is empty), or `new` put after the last of `after` there
+/// is, else first.
+fn set_child(el: &str, names: &[&str], new: &str, after: &[&str]) -> String {
+    let (el, open_end, close, kids) = open_up(el);
+    let mut out = String::from(&el[..open_end]);
+    let mut placed = new.is_empty();
+    let last_after = kids.iter().rposition(|k| after.contains(&k.0.as_str()));
+    if !placed && last_after.is_none() && !kids.iter().any(|k| names.contains(&k.0.as_str())) {
+        out.push_str(new);
+        placed = true;
+    }
+    for (i, (name, sp)) in kids.iter().enumerate() {
+        if names.contains(&name.as_str()) {
+            if !placed {
+                out.push_str(new);
+                placed = true;
+            }
+            continue;
+        }
+        out.push_str(&el[sp.clone()]);
+        if !placed && Some(i) == last_after {
+            out.push_str(new);
+            placed = true;
+        }
+    }
+    if !placed {
+        out.push_str(new);
+    }
+    out.push_str(&el[close..]);
+    out
+}
+
+/// The direct child `name` of an element, if any.
+fn child<'a>(el: &'a str, name: &str) -> Option<&'a str> {
+    let (_, _, _, kids) = open_up(el);
+    kids.into_iter().find(|k| k.0 == name).map(|k| &el[k.1])
+}
+
+/// A chart part with series `series` of its plot given `color`, or the
+/// theme's again (`None`): a column, bar or area series' fill, a line's
+/// stroke, a scatter chart's points; the rest of its formatting kept.
+/// `None` when there is no such series.
+pub fn with_series_color(
+    text: &str,
+    series: usize,
+    color: Option<Rgb>,
+    kind: ChartKind,
+) -> Option<String> {
+    const DRAWING: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut found = None;
+    let mut n = 0;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                let parent = stack.last().map(String::as_str).unwrap_or("");
+                if tag.name == "ser" && parent.ends_with("Chart") {
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    if n == series {
+                        found = Some((tag.span.start..end, xml::prefix(tag.qname).to_owned()));
+                        break;
+                    }
+                    n += 1;
+                    continue;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let (span, p) = found?;
+    let a = text.split("xmlns:").skip(1).find_map(|d| {
+        let (pfx, rest) = d.split_once("=\"")?;
+        (rest.split('"').next()? == DRAWING).then(|| pfx.to_owned())
+    });
+    let (a, decl) = match a {
+        Some(a) => (a, String::new()),
+        None => ("a".to_owned(), format!(" xmlns:a=\"{DRAWING}\"")),
+    };
+    let fill = color.map_or(String::new(), |c| {
+        format!("<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>")
+    });
+    let geometry = ["xfrm", "custGeom", "prstGeom"];
+    let ser = &text[span.clone()];
+    let head = ["idx", "order", "tx"];
+    let new_ser = match kind {
+        ChartKind::Line => match child(ser, "spPr") {
+            Some(sp) => {
+                let ln = match child(sp, "ln") {
+                    Some(ln) => set_child(ln, &FILLS, &fill, &[]),
+                    None if fill.is_empty() => String::new(),
+                    None => format!("<{a}:ln{decl} w=\"28575\" cap=\"rnd\">{fill}</{a}:ln>"),
+                };
+                let mut after = geometry.to_vec();
+                after.extend(FILLS);
+                let sp = if ln.is_empty() {
+                    sp.to_owned()
+                } else {
+                    set_child(sp, &["ln"], &ln, &after)
+                };
+                set_child(ser, &["spPr"], &sp, &head)
+            }
+            None if fill.is_empty() => ser.to_owned(),
+            None => set_child(
+                ser,
+                &["spPr"],
+                &format!(
+                    "<{p}spPr><{a}:ln{decl} w=\"28575\" cap=\"rnd\">{fill}</{a}:ln></{p}spPr>"
+                ),
+                &head,
+            ),
+        },
+        ChartKind::Scatter => {
+            let marker = match child(ser, "marker") {
+                Some(m) => {
+                    let sp = match child(m, "spPr") {
+                        Some(sp) => set_child(sp, &FILLS, &fill, &geometry),
+                        None => format!("<{p}spPr>{fill}</{p}spPr>"),
+                    };
+                    set_child(m, &["spPr"], &sp, &["symbol", "size"])
+                }
+                None if fill.is_empty() => String::new(),
+                None => format!(
+                    "<{p}marker><{p}symbol val=\"circle\"/><{p}size val=\"5\"/><{p}spPr>{fill}</{p}spPr></{p}marker>"
+                ),
+            };
+            if marker.is_empty() {
+                ser.to_owned()
+            } else {
+                set_child(ser, &["marker"], &marker, &["idx", "order", "tx", "spPr"])
+            }
+        }
+        _ => match child(ser, "spPr") {
+            Some(sp) => set_child(
+                ser,
+                &["spPr"],
+                &set_child(sp, &FILLS, &fill, &geometry),
+                &head,
+            ),
+            None if fill.is_empty() => ser.to_owned(),
+            None => set_child(ser, &["spPr"], &format!("<{p}spPr>{fill}</{p}spPr>"), &head),
+        },
+    };
+    let mut out = text.to_owned();
+    out.replace_range(span, &new_ser);
+    Some(out)
+}
+
 /// An absolute reference to a range of a sheet, as charts write them.
 pub fn reference(sheet: &str, r: crate::cellref::Range) -> String {
     let abs = |c: crate::cellref::CellRef| {
@@ -1433,6 +1647,46 @@ mod tests {
         }
         let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
         assert!(with_scale(&pie, (Some(1.0), None, None, false), false).is_none());
+    }
+
+    #[test]
+    fn series_colors_set_and_cleared() {
+        let s = NewSeries {
+            name: None,
+            cat: Some(("S!$A$2:$A$3".into(), vec!["1".into(), "2".into()], false)),
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
+        };
+        for kind in [
+            ChartKind::Column,
+            ChartKind::Line,
+            ChartKind::Area,
+            ChartKind::Scatter,
+        ] {
+            let x = chart_xml(kind, None, &[s.clone(), s.clone()]);
+            let y = with_series_color(&x, 1, Some(0x123456), kind).unwrap();
+            let d = parse_chart(&y, &[]);
+            assert_eq!(
+                (d.series[0].color, d.series[1].color),
+                (None, Some(0x123456)),
+                "{kind:?}"
+            );
+            // Again: replaced, not added.
+            let z = with_series_color(&y, 1, Some(0xABCDEF), kind).unwrap();
+            assert_eq!(parse_chart(&z, &[]).series[1].color, Some(0xABCDEF));
+            assert_eq!(z.matches("srgbClr").count(), 1, "{z}");
+            // Cleared: the theme's.
+            let back = with_series_color(&z, 1, None, kind).unwrap();
+            assert_eq!(parse_chart(&back, &[]).series[1].color, None, "{back}");
+            if kind == ChartKind::Scatter {
+                assert!(back.contains("<a:noFill/>"), "the line stays off");
+            }
+        }
+        // Excel's series: a theme fill and a border; the fill changes only.
+        let excel = r#"<c:chartSpace xmlns:c="c" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:ser><c:idx val="0"/><c:order val="0"/><c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></c:spPr><c:val/></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let y = with_series_color(excel, 0, Some(0xFF0000), ChartKind::Column).unwrap();
+        assert!(y.contains(r#"<c:spPr><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></c:spPr>"#), "{y}");
+        assert!(with_series_color(excel, 3, Some(1), ChartKind::Column).is_none());
     }
 
     #[test]
