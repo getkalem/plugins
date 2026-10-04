@@ -260,12 +260,27 @@ impl XlsxDoc {
             index.insert((at.row, at.col), out.len());
             out.push((at.row, at.col, GridCell::default()));
         }
-        // The formulas the rules need for these cells, computed together.
-        let touched: Vec<CellRef> = index
+        // The formulas the rules need for these cells, and for a screenful
+        // above and below, computed together: a held arrow key then costs
+        // one recalculation a screenful, not one a row.
+        let h = rows.end - rows.start;
+        let ahead = rows.start.saturating_sub(h)..rows.end.saturating_add(h);
+        let mut touched: Vec<CellRef> = index
             .keys()
             .map(|&(r, c)| CellRef::new(r, c))
             .filter(|p| ev.touches(*p))
             .collect();
+        if let Ok(sheet) = self.book().sheet(unit) {
+            touched.extend(
+                sheet
+                    .cells
+                    .range(CellRef::new(ahead.start, 0)..CellRef::new(ahead.end, 0))
+                    .map(|(p, _)| *p)
+                    .filter(|p| cols.contains(&p.col) && !rows.contains(&p.row))
+                    .take(20_000),
+            );
+        }
+        touched.retain(|p| ev.touches(*p));
         ev.prefetch(&touched, self.book(), unit);
         let mut unused = Vec::new();
         for (&(row, col), &i) in &index {
