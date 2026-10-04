@@ -626,6 +626,26 @@ impl ViewerDocument for XlsxDoc {
         crate::functions::list()
     }
 
+    fn cell_link(&mut self, unit: usize, row: u32, col: u32) -> Option<String> {
+        self.book()
+            .link(unit, CellRef::new(row, col))
+            .ok()
+            .flatten()
+    }
+
+    fn set_link(
+        &mut self,
+        unit: usize,
+        row: u32,
+        col: u32,
+        target: Option<String>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_link(unit, CellRef::new(row, col), target.as_deref())
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn set_note(
         &mut self,
         unit: usize,
@@ -2874,5 +2894,42 @@ mod tests {
         assert_eq!(removed, 1);
         assert_eq!(d.cell_input(0, 9, 6), "KIRA");
         assert_eq!(d.remove_duplicates(0, [6, 6, 9, 7], &[], false).unwrap(), 0);
+    }
+
+    #[test]
+    fn hyperlinks() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // An address on an empty cell: its text, drawn as a link.
+        d.set_link(0, 9, 1, Some("https://kalem.app/?a=1&b=2".into()))
+            .unwrap();
+        assert_eq!(
+            d.cell_link(0, 9, 1).as_deref(),
+            Some("https://kalem.app/?a=1&b=2")
+        );
+        let c = d.grid_cells(0, 9..10, 1..2).remove(0).2;
+        assert_eq!(c.text, "https://kalem.app/?a=1&b=2");
+        assert!(c.underline && c.color == Some([0x05, 0x63, 0xC1]));
+        // A place in the workbook on A2, its text kept.
+        d.set_link(0, 1, 0, Some("#Dates!A1".into())).unwrap();
+        assert_eq!(d.cell_link(0, 1, 0).as_deref(), Some("#Dates!A1"));
+        assert_eq!(d.grid_cells(0, 1..2, 0..1)[0].2.text, "Rent");
+        // Changed, then taken away with its look.
+        d.set_link(0, 9, 1, Some("mailto:a@b.c".into())).unwrap();
+        assert_eq!(d.cell_link(0, 9, 1).as_deref(), Some("mailto:a@b.c"));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-links-test.xlsx"), &saved).unwrap();
+        }
+        let pkg = crate::package::Package::read(saved).unwrap();
+        let rels =
+            String::from_utf8(pkg.part("xl/worksheets/_rels/sheet1.xml.rels").unwrap()).unwrap();
+        assert_eq!(rels.matches("TargetMode=\"External\"").count(), 1, "{rels}");
+        d.set_link(0, 1, 0, None).unwrap();
+        assert!(d.cell_link(0, 1, 0).is_none());
+        assert!(!d.grid_cells(0, 1..2, 0..1)[0].2.underline);
+        for _ in 0..4 {
+            assert!(d.undo().unwrap());
+        }
+        assert!(d.cell_link(0, 9, 1).is_none() && d.cell_link(0, 1, 0).is_none());
     }
 }
