@@ -6967,6 +6967,7 @@ fn widen_spans(row_tag: &str, col: u32) -> String {
 }
 
 mod links;
+mod names;
 mod notes;
 mod sheet_ops;
 

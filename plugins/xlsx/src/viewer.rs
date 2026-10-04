@@ -646,6 +646,20 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn defined_names(&mut self) -> Vec<(String, String)> {
+        self.book()
+            .defined_names()
+            .iter()
+            .filter(|d| !d.hidden && !d.name.starts_with("_xlnm."))
+            .map(|d| (d.name.clone(), d.refers_to.clone()))
+            .collect()
+    }
+
+    fn set_defined_name(&mut self, name: &str, refers_to: Option<&str>) -> Result<Vec<usize>> {
+        self.book().set_defined_name(name, refers_to).map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn set_note(
         &mut self,
         unit: usize,
@@ -2931,5 +2945,40 @@ mod tests {
             assert!(d.undo().unwrap());
         }
         assert!(d.cell_link(0, 9, 1).is_none() && d.cell_link(0, 1, 0).is_none());
+    }
+
+    #[test]
+    fn names_defined() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let before = d.defined_names();
+        // A name for B2:B4, used by a formula.
+        d.set_defined_name("Q1Values", Some("Budget!$B$2:$B$4"))
+            .unwrap();
+        assert!(
+            d.defined_names()
+                .contains(&("Q1Values".into(), "Budget!$B$2:$B$4".into()))
+        );
+        d.set_cell(0, 9, 1, "=SUM(Q1Values)").unwrap();
+        assert_eq!(d.grid_cells(0, 9..10, 1..2)[0].2.text, "1631.5");
+        // Names Excel refuses.
+        for bad in ["A1", "R1C1", "1x", "a b", "c"] {
+            assert!(
+                d.set_defined_name(bad, Some("Budget!$A$1")).is_err(),
+                "{bad}"
+            );
+        }
+        // Defined again elsewhere, then deleted.
+        d.set_defined_name("q1values", Some("Budget!$B$2")).unwrap();
+        assert_eq!(d.grid_cells(0, 9..10, 1..2)[0].2.text, "1200");
+        let saved = d.save().unwrap().bytes;
+        let wb = Workbook::open(saved).unwrap();
+        assert!(wb.defined_names().iter().any(|n| n.name == "q1values"));
+        d.set_defined_name("Q1VALUES", None).unwrap();
+        assert_eq!(d.defined_names(), before);
+        assert!(d.set_defined_name("Q1VALUES", None).is_err());
+        for _ in 0..4 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(d.defined_names(), before);
     }
 }
