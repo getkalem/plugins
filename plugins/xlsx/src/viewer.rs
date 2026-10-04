@@ -820,6 +820,18 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_axis_format(
+        &mut self,
+        unit: usize,
+        index: usize,
+        format: Option<String>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_axis_format(unit, index, format.as_deref())
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1880,6 +1892,13 @@ mod tests {
         };
         d.set_gridlines(0, before, lines).unwrap();
         assert_eq!(d.charts(0)[before].gridlines, lines);
+        // Its value axis in thousands of lira, kept by the change of kind.
+        d.set_axis_format(0, before, Some("#,##0 \"TL\"".into()))
+            .unwrap();
+        assert_eq!(
+            d.charts(0)[before].axis_format.as_deref(),
+            Some("#,##0 \"TL\"")
+        );
         // Q2 colored red, kept by the change of kind below.
         d.set_series_color(0, before, 1, Some([0xFF, 0, 0]))
             .unwrap();
@@ -1900,6 +1919,7 @@ mod tests {
         assert_eq!(bar.categories, was.categories);
         assert_eq!((bar.background, bar.border), (was.background, was.border));
         assert_eq!(bar.plot_background, was.plot_background);
+        assert_eq!(bar.axis_format, was.axis_format);
         assert_eq!(
             bar.gridlines,
             Gridlines {

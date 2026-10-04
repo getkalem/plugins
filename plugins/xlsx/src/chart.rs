@@ -179,6 +179,8 @@ pub struct ChartDef {
     pub plot_border: Fill,
     /// Gridlines: horizontal major and minor, vertical major and minor.
     pub gridlines: (bool, bool, bool, bool),
+    /// The value axis's own number format, when not the cells'.
+    pub axis_format: Option<String>,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -251,7 +253,8 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     let mut point_explosion: Option<u32> = None;
     let mut axis_scale: Scale = (None, None, None, false);
     // Each value axis: its side and scale.
-    let mut value_axes: Vec<(String, Scale)> = Vec::new();
+    let mut value_axes: Vec<(String, Scale, Option<String>)> = Vec::new();
+    let mut axis_format: Option<String> = None;
     while let Some(t) = r.next_token() {
         match t {
             Token::Start(tag) => {
@@ -374,6 +377,17 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             "max" => axis_scale.1 = v,
                             _ => axis_scale.3 = v.is_some(),
                         }
+                    }
+                    "numFmt" if parent.ends_with("Ax") => {
+                        let linked = tag
+                            .attr("sourceLinked")
+                            .is_some_and(|v| v == "1" || v == "true");
+                        let code = tag
+                            .attr("formatCode")
+                            .map(|v| v.into_owned())
+                            .unwrap_or_default();
+                        axis_format =
+                            (!linked && !code.is_empty() && code != "General").then_some(code);
                     }
                     "majorUnit" if parent.ends_with("Ax") => {
                         axis_scale.2 = tag.attr("val").and_then(|v| v.trim().parse::<f64>().ok());
@@ -501,7 +515,9 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     }
                     let sc = std::mem::take(&mut axis_scale);
                     if name == "valAx" {
-                        value_axes.push((axis_pos.clone(), sc));
+                        value_axes.push((axis_pos.clone(), sc, axis_format.take()));
+                    } else {
+                        axis_format = None;
                     }
                     let t = std::mem::take(&mut axis_title);
                     if !t.trim().is_empty() {
@@ -536,6 +552,7 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     };
     if let Some(a) = pick {
         def.scale = a.1;
+        def.axis_format = a.2.clone();
     }
     if !title.trim().is_empty() {
         def.title = Some(title);
@@ -1695,6 +1712,83 @@ pub fn with_gridlines(text: &str, lines: (bool, bool, bool, bool)) -> Option<Str
     Some(out)
 }
 
+/// The value axis of a chart part (a scatter chart's vertical one): its
+/// bytes and prefix.
+fn value_axis(text: &str, scatter: bool) -> Option<(Span<usize>, String)> {
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut axes: Vec<(Span<usize>, String, bool)> = Vec::new();
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if tag.name == "valAx"
+                    && stack.last().is_some_and(|s| s == "plotArea")
+                    && !tag.empty
+                {
+                    let start = tag.span.start;
+                    let p = xml::prefix(tag.qname).to_owned();
+                    let end = r.skip_element();
+                    let vertical = matches!(
+                        child(&text[start..end], "axPos").and_then(|a| a
+                            .split("val=\"")
+                            .nth(1)?
+                            .split('"')
+                            .next()),
+                        Some("l" | "r")
+                    );
+                    axes.push((start..end, p, vertical));
+                    continue;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let pick = if scatter {
+        axes.into_iter().find(|a| a.2)
+    } else {
+        axes.into_iter().next()
+    };
+    pick.map(|a| (a.0, a.1))
+}
+
+/// A chart part with its value axis's labels in `format`, or in the
+/// cells' own (`None`): the axis's `<c:numFmt>` written where the schema
+/// puts it. `None` when the chart has no value axis (a pie).
+pub fn with_axis_format(text: &str, format: Option<&str>, scatter: bool) -> Option<String> {
+    let (span, p) = value_axis(text, scatter)?;
+    let el = &text[span.clone()];
+    let fmt = match format {
+        Some(code) => format!(
+            "<{p}numFmt formatCode=\"{}\" sourceLinked=\"0\"/>",
+            xml::escape(code)
+        ),
+        None => format!("<{p}numFmt formatCode=\"General\" sourceLinked=\"1\"/>"),
+    };
+    let new = set_child(
+        el,
+        &["numFmt"],
+        &fmt,
+        &[
+            "axId",
+            "scaling",
+            "delete",
+            "axPos",
+            "majorGridlines",
+            "minorGridlines",
+            "title",
+        ],
+    );
+    let mut out = text.to_owned();
+    out.replace_range(span, &new);
+    Some(out)
+}
+
 /// An absolute reference to a range of a sheet, as charts write them.
 pub fn reference(sheet: &str, r: crate::cellref::Range) -> String {
     let abs = |c: crate::cellref::CellRef| {
@@ -2448,6 +2542,47 @@ mod tests {
         assert!(kept.contains("<c:majorGridlines><c:spPr>gray</c:spPr></c:majorGridlines><c:minorGridlines/><c:numFmt/>"), "{kept}");
         let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
         assert!(with_gridlines(&pie, (true, false, false, false)).is_none());
+    }
+
+    #[test]
+    fn axis_number_formats() {
+        let s = NewSeries {
+            name: None,
+            cat: Some(("S!$A$2:$A$3".into(), vec!["1".into(), "2".into()], false)),
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
+        };
+        for kind in [ChartKind::Column, ChartKind::Bar, ChartKind::Scatter] {
+            let x = chart_xml(kind, None, std::slice::from_ref(&s));
+            let scatter = kind == ChartKind::Scatter;
+            assert_eq!(
+                parse_chart(&x, &[]).axis_format,
+                None,
+                "linked to the cells"
+            );
+            let y = with_axis_format(&x, Some("#,##0 \"TL\""), scatter).unwrap();
+            assert_eq!(
+                parse_chart(&y, &[]).axis_format.as_deref(),
+                Some("#,##0 \"TL\""),
+                "{kind:?}"
+            );
+            assert_eq!(
+                y.matches("<c:numFmt").count(),
+                x.matches("<c:numFmt").count(),
+                "replaced"
+            );
+            let back = with_axis_format(&y, None, scatter).unwrap();
+            assert_eq!(parse_chart(&back, &[]).axis_format, None);
+        }
+        // After the title, before the tick marks.
+        let x = chart_xml(ChartKind::Column, None, std::slice::from_ref(&s));
+        let x = axis_titled(&x, true, Some("TRY")).unwrap();
+        let y = with_axis_format(&x, Some("0%"), false).unwrap();
+        let ax = &y[y.find("<c:valAx>").unwrap()..];
+        assert!(ax.find("</c:title>") < ax.find("formatCode=\"0%\""));
+        assert!(ax.find("formatCode=\"0%\"") < ax.find("<c:majorTickMark"));
+        let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
+        assert!(with_axis_format(&pie, Some("0"), false).is_none());
     }
 
     #[test]

@@ -2300,6 +2300,7 @@ impl Workbook {
                 border: paint(def.border),
                 plot_background: paint(def.plot_background),
                 plot_border: paint(def.plot_border),
+                axis_format: def.axis_format.clone(),
                 gridlines: kalem_viewer::Gridlines {
                     horizontal_major: def.gridlines.0,
                     horizontal_minor: def.gridlines.1,
@@ -2887,6 +2888,11 @@ impl Workbook {
         {
             new = x;
         }
+        if let Some(f) = &def.axis_format
+            && let Some(x) = chart::with_axis_format(&new, Some(f), kind == K::Scatter)
+        {
+            new = x;
+        }
         if (def.background, def.border) != (chart::Fill::Auto, chart::Fill::Auto) {
             new = chart::with_chart_area(&new, def.background, def.border);
         }
@@ -3194,6 +3200,48 @@ impl Workbook {
             ),
         )
         .ok_or_else(|| Error::Refused("This chart has no axes".into()))?;
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Sets the number format of the value axis's labels of a sheet's
+    /// chart (by its place among [`Workbook::charts`]), or the cells' own.
+    /// One undo step.
+    pub fn set_axis_format(
+        &mut self,
+        idx: usize,
+        index: usize,
+        format: Option<&str>,
+    ) -> Result<()> {
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let scatter =
+            chart::parse_chart(&old, &self.theme).kind == kalem_viewer::ChartKind::Scatter;
+        let format = format
+            .map(str::trim)
+            .filter(|f| !f.is_empty() && *f != "General");
+        let new = chart::with_axis_format(&old, format, scatter)
+            .ok_or_else(|| Error::Refused("This chart has no value axis".into()))?;
         if new == old {
             return Ok(());
         }
