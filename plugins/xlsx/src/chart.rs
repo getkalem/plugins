@@ -964,6 +964,8 @@ pub struct NewSeries {
     pub cat: Option<(String, Vec<String>, bool)>,
     /// The values' cells and numbers.
     pub val: (String, Vec<Option<f64>>),
+    /// Its color, when it keeps one.
+    pub color: Option<Rgb>,
 }
 
 fn str_cache(f: &str, items: &[String]) -> String {
@@ -1010,6 +1012,18 @@ pub fn chart_xml(kind: ChartKind, title: Option<&str>, series: &[NewSeries]) -> 
             let mut x = format!("<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/>");
             if let Some((f, text)) = &s.name {
                 x.push_str(&format!("<c:tx>{}</c:tx>", str_cache(f, std::slice::from_ref(text))));
+            }
+            // Its own color, kept from the chart it was (not a pie's slices).
+            if let Some(c) = s.color {
+                match kind {
+                    ChartKind::Column | ChartKind::Bar | ChartKind::Area => x.push_str(&format!(
+                        "<c:spPr><a:solidFill><a:srgbClr val=\"{c:06X}\"/></a:solidFill></c:spPr>"
+                    )),
+                    ChartKind::Line => x.push_str(&format!(
+                        "<c:spPr><a:ln w=\"28575\" cap=\"rnd\"><a:solidFill><a:srgbClr val=\"{c:06X}\"/></a:solidFill></a:ln></c:spPr>"
+                    )),
+                    _ => {}
+                }
             }
             match kind {
                 ChartKind::Column | ChartKind::Bar => x.push_str("<c:invertIfNegative val=\"0\"/>"),
@@ -1205,6 +1219,7 @@ mod tests {
                 false,
             )),
             val: ("Budget!$B$2:$B$3".into(), vec![Some(1200.0), Some(431.5)]),
+            color: None,
         };
         for kind in [
             ChartKind::Column,
@@ -1239,6 +1254,7 @@ mod tests {
             name: Some(("S!$B$1".into(), "Q1".into())),
             cat: None,
             val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
         };
         let x = chart_xml(ChartKind::Line, Some("Old"), std::slice::from_ref(&s));
         let y = titled(&x, Some("New & better"));
@@ -1261,6 +1277,7 @@ mod tests {
             name: None,
             cat: Some(("S!$A$2:$A$3".into(), vec!["a".into(), "b".into()], false)),
             val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
         };
         for kind in [ChartKind::Column, ChartKind::Bar, ChartKind::Scatter] {
             let x = chart_xml(kind, None, std::slice::from_ref(&s));
@@ -1301,6 +1318,7 @@ mod tests {
             name: None,
             cat: None,
             val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
         };
         // One series: no legend to start with.
         let x = chart_xml(ChartKind::Column, None, std::slice::from_ref(&s));
@@ -1331,6 +1349,7 @@ mod tests {
             name: Some(("S!$B$1".into(), "Q1".into())),
             cat: Some(("S!$A$2:$A$3".into(), vec!["a".into(), "b".into()], false)),
             val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
         };
         for kind in [
             ChartKind::Column,
@@ -1376,6 +1395,7 @@ mod tests {
             name: None,
             cat: Some(("S!$A$2:$A$3".into(), vec!["1".into(), "2".into()], false)),
             val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(200.0)]),
+            color: None,
         };
         for kind in [
             ChartKind::Column,

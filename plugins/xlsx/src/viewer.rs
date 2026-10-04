@@ -743,6 +743,11 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_chart_kind(&mut self, unit: usize, index: usize, kind: ChartKind) -> Result<Vec<usize>> {
+        self.book().set_chart_kind(unit, index, kind).map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1776,6 +1781,50 @@ mod tests {
         assert_eq!(wb.charts(0).unwrap()[before].scale, scale);
         assert!(d.undo().unwrap());
         assert_eq!(d.charts(0)[before].scale, AxisScale::default());
+        // Made a bar chart: the series, title, legend, labels and scale
+        // kept, the category axis's title going to the side with the
+        // categories; then a line chart; undone.
+        d.set_axis_title(0, before, ChartAxis::Horizontal, Some("Item".into()))
+            .unwrap();
+        d.set_data_labels(0, before, values).unwrap();
+        d.set_axis_scale(0, before, scale).unwrap();
+        let was = d.charts(0)[before].clone();
+        d.set_chart_kind(0, before, ChartKind::Bar).unwrap();
+        let bar = d.charts(0)[before].clone();
+        assert_eq!(bar.kind, ChartKind::Bar);
+        assert_eq!(bar.series, was.series);
+        assert_eq!(bar.categories, was.categories);
+        assert_eq!(
+            (bar.title.clone(), bar.legend, bar.labels, bar.scale),
+            (was.title.clone(), was.legend, was.labels, was.scale)
+        );
+        assert_eq!(
+            (
+                bar.vertical_title.as_deref(),
+                bar.horizontal_title.as_deref()
+            ),
+            (Some("Item"), None)
+        );
+        d.set_chart_kind(0, before, ChartKind::Line).unwrap();
+        let line = d.charts(0)[before].clone();
+        assert_eq!(
+            (line.kind, line.horizontal_title.as_deref()),
+            (ChartKind::Line, Some("Item"))
+        );
+        // A pie made of it shows a legend for its slices.
+        d.set_legend(0, before, None).unwrap();
+        d.set_chart_kind(0, before, ChartKind::Pie).unwrap();
+        assert!(d.charts(0)[before].legend.is_some());
+        let pie = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-kind-test.xlsx"), &pie).unwrap();
+        }
+        let mut wb = Workbook::open(pie).unwrap();
+        assert_eq!(wb.charts(0).unwrap()[before].kind, ChartKind::Pie);
+        for _ in 0..7 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(d.charts(0)[before].kind, ChartKind::Column);
         // Removed, then back with undo.
         d.delete_chart(0, before).unwrap();
         assert_eq!(d.charts(0).len(), before);

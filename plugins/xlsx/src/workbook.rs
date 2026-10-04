@@ -2376,6 +2376,7 @@ impl Workbook {
                 name,
                 cat,
                 val: (chart::reference(&sheet, val_r), values),
+                color: None,
             });
         }
         if series.iter().all(|s| s.val.1.iter().all(Option::is_none)) {
@@ -2709,6 +2710,134 @@ impl Workbook {
         .ok_or_else(|| Error::Refused("This chart has no value axis".into()))?;
         if new == old {
             return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Changes the kind of a sheet's chart (by its place among
+    /// [`Workbook::charts`]), as Excel's Change Chart Type: the part
+    /// written again for the new kind from the cells its series name, with
+    /// their colors, the titles (an axis's going with its role, so a
+    /// column chart's category title stays the categories' as a bar
+    /// chart's), the legend, the data labels and the value axis's scale.
+    /// One undo step.
+    pub fn set_chart_kind(
+        &mut self,
+        idx: usize,
+        index: usize,
+        kind: kalem_viewer::ChartKind,
+    ) -> Result<()> {
+        use kalem_viewer::ChartKind as K;
+        if kind == K::Other {
+            return Err(Error::Refused(
+                "Kalem does not write that kind of chart".into(),
+            ));
+        }
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let def = chart::parse_chart(&old, &self.theme);
+        if def.kind == kind {
+            return Ok(());
+        }
+        let mut series = Vec::new();
+        for s in &def.series {
+            let Some(val_f) = s.val.0.clone() else {
+                return Err(Error::Refused(
+                    "The chart's values are not in cells: Kalem cannot redraw it".into(),
+                ));
+            };
+            let values = match self.chart_range(&val_f) {
+                Some((i, r)) => self.range_numbers(i, r),
+                None => s.val.1.clone(),
+            };
+            let name = s.name.0.clone().map(|f| {
+                let text = match self.chart_range(&f) {
+                    Some((i, r)) => self
+                        .range_texts(
+                            i,
+                            Range {
+                                start: r.start,
+                                end: r.start,
+                            },
+                        )
+                        .join(""),
+                    None => s.name.1.clone(),
+                };
+                (f, text)
+            });
+            let cat = s.cat.0.clone().map(|f| {
+                let texts = match self.chart_range(&f) {
+                    Some((i, r)) => self.range_texts(i, r),
+                    None => s.cat.1.clone(),
+                };
+                (f, texts, kind == K::Scatter)
+            });
+            series.push(chart::NewSeries {
+                name,
+                cat,
+                val: (val_f, values),
+                color: s.color,
+            });
+        }
+        if series.is_empty() {
+            return Err(Error::Refused("The chart has no series".into()));
+        }
+        let pie = |k: K| matches!(k, K::Pie | K::Doughnut);
+        let mut new = chart::chart_xml(kind, def.title.as_deref(), &series);
+        if def.title.is_none() && def.title_deleted {
+            new = chart::titled(&new, None);
+        }
+        // The legend as it was; a pie made from a chart without one gets
+        // the legend its slices need.
+        let legend = match (&def.legend, pie(kind) && !pie(def.kind)) {
+            (None, true) => Some("r".to_owned()),
+            (l, _) => l.clone(),
+        };
+        new = chart::with_legend(&new, legend.as_deref());
+        new = chart::with_labels(&new, def.labels, pie(kind));
+        // An axis's title keeps its role: categories (or x) and values.
+        let (cat_title, val_title) = if def.kind == K::Bar {
+            (def.vertical_title.clone(), def.horizontal_title.clone())
+        } else {
+            (def.horizontal_title.clone(), def.vertical_title.clone())
+        };
+        let (horizontal, vertical) = if kind == K::Bar {
+            (val_title, cat_title)
+        } else {
+            (cat_title, val_title)
+        };
+        if let Some(t) = horizontal
+            && let Some(x) = chart::axis_titled(&new, false, Some(&t))
+        {
+            new = x;
+        }
+        if let Some(t) = vertical
+            && let Some(x) = chart::axis_titled(&new, true, Some(&t))
+        {
+            new = x;
+        }
+        if def.scale != (None, None, None, false)
+            && let Some(x) = chart::with_scale(&new, def.scale, kind == K::Scatter)
+        {
+            new = x;
         }
         let snapshot = (self.batch.is_none()).then(|| self.snapshot());
         self.pkg.set_part(&part, new.into_bytes());
