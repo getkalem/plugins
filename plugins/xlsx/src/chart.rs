@@ -1282,7 +1282,7 @@ const FILLS: [&str; 6] = [
 
 /// An element's direct children (name and bytes), where its content
 /// starts and where its end tag starts; an empty element is opened up.
-fn open_up(el: &str) -> (String, usize, usize, Vec<(String, Span<usize>)>) {
+pub(crate) fn open_up(el: &str) -> (String, usize, usize, Vec<(String, Span<usize>)>) {
     let mut r = Reader::new(el);
     let mut out = el.to_owned();
     let (mut open_end, mut close) = (0, el.len());
@@ -1323,7 +1323,7 @@ fn open_up(el: &str) -> (String, usize, usize, Vec<(String, Span<usize>)>) {
 /// An element with its direct child `name` replaced by `new` (or taken
 /// out when `new` is empty), or `new` put after the last of `after` there
 /// is, else first.
-fn set_child(el: &str, names: &[&str], new: &str, after: &[&str]) -> String {
+pub(crate) fn set_child(el: &str, names: &[&str], new: &str, after: &[&str]) -> String {
     let (el, open_end, close, kids) = open_up(el);
     let mut out = String::from(&el[..open_end]);
     let mut placed = new.is_empty();
@@ -1354,7 +1354,7 @@ fn set_child(el: &str, names: &[&str], new: &str, after: &[&str]) -> String {
 }
 
 /// The direct child `name` of an element, if any.
-fn child<'a>(el: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn child<'a>(el: &'a str, name: &str) -> Option<&'a str> {
     let (_, _, _, kids) = open_up(el);
     kids.into_iter().find(|k| k.0 == name).map(|k| &el[k.1])
 }

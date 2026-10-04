@@ -1668,6 +1668,189 @@ impl Workbook {
         Ok(count)
     }
 
+    /// `styles.xml` as it stands now: the part's name and its text.
+    fn styles_now(&self) -> Result<(String, String)> {
+        let part = self
+            .styles_part
+            .clone()
+            .ok_or_else(|| Error::Refused("The workbook has no styles part".into()))?;
+        let text = match &self.styles_xml {
+            Some(t) => t.clone(),
+            None => text_of(self.pkg.part(&part)?, &part)?,
+        };
+        Ok((part, text))
+    }
+
+    /// A copy of the style at index `style` with `change` made: a new
+    /// `<font>` and `<fill>` where the change touches them, and a new
+    /// `<xf>`; each the same one again when `styles.xml` has it already.
+    fn restyle(&mut self, style: u32, change: &kalem_viewer::StyleChange) -> Result<u32> {
+        let (_, mut text) = self.styles_now()?;
+        let xfs = style_children(&text, "cellXfs")
+            .ok_or_else(|| Error::Refused("styles.xml has no cell formats".into()))?;
+        let mut xf = xfs
+            .get(style as usize)
+            .map(|s| text[s.clone()].to_owned())
+            .unwrap_or_else(|| {
+                "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>".into()
+            });
+        let id = |xf: &str, k: &str| -> usize {
+            xf.split(&format!(" {k}=\""))
+                .nth(1)
+                .and_then(|v| v.split('"').next()?.parse().ok())
+                .unwrap_or(0)
+        };
+        let font_touched = change.bold.is_some()
+            || change.italic.is_some()
+            || change.underline.is_some()
+            || change.strike.is_some()
+            || change.color.is_some()
+            || change.size.is_some()
+            || change.face.is_some();
+        if font_touched {
+            let fonts = style_children(&text, "fonts")
+                .ok_or_else(|| Error::Refused("styles.xml has no fonts".into()))?;
+            let src = fonts
+                .get(id(&xf, "fontId"))
+                .map(|s| text[s.clone()].to_owned())
+                .unwrap_or_else(|| "<font/>".into());
+            let p = xml::prefix(
+                src.trim_start_matches('<')
+                    .split([' ', '/', '>'])
+                    .next()
+                    .unwrap_or(""),
+            )
+            .to_owned();
+            let mut f = src;
+            for (name, on) in [
+                ("b", change.bold),
+                ("i", change.italic),
+                ("u", change.underline),
+                ("strike", change.strike),
+            ] {
+                if let Some(on) = on {
+                    let el = if on {
+                        format!("<{p}{name}/>")
+                    } else {
+                        String::new()
+                    };
+                    f = crate::chart::set_child(&f, &[name], &el, &[]);
+                }
+            }
+            if let Some(sz) = change.size {
+                f = crate::chart::set_child(
+                    &f,
+                    &["sz"],
+                    &format!("<{p}sz val=\"{sz}\"/>"),
+                    &["b", "i", "strike", "u"],
+                );
+            }
+            if let Some(c) = change.color {
+                let el = c.map_or(String::new(), |[r, g, b]| {
+                    format!("<{p}color rgb=\"FF{r:02X}{g:02X}{b:02X}\"/>")
+                });
+                f = crate::chart::set_child(&f, &["color"], &el, &["b", "i", "strike", "u", "sz"]);
+            }
+            if let Some(face) = &change.face {
+                // A theme's font (`scheme`) would win over the name.
+                f = crate::chart::set_child(&f, &["scheme"], "", &[]);
+                f = crate::chart::set_child(
+                    &f,
+                    &["name"],
+                    &format!("<{p}name val=\"{}\"/>", xml::escape(face)),
+                    &["b", "i", "strike", "u", "sz", "color"],
+                );
+            }
+            let (t, fid) = add_style_child(&text, "fonts", &f);
+            text = t;
+            xf = xml::set_attr(&xf, "fontId", &fid.to_string());
+            xf = xml::set_attr(&xf, "applyFont", "1");
+        }
+        if let Some(fill) = change.fill {
+            let fid = match fill {
+                None => 0,
+                Some([r, g, b]) => {
+                    let el = format!(
+                        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF{r:02X}{g:02X}{b:02X}\"/><bgColor indexed=\"64\"/></patternFill></fill>"
+                    );
+                    let (t, fid) = add_style_child(&text, "fills", &el);
+                    text = t;
+                    fid
+                }
+            };
+            xf = xml::set_attr(&xf, "fillId", &fid.to_string());
+            xf = xml::set_attr(&xf, "applyFill", "1");
+        }
+        let (t, xid) = add_style_child(&text, "cellXfs", &xf);
+        text = t;
+        self.styles = styles::parse(&text, &self.theme);
+        self.styles_xml = Some(text);
+        Ok(xid as u32)
+    }
+
+    /// Changes the format of a range's cells, as Format Cells: each cell's
+    /// style copied with the change made (the same new style for the same
+    /// old one), empty cells given one too. One undo step.
+    pub fn change_style(
+        &mut self,
+        idx: usize,
+        range: Range,
+        change: &kalem_viewer::StyleChange,
+    ) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let area = u64::from(range.end.row - range.start.row + 1)
+            * u64::from(range.end.col - range.start.col + 1);
+        if area > 200_000 {
+            return Err(Error::Refused("Select fewer cells: 200,000 at most".into()));
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = (|| -> Result<()> {
+            let mut made: HashMap<u32, u32> = HashMap::new();
+            for row in range.start.row..=range.end.row {
+                for col in range.start.col..=range.end.col {
+                    let at = CellRef::new(row, col);
+                    let old = self.loaded[&idx]
+                        .1
+                        .cells
+                        .get(&at)
+                        .map_or_else(|| self.row_or_col_style(idx, at), |c| c.style);
+                    let new = match made.get(&old) {
+                        Some(n) => *n,
+                        None => {
+                            let n = self.restyle(old, change)?;
+                            made.insert(old, n);
+                            n
+                        }
+                    };
+                    if new != old || !self.loaded[&idx].1.cells.contains_key(&at) {
+                        self.apply_style(idx, at, new)?;
+                    }
+                }
+            }
+            Ok(())
+        })();
+        self.batch_changed = true;
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Turns wrapping of a cell's text on or off, as Excel's Wrap Text: the
     /// cell gets a copy of its `<xf>` with `<alignment wrapText>`.
     pub fn set_wrap(&mut self, idx: usize, at: CellRef, wrap: bool) -> Result<()> {
@@ -5409,6 +5592,98 @@ const AFTER_AUTO_FILTER: [&str; 28] = [
     "tableParts",
     "extLst",
 ];
+
+/// The children of a top-level list of `styles.xml` (`fonts`, `fills`,
+/// `cellXfs`), as byte ranges.
+fn style_children(text: &str, list: &str) -> Option<Vec<Span<usize>>> {
+    let mut r = Reader::new(text);
+    let mut depth = 0;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 1 && tag.name == list {
+                    if tag.empty {
+                        return Some(Vec::new());
+                    }
+                    let mut out = Vec::new();
+                    while let Some(t2) = r.next_token() {
+                        match t2 {
+                            Token::Start(c) => {
+                                let end = if c.empty {
+                                    c.span.end
+                                } else {
+                                    r.skip_element()
+                                };
+                                out.push(c.span.start..end);
+                            }
+                            Token::End { .. } => return Some(out),
+                            Token::Text { .. } => {}
+                        }
+                    }
+                    return Some(out);
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { .. } => depth -= 1,
+            Token::Text { .. } => {}
+        }
+    }
+    None
+}
+
+/// `styles.xml` with `el` the last child of its list `list` (`count` kept
+/// right), and its index; the one already there when the list has it.
+fn add_style_child(text: &str, list: &str, el: &str) -> (String, usize) {
+    let kids = style_children(text, list).unwrap_or_default();
+    if let Some(i) = kids.iter().position(|k| text[k.clone()] == *el) {
+        return (text.to_owned(), i);
+    }
+    let mut r = Reader::new(text);
+    let mut depth = 0;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 1 && tag.name == list {
+                    let p = xml::prefix(tag.qname).to_owned();
+                    let el = if p.is_empty() {
+                        el.to_owned()
+                    } else {
+                        with_prefix(el, &p)
+                    };
+                    let open = xml::set_attr(
+                        &text[tag.span.clone()],
+                        "count",
+                        &(kids.len() + 1).to_string(),
+                    );
+                    if tag.empty {
+                        let o = open.trim_end_matches("/>").trim_end().to_owned();
+                        return (
+                            splice(
+                                text,
+                                vec![(tag.span.clone(), format!("{o}>{el}</{p}{list}>"))],
+                            ),
+                            0,
+                        );
+                    }
+                    let end = r.skip_element();
+                    let close = text[..end].rfind("</").unwrap_or(end);
+                    return (
+                        splice(text, vec![(tag.span.clone(), open), (close..close, el)]),
+                        kids.len(),
+                    );
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { .. } => depth -= 1,
+            Token::Text { .. } => {}
+        }
+    }
+    (text.to_owned(), 0)
+}
 
 /// A sheet part with a `<dataValidation>` added to the sheet's
 /// `<dataValidations>`, made where the schema puts it when missing.

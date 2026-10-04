@@ -10,8 +10,8 @@ use kalem_viewer::{
     Align, AxisFont, AxisScale, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule,
     CondStyle, DataLabels, Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout,
     Gridlines, InfoField, LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, Paint,
-    PivotSpec, RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation,
-    ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
+    PivotSpec, RenderRequest, Rendered, Result, SaveOutput, Structure, StyleChange, Unit, UnitKind,
+    Validation, ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -467,6 +467,7 @@ impl ViewerDocument for XlsxDoc {
             Err(_) => return Vec::new(),
         };
         let notes: Vec<CellRef> = self.notes(unit).keys().copied().collect();
+        let base = self.book().style(0);
         let mut out = Vec::with_capacity(positions.len());
         for at in positions {
             let text = self.book().display(unit, at).unwrap_or_default();
@@ -504,6 +505,13 @@ impl ViewerDocument for XlsxDoc {
                     note: notes.contains(&at),
                     bar: None,
                     icon: None,
+                    // Size and typeface only where they differ from the
+                    // workbook's default font.
+                    font_size: style
+                        .size
+                        .filter(|s| Some(*s) != base.size)
+                        .map(|s| (s * 10.0).round() as u16),
+                    face: style.font.clone().filter(|f| Some(f) != base.font.as_ref()),
                     // Fields the contract gains later start empty.
                     ..GridCell::default()
                 },
@@ -1121,6 +1129,20 @@ impl ViewerDocument for XlsxDoc {
             .clear_conditional_formats(unit, r)
             .map_err(err)?;
         Ok(if any { vec![unit] } else { Vec::new() })
+    }
+
+    fn change_style(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        change: StyleChange,
+    ) -> Result<Vec<usize>> {
+        let r = crate::cellref::Range {
+            start: CellRef::new(range[0].min(range[2]), range[1].min(range[3])),
+            end: CellRef::new(range[0].max(range[2]), range[1].max(range[3])),
+        };
+        self.book().change_style(unit, r, &change).map_err(err)?;
+        Ok(vec![unit])
     }
 
     fn set_wrap(&mut self, unit: usize, row: u32, col: u32, wrap: bool) -> Result<Vec<usize>> {
@@ -2204,5 +2226,69 @@ mod tests {
             (d.cell_input(0, 21, 0), d.cell_input(0, 22, 0)),
             ("High".into(), "Low".into())
         );
+    }
+
+    #[test]
+    fn font_formatting() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // A2:B3 bold, red on yellow, 14 point Arial; C9 (empty) too.
+        let change = StyleChange {
+            bold: Some(true),
+            color: Some(Some([0xC0, 0, 0])),
+            fill: Some(Some([0xFF, 0xFF, 0])),
+            size: Some(14.0),
+            face: Some("Arial".into()),
+            ..StyleChange::default()
+        };
+        d.change_style(0, [1, 0, 2, 1], change.clone()).unwrap();
+        d.change_style(0, [8, 2, 8, 2], change.clone()).unwrap();
+        let c = d.grid_cells(0, 1..2, 1..2).remove(0).2;
+        assert!(c.bold);
+        assert_eq!(
+            (c.color, c.fill),
+            (Some([0xC0, 0, 0]), Some([0xFF, 0xFF, 0]))
+        );
+        assert_eq!((c.font_size, c.face.as_deref()), (Some(140), Some("Arial")));
+        assert!(
+            d.grid_cells(0, 8..9, 2..3)[0].2.bold,
+            "an empty cell takes the style"
+        );
+        // The number format stays: B2 still shows 1,200.00.
+        assert_eq!(c.text, "1,200.00");
+        // The same change again makes no new style.
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-font-test.xlsx"), &saved).unwrap();
+        }
+        let mut wb = Workbook::open(saved).unwrap();
+        let s = wb.sheet(0).unwrap().cells[&CellRef::new(1, 1)].style;
+        assert!(wb.style(s).bold && wb.style(s).font.as_deref() == Some("Arial"));
+        let xfs = |d: &mut Box<dyn ViewerDocument>| {
+            let b = d.save().unwrap().bytes;
+            let pkg = crate::package::Package::read(b).unwrap();
+            String::from_utf8(pkg.part("xl/styles.xml").unwrap())
+                .unwrap()
+                .matches("<xf ")
+                .count()
+        };
+        let before = xfs(&mut d);
+        d.change_style(0, [1, 0, 2, 1], change).unwrap();
+        assert_eq!(xfs(&mut d), before);
+        // Bold off, then the whole change undone: as the file was.
+        d.change_style(
+            0,
+            [1, 1, 1, 1],
+            StyleChange {
+                bold: Some(false),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        assert!(!d.grid_cells(0, 1..2, 1..2)[0].2.bold);
+        for _ in 0..4 {
+            assert!(d.undo().unwrap());
+        }
+        let c = d.grid_cells(0, 1..2, 1..2).remove(0).2;
+        assert!(!c.bold && c.fill.is_none() && c.font_size.is_none());
     }
 }
