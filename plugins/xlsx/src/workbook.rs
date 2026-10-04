@@ -596,6 +596,32 @@ impl Workbook {
             .map_or(Value::Empty, |c| self.value_of(idx, at, c)))
     }
 
+    /// The numbers among a range's values, and how many of its cells hold
+    /// a value: a status bar's Sum, Average and Count.
+    pub fn range_summary(&mut self, idx: usize, range: Range) -> Result<(Vec<f64>, usize)> {
+        self.load(idx)?;
+        self.flush()?;
+        self.compute_missing(idx)?;
+        let cells = &self.loaded[&idx].1.cells;
+        let (mut numbers, mut count) = (Vec::new(), 0);
+        let from = CellRef::new(range.start.row, 0);
+        let to = CellRef::new(range.end.row, u32::MAX);
+        for (at, c) in cells.range(from..=to) {
+            if !(range.start.col..=range.end.col).contains(&at.col) {
+                continue;
+            }
+            match self.value_of(idx, *at, c) {
+                Value::Empty => {}
+                Value::Number(v) => {
+                    numbers.push(v);
+                    count += 1;
+                }
+                _ => count += 1,
+            }
+        }
+        Ok((numbers, count))
+    }
+
     fn value_of(&self, idx: usize, at: CellRef, c: &Cell) -> Value {
         if c.formula.is_some()
             && c.value == Value::Empty

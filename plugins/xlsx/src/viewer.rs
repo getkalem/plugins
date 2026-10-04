@@ -550,6 +550,14 @@ impl ViewerDocument for XlsxDoc {
             .unwrap_or_default()
     }
 
+    fn range_numbers(&mut self, unit: usize, range: [u32; 4]) -> (Vec<f64>, usize) {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book().range_summary(unit, r).unwrap_or_default()
+    }
+
     fn cell_format(&mut self, unit: usize, row: u32, col: u32) -> Option<String> {
         let style = self
             .book()
@@ -2464,5 +2472,20 @@ mod tests {
             assert!(d.undo().unwrap());
         }
         assert_eq!(text(&mut d, 1, 1), "1,200.00");
+    }
+
+    #[test]
+    fn range_numbers() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // A1:D3: four headers and Rent, Food as text, six numbers.
+        let (numbers, count) = d.range_numbers(0, [0, 0, 2, 3]);
+        assert_eq!(count, 12);
+        assert_eq!(numbers.len(), 6);
+        // D2:D3 are formulas: their values count.
+        let (n, _) = d.range_numbers(0, [1, 3, 2, 3]);
+        assert_eq!(n.iter().sum::<f64>(), 2400.0 + 943.75);
+        // Empty cells are not counted; a whole column is quick.
+        assert_eq!(d.range_numbers(0, [10, 10, 20, 20]), (Vec::new(), 0));
+        assert_eq!(d.range_numbers(0, [0, 1, 1_048_575, 1]).1, 5);
     }
 }
