@@ -148,11 +148,9 @@ pub fn set_attr(tag: &str, name: &str, value: &str) -> String {
         }
         i = vs + len + 1;
     }
-    let close = if tag.ends_with("/>") {
-        tag.len() - 2
-    } else {
-        tag.len() - 1
-    };
+    // At the start tag's end, not the text's: an element with children
+    // keeps its closing tag bare.
+    let close = i.min(tag.len());
     let head = tag[..close].trim_end();
     format!("{head} {name}=\"{value}\"{}", &tag[close..])
 }
@@ -444,6 +442,18 @@ pub fn unescape_st_xstring(s: &str) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attributes_set_on_the_start_tag() {
+        assert_eq!(set_attr(r#"<a k="1"/>"#, "k", "2"), r#"<a k="2"/>"#);
+        assert_eq!(set_attr("<a/>", "k", "2"), r#"<a k="2"/>"#);
+        assert_eq!(set_attr("<a>", "k", "2"), r#"<a k="2">"#);
+        // An element with children: the start tag gets it, not the end.
+        assert_eq!(
+            set_attr(r#"<xf a="1"><b/></xf>"#, "c", "2"),
+            r#"<xf a="1" c="2"><b/></xf>"#
+        );
+    }
 
     #[test]
     fn tokens_and_spans() {
