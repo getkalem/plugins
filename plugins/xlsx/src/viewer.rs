@@ -845,6 +845,13 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_title_font(&mut self, unit: usize, index: usize, font: AxisFont) -> Result<Vec<usize>> {
+        self.book()
+            .set_title_font(unit, index, &font)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1934,6 +1941,19 @@ mod tests {
             )
             .is_err()
         );
+        // The title in a big green font, kept when its words change and by
+        // the change of kind below.
+        let big = AxisFont {
+            size: Some(18.0),
+            bold: true,
+            color: Some([0, 0xB0, 0x50]),
+            ..AxisFont::default()
+        };
+        d.set_title_font(0, before, big.clone()).unwrap();
+        assert_eq!(d.charts(0)[before].title_font, big);
+        d.set_chart_title(0, before, Some("Spending".into()))
+            .unwrap();
+        assert_eq!(d.charts(0)[before].title_font, big);
         // Q2 colored red, kept by the change of kind below.
         d.set_series_color(0, before, 1, Some([0xFF, 0, 0]))
             .unwrap();
@@ -1955,6 +1975,7 @@ mod tests {
         assert_eq!((bar.background, bar.border), (was.background, was.border));
         assert_eq!(bar.plot_background, was.plot_background);
         assert_eq!(bar.axis_format, was.axis_format);
+        assert_eq!(bar.title_font, was.title_font);
         assert_eq!(
             bar.vertical_font, was.horizontal_font,
             "the categories' font"

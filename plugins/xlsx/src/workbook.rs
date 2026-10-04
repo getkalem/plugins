@@ -2310,6 +2310,7 @@ impl Workbook {
                 axis_format: def.axis_format.clone(),
                 horizontal_font: axis_font(&def.horizontal_font),
                 vertical_font: axis_font(&def.vertical_font),
+                title_font: axis_font(&def.title_font),
                 gridlines: kalem_viewer::Gridlines {
                     horizontal_major: def.gridlines.0,
                     horizontal_minor: def.gridlines.1,
@@ -2558,7 +2559,9 @@ impl Workbook {
             .nth(index)
             .ok_or_else(|| Error::Refused("No such chart".into()))?;
         let old = text_of(self.pkg.part(&part)?, &part)?;
-        let new = chart::titled(&old, title.map(str::trim).filter(|t| !t.is_empty()));
+        // The title keeps its font when its words change.
+        let font = chart::parse_chart(&old, &self.theme).title_font;
+        let new = chart::titled(&old, title.map(str::trim).filter(|t| !t.is_empty()), &font);
         if new == old {
             return Ok(());
         }
@@ -2860,8 +2863,11 @@ impl Workbook {
                 }
             }
         }
+        if def.title.is_some() && !def.title_font.is_default() {
+            new = chart::titled(&new, def.title.as_deref(), &def.title_font);
+        }
         if def.title.is_none() && def.title_deleted {
-            new = chart::titled(&new, None);
+            new = chart::titled(&new, None, &chart::Font::default());
         }
         // The legend as it was; a pie made from a chart without one gets
         // the legend its slices need.
@@ -3318,6 +3324,58 @@ impl Workbook {
         };
         let new = chart::with_axis_font(&old, vertical, &f)
             .ok_or_else(|| Error::Refused("This chart has no such axis".into()))?;
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Sets the font of a sheet's chart's title (by its place among
+    /// [`Workbook::charts`]). The chart needs a title of its own. One undo
+    /// step.
+    pub fn set_title_font(
+        &mut self,
+        idx: usize,
+        index: usize,
+        font: &kalem_viewer::AxisFont,
+    ) -> Result<()> {
+        if font.size.is_some_and(|s| !(1.0..=400.0).contains(&s)) {
+            return Err(Error::Refused("A font is 1 to 400 points".into()));
+        }
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let def = chart::parse_chart(&old, &self.theme);
+        let Some(title) = def.title else {
+            return Err(Error::Refused("Give the chart a title first (h t)".into()));
+        };
+        let f = chart::Font {
+            size: font.size,
+            bold: font.bold,
+            italic: font.italic,
+            color: font
+                .color
+                .map(|[r, g, b]| (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)),
+            face: font.face.clone().filter(|f| !f.trim().is_empty()),
+        };
+        let new = chart::titled(&old, Some(&title), &f);
         if new == old {
             return Ok(());
         }

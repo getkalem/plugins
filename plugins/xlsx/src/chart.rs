@@ -207,6 +207,8 @@ pub struct ChartDef {
     pub horizontal_font: Font,
     /// The vertical axis's labels' font.
     pub vertical_font: Font,
+    /// The title's font.
+    pub title_font: Font,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -276,6 +278,7 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     let (mut axis_title, mut axis_pos) = (String::new(), String::new());
     let mut axis_grid = (false, false);
     let mut axis_font = Font::default();
+    let mut title_font_done = false;
     let mut point: Option<(Option<usize>, Option<Rgb>)> = None;
     let mut point_explosion: Option<u32> = None;
     let mut axis_scale: Scale = (None, None, None, false);
@@ -455,6 +458,45 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             _ => {}
                         }
                     }
+                    // The title's font: its first run's, else its paragraph's.
+                    "defRPr" | "rPr" | "latin" | "srgbClr" | "schemeClr"
+                        if ser.is_none()
+                            && stack.len() >= 3
+                            && stack[1] == "chart"
+                            && stack[2] == "title"
+                            && (name == "defRPr"
+                                || name == "rPr"
+                                || stack.iter().any(|s| s == "defRPr" || s == "rPr"))
+                            && !title_font_done =>
+                    {
+                        let flag = |k: &str| tag.attr(k).is_some_and(|v| v == "1" || v == "true");
+                        match name {
+                            "defRPr" | "rPr" => {
+                                if name == "rPr" {
+                                    // A run's own properties win over the defaults.
+                                    def.title_font = Font::default();
+                                }
+                                def.title_font.size = tag
+                                    .attr("sz")
+                                    .and_then(|v| v.parse::<f32>().ok())
+                                    .map(|v| v / 100.0);
+                                def.title_font.bold = flag("b");
+                                def.title_font.italic = flag("i");
+                            }
+                            "latin" => {
+                                def.title_font.face = tag.attr("typeface").map(|v| v.into_owned())
+                            }
+                            _ if parent == "solidFill" => {
+                                let v = tag.attr("val").unwrap_or_default();
+                                def.title_font.color = if name == "srgbClr" {
+                                    u32::from_str_radix(&v, 16).ok()
+                                } else {
+                                    scheme(&v, theme)
+                                };
+                            }
+                            _ => {}
+                        }
+                    }
                     // An axis's labels' font.
                     "defRPr" | "latin" | "srgbClr" | "schemeClr"
                         if stack.len() >= 4
@@ -547,6 +589,9 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
             }
             Token::End { name, .. } => {
                 stack.pop();
+                if name == "rPr" && stack.len() >= 3 && stack[2] == "title" && stack[1] == "chart" {
+                    title_font_done = true;
+                }
                 if name == "dPt" {
                     let pt = point.take();
                     let ex = point_explosion.take();
@@ -629,10 +674,38 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     def
 }
 
+/// A font as DrawingML run properties: the attributes (size, bold,
+/// italic) and the children (fill, typeface), `decl` declaring the prefix
+/// where it is not.
+fn run_font(font: &Font, a: &str, decl: &str) -> (String, String) {
+    let mut attrs = String::new();
+    if let Some(sz) = font.size {
+        attrs.push_str(&format!(" sz=\"{}\"", (sz * 100.0).round() as u32));
+    }
+    attrs.push_str(&format!(
+        " b=\"{}\" i=\"{}\"",
+        u8::from(font.bold),
+        u8::from(font.italic)
+    ));
+    let mut inner = String::new();
+    if let Some(c) = font.color {
+        inner.push_str(&format!(
+            "<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>"
+        ));
+    }
+    if let Some(face) = &font.face {
+        inner.push_str(&format!(
+            "<{a}:latin{decl} typeface=\"{}\"/>",
+            xml::escape(face)
+        ));
+    }
+    (attrs, inner)
+}
+
 /// A chart part with its title set to `title`, or taken away: the
 /// chart's own `<c:title>` and `<c:autoTitleDeleted>` written again as the
 /// first children of `<c:chart>`, everything else kept.
-pub fn titled(text: &str, title: Option<&str>) -> String {
+pub fn titled(text: &str, title: Option<&str>, font: &Font) -> String {
     const DRAWING: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
     let mut r = Reader::new(text);
     let mut depth = 0;
@@ -681,10 +754,22 @@ pub fn titled(text: &str, title: Option<&str>) -> String {
         None => ("a".to_owned(), format!(" xmlns:a=\"{DRAWING}\"")),
     };
     let new = match title {
-        Some(t) => format!(
-            "<{p}title><{p}tx><{p}rich{decl}><{a}:bodyPr/><{a}:lstStyle/><{a}:p><{a}:r><{a}:t>{}</{a}:t></{a}:r></{a}:p></{p}rich></{p}tx><{p}overlay val=\"0\"/></{p}title><{p}autoTitleDeleted val=\"0\"/>",
-            xml::escape(t)
-        ),
+        Some(t) => {
+            // The font on the paragraph's defaults and on its run.
+            let (attrs, inner) = run_font(font, &a, "");
+            let (ppr, rpr) = if font.is_default() {
+                (String::new(), String::new())
+            } else {
+                (
+                    format!("<{a}:pPr><{a}:defRPr{attrs}>{inner}</{a}:defRPr></{a}:pPr>"),
+                    format!("<{a}:rPr lang=\"en-US\"{attrs}>{inner}</{a}:rPr>"),
+                )
+            };
+            format!(
+                "<{p}title><{p}tx><{p}rich{decl}><{a}:bodyPr/><{a}:lstStyle/><{a}:p>{ppr}<{a}:r>{rpr}<{a}:t>{}</{a}:t></{a}:r></{a}:p></{p}rich></{p}tx><{p}overlay val=\"0\"/></{p}title><{p}autoTitleDeleted val=\"0\"/>",
+                xml::escape(t)
+            )
+        }
         None => format!("<{p}autoTitleDeleted val=\"1\"/>"),
     };
     let mut out = String::with_capacity(text.len() + new.len());
@@ -2274,18 +2359,40 @@ mod tests {
             color: None,
         };
         let x = chart_xml(ChartKind::Line, Some("Old"), std::slice::from_ref(&s));
-        let y = titled(&x, Some("New & better"));
+        let y = titled(&x, Some("New & better"), &Font::default());
         let d = parse_chart(&y, &[]);
         assert_eq!(d.title.as_deref(), Some("New & better"));
         assert!(!d.title_deleted);
         assert_eq!(y.matches("autoTitleDeleted").count(), 1);
-        let z = titled(&y, None);
+        let z = titled(&y, None, &Font::default());
         let d = parse_chart(&z, &[]);
         assert_eq!((d.title, d.title_deleted), (None, true));
         assert_eq!(d.series.len(), 1, "the rest kept");
         // A part without the DrawingML prefix declares it.
         let bare = r#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea/></c:chart></c:chartSpace>"#;
-        assert!(titled(bare, Some("T")).contains("<c:rich xmlns:a="));
+        assert!(titled(bare, Some("T"), &Font::default()).contains("<c:rich xmlns:a="));
+        // A title in a font, read back; the axes' fonts untouched.
+        let font = Font {
+            size: Some(18.0),
+            bold: true,
+            italic: true,
+            color: Some(0xC00000),
+            face: Some("Georgia".into()),
+        };
+        let f = titled(&x, Some("Sales"), &font);
+        let d = parse_chart(&f, &[]);
+        assert_eq!(
+            (d.title.as_deref(), d.title_font.clone()),
+            (Some("Sales"), font)
+        );
+        assert!(d.vertical_font.is_default() && d.horizontal_font.is_default());
+        // Excel's title: run properties over the paragraph's.
+        let excel = r#"<c:chartSpace xmlns:c="c" xmlns:a="a"><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1400" b="0"/></a:pPr><a:r><a:rPr lang="tr-TR" sz="2000" b="1"><a:solidFill><a:srgbClr val="00B050"/></a:solidFill></a:rPr><a:t>Satış</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea/></c:chart></c:chartSpace>"#;
+        let d = parse_chart(excel, &[]);
+        assert_eq!(
+            (d.title_font.size, d.title_font.bold, d.title_font.color),
+            (Some(20.0), true, Some(0x00B050))
+        );
     }
 
     #[test]
