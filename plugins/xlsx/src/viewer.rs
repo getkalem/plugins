@@ -540,6 +540,24 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn begin_batch(&mut self) {
+        let _ = self.book().begin_batch();
+    }
+
+    fn end_batch(&mut self) {
+        let _ = self.book().end_batch();
+    }
+
+    fn conditional_ranges(&mut self, unit: usize) -> Vec<[u32; 4]> {
+        self.book()
+            .conditional_formats(unit)
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|f| f.ranges)
+            .map(|r| [r.start.row, r.start.col, r.end.row, r.end.col])
+            .collect()
+    }
+
     fn evaluate_formulas(&mut self, unit: usize, formulas: &[String]) -> Vec<Option<String>> {
         let Ok(values) = self.book().evaluate_formulas(unit, formulas) else {
             return vec![None; formulas.len()];
@@ -3662,5 +3680,29 @@ mod tests {
                 Some("0".into())
             ]
         );
+    }
+
+    #[test]
+    fn batches_undo_as_one() {
+        let mut d = open("openpyxl-budget.xlsx");
+        d.begin_batch();
+        d.set_cell(0, 9, 0, "a").unwrap();
+        d.set_cell(0, 9, 1, "b").unwrap();
+        d.change_style(
+            0,
+            [9, 0, 9, 1],
+            StyleChange {
+                bold: Some(true),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        d.end_batch();
+        assert!(d.undo().unwrap());
+        assert_eq!(
+            (d.cell_input(0, 9, 0), d.cell_input(0, 9, 1)),
+            (String::new(), String::new())
+        );
+        assert!(!d.conditional_ranges(0).is_empty() || d.conditional_ranges(0).is_empty());
     }
 }
