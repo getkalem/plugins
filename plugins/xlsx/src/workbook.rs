@@ -1341,6 +1341,74 @@ impl Workbook {
         Ok(())
     }
 
+    /// Hides rows (`rows`) or columns `from..=to`, or shows them again, as
+    /// Excel's Hide and Unhide: `hidden` on their `<row>`s or `<col>`s.
+    pub fn set_hidden(
+        &mut self,
+        idx: usize,
+        rows: bool,
+        from: u32,
+        to: u32,
+        hidden: bool,
+    ) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let (from, to) = (from.min(to), from.max(to));
+        let limit = if rows { MAX_ROW } else { MAX_COL };
+        if to >= limit {
+            return Err(Error::Refused("No such row or column".into()));
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let text = self.loaded[&idx].0.clone();
+        let new = if rows {
+            if hidden && to - from >= 100_000 {
+                return Err(Error::Refused("Hide 100,000 rows at most at once".into()));
+            }
+            rows_hidden_text(&text, &self.loaded[&idx].1, from, to, hidden)?
+        } else {
+            let mut t = text.clone();
+            // Only columns a `<col>` has can be hidden already.
+            let has = |c: u32| {
+                self.loaded[&idx]
+                    .1
+                    .cols
+                    .iter()
+                    .any(|k| (k.min..=k.max).contains(&c))
+            };
+            for col in from..=to {
+                if !hidden && !has(col) {
+                    continue;
+                }
+                t = col_attrs_text(&t, col + 1, &|tag: &str| {
+                    if hidden {
+                        xml::set_attr(tag, "hidden", "1")
+                    } else {
+                        xml::remove_attr(tag, "hidden")
+                    }
+                });
+            }
+            t
+        };
+        if new != text {
+            let model = sheet::parse(&new, &self.strings, self.date1904);
+            self.loaded.insert(idx, (new, model));
+            self.generation += 1;
+            if !self.dirty_sheets.contains(&idx) {
+                self.dirty_sheets.push(idx);
+            }
+            match snapshot {
+                Some(s) => {
+                    self.undo.push(s);
+                    self.redo.clear();
+                }
+                None => self.batch_changed = true,
+            }
+        }
+        Ok(())
+    }
+
     /// Inserts `n` empty rows before row `at` (zero-based).
     pub fn insert_rows(&mut self, idx: usize, at: u32, n: u32) -> Result<()> {
         self.structural(idx, Op::InsertRows { at, n })
@@ -5521,6 +5589,15 @@ impl Workbook {
 /// split around it, or a new one, `<cols>` made where the schema puts it.
 fn col_width_text(text: &str, col: u32, width: f64) -> String {
     let w = format!("{}", (width * 100.0).round() / 100.0);
+    col_attrs_text(text, col, &|tag: &str| {
+        let t = xml::set_attr(tag, "width", &w);
+        xml::set_attr(&t, "customWidth", "1")
+    })
+}
+
+/// A sheet part with column `col` (one-based) given its own `<col>`, made
+/// by `set` from the one it was in (split around it) or a new one.
+fn col_attrs_text(text: &str, col: u32, set: &dyn Fn(&str) -> String) -> String {
     let mut r = Reader::new(text);
     let mut cols_start: Option<(Span<usize>, bool, String)> = None;
     let mut cols_end: Option<usize> = None;
@@ -5557,10 +5634,6 @@ fn col_width_text(text: &str, col: u32, width: f64) -> String {
             _ => {}
         }
     }
-    let set = |tag: &str| -> String {
-        let t = xml::set_attr(tag, "width", &w);
-        xml::set_attr(&t, "customWidth", "1")
-    };
     match (cols_start, cols_end) {
         (Some((open, false, prefix)), Some(close)) => {
             if let Some((span, a, b)) = entries
@@ -5614,6 +5687,57 @@ fn col_width_text(text: &str, col: u32, width: f64) -> String {
             None => text.to_owned(),
         },
     }
+}
+
+/// A sheet part with rows `from..=to` (zero-based) hidden or shown: the
+/// `hidden` of their `<row>`s, rows made for the ones the part lacks.
+fn rows_hidden_text(text: &str, model: &Sheet, from: u32, to: u32, hidden: bool) -> Result<String> {
+    let p = &model.prefix;
+    let mut splices: Vec<(Span<usize>, String)> = Vec::new();
+    let mut inserts: BTreeMap<usize, String> = BTreeMap::new();
+    let Some((sd_start, sd_end)) = &model.sheet_data else {
+        return Err(Error::Refused("the sheet part has no sheetData".into()));
+    };
+    let mut fresh = String::new();
+    for row in from..=to {
+        match model.rows.get(&row) {
+            Some(r) => {
+                let tag = &text[r.start.clone()];
+                let new = if hidden {
+                    xml::set_attr(tag, "hidden", "1")
+                } else {
+                    xml::remove_attr(tag, "hidden")
+                };
+                if new != tag {
+                    splices.push((r.start.clone(), new));
+                }
+            }
+            None if hidden => {
+                let el = format!("<{p}row r=\"{}\" hidden=\"1\"/>", row + 1);
+                if sd_end.is_none() {
+                    fresh.push_str(&el);
+                    continue;
+                }
+                let at = model
+                    .rows
+                    .range(..row)
+                    .next_back()
+                    .map_or(sd_start.end, |(_, r)| {
+                        r.end.as_ref().map_or(r.start.end, |e| e.end)
+                    });
+                inserts.entry(at).or_default().push_str(&el);
+            }
+            None => {}
+        }
+    }
+    if !fresh.is_empty() {
+        let tag = &text[sd_start.clone()];
+        let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
+        splices.push((sd_start.clone(), format!("{open}>{fresh}</{p}sheetData>")));
+    }
+    splices.extend(inserts.into_iter().map(|(at, s)| (at..at, s)));
+    splices.sort_by_key(|s| (s.0.start, s.0.end));
+    Ok(splice(text, splices))
 }
 
 /// An `<xf>` element with its text wrapping set: `wrapText` on its

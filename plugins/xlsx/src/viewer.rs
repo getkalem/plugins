@@ -550,6 +550,20 @@ impl ViewerDocument for XlsxDoc {
             .unwrap_or_default()
     }
 
+    fn set_hidden(
+        &mut self,
+        unit: usize,
+        rows: bool,
+        from: u32,
+        to: u32,
+        hidden: bool,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_hidden(unit, rows, from, to, hidden)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn edit_sheets(&mut self, edit: kalem_viewer::SheetEdit) -> Result<usize> {
         let shown = self.book().edit_sheets(&edit).map_err(err)?;
         // What was kept by sheet number.
@@ -2555,5 +2569,37 @@ mod tests {
         }
         assert_eq!(names(&mut d), first);
         assert_eq!(d.grid_cells(0, 1..2, 3..4)[0].2.text, "2,400.00");
+    }
+
+    #[test]
+    fn rows_and_columns_hidden() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let layout = |d: &mut Box<dyn ViewerDocument>| d.grid(0).unwrap();
+        // Rows 2-3, and rows 20-21 the part has not got yet.
+        d.set_hidden(0, true, 1, 2, true).unwrap();
+        d.set_hidden(0, true, 19, 20, true).unwrap();
+        assert_eq!(layout(&mut d).hidden_rows, vec![1, 2, 19, 20]);
+        // Columns B:C, then C shown again.
+        d.set_hidden(0, false, 1, 2, true).unwrap();
+        assert_eq!(layout(&mut d).hidden_cols, vec![1, 2]);
+        d.set_hidden(0, false, 2, 2, false).unwrap();
+        assert_eq!(layout(&mut d).hidden_cols, vec![1]);
+        // Saved as Excel reads it; the values stay.
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-hidden-test.xlsx"), &saved).unwrap();
+        }
+        let mut wb = Workbook::open(saved).unwrap();
+        let sheet = wb.sheet(0).unwrap();
+        assert!(sheet.rows[&1].hidden && sheet.rows[&20].hidden);
+        assert_eq!(d.grid_cells(0, 1..2, 3..4)[0].2.text, "2,400.00");
+        // Rows shown again; each change one undo step.
+        d.set_hidden(0, true, 0, 30, false).unwrap();
+        assert!(layout(&mut d).hidden_rows.is_empty());
+        for _ in 0..5 {
+            assert!(d.undo().unwrap());
+        }
+        let l = layout(&mut d);
+        assert!(l.hidden_rows.is_empty() && l.hidden_cols.is_empty());
     }
 }
