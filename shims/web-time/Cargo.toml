@@ -1,0 +1,10 @@
+[package]
+name = "web-time"
+version = "1.1.0"
+edition = "2021"
+publish = false
+description = "web-time's API for the plugins built as WebAssembly components: std's time natively; on wasm32, the clock the plugin sets from Kalem's `clock` interface instead of the browser's JavaScript"
+license = "MIT OR Apache-2.0"
+
+# Not a member of the workspace's members list: `[patch.crates-io]` puts it
+# in place of web-time for every plugin.

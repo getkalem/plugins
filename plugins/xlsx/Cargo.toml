@@ -19,7 +19,9 @@ crate-type = ["cdylib", "rlib"]
 kalem-viewer = { git = "https://github.com/getkalem/kalem", branch = "main" }
 cfb = "0.15.0"
 crc32fast = "1.5.2"
-ironcalc_base = "0.8.3"
+# IronCalc in getkalem's fork: on wasm32 it runs without JavaScript, its
+# clock and randomness from Kalem's `clock` interface (feature `host`).
+ironcalc_base = { git = "https://github.com/getkalem/ironcalc", branch = "kalem", default-features = false }
 miniz_oxide = "0.9.1"
 # Sheet and workbook protection's password hashes, as Excel writes them.
 sha2 = "0.10"
@@ -29,6 +31,14 @@ sha2 = "0.10"
 # (native) plugin has it, the component does not.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 calamine = "0.36.1"
+
+# The component's exports (`kalem plugin build`): the Rust contract
+# adapted to the WIT world `spreadsheet-viewer` (the grid's half, with the
+# feature `grid`), and the engine's clock from Kalem's, on wasm32 only.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main", features = ["grid"] }
+ironcalc_base = { git = "https://github.com/getkalem/ironcalc", branch = "kalem", default-features = false, features = ["host"] }
+web-time = "1"
 
 [dev-dependencies]
 serde_json = "1"

@@ -35,3 +35,8 @@ lto = true
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
+
+# web-time without the browser's JavaScript, for the plugins built as
+# WebAssembly components (cfb reads its clock): see shims/web-time.
+[patch.crates-io]
+web-time = { path = "shims/web-time" }

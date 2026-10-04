@@ -81,6 +81,8 @@ impl Viewer for XlsxViewer {
     }
 
     fn open(&self, file: FileHandle) -> Result<Box<dyn ViewerDocument>> {
+        #[cfg(target_arch = "wasm32")]
+        crate::component_clock();
         let bytes = file.read_all()?;
         let ext = file.extension();
         if !OOXML.contains(&ext.as_str()) {

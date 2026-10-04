@@ -66,14 +66,10 @@ jobs:
           for m in target/wasm32-unknown-unknown/release/*.wasm; do
             case "$m" in *.component.wasm) continue ;; esac
             c="${m%.wasm}.component.wasm"
-            # A module that imports what no component may (wasm-bindgen's
-            # JavaScript glue, pulled in by a dependency that assumes
-            # wasm32 means a browser) cannot be wrapped yet: said, not
-            # failed, until the plugin is a component (Kalem's T3.1.3).
-            if ! err=$(wasm-tools component new "$m" -o "$c" 2>&1); then
-              echo "::warning title=not a component yet::$m: $(echo "$err" | grep -m1 'import interface')"
-              continue
-            fi
+            # Every plugin is a component: a module importing what none may
+            # (wasm-bindgen's JavaScript glue, from a dependency assuming
+            # wasm32 means a browser) fails.
+            wasm-tools component new "$m" -o "$c"
             if wasm-tools component wit "$c" | grep -q 'import wasi:'; then
               echo "$c imports WASI:"; wasm-tools component wit "$c" | grep 'import '; exit 1
             fi

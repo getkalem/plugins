@@ -61,3 +61,23 @@ mod tests {
         assert!(value.is_object());
     }
 }
+
+/// In a component, the clock and the randomness of formulas (`NOW()`,
+/// `TODAY()`, `RAND()`) and of the macros' storage come from Kalem's
+/// `clock` interface, as natively from the system.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn component_clock() {
+    use kalem_plugin::viewer::kalem::plugin::clock;
+    fn now() -> i64 {
+        clock::now()
+    }
+    fn random() -> f64 {
+        (clock::random() >> 11) as f64 / (1u64 << 53) as f64
+    }
+    ironcalc_base::platform::set_clock(now);
+    ironcalc_base::platform::set_random(random);
+    web_time::set_clock(now);
+}
+
+#[cfg(target_arch = "wasm32")]
+kalem_plugin::export_viewer_of!(XlsxViewer);
