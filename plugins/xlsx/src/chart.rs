@@ -168,6 +168,20 @@ pub struct SeriesDef {
     pub explosion: u32,
     /// Slices standing out on their own: point, percent.
     pub point_explosions: Vec<(usize, u32)>,
+    /// The plot it is in, by order (a combo chart's second is 1).
+    pub plot: usize,
+    /// Its trendline.
+    pub trendline: Option<kalem_viewer::Trendline>,
+    /// Its error bars.
+    pub error_bars: Option<kalem_viewer::ErrorBars>,
+    /// Its data labels' cells, and their cached texts.
+    pub label_cells: (Option<String>, Vec<String>),
+    /// A bubble chart's sizes' cells, and their cached numbers.
+    pub sizes: (Option<String>, Vec<Option<f64>>),
+    /// A waterfall's totals, by point.
+    pub subtotals: Vec<usize>,
+    /// A histogram's bins: how many, or how wide.
+    pub binning: Option<(Option<u32>, Option<f64>)>,
 }
 
 /// A chart part as Kalem reads it.
@@ -211,8 +225,12 @@ pub struct ChartDef {
     pub title_font: Font,
     /// The legend's font.
     pub legend_font: Font,
-    /// Its series, of its first plot.
+    /// Its series, of every plot.
     pub series: Vec<SeriesDef>,
+    /// Each plot's kind, by order.
+    pub plots: Vec<ChartKind>,
+    /// The plots against the secondary value axis.
+    pub secondary: Vec<usize>,
 }
 
 fn cache_points(r: &mut Reader<'_>, end: &str) -> Vec<(usize, String)> {
@@ -287,6 +305,11 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     // Each value axis: its side and scale.
     let mut value_axes: Vec<(String, Scale, Option<String>)> = Vec::new();
     let mut axis_format: Option<String> = None;
+    let mut value_ids: Vec<String> = Vec::new();
+    let mut axis_id = String::new();
+    let mut plot_axes: Vec<Vec<String>> = Vec::new();
+    let mut trend: Option<kalem_viewer::Trendline> = None;
+    let mut bars: Option<kalem_viewer::ErrorBars> = None;
     while let Some(t) = r.next_token() {
         match t {
             Token::Start(tag) => {
@@ -297,19 +320,80 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     | "area3DChart" | "pieChart" | "pie3DChart" | "ofPieChart"
                     | "doughnutChart" | "scatterChart" | "radarChart" | "stockChart"
                     | "surfaceChart" | "surface3DChart" | "bubbleChart"
-                        if !plot_seen =>
+                        if parent == "plotArea" =>
                     {
-                        plot_seen = true;
                         in_plot = true;
-                        def.kind = match name {
+                        let kind = match name {
                             "barChart" | "bar3DChart" => ChartKind::Column,
                             "lineChart" | "line3DChart" => ChartKind::Line,
                             "areaChart" | "area3DChart" => ChartKind::Area,
                             "pieChart" | "pie3DChart" | "ofPieChart" => ChartKind::Pie,
                             "doughnutChart" => ChartKind::Doughnut,
                             "scatterChart" => ChartKind::Scatter,
+                            "radarChart" => ChartKind::Radar,
+                            "stockChart" => ChartKind::Stock,
+                            "bubbleChart" => ChartKind::Bubble,
                             _ => ChartKind::Other,
                         };
+                        if !plot_seen {
+                            def.kind = kind;
+                        }
+                        plot_seen = true;
+                        def.plots.push(kind);
+                        plot_axes.push(Vec::new());
+                    }
+                    "axId" if in_plot && parent.ends_with("Chart") => {
+                        if let (Some(v), Some(axes)) = (tag.attr("val"), plot_axes.last_mut()) {
+                            axes.push(v.into_owned());
+                        }
+                    }
+                    "axId" if parent == "valAx" => {
+                        axis_id = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
+                    }
+                    "trendline" if ser.is_some() && !tag.empty => {
+                        trend = Some(kalem_viewer::Trendline::default());
+                    }
+                    "trendlineType" | "order" | "period" | "dispRSqr" | "dispEq"
+                        if parent == "trendline" =>
+                    {
+                        let v = tag.attr("val").unwrap_or_default();
+                        if let Some(t) = trend.as_mut() {
+                            let on = matches!(v.as_ref(), "1" | "true");
+                            match name {
+                                "trendlineType" => {
+                                    t.kind = match v.as_ref() {
+                                        "exp" => kalem_viewer::TrendKind::Exponential,
+                                        "log" => kalem_viewer::TrendKind::Logarithmic,
+                                        "poly" => kalem_viewer::TrendKind::Polynomial,
+                                        "power" => kalem_viewer::TrendKind::Power,
+                                        "movingAvg" => kalem_viewer::TrendKind::MovingAverage,
+                                        _ => kalem_viewer::TrendKind::Linear,
+                                    }
+                                }
+                                "order" => t.order = v.parse().unwrap_or(2),
+                                "period" => t.period = v.parse().unwrap_or(2),
+                                "dispRSqr" => t.r_squared = on,
+                                _ => t.equation = on,
+                            }
+                        }
+                    }
+                    "errBars" if ser.is_some() && !tag.empty => {
+                        bars = Some(kalem_viewer::ErrorBars::default());
+                    }
+                    "errValType" | "val" if parent == "errBars" => {
+                        let v = tag.attr("val").unwrap_or_default();
+                        if let Some(b) = bars.as_mut() {
+                            if name == "val" {
+                                b.value = v.trim().parse().unwrap_or(0.0);
+                            } else {
+                                b.kind = match v.as_ref() {
+                                    "percentage" => kalem_viewer::ErrorKind::Percent,
+                                    "stdDev" => kalem_viewer::ErrorKind::StdDev,
+                                    "stdErr" => kalem_viewer::ErrorKind::StdErr,
+                                    _ => kalem_viewer::ErrorKind::Fixed,
+                                };
+                            }
+                        }
                     }
                     "showVal" | "showCatName" | "showSerName" | "showPercent"
                         if parent == "dLbls" && in_plot =>
@@ -332,10 +416,16 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             matches!(tag.attr("val").as_deref(), Some("1" | "true") | None);
                     }
                     "barDir" if in_plot && tag.attr("val").as_deref() == Some("bar") => {
-                        def.kind = ChartKind::Bar;
+                        if def.plots.len() == 1 {
+                            def.kind = ChartKind::Bar;
+                        }
+                        if let Some(k) = def.plots.last_mut() {
+                            *k = ChartKind::Bar;
+                        }
                     }
                     "grouping"
                         if in_plot
+                            && def.plots.len() == 1
                             && matches!(
                                 tag.attr("val").as_deref(),
                                 Some("stacked" | "percentStacked")
@@ -343,12 +433,21 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     {
                         def.stacked = true;
                     }
-                    "ser" if in_plot => ser = Some(SeriesDef::default()),
+                    "ser" if in_plot => {
+                        ser = Some(SeriesDef {
+                            plot: def.plots.len().saturating_sub(1),
+                            ..SeriesDef::default()
+                        })
+                    }
                     "f" if !tag.empty => {
                         let f = r.text_until_end("f").0;
                         let within = |n: &str| stack.iter().any(|s| s == n);
                         if let Some(s) = ser.as_mut() {
-                            if within("tx") {
+                            if within("datalabelsRange") {
+                                s.label_cells.0 = Some(f);
+                            } else if within("bubbleSize") {
+                                s.sizes.0 = Some(f);
+                            } else if within("tx") {
                                 s.name.0 = Some(f);
                             } else if within("cat") || within("xVal") {
                                 s.cat.0 = Some(f);
@@ -360,11 +459,20 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                         }
                         continue;
                     }
-                    "strCache" | "numCache" | "strLit" | "numLit" if !tag.empty => {
+                    "strCache" | "numCache" | "strLit" | "numLit" | "dlblRangeCache"
+                        if !tag.empty =>
+                    {
                         let within = |n: &str| stack.iter().any(|s| s == n);
                         let points = cache_points(&mut r, name);
                         if let Some(s) = ser.as_mut() {
-                            if within("tx") {
+                            if name == "dlblRangeCache" || within("datalabelsRange") {
+                                s.label_cells.1 = dense(points);
+                            } else if within("bubbleSize") {
+                                s.sizes.1 = dense(points)
+                                    .into_iter()
+                                    .map(|v| v.trim().parse().ok())
+                                    .collect();
+                            } else if within("tx") {
                                 s.name.1 = points.into_iter().map(|p| p.1).collect();
                             } else if within("cat") || within("xVal") {
                                 s.cat.1 = dense(points);
@@ -600,7 +708,12 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             stack.iter().any(|s| s == "marker") && stack.iter().any(|s| s == "spPr")
                         } else {
                             stack.iter().any(|s| s == "spPr")
-                                && !stack.iter().any(|s| s == "dPt" || s == "marker")
+                                && !stack.iter().any(|s| {
+                                    matches!(
+                                        s.as_str(),
+                                        "dPt" | "marker" | "trendline" | "errBars" | "dLbls"
+                                    )
+                                })
                         };
                         if let Some(s) = ser.as_mut()
                             && s.color.is_none()
@@ -663,6 +776,7 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     let sc = std::mem::take(&mut axis_scale);
                     if name == "valAx" {
                         value_axes.push((axis_pos.clone(), sc, axis_format.take()));
+                        value_ids.push(std::mem::take(&mut axis_id));
                     } else {
                         axis_format = None;
                     }
@@ -677,6 +791,16 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     }
                     axis_pos.clear();
                 }
+                if name == "trendline"
+                    && let (Some(t), Some(s)) = (trend.take(), ser.as_mut())
+                {
+                    s.trendline = Some(t);
+                }
+                if name == "errBars"
+                    && let (Some(b), Some(s)) = (bars.take(), ser.as_mut())
+                {
+                    s.error_bars = Some(b);
+                }
                 if name == "ser" && in_plot {
                     if let Some(s) = ser.take() {
                         def.series.push(s);
@@ -689,13 +813,30 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
         }
     }
     let _ = title_ref;
-    // The value axis: a scatter chart's vertical one, else the only one.
-    let pick = if def.kind == ChartKind::Scatter {
-        value_axes
+    // The value axis: the first plot's (a scatter chart's vertical one).
+    let first_axes = plot_axes.first().cloned().unwrap_or_default();
+    let primary = value_ids.iter().position(|id| {
+        first_axes.contains(id)
+            && (def.kind != ChartKind::Scatter
+                || value_axes
+                    .get(value_ids.iter().position(|x| x == id).unwrap_or(0))
+                    .is_some_and(|a| matches!(a.0.as_str(), "l" | "r")))
+    });
+    // The plots against another value axis: the secondary.
+    if let Some(p) = primary {
+        let id = &value_ids[p];
+        for (i, axes) in plot_axes.iter().enumerate().skip(1) {
+            if axes.iter().any(|a| value_ids.contains(a) && a != id) {
+                def.secondary.push(i);
+            }
+        }
+    }
+    let pick = match primary {
+        Some(p) => value_axes.get(p),
+        None if def.kind == ChartKind::Scatter => value_axes
             .iter()
-            .find(|a| matches!(a.0.as_str(), "l" | "r"))
-    } else {
-        value_axes.first()
+            .find(|a| matches!(a.0.as_str(), "l" | "r")),
+        None => value_axes.first(),
     };
     if let Some(a) = pick {
         def.scale = a.1;
@@ -704,6 +845,214 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     if !title.trim().is_empty() {
         def.title = Some(title);
     }
+    def
+}
+
+/// A histogram's bins of `values`: how many (`binning.0`), or how wide
+/// (`binning.1`), else as many as Scott's rule makes them, as Excel does;
+/// each bin's label (`[a, b]` first, `(a, b]` after) and count.
+pub fn histogram(
+    values: &[Option<f64>],
+    binning: (Option<u32>, Option<f64>),
+) -> (Vec<String>, Vec<usize>) {
+    let v: Vec<f64> = values
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|x| x.is_finite())
+        .collect();
+    if v.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let lo = v.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let n = v.len() as f64;
+    let width = match binning {
+        (Some(count), _) if count > 0 => ((hi - lo) / f64::from(count)).max(f64::EPSILON),
+        (_, Some(w)) if w > 0.0 => w,
+        _ => {
+            let mean = v.iter().sum::<f64>() / n;
+            let sd =
+                (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
+            let w = 3.49 * sd / n.cbrt();
+            if w > 0.0 { w } else { 1.0 }
+        }
+    };
+    let bins = (((hi - lo) / width).ceil() as usize).clamp(1, 1000);
+    let mut counts = vec![0usize; bins];
+    for x in &v {
+        // A value on a bin's upper edge is in that bin.
+        let mut b = ((x - lo) / width).ceil() as usize;
+        b = b.saturating_sub(1).min(bins - 1);
+        counts[b] += 1;
+    }
+    let num = |x: f64| {
+        let s = format!("{x:.2}");
+        s.trim_end_matches('0').trim_end_matches('.').to_owned()
+    };
+    let labels = (0..bins)
+        .map(|b| {
+            let (a, z) = (lo + width * b as f64, lo + width * (b + 1) as f64);
+            if b == 0 {
+                format!("[{}, {}]", num(a), num(z))
+            } else {
+                format!("({}, {}]", num(a), num(z))
+            }
+        })
+        .collect();
+    (labels, counts)
+}
+
+/// Reads an Office 2016 chart part (`cx:chartSpace`): a histogram, a
+/// waterfall, or another kind drawn as a placeholder; its data from the
+/// cells its dimensions name.
+pub fn parse_chartex(text: &str, _theme: &[Rgb]) -> ChartDef {
+    let mut def = ChartDef {
+        kind: ChartKind::Other,
+        legend: None,
+        ..ChartDef::default()
+    };
+    // Each data block: its categories' and values' cells and caches.
+    type Dim = (Option<String>, Vec<(usize, String)>);
+    let mut data: std::collections::HashMap<String, (Dim, Dim)> = Default::default();
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut data_id = String::new();
+    let mut dim = "";
+    let mut ser: Option<(SeriesDef, String)> = None;
+    let mut title = String::new();
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                let name = tag.name;
+                match name {
+                    "data" if !tag.empty && stack.iter().any(|s| s == "chartData") => {
+                        data_id = tag.attr("id").map(|v| v.into_owned()).unwrap_or_default();
+                    }
+                    "strDim" | "numDim" => {
+                        dim = match tag.attr("type").as_deref() {
+                            Some("cat") | Some("x") => "cat",
+                            Some("val") | Some("y") | Some("size") => "val",
+                            _ => "",
+                        };
+                    }
+                    "f" if !tag.empty => {
+                        let f = r.text_until_end("f").0;
+                        if let Some((s, _)) = ser.as_mut() {
+                            if stack.iter().any(|x| x == "tx") {
+                                s.name.0 = Some(f);
+                            }
+                        } else if !dim.is_empty() {
+                            let e = data.entry(data_id.clone()).or_default();
+                            if dim == "cat" {
+                                e.0.0 = Some(f);
+                            } else {
+                                e.1.0 = Some(f);
+                            }
+                        }
+                        continue;
+                    }
+                    "pt" if !tag.empty && !dim.is_empty() => {
+                        let i = tag.attr("idx").and_then(|v| v.parse().ok()).unwrap_or(0);
+                        let v = r.text_until_end("pt").0;
+                        let e = data.entry(data_id.clone()).or_default();
+                        if dim == "cat" {
+                            e.0.1.push((i, v));
+                        } else {
+                            e.1.1.push((i, v));
+                        }
+                        continue;
+                    }
+                    "v" if !tag.empty => {
+                        let v = r.text_until_end("v").0;
+                        if let Some((s, _)) = ser.as_mut() {
+                            s.name.1 = v;
+                        } else if stack.iter().any(|x| x == "title") {
+                            title.push_str(&v);
+                        }
+                        continue;
+                    }
+                    "t" if !tag.empty && stack.iter().any(|x| x == "title") => {
+                        title.push_str(&r.text_until_end("t").0);
+                        continue;
+                    }
+                    "series" => {
+                        let layout = tag.attr("layoutId").unwrap_or_default().into_owned();
+                        if def.series.is_empty() {
+                            def.kind = match layout.as_str() {
+                                "waterfall" => ChartKind::Waterfall,
+                                "clusteredColumn" => ChartKind::Histogram,
+                                _ => ChartKind::Other,
+                            };
+                        }
+                        ser = Some((SeriesDef::default(), String::new()));
+                    }
+                    "dataId" => {
+                        if let Some((_, id)) = ser.as_mut() {
+                            *id = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
+                        }
+                    }
+                    "binCount" | "binSize" => {
+                        if let Some((s, _)) = ser.as_mut() {
+                            let b = s.binning.get_or_insert((None, None));
+                            let v = tag.attr("val").unwrap_or_default();
+                            if name == "binCount" {
+                                b.0 = v.parse().ok();
+                            } else {
+                                b.1 = v.parse().ok();
+                            }
+                        }
+                    }
+                    "binning" => {
+                        if let Some((s, _)) = ser.as_mut() {
+                            s.binning.get_or_insert((None, None));
+                        }
+                    }
+                    "idx" if stack.last().is_some_and(|x| x == "subtotals") => {
+                        if let (Some((s, _)), Some(v)) =
+                            (ser.as_mut(), tag.attr("val").and_then(|v| v.parse().ok()))
+                        {
+                            s.subtotals.push(v);
+                        }
+                    }
+                    "legend" => {
+                        def.legend = Some(tag.attr("pos").map_or("r".into(), |v| v.into_owned()));
+                    }
+                    _ => {}
+                }
+                if !tag.empty {
+                    stack.push(name.to_owned());
+                }
+            }
+            Token::Text { .. } => {}
+            Token::End { name, .. } => {
+                stack.pop();
+                match name {
+                    "strDim" | "numDim" => dim = "",
+                    "series" => {
+                        if let Some((mut s, id)) = ser.take() {
+                            if let Some(((cf, cc), (vf, vc))) = data.get(&id).cloned() {
+                                s.cat = (cf, dense(cc));
+                                s.val = (
+                                    vf,
+                                    dense(vc)
+                                        .into_iter()
+                                        .map(|v| v.trim().parse().ok())
+                                        .collect(),
+                                );
+                            }
+                            def.series.push(s);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    if !title.trim().is_empty() {
+        def.title = Some(title);
+    }
+    def.plots.push(def.kind);
     def
 }
 
@@ -2183,15 +2532,22 @@ pub fn chart_xml(kind: ChartKind, title: Option<&str>, series: &[NewSeries]) -> 
                     ChartKind::Column | ChartKind::Bar | ChartKind::Area => x.push_str(&format!(
                         "<c:spPr><a:solidFill><a:srgbClr val=\"{c:06X}\"/></a:solidFill></c:spPr>"
                     )),
-                    ChartKind::Line => x.push_str(&format!(
+                    ChartKind::Line | ChartKind::Radar => x.push_str(&format!(
                         "<c:spPr><a:ln w=\"28575\" cap=\"rnd\"><a:solidFill><a:srgbClr val=\"{c:06X}\"/></a:solidFill></a:ln></c:spPr>"
                     )),
                     _ => {}
                 }
             }
             match kind {
-                ChartKind::Column | ChartKind::Bar => x.push_str("<c:invertIfNegative val=\"0\"/>"),
-                ChartKind::Line => x.push_str("<c:marker><c:symbol val=\"none\"/></c:marker>"),
+                ChartKind::Column | ChartKind::Bar | ChartKind::Bubble => {
+                    x.push_str("<c:invertIfNegative val=\"0\"/>")
+                }
+                ChartKind::Line | ChartKind::Radar => {
+                    x.push_str("<c:marker><c:symbol val=\"none\"/></c:marker>")
+                }
+                ChartKind::Stock => x.push_str(
+                    "<c:spPr><a:ln w=\"19050\"><a:noFill/></a:ln></c:spPr><c:marker><c:symbol val=\"none\"/></c:marker>",
+                ),
                 ChartKind::Scatter => x.push_str(
                     "<c:spPr><a:ln w=\"19050\" cap=\"rnd\"><a:noFill/></a:ln></c:spPr><c:marker><c:symbol val=\"circle\"/><c:size val=\"5\"/></c:marker>",
                 ),
@@ -2200,7 +2556,7 @@ pub fn chart_xml(kind: ChartKind, title: Option<&str>, series: &[NewSeries]) -> 
             if matches!(kind, ChartKind::Pie | ChartKind::Doughnut) {
                 // Each slice its own color, as varyColors asks.
             }
-            let (cat_tag, val_tag) = if kind == ChartKind::Scatter {
+            let (cat_tag, val_tag) = if matches!(kind, ChartKind::Scatter | ChartKind::Bubble) {
                 ("xVal", "yVal")
             } else {
                 ("cat", "val")
@@ -2216,7 +2572,13 @@ pub fn chart_xml(kind: ChartKind, title: Option<&str>, series: &[NewSeries]) -> 
             }
             x.push_str(&format!("<c:{val_tag}>{}</c:{val_tag}>", num_cache(&s.val.0, &s.val.1)));
             match kind {
-                ChartKind::Line | ChartKind::Scatter => x.push_str("<c:smooth val=\"0\"/>"),
+                ChartKind::Line | ChartKind::Scatter | ChartKind::Stock => {
+                    x.push_str("<c:smooth val=\"0\"/>")
+                }
+                ChartKind::Bubble => x.push_str(&format!(
+                    "<c:bubbleSize>{}</c:bubbleSize><c:bubble3D val=\"0\"/>",
+                    num_cache(&s.val.0, &s.val.1)
+                )),
                 _ => {}
             }
             x.push_str("</c:ser>");
@@ -2229,9 +2591,18 @@ pub fn chart_xml(kind: ChartKind, title: Option<&str>, series: &[NewSeries]) -> 
             "<c:barChart><c:barDir val=\"{}\"/><c:grouping val=\"clustered\"/><c:varyColors val=\"0\"/>{sers}<c:gapWidth val=\"182\"/>{axes_ids}</c:barChart>",
             if kind == ChartKind::Bar { "bar" } else { "col" }
         ),
-        ChartKind::Line | ChartKind::Other => format!(
-            "<c:lineChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{sers}<c:marker val=\"1\"/>{axes_ids}</c:lineChart>"
+        ChartKind::Radar => format!(
+            "<c:radarChart><c:radarStyle val=\"marker\"/><c:varyColors val=\"0\"/>{sers}{axes_ids}</c:radarChart>"
         ),
+        ChartKind::Bubble => format!(
+            "<c:bubbleChart><c:varyColors val=\"0\"/>{sers}<c:bubbleScale val=\"100\"/><c:showNegBubbles val=\"0\"/>{axes_ids}</c:bubbleChart>"
+        ),
+        ChartKind::Stock => format!("<c:stockChart>{sers}<c:hiLowLines/>{axes_ids}</c:stockChart>"),
+        ChartKind::Line | ChartKind::Other | ChartKind::Histogram | ChartKind::Waterfall => {
+            format!(
+                "<c:lineChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{sers}<c:marker val=\"1\"/>{axes_ids}</c:lineChart>"
+            )
+        }
         ChartKind::Area => format!(
             "<c:areaChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{sers}{axes_ids}</c:areaChart>"
         ),
@@ -2254,7 +2625,7 @@ pub fn chart_xml(kind: ChartKind, title: Option<&str>, series: &[NewSeries]) -> 
     };
     let axes = match kind {
         ChartKind::Pie | ChartKind::Doughnut => String::new(),
-        ChartKind::Scatter => format!(
+        ChartKind::Scatter | ChartKind::Bubble => format!(
             "<c:valAx><c:axId val=\"{cat_ax}\"/>{ax_common}<c:axPos val=\"b\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{ticks}<c:crossAx val=\"{val_ax}\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx><c:valAx><c:axId val=\"{val_ax}\"/>{ax_common}<c:axPos val=\"l\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{ticks}<c:crossAx val=\"{cat_ax}\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx>"
         ),
         _ => format!(

@@ -282,6 +282,13 @@ impl XlsxDoc {
             .is_some_and(|s| s.kind == SheetKind::Worksheet)
     }
 
+    fn chartsheet(&self, unit: usize) -> bool {
+        self.locked()
+            .sheets()
+            .get(unit)
+            .is_some_and(|s| s.kind == SheetKind::Chartsheet)
+    }
+
     /// Puts what the sheet's conditional formats make of the cells in
     /// view into `out`, adding the empty cells they color.
     fn conditional(
@@ -543,7 +550,7 @@ impl ViewerDocument for XlsxDoc {
             (
                 s.name.clone(),
                 s.visibility != Visibility::Visible,
-                s.kind == SheetKind::Worksheet,
+                matches!(s.kind, SheetKind::Worksheet | SheetKind::Chartsheet),
             )
         }))
     }
@@ -570,6 +577,19 @@ impl ViewerDocument for XlsxDoc {
     }
 
     fn grid(&mut self, unit: usize) -> Option<GridLayout> {
+        // A chart sheet: empty cells under its chart, not edited.
+        if self.chartsheet(unit) {
+            return Some(GridLayout {
+                rows: 33,
+                cols: 14,
+                max_rows: 33,
+                max_cols: 14,
+                default_width: 8.43,
+                default_height: 15.0,
+                editable: false,
+                ..GridLayout::default()
+            });
+        }
         if !self.worksheet(unit) {
             return None;
         }
@@ -1694,7 +1714,7 @@ impl ViewerDocument for XlsxDoc {
     }
 
     fn charts(&mut self, unit: usize) -> Vec<Chart> {
-        if !self.worksheet(unit) {
+        if !self.worksheet(unit) && !self.chartsheet(unit) {
             return Vec::new();
         }
         let generation = self.book().generation();
@@ -1911,6 +1931,100 @@ impl ViewerDocument for XlsxDoc {
 
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_series_kind(
+        &mut self,
+        unit: usize,
+        index: usize,
+        series: usize,
+        kind: Option<ChartKind>,
+        secondary: bool,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_series_kind(unit, index, series, kind, secondary)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_trendline(
+        &mut self,
+        unit: usize,
+        index: usize,
+        series: usize,
+        trendline: Option<kalem_viewer::Trendline>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_trendline(unit, index, series, trendline)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_error_bars(
+        &mut self,
+        unit: usize,
+        index: usize,
+        series: usize,
+        bars: Option<kalem_viewer::ErrorBars>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_error_bars(unit, index, series, bars)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_label_cells(
+        &mut self,
+        unit: usize,
+        index: usize,
+        series: usize,
+        range: Option<[u32; 4]>,
+    ) -> Result<Vec<usize>> {
+        let range = range.map(|r| crate::cellref::Range {
+            start: CellRef::new(r[0], r[1]),
+            end: CellRef::new(r[2], r[3]),
+        });
+        self.book()
+            .set_label_cells(unit, index, series, range)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn move_chart_to_sheet(&mut self, unit: usize, index: usize, name: &str) -> Result<usize> {
+        self.book()
+            .move_chart_to_sheet(unit, index, name)
+            .map_err(err)
+    }
+
+    fn move_chart_to_grid(
+        &mut self,
+        unit: usize,
+        target: usize,
+        anchor: [u32; 4],
+    ) -> Result<usize> {
+        let anchor = crate::cellref::Range {
+            start: CellRef::new(anchor[0], anchor[1]),
+            end: CellRef::new(anchor[2], anchor[3]),
+        };
+        self.book()
+            .move_chart_to_grid(unit, target, anchor)
+            .map_err(err)
+    }
+
+    fn chart_template(&mut self, unit: usize, index: usize) -> Result<Vec<u8>> {
+        self.book().chart_template(unit, index).map_err(err)
+    }
+
+    fn apply_chart_template(
+        &mut self,
+        unit: usize,
+        index: usize,
+        template: &[u8],
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .apply_chart_template(unit, index, template)
+            .map_err(err)?;
         Ok(vec![unit])
     }
 
@@ -2852,6 +2966,86 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn charts_the_rest() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let n = d.charts(0).len();
+        d.insert_chart(0, [0, 0, 4, 2], ChartKind::Column, Some("Spending".into()))
+            .unwrap();
+        // Q2 a line on the secondary axis: a combo chart.
+        d.set_series_kind(0, n, 1, Some(ChartKind::Line), true)
+            .unwrap();
+        let c = d.charts(0)[n].clone();
+        assert_eq!(c.kind, ChartKind::Column);
+        assert_eq!(c.series[1].kind, Some(ChartKind::Line));
+        assert!(c.series[1].secondary && !c.series[0].secondary);
+        // A trendline with its equation, error bars, labels from cells.
+        let t = kalem_viewer::Trendline {
+            kind: kalem_viewer::TrendKind::Linear,
+            equation: true,
+            r_squared: true,
+            ..Default::default()
+        };
+        d.set_trendline(0, n, 0, Some(t)).unwrap();
+        let b = kalem_viewer::ErrorBars {
+            kind: kalem_viewer::ErrorKind::Percent,
+            value: 10.0,
+        };
+        d.set_error_bars(0, n, 0, Some(b)).unwrap();
+        d.set_label_cells(0, n, 0, Some([1, 0, 4, 0])).unwrap();
+        let c = d.charts(0)[n].clone();
+        assert_eq!(c.series[0].trendline, Some(t));
+        assert_eq!(c.series[0].error_bars, Some(b));
+        assert_eq!(c.series[0].cell_labels.len(), 4);
+        // Saved as a template and given to a chart of another kind.
+        let crtx = d.chart_template(0, n).unwrap();
+        d.insert_chart(0, [0, 0, 4, 1], ChartKind::Line, None)
+            .unwrap();
+        d.apply_chart_template(0, n + 1, &crtx).unwrap();
+        assert_eq!(d.charts(0)[n + 1].kind, ChartKind::Column);
+        // Moved to a chart sheet of its own, and back.
+        let units = d.structure().units.len();
+        let sheet = d.move_chart_to_sheet(0, n, "Chart1").unwrap();
+        assert_eq!(sheet, units);
+        assert_eq!(d.structure().units.len(), units + 1);
+        assert_eq!(d.charts(0).len(), n + 1);
+        let on_sheet = d.charts(sheet);
+        assert_eq!(on_sheet.len(), 1);
+        assert_eq!(on_sheet[0].series[1].kind, Some(ChartKind::Line));
+        assert!(d.grid(sheet).is_some_and(|g| !g.editable));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-charts-rest.xlsx"), &saved).unwrap();
+        }
+        let back = d.move_chart_to_grid(sheet, 0, [20, 0, 34, 7]).unwrap();
+        assert_eq!(back, 0);
+        assert_eq!(d.structure().units.len(), units);
+        assert_eq!(d.charts(0).len(), n + 2);
+        assert_eq!(d.charts(0)[n + 1].anchor, [20, 0, 34, 7]);
+        assert!(d.undo().unwrap());
+        assert_eq!(d.structure().units.len(), units + 1);
+    }
+
+    #[test]
+    fn histograms_and_waterfalls_read() {
+        let x = r#"<cx:chartSpace xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex"><cx:chartData><cx:data id="0"><cx:numDim type="val"><cx:f>Sheet1!$B$2:$B$7</cx:f><cx:lvl ptCount="6"><cx:pt idx="0">1</cx:pt><cx:pt idx="1">2</cx:pt><cx:pt idx="2">2</cx:pt><cx:pt idx="3">3</cx:pt><cx:pt idx="4">9</cx:pt><cx:pt idx="5">10</cx:pt></cx:lvl></cx:numDim></cx:data></cx:chartData><cx:chart><cx:title><cx:tx><cx:txData><cx:v>Ages</cx:v></cx:txData></cx:tx></cx:title><cx:plotArea><cx:plotAreaRegion><cx:series layoutId="clusteredColumn" uniqueId="{1}"><cx:dataId val="0"/><cx:layoutPr><cx:binning intervalClosed="r"><cx:binCount val="3"/></cx:binning></cx:layoutPr></cx:series></cx:plotAreaRegion></cx:plotArea></cx:chart></cx:chartSpace>"#;
+        let def = crate::chart::parse_chartex(x, &[]);
+        assert_eq!(def.kind, ChartKind::Histogram);
+        assert_eq!(def.title.as_deref(), Some("Ages"));
+        assert_eq!(def.series[0].val.0.as_deref(), Some("Sheet1!$B$2:$B$7"));
+        assert_eq!(def.series[0].binning, Some((Some(3), None)));
+        let (labels, counts) = crate::chart::histogram(&def.series[0].val.1, (Some(3), None));
+        assert_eq!(labels[0], "[1, 4]");
+        assert_eq!(counts, vec![4, 0, 2]);
+        let w = x.replace("clusteredColumn", "waterfall").replace(
+            "<cx:binning intervalClosed=\"r\"><cx:binCount val=\"3\"/></cx:binning>",
+            "<cx:subtotals><cx:idx val=\"5\"/></cx:subtotals>",
+        );
+        let def = crate::chart::parse_chartex(&w, &[]);
+        assert_eq!(def.kind, ChartKind::Waterfall);
+        assert_eq!(def.series[0].subtotals, vec![5]);
     }
 
     #[test]

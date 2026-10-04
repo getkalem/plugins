@@ -3065,7 +3065,12 @@ impl Workbook {
             let Ok(bytes) = self.pkg.part(&part) else {
                 continue;
             };
-            let def = chart::parse_chart(&String::from_utf8_lossy(&bytes), &self.theme);
+            let text = String::from_utf8_lossy(&bytes);
+            let def = if text.contains("/drawing/2014/chartex") {
+                chart::parse_chartex(&text, &self.theme)
+            } else {
+                chart::parse_chart(&text, &self.theme)
+            };
             let mut categories = Vec::new();
             let mut series = Vec::new();
             for s in &def.series {
@@ -3090,7 +3095,10 @@ impl Workbook {
                     Some((i, r)) => self.range_texts(i, r),
                     None => s.cat.1.clone(),
                 };
-                let x: Vec<Option<f64>> = if def.kind == kalem_viewer::ChartKind::Scatter {
+                let x: Vec<Option<f64>> = if matches!(
+                    def.kind,
+                    kalem_viewer::ChartKind::Scatter | kalem_viewer::ChartKind::Bubble
+                ) {
                     match cat_r {
                         Some((i, r)) => self.range_numbers(i, r),
                         None => s.cat.1.iter().map(|v| v.trim().parse().ok()).collect(),
@@ -3098,15 +3106,31 @@ impl Workbook {
                 } else {
                     Vec::new()
                 };
-                let values = match val_r {
+                let mut values = match val_r {
                     Some((i, r)) => self.range_numbers(i, r),
                     None => s.val.1.clone(),
                 };
+                let mut cats = cats;
+                // A histogram's bins counted from its values.
+                if def.kind == kalem_viewer::ChartKind::Histogram {
+                    let (labels, counts) =
+                        chart::histogram(&values, s.binning.unwrap_or((None, None)));
+                    cats = labels;
+                    values = counts.into_iter().map(|c| Some(c as f64)).collect();
+                }
                 if categories.is_empty() {
                     categories = cats;
                 }
-                // Fields the contract gains later start empty.
-                #[allow(clippy::needless_update)]
+                let cell_labels = match s.label_cells.0.as_deref().and_then(|f| self.chart_range(f))
+                {
+                    Some((i, r)) => self.range_texts(i, r),
+                    None => s.label_cells.1.clone(),
+                };
+                let sizes = match s.sizes.0.as_deref().and_then(|f| self.chart_range(f)) {
+                    Some((i, r)) => self.range_numbers(i, r),
+                    None => s.sizes.1.clone(),
+                };
+                let plot_kind = def.plots.get(s.plot).copied().filter(|k| *k != def.kind);
                 series.push(kalem_viewer::ChartSeries {
                     name,
                     values,
@@ -3119,7 +3143,13 @@ impl Workbook {
                         .collect(),
                     explosion: s.explosion,
                     point_explosions: s.point_explosions.clone(),
-                    ..kalem_viewer::ChartSeries::default()
+                    kind: plot_kind,
+                    secondary: def.secondary.contains(&s.plot),
+                    trendline: s.trendline,
+                    error_bars: s.error_bars,
+                    cell_labels,
+                    sizes,
+                    subtotals: s.subtotals.clone(),
                 });
             }
             // Fields the contract gains later start empty instead of
@@ -3193,6 +3223,14 @@ impl Workbook {
         title: Option<&str>,
     ) -> Result<()> {
         use kalem_viewer::ChartKind;
+        if matches!(
+            kind,
+            ChartKind::Other | ChartKind::Histogram | ChartKind::Waterfall
+        ) {
+            return Err(Error::Refused(
+                "Kalem draws histograms and waterfalls Excel made, but does not make them".into(),
+            ));
+        }
         self.load(idx)?;
         if self.sheets[idx].kind != SheetKind::Worksheet {
             return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
@@ -3290,10 +3328,32 @@ impl Workbook {
         )?;
         let from = (r0, c1 + 2);
         let to = (r0 + 14, c1 + 9);
+        self.attach_chart(idx, &chart_part, from, to)?;
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// A chart part shown on sheet `idx` over cells `from` to `to`: an
+    /// anchor in the sheet's drawing, the drawing made when it has none.
+    pub(crate) fn attach_chart(
+        &mut self,
+        idx: usize,
+        chart_part: &str,
+        from: (u32, u32),
+        to: (u32, u32),
+    ) -> Result<()> {
+        self.load(idx)?;
         let sheet_part = self.sheets[idx].part.clone();
         match self.sheet_drawing(idx) {
             Some(drawing) => {
-                let rid = self.add_rel(&drawing, "chart", &chart_part)?;
+                let rid = self.add_rel(&drawing, "chart", chart_part)?;
                 let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
                 let prefix = text
                     .find("wsDr")
@@ -3311,7 +3371,7 @@ impl Workbook {
                 let drawing = self.free_part("xl/drawings/drawing");
                 // The relationship first, so the drawing can name the chart.
                 self.pkg.set_part(&drawing, Vec::new());
-                let rid = self.add_rel(&drawing, "chart", &chart_part)?;
+                let rid = self.add_rel(&drawing, "chart", chart_part)?;
                 let anchor = chart::anchor_xml("xdr:", from, to, 2, &rid);
                 self.pkg.remove_part(&drawing);
                 self.add_part(
@@ -3356,14 +3416,6 @@ impl Workbook {
                 );
                 self.replace_sheet_text(idx, new);
             }
-        }
-        self.generation += 1;
-        match snapshot {
-            Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
-            }
-            None => self.batch_changed = true,
         }
         Ok(())
     }
@@ -3636,9 +3688,9 @@ impl Workbook {
         kind: kalem_viewer::ChartKind,
     ) -> Result<()> {
         use kalem_viewer::ChartKind as K;
-        if kind == K::Other {
+        if matches!(kind, K::Other | K::Histogram | K::Waterfall) {
             return Err(Error::Refused(
-                "Kalem does not write that kind of chart".into(),
+                "Kalem draws histograms and waterfalls Excel made, but does not make them".into(),
             ));
         }
         let drawing = self
@@ -4636,8 +4688,20 @@ impl Workbook {
             text,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
         )?;
+        self.add_sheet_entry(name, part, kind::WORKSHEET, SheetKind::Worksheet)
+    }
+
+    /// A sheet part (`part`, of relationship kind `rel`) made sheet `name`
+    /// of the workbook, last: its relationship and `<sheet>`; its index.
+    pub(crate) fn add_sheet_entry(
+        &mut self,
+        name: String,
+        part: String,
+        rel: &str,
+        sheet_kind: SheetKind,
+    ) -> Result<usize> {
         let wb_part = self.workbook_part.clone();
-        let rid = self.add_rel(&wb_part, kind::WORKSHEET, &part)?;
+        let rid = self.add_rel(&wb_part, rel, &part)?;
         // Its `<sheet>`, with the next sheetId.
         let mut r = Reader::new(&self.workbook_xml);
         let (mut max_id, mut close, mut prefix) = (0u32, None, String::new());
@@ -4672,7 +4736,7 @@ impl Workbook {
         self.workbook_xml = splice(&self.workbook_xml, vec![(close..close, item)]);
         self.sheets.push(SheetInfo {
             name,
-            kind: SheetKind::Worksheet,
+            kind: sheet_kind,
             visibility: Visibility::Visible,
             part,
         });
@@ -7761,6 +7825,7 @@ pub use sparklines::Spark;
 mod bulk;
 mod calculation;
 mod cellstyles;
+mod charts_more;
 mod copy_sheet;
 mod tables;
 mod views;

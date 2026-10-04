@@ -21,6 +21,7 @@
 pub mod calc;
 pub mod cellref;
 pub mod chart;
+pub mod chart_more;
 pub mod conditional;
 pub mod fill;
 pub mod formula;
