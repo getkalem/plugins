@@ -76,6 +76,8 @@ pub struct Row {
     pub height: Option<f64>,
     /// Hidden by the user or a filter.
     pub hidden: bool,
+    /// Its outline level (`outlineLevel`), 0 when ungrouped.
+    pub level: u8,
     /// The start tag's bytes.
     pub(crate) start: Span<usize>,
     /// The end tag's bytes; `None` for `<row/>`.
@@ -93,6 +95,8 @@ pub struct Cols {
     pub width: Option<f64>,
     /// Hidden.
     pub hidden: bool,
+    /// Their outline level, 0 when ungrouped.
+    pub level: u8,
 }
 
 /// A worksheet.
@@ -291,6 +295,10 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                                 .attr("hidden")
                                 .as_deref()
                                 .is_some_and(|v| v == "1" || v == "true"),
+                            level: tag
+                                .attr("outlineLevel")
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
                         });
                     }
                 }
@@ -313,6 +321,10 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                                 .attr("hidden")
                                 .as_deref()
                                 .is_some_and(|v| v == "1" || v == "true"),
+                            level: tag
+                                .attr("outlineLevel")
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
                             start: tag.span.clone(),
                             end: None,
                         },

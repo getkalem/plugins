@@ -491,6 +491,55 @@ impl ViewerDocument for XlsxDoc {
         })
     }
 
+    fn outline(&mut self, unit: usize) -> (Vec<(u32, u8)>, Vec<(u32, u8)>) {
+        self.book().outline(unit).unwrap_or_default()
+    }
+
+    fn set_outline(
+        &mut self,
+        unit: usize,
+        rows: bool,
+        from: u32,
+        to: u32,
+        deeper: bool,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_outline(unit, rows, from, to, deeper)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_detail_shown(
+        &mut self,
+        unit: usize,
+        rows: bool,
+        at: u32,
+        shown: bool,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_detail_shown(unit, rows, at, shown)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn subtotal(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        by: u32,
+        function: u32,
+        columns: &[u32],
+    ) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .subtotal(unit, r, by, function, columns)
+            .map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn page_setup(&mut self, unit: usize) -> Option<kalem_viewer::PageSetup> {
         self.book().page_setup(unit).ok()
     }
@@ -3357,5 +3406,72 @@ mod tests {
         assert_eq!(d.page_setup(0).unwrap().print_area, None);
         assert!(d.undo().unwrap() && d.undo().unwrap());
         assert_eq!(d.page_setup(0).unwrap(), first);
+    }
+
+    #[test]
+    fn outlines_and_subtotals() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // Rows 2-4 grouped, then 3 one deeper; columns B:C grouped.
+        d.set_outline(0, true, 1, 3, true).unwrap();
+        d.set_outline(0, true, 2, 2, true).unwrap();
+        d.set_outline(0, false, 1, 2, true).unwrap();
+        let (rows, cols) = d.outline(0);
+        assert_eq!(rows, vec![(1, 1), (2, 2), (3, 1)]);
+        assert_eq!(cols, vec![(1, 1), (2, 1)]);
+        // Collapsed from its summary row 5, then shown again.
+        d.set_detail_shown(0, true, 4, false).unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![1, 2, 3]);
+        d.set_detail_shown(0, true, 4, true).unwrap();
+        assert!(d.grid(0).unwrap().hidden_rows.is_empty());
+        d.set_detail_shown(0, false, 1, false).unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_cols, vec![1, 2]);
+        // Ungrouped one level.
+        d.set_outline(0, true, 1, 3, false).unwrap();
+        assert_eq!(d.outline(0).0, vec![(2, 1)]);
+        for _ in 0..7 {
+            assert!(d.undo().unwrap());
+        }
+        assert!(d.outline(0).0.is_empty());
+        // A subtotal of a small table by its first column.
+        for (r, row) in [
+            ["Ay", "Tutar"],
+            ["Ocak", "10"],
+            ["Ocak", "5"],
+            ["Şubat", "20"],
+        ]
+        .iter()
+        .enumerate()
+        {
+            for (c, v) in row.iter().enumerate() {
+                d.set_cell(0, 20 + r as u32, 8 + c as u32, v).unwrap();
+            }
+        }
+        d.subtotal(0, [20, 8, 23, 9], 8, 9, &[9]).unwrap();
+        let col: Vec<String> = (21..27).map(|r| d.cell_input(0, r, 8)).collect();
+        assert_eq!(
+            col,
+            [
+                "Ocak",
+                "Ocak",
+                "Ocak Total",
+                "Şubat",
+                "Şubat Total",
+                "Grand Total"
+            ]
+        );
+        assert_eq!(d.cell_input(0, 23, 9), "=SUBTOTAL(9,J22:J23)");
+        let shown = |d: &mut Box<dyn ViewerDocument>, r: u32| {
+            d.grid_cells(0, r..r + 1, 9..10)[0].2.text.clone()
+        };
+        assert_eq!(
+            (shown(&mut d, 23), shown(&mut d, 25), shown(&mut d, 26)),
+            ("15".into(), "20".into(), "35".into())
+        );
+        let (rows, _) = d.outline(0);
+        assert_eq!(rows, vec![(21, 2), (22, 2), (23, 1), (24, 2), (25, 1)]);
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-outline-test.xlsx"), &saved).unwrap();
+        }
     }
 }
