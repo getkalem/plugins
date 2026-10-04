@@ -802,6 +802,19 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_plot_area(
+        &mut self,
+        unit: usize,
+        index: usize,
+        background: Paint,
+        border: Paint,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_plot_area(unit, index, background, border)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1849,6 +1862,10 @@ mod tests {
             (c.background, c.border),
             (Paint::Color([0xFF, 0xF2, 0xCC]), Paint::Color([0x40; 3]))
         );
+        // A light gray plot area, kept by the change of kind below.
+        d.set_plot_area(0, before, Paint::Color([0xF2; 3]), Paint::Automatic)
+            .unwrap();
+        assert_eq!(d.charts(0)[before].plot_background, Paint::Color([0xF2; 3]));
         // Q2 colored red, kept by the change of kind below.
         d.set_series_color(0, before, 1, Some([0xFF, 0, 0]))
             .unwrap();
@@ -1868,6 +1885,7 @@ mod tests {
         assert_eq!(bar.series, was.series);
         assert_eq!(bar.categories, was.categories);
         assert_eq!((bar.background, bar.border), (was.background, was.border));
+        assert_eq!(bar.plot_background, was.plot_background);
         assert_eq!(
             (bar.title.clone(), bar.legend, bar.labels, bar.scale),
             (was.title.clone(), was.legend, was.labels, was.scale)

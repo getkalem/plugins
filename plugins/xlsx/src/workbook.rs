@@ -2298,6 +2298,8 @@ impl Workbook {
                 },
                 background: paint(def.background),
                 border: paint(def.border),
+                plot_background: paint(def.plot_background),
+                plot_border: paint(def.plot_border),
                 ..kalem_viewer::Chart::default()
             });
         }
@@ -2882,6 +2884,9 @@ impl Workbook {
         if (def.background, def.border) != (chart::Fill::Auto, chart::Fill::Auto) {
             new = chart::with_chart_area(&new, def.background, def.border);
         }
+        if (def.plot_background, def.plot_border) != (chart::Fill::Auto, chart::Fill::Auto) {
+            new = chart::with_plot_area(&new, def.plot_background, def.plot_border);
+        }
         let snapshot = (self.batch.is_none()).then(|| self.snapshot());
         self.pkg.set_part(&part, new.into_bytes());
         self.generation += 1;
@@ -3077,6 +3082,50 @@ impl Workbook {
             .ok_or_else(|| Error::Refused("No such chart".into()))?;
         let old = text_of(self.pkg.part(&part)?, &part)?;
         let new = chart::with_chart_area(&old, fill(background), fill(border));
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Paints the plot area (background and border, inside the axes) of a
+    /// sheet's chart
+    /// (by its place among [`Workbook::charts`]). One undo step.
+    pub fn set_plot_area(
+        &mut self,
+        idx: usize,
+        index: usize,
+        background: kalem_viewer::Paint,
+        border: kalem_viewer::Paint,
+    ) -> Result<()> {
+        let fill = |p: kalem_viewer::Paint| match p {
+            kalem_viewer::Paint::Automatic => chart::Fill::Auto,
+            kalem_viewer::Paint::None => chart::Fill::None,
+            kalem_viewer::Paint::Color([r, g, b]) => {
+                chart::Fill::Color((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b))
+            }
+        };
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let new = chart::with_plot_area(&old, fill(background), fill(border));
         if new == old {
             return Ok(());
         }

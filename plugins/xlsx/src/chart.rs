@@ -173,6 +173,10 @@ pub struct ChartDef {
     pub background: Fill,
     /// The chart area's border.
     pub border: Fill,
+    /// The plot area's background.
+    pub plot_background: Fill,
+    /// The plot area's border.
+    pub plot_border: Fill,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -376,13 +380,18 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     }
                     // The chart area's own fill and line.
                     "noFill" | "solidFill" | "srgbClr" | "schemeClr"
-                        if stack.len() >= 2 && stack[1] == "spPr" && stack[0] == "chartSpace" =>
+                        if (stack.len() >= 2 && stack[1] == "spPr" && stack[0] == "chartSpace")
+                            || (stack.len() >= 4
+                                && stack[2] == "plotArea"
+                                && stack[3] == "spPr") =>
                     {
                         let in_line = stack.iter().any(|s| s == "ln");
-                        let slot = if in_line {
-                            &mut def.border
-                        } else {
-                            &mut def.background
+                        let plot = stack.get(2).is_some_and(|s| s == "plotArea");
+                        let slot = match (plot, in_line) {
+                            (false, false) => &mut def.background,
+                            (false, true) => &mut def.border,
+                            (true, false) => &mut def.plot_background,
+                            (true, true) => &mut def.plot_border,
                         };
                         match name {
                             "noFill" if parent == "spPr" || parent == "ln" => *slot = Fill::None,
@@ -1465,6 +1474,47 @@ pub fn with_explosion(
     Some(out)
 }
 
+/// An `<c:spPr>` (or none) given a fill and a line's fill, the rest of
+/// it kept; empty when nothing is left in it.
+fn painted(
+    sp: Option<&str>,
+    p: &str,
+    (a, decl): (&str, &str),
+    background: Fill,
+    border: Fill,
+) -> String {
+    let paint = |f: Fill| match f {
+        Fill::Auto => String::new(),
+        Fill::None => format!("<{a}:noFill{decl}/>"),
+        Fill::Color(c) => {
+            format!("<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>")
+        }
+    };
+    let geometry = ["xfrm", "custGeom", "prstGeom"];
+    let sp = sp.map_or_else(|| format!("<{p}spPr></{p}spPr>"), str::to_owned);
+    let sp = set_child(&sp, &FILLS, &paint(background), &geometry);
+    let line = paint(border);
+    let ln = match child(&sp, "ln") {
+        Some(ln) => set_child(ln, &FILLS, &line, &[]),
+        None if line.is_empty() => String::new(),
+        None => format!("<{a}:ln{decl}>{line}</{a}:ln>"),
+    };
+    // A line left with nothing to say goes.
+    let ln = if !ln.is_empty() && open_up(&ln).3.is_empty() && !ln.contains(" w=") {
+        String::new()
+    } else {
+        ln
+    };
+    let mut after = geometry.to_vec();
+    after.extend(FILLS);
+    let sp = set_child(&sp, &["ln"], &ln, &after);
+    if open_up(&sp).3.is_empty() {
+        String::new()
+    } else {
+        sp
+    }
+}
+
 /// A chart part with its chart area's background and border painted so:
 /// the chart space's `<c:spPr>` (after `<c:chart>`, as the schema puts
 /// it) given the fill and the line's fill, the rest of it kept.
@@ -1488,36 +1538,7 @@ pub fn with_chart_area(text: &str, background: Fill, border: Fill) -> String {
     };
     let el = &text[span.clone()];
     let (a, decl) = drawing_prefix(text);
-    let paint = |f: Fill| match f {
-        Fill::Auto => String::new(),
-        Fill::None => format!("<{a}:noFill{decl}/>"),
-        Fill::Color(c) => {
-            format!("<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>")
-        }
-    };
-    let geometry = ["xfrm", "custGeom", "prstGeom"];
-    let sp = child(el, "spPr").map_or_else(|| format!("<{p}spPr></{p}spPr>"), str::to_owned);
-    let sp = set_child(&sp, &FILLS, &paint(background), &geometry);
-    let line = paint(border);
-    let ln = match child(&sp, "ln") {
-        Some(ln) => set_child(ln, &FILLS, &line, &[]),
-        None if line.is_empty() => String::new(),
-        None => format!("<{a}:ln{decl}>{line}</{a}:ln>"),
-    };
-    // A line left with nothing to say goes.
-    let ln = if !ln.is_empty() && open_up(&ln).3.is_empty() && !ln.contains(" w=") {
-        String::new()
-    } else {
-        ln
-    };
-    let mut after = geometry.to_vec();
-    after.extend(FILLS);
-    let sp = set_child(&sp, &["ln"], &ln, &after);
-    let sp = if open_up(&sp).3.is_empty() {
-        String::new()
-    } else {
-        sp
-    };
+    let sp = painted(child(el, "spPr"), &p, (&a, &decl), background, border);
     let new_root = set_child(
         el,
         &["spPr"],
@@ -1536,6 +1557,55 @@ pub fn with_chart_area(text: &str, background: Fill, border: Fill) -> String {
     );
     let mut out = text.to_owned();
     out.replace_range(span, &new_root);
+    out
+}
+
+/// A chart part with its plot area's background and border painted so:
+/// the plot area's `<c:spPr>`, after its plots and axes as the schema
+/// puts it, the rest of it kept.
+pub fn with_plot_area(text: &str, background: Fill, border: Fill) -> String {
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut found = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if tag.name == "plotArea" && stack.last().is_some_and(|s| s == "chart") {
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    found = Some((tag.span.start..end, xml::prefix(tag.qname).to_owned()));
+                    break;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let Some((span, p)) = found else {
+        return text.to_owned();
+    };
+    let el = &text[span.clone()];
+    let (a, decl) = drawing_prefix(text);
+    let sp = painted(child(el, "spPr"), &p, (&a, &decl), background, border);
+    // After every child but its own spPr and extensions.
+    let names: Vec<String> = open_up(el)
+        .3
+        .into_iter()
+        .map(|k| k.0)
+        .filter(|n| n != "spPr" && n != "extLst")
+        .collect();
+    let after: Vec<&str> = names.iter().map(String::as_str).collect();
+    let new_plot = set_child(el, &["spPr"], &sp, &after);
+    let mut out = text.to_owned();
+    out.replace_range(span, &new_plot);
     out
 }
 
@@ -2201,6 +2271,50 @@ mod tests {
         let excel = r#"<c:chartSpace xmlns:c="c" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart/><c:spPr><a:solidFill><a:schemeClr val="bg1"/></a:solidFill><a:ln w="9525" cap="flat"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill></a:ln></c:spPr><c:txPr/></c:chartSpace>"#;
         let e = with_chart_area(excel, Fill::Auto, Fill::Color(0xFF0000));
         assert!(e.contains(r#"<c:spPr><a:ln w="9525" cap="flat"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln></c:spPr><c:txPr/>"#), "{e}");
+    }
+
+    #[test]
+    fn plot_area_painted() {
+        let s = NewSeries {
+            name: None,
+            cat: None,
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
+        };
+        for kind in [ChartKind::Column, ChartKind::Pie, ChartKind::Scatter] {
+            let x = chart_xml(kind, None, std::slice::from_ref(&s));
+            let y = with_plot_area(&x, Fill::Color(0xF2F2F2), Fill::Color(0x7F7F7F));
+            let d = parse_chart(&y, &[]);
+            assert_eq!(
+                (d.plot_background, d.plot_border),
+                (Fill::Color(0xF2F2F2), Fill::Color(0x7F7F7F)),
+                "{kind:?}"
+            );
+            assert_eq!(
+                (d.background, d.border),
+                (Fill::Auto, Fill::Auto),
+                "not the chart area's"
+            );
+            assert!(d.series[0].color.is_none(), "not the series'");
+            // After the plots and axes, inside the plot area.
+            let pa = &y[y.find("<c:plotArea>").unwrap()..y.find("</c:plotArea>").unwrap()];
+            assert!(
+                pa.rfind("<c:spPr>").unwrap() > pa.rfind("Chart>").unwrap(),
+                "{pa}"
+            );
+            if pa.contains("Ax>") {
+                assert!(
+                    pa.rfind("<c:spPr>").unwrap() > pa.rfind("Ax>").unwrap(),
+                    "{pa}"
+                );
+            }
+            let back = with_plot_area(&y, Fill::Auto, Fill::Auto);
+            assert_eq!(parse_chart(&back, &[]).plot_background, Fill::Auto);
+            assert_eq!(
+                back.matches("<c:spPr>").count(),
+                x.matches("<c:spPr>").count()
+            );
+        }
     }
 
     #[test]
