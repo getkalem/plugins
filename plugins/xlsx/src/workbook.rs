@@ -1022,6 +1022,58 @@ impl Workbook {
         self.set_input(idx, at, input)
     }
 
+    /// Enters `entry` into every cell of `range`, as Excel's Ctrl+Enter: a
+    /// formula's references moved for each cell as from `at`, where it was
+    /// typed. One undo step.
+    pub fn enter_in_range(
+        &mut self,
+        idx: usize,
+        range: Range,
+        at: CellRef,
+        entry: &str,
+    ) -> Result<()> {
+        self.load(idx)?;
+        let area = u64::from(range.end.row - range.start.row + 1)
+            * u64::from(range.end.col - range.start.col + 1);
+        if area > 200_000 {
+            return Err(Error::Refused("Select fewer cells: 200,000 at most".into()));
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = (|| -> Result<()> {
+            for r in range.start.row..=range.end.row {
+                for c in range.start.col..=range.end.col {
+                    let input = match Input::parse(entry, self.date1904) {
+                        Input::Formula(f) => Input::Formula(formula::shift(
+                            &f,
+                            i64::from(r) - i64::from(at.row),
+                            i64::from(c) - i64::from(at.col),
+                        )),
+                        other => other,
+                    };
+                    self.set_input(idx, CellRef::new(r, c), input)?;
+                }
+            }
+            Ok(())
+        })();
+        self.batch_changed = true;
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Writes a parsed entry into a cell. Only the cell's `<c>` changes,
     /// plus, where the specification needs it: a shared formula's next cell
     /// when the group's first cell is overwritten, the `<dimension>`, the

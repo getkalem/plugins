@@ -741,6 +741,23 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn enter_in_range(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        at: (u32, u32),
+        input: &str,
+    ) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .enter_in_range(unit, r, CellRef::new(at.0, at.1), input)
+            .map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn grid_edit(&mut self, unit: usize, edit: GridEdit) -> Result<Vec<usize>> {
         match edit {
             GridEdit::InsertRows { at, count } => self.book().insert_rows(unit, at, count),
@@ -3001,5 +3018,20 @@ mod tests {
         assert_ne!(a, b, "a new random number");
         // Other results stay.
         assert_eq!(d.grid_cells(0, 1..2, 3..4)[0].2.text, "2,400.00");
+    }
+
+    #[test]
+    fn entered_in_a_range() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // Typed in F2 with F2:G3 selected: each cell's own references.
+        d.enter_in_range(0, [1, 5, 2, 6], (1, 5), "=B2*2").unwrap();
+        assert_eq!(d.cell_input(0, 1, 5), "=B2*2");
+        assert_eq!(d.cell_input(0, 2, 6), "=C3*2");
+        assert_eq!(d.grid_cells(0, 2..3, 6..7)[0].2.text, "1024.5");
+        d.enter_in_range(0, [8, 0, 9, 0], (8, 0), "Yok").unwrap();
+        assert_eq!(d.cell_input(0, 9, 0), "Yok");
+        assert!(d.undo().unwrap());
+        assert!(d.undo().unwrap());
+        assert_eq!(d.cell_input(0, 1, 5), "");
     }
 }
