@@ -2273,6 +2273,12 @@ impl Workbook {
                     series: def.labels.2,
                     percent: def.labels.3,
                 },
+                scale: kalem_viewer::AxisScale {
+                    min: def.scale.0,
+                    max: def.scale.1,
+                    major: def.scale.2,
+                    log: def.scale.3,
+                },
                 ..kalem_viewer::Chart::default()
             });
         }
@@ -2643,6 +2649,64 @@ impl Workbook {
             (labels.value, labels.category, labels.series, labels.percent),
             pie,
         );
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Sets the value axis's scale of a sheet's chart (by its place among
+    /// [`Workbook::charts`]). One undo step.
+    pub fn set_axis_scale(
+        &mut self,
+        idx: usize,
+        index: usize,
+        scale: kalem_viewer::AxisScale,
+    ) -> Result<()> {
+        if let (Some(a), Some(b)) = (scale.min, scale.max)
+            && a >= b
+        {
+            return Err(Error::Refused(
+                "The minimum must be below the maximum".into(),
+            ));
+        }
+        if scale.major.is_some_and(|m| m <= 0.0) {
+            return Err(Error::Refused("The major unit must be above zero".into()));
+        }
+        if scale.log && (scale.min.is_some_and(|m| m <= 0.0) || scale.max.is_some_and(|m| m <= 0.0))
+        {
+            return Err(Error::Refused(
+                "A logarithmic scale shows values above zero".into(),
+            ));
+        }
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let scatter =
+            chart::parse_chart(&old, &self.theme).kind == kalem_viewer::ChartKind::Scatter;
+        let new = chart::with_scale(
+            &old,
+            (scale.min, scale.max, scale.major, scale.log),
+            scatter,
+        )
+        .ok_or_else(|| Error::Refused("This chart has no value axis".into()))?;
         if new == old {
             return Ok(());
         }
