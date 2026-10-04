@@ -1,8 +1,10 @@
 # Publishes one plugin: push a tag NAME-vX.Y.Z, where NAME is the directory
-# under plugins/ and X.Y.Z the version in its plugin.json. The component is
-# built from the tagged source, hashed, signed with sigstore through the
-# workflow's identity, and attached to a GitHub release; then main gets the
-# SHA-256 file and a regenerated index.json. Not run yet: the first tag runs it.
+# under plugins/ and X.Y.Z the version in its plugin.json. A component is
+# built from the tagged source; a declarative plugin (no `main`: a manifest
+# and syntax files) is packed as NAME-vX.Y.Z.tar.gz of its folder, as
+# tools/build-index.py names it. The asset is hashed, signed with sigstore
+# through the workflow's identity, and attached to a GitHub release; then
+# main gets the SHA-256 file and a regenerated index.json.
 name: Release a plugin
 
 on:
@@ -27,17 +29,28 @@ jobs:
           test -f "plugins/$name/plugin.json" || { echo "no plugins/$name/plugin.json"; exit 1; }
           manifest_version=$(python3 -c "import json;print(json.load(open('plugins/$name/plugin.json'))['version'])")
           test "$manifest_version" = "$version" || { echo "tag says $version, plugin.json says $manifest_version"; exit 1; }
-          asset=$(python3 -c "import json,os;print(os.path.basename(json.load(open('plugins/$name/plugin.json'))['main']))")
+          main=$(python3 -c "import json;print(json.load(open('plugins/$name/plugin.json')).get('main', ''))")
+          if [ -n "$main" ]; then
+            asset=$(basename "$main")
+            kind=component
+          else
+            asset="$tag.tar.gz"
+            kind=declarative
+          fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "asset=$asset" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.tag.outputs.kind == 'component'
         with:
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@v2
+        if: steps.tag.outputs.kind == 'component'
         with:
           tool: wasm-tools
       - name: Build the component from the tagged source
+        if: steps.tag.outputs.kind == 'component'
         run: |
           name="${{ steps.tag.outputs.name }}"
           cargo build --release --target wasm32-unknown-unknown -p "kalem-plugin-$name"
@@ -47,13 +60,21 @@ jobs:
           wasm-tools component new "$built" -o "dist/${{ steps.tag.outputs.asset }}"
           (cd dist && sha256sum "${{ steps.tag.outputs.asset }}" > SHA256SUMS)
           cat dist/SHA256SUMS
+      - name: Pack the declarative plugin's folder from the tagged source
+        if: steps.tag.outputs.kind == 'declarative'
+        run: |
+          mkdir -p dist
+          # The folder's files at the archive's root, as Kalem unpacks it.
+          git archive --format=tar.gz -o "dist/${{ steps.tag.outputs.asset }}" "HEAD:plugins/${{ steps.tag.outputs.name }}"
+          (cd dist && sha256sum "${{ steps.tag.outputs.asset }}" > SHA256SUMS)
+          cat dist/SHA256SUMS
       - uses: sigstore/cosign-installer@v3
-      - name: Sign the component (sigstore, keyless)
+      - name: Sign the asset (sigstore, keyless)
         run: |
           cd dist
           cosign sign-blob --yes "${{ steps.tag.outputs.asset }}" \
             --bundle "${{ steps.tag.outputs.asset }}.sigstore.json"
-      - name: GitHub release with the component, its hash and its signature
+      - name: GitHub release with the asset, its hash and its signature
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
