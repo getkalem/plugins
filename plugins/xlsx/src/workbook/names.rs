@@ -177,3 +177,79 @@ impl Workbook {
         self.compute_again(&before, trusted)
     }
 }
+
+impl Workbook {
+    /// A name of sheet `idx` only (`localSheetId`), such as the print area,
+    /// set to `refers_to` or taken away (`None`). No undo step of its own;
+    /// no formula computed again.
+    pub(crate) fn set_local_name(&mut self, name: &str, idx: usize, refers_to: Option<&str>) {
+        let text = self.workbook_xml.clone();
+        let mut r = Reader::new(&text);
+        let mut splices = Vec::new();
+        let mut prefix = String::new();
+        let mut list: Option<(std::ops::Range<usize>, bool)> = None;
+        while let Some(t) = r.next_token() {
+            let Token::Start(tag) = t else { continue };
+            match tag.name {
+                "workbook" => prefix = xml::prefix(tag.qname).to_owned(),
+                "definedNames" => list = Some((tag.span.clone(), tag.empty)),
+                "definedName" => {
+                    let start = tag.span.start;
+                    let same = tag
+                        .attr("localSheetId")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        == Some(idx)
+                        && tag
+                            .attr("name")
+                            .is_some_and(|n| n.eq_ignore_ascii_case(name));
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    if same {
+                        splices.push((start..end, String::new()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut text = text;
+        if let Some(to) = refers_to {
+            let el = format!(
+                "<{prefix}definedName name=\"{}\" localSheetId=\"{idx}\">{}</{prefix}definedName>",
+                xml::escape(name),
+                xml::escape(to)
+            );
+            match &list {
+                Some((span, true)) => splices.push((
+                    span.clone(),
+                    format!("<{prefix}definedNames>{el}</{prefix}definedNames>"),
+                )),
+                Some((span, false)) => splices.push((span.end..span.end, el)),
+                None => {
+                    text = splice(&text, std::mem::take(&mut splices));
+                    text = insert_top_level(
+                        &text,
+                        &AFTER_DEFINED_NAMES,
+                        &format!("<{prefix}definedNames>{el}</{prefix}definedNames>"),
+                    );
+                }
+            }
+        }
+        text = splice(&text, splices);
+        for empty in [
+            format!("<{prefix}definedNames></{prefix}definedNames>"),
+            format!("<{prefix}definedNames/>"),
+        ] {
+            text = text.replace(&empty, "");
+        }
+        if text != self.workbook_xml {
+            self.workbook_xml = text;
+            let part = self.workbook_part.clone();
+            self.pkg
+                .set_part(&part, self.workbook_xml.clone().into_bytes());
+            self.reread_defined_names();
+        }
+    }
+}

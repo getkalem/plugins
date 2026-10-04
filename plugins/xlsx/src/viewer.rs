@@ -491,6 +491,19 @@ impl ViewerDocument for XlsxDoc {
         })
     }
 
+    fn page_setup(&mut self, unit: usize) -> Option<kalem_viewer::PageSetup> {
+        self.book().page_setup(unit).ok()
+    }
+
+    fn set_page_setup(
+        &mut self,
+        unit: usize,
+        setup: &kalem_viewer::PageSetup,
+    ) -> Result<Vec<usize>> {
+        self.book().set_page_setup(unit, setup).map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn tables(&mut self, unit: usize) -> Vec<kalem_viewer::TableInfo> {
         self.book()
             .sheet_tables(unit)
@@ -3312,5 +3325,37 @@ mod tests {
         assert!(d.tables(0).is_empty());
         assert_eq!(d.cell_input(0, 9, 9), "=SUM($B$2:$B$5)");
         assert_eq!(d.grid_cells(0, 9..10, 9..10)[0].2.text, "1731.5");
+    }
+
+    #[test]
+    fn page_set_up() {
+        use kalem_viewer::PageSetup;
+        let mut d = open("openpyxl-budget.xlsx");
+        let first = d.page_setup(0).unwrap();
+        let s = PageSetup {
+            landscape: true,
+            paper: 8,
+            margins: [0.25, 0.25, 0.5, 0.5],
+            fit_width: true,
+            print_area: Some([0, 0, 4, 3]),
+            title_rows: Some((0, 0)),
+            header: "&C&A".into(),
+            footer: "&CPage &P of &N".into(),
+            row_breaks: vec![3],
+        };
+        d.set_page_setup(0, &s).unwrap();
+        assert_eq!(d.page_setup(0).unwrap(), s);
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-page-test.xlsx"), &saved).unwrap();
+        }
+        let wb = Workbook::open(saved).unwrap();
+        let names: Vec<&str> = wb.defined_names().iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"_xlnm.Print_Area") && names.contains(&"_xlnm.Print_Titles"));
+        // Back to none of it; undone.
+        d.set_page_setup(0, &PageSetup::default()).unwrap();
+        assert_eq!(d.page_setup(0).unwrap().print_area, None);
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        assert_eq!(d.page_setup(0).unwrap(), first);
     }
 }

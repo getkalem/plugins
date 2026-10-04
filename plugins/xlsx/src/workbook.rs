@@ -7459,6 +7459,7 @@ fn widen_spans(row_tag: &str, col: u32) -> String {
 mod links;
 mod names;
 mod notes;
+mod page;
 mod sheet_ops;
 mod tables;
 pub use tables::{TableDef, style_colors};
