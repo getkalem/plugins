@@ -37,6 +37,12 @@ pub struct CellStyle {
     pub valign: Option<String>,
     /// Text wraps in the cell.
     pub wrap: bool,
+    /// The indent, in levels.
+    pub indent: u8,
+    /// The text's rotation (`textRotation`).
+    pub rotation: u16,
+    /// Shrunk to fit.
+    pub shrink: bool,
     /// Whether any border is drawn.
     pub border: bool,
     /// The sides drawn: top, right, bottom, left, each its color
@@ -427,6 +433,15 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                         s.valign = tag.attr("vertical").map(|v| v.into_owned());
                         s.wrap = tag
                             .attr("wrapText")
+                            .as_deref()
+                            .is_some_and(|v| v == "1" || v == "true");
+                        s.indent = tag.attr("indent").and_then(|v| v.parse().ok()).unwrap_or(0);
+                        s.rotation = tag
+                            .attr("textRotation")
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(0);
+                        s.shrink = tag
+                            .attr("shrinkToFit")
                             .as_deref()
                             .is_some_and(|v| v == "1" || v == "true");
                     }

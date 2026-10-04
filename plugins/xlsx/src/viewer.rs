@@ -661,6 +661,10 @@ impl ViewerDocument for XlsxDoc {
                         .filter(|s| Some(*s) != base.size)
                         .map(|s| (s * 10.0).round() as u16),
                     face: style.font.clone().filter(|f| Some(f) != base.font.as_ref()),
+                    indent: style.indent,
+                    rotation: style.rotation,
+                    shrink: style.shrink,
+                    center_across: style.align.as_deref() == Some("centerContinuous"),
                     borders: style.sides.map(|s| s.map(|(c, _)| rgb(c))),
                     border_thick: style.sides.map(|s| s.is_some_and(|(_, t)| t)),
                     valign: match style.valign.as_deref() {
@@ -3473,5 +3477,53 @@ mod tests {
         if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
             std::fs::write(format!("{dir}/kalem-outline-test.xlsx"), &saved).unwrap();
         }
+    }
+
+    #[test]
+    fn indent_rotation_shrink_across() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let cell = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1).remove(0).2
+        };
+        d.change_style(
+            0,
+            [1, 0, 1, 0],
+            StyleChange {
+                indent: Some(2),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        let a2 = cell(&mut d, 1, 0);
+        assert_eq!((a2.indent, a2.align), (2, Align::Left));
+        d.change_style(
+            0,
+            [2, 0, 2, 0],
+            StyleChange {
+                rotation: Some(45),
+                shrink: Some(true),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        let a3 = cell(&mut d, 2, 0);
+        assert_eq!((a3.rotation, a3.shrink), (45, true));
+        d.change_style(
+            0,
+            [0, 0, 0, 2],
+            StyleChange {
+                center_across: Some(true),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        assert!(cell(&mut d, 0, 0).center_across);
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        let s = wb.sheet(0).unwrap().cells[&CellRef::new(2, 0)].style;
+        assert_eq!((wb.style(s).rotation, wb.style(s).shrink), (45, true));
+        for _ in 0..3 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(cell(&mut d, 1, 0).indent, 0);
     }
 }

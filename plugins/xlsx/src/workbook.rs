@@ -2081,6 +2081,29 @@ impl Workbook {
             };
             xf = with_alignment(&xf, "horizontal", v);
         }
+        if let Some(across) = change.center_across {
+            let v = if across {
+                "centerContinuous"
+            } else {
+                "general"
+            };
+            xf = with_alignment(&xf, "horizontal", v);
+        }
+        if let Some(n) = change.indent {
+            xf = with_alignment(&xf, "indent", &n.to_string());
+            // Excel indents text set to the left (or right), not General.
+            let general =
+                !xf.contains("horizontal=\"left\"") && !xf.contains("horizontal=\"right\"");
+            if n > 0 && general {
+                xf = with_alignment(&xf, "horizontal", "left");
+            }
+        }
+        if let Some(r) = change.rotation {
+            xf = with_alignment(&xf, "textRotation", &r.to_string());
+        }
+        if let Some(on) = change.shrink {
+            xf = with_alignment(&xf, "shrinkToFit", if on { "1" } else { "0" });
+        }
         if let Some(a) = change.valign {
             let v = match a {
                 kalem_viewer::VAlign::Top => "top",
