@@ -11,6 +11,18 @@ use crate::xml::{self, Reader, Token};
 /// A value axis's scale: min, max, major unit, logarithmic.
 pub type Scale = (Option<f64>, Option<f64>, Option<f64>, bool);
 
+/// How the chart area's background or border is painted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Fill {
+    /// As the style has it.
+    #[default]
+    Auto,
+    /// Not at all.
+    None,
+    /// In a color.
+    Color(Rgb),
+}
+
 /// A chart's place in a drawing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Anchor {
@@ -157,6 +169,10 @@ pub struct ChartDef {
     pub labels: (bool, bool, bool, bool),
     /// Its value axis's scale: min, max, major unit, logarithmic.
     pub scale: Scale,
+    /// The chart area's background.
+    pub background: Fill,
+    /// The chart area's border.
+    pub border: Fill,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -357,6 +373,32 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     }
                     "axPos" if parent.ends_with("Ax") => {
                         axis_pos = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
+                    }
+                    // The chart area's own fill and line.
+                    "noFill" | "solidFill" | "srgbClr" | "schemeClr"
+                        if stack.len() >= 2 && stack[1] == "spPr" && stack[0] == "chartSpace" =>
+                    {
+                        let in_line = stack.iter().any(|s| s == "ln");
+                        let slot = if in_line {
+                            &mut def.border
+                        } else {
+                            &mut def.background
+                        };
+                        match name {
+                            "noFill" if parent == "spPr" || parent == "ln" => *slot = Fill::None,
+                            "srgbClr" | "schemeClr" if parent == "solidFill" => {
+                                let v = tag.attr("val").unwrap_or_default();
+                                let c = if name == "srgbClr" {
+                                    u32::from_str_radix(&v, 16).ok()
+                                } else {
+                                    scheme(&v, theme)
+                                };
+                                if let Some(c) = c {
+                                    *slot = Fill::Color(c);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                     "dPt" if ser.is_some() && !tag.empty => point = Some((None, None)),
                     "explosion" if parent == "ser" || parent == "dPt" => {
@@ -1423,6 +1465,80 @@ pub fn with_explosion(
     Some(out)
 }
 
+/// A chart part with its chart area's background and border painted so:
+/// the chart space's `<c:spPr>` (after `<c:chart>`, as the schema puts
+/// it) given the fill and the line's fill, the rest of it kept.
+pub fn with_chart_area(text: &str, background: Fill, border: Fill) -> String {
+    // The root element's bytes.
+    let mut r = Reader::new(text);
+    let mut root = None;
+    while let Some(t) = r.next_token() {
+        if let Token::Start(tag) = t {
+            let end = if tag.empty {
+                tag.span.end
+            } else {
+                r.skip_element()
+            };
+            root = Some((tag.span.start..end, xml::prefix(tag.qname).to_owned()));
+            break;
+        }
+    }
+    let Some((span, p)) = root else {
+        return text.to_owned();
+    };
+    let el = &text[span.clone()];
+    let (a, decl) = drawing_prefix(text);
+    let paint = |f: Fill| match f {
+        Fill::Auto => String::new(),
+        Fill::None => format!("<{a}:noFill{decl}/>"),
+        Fill::Color(c) => {
+            format!("<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>")
+        }
+    };
+    let geometry = ["xfrm", "custGeom", "prstGeom"];
+    let sp = child(el, "spPr").map_or_else(|| format!("<{p}spPr></{p}spPr>"), str::to_owned);
+    let sp = set_child(&sp, &FILLS, &paint(background), &geometry);
+    let line = paint(border);
+    let ln = match child(&sp, "ln") {
+        Some(ln) => set_child(ln, &FILLS, &line, &[]),
+        None if line.is_empty() => String::new(),
+        None => format!("<{a}:ln{decl}>{line}</{a}:ln>"),
+    };
+    // A line left with nothing to say goes.
+    let ln = if !ln.is_empty() && open_up(&ln).3.is_empty() && !ln.contains(" w=") {
+        String::new()
+    } else {
+        ln
+    };
+    let mut after = geometry.to_vec();
+    after.extend(FILLS);
+    let sp = set_child(&sp, &["ln"], &ln, &after);
+    let sp = if open_up(&sp).3.is_empty() {
+        String::new()
+    } else {
+        sp
+    };
+    let new_root = set_child(
+        el,
+        &["spPr"],
+        &sp,
+        &[
+            "date1904",
+            "lang",
+            "roundedCorners",
+            "AlternateContent",
+            "style",
+            "clrMapOvr",
+            "pivotSource",
+            "protection",
+            "chart",
+        ],
+    );
+    let mut out = text.to_owned();
+    out.replace_range(span, &new_root);
+    out
+}
+
 /// An absolute reference to a range of a sheet, as charts write them.
 pub fn reference(sheet: &str, r: crate::cellref::Range) -> String {
     let abs = |c: crate::cellref::CellRef| {
@@ -2048,6 +2164,43 @@ mod tests {
         let none = with_explosion(&all, 0, None, 0).unwrap();
         assert_eq!(parse_chart(&none, &[]).series[0].explosion, 0);
         assert!(with_explosion(&x, 2, None, 5).is_none());
+    }
+
+    #[test]
+    fn chart_area_painted() {
+        let s = NewSeries {
+            name: None,
+            cat: None,
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
+        };
+        let x = chart_xml(ChartKind::Column, None, std::slice::from_ref(&s));
+        let d = parse_chart(&x, &[]);
+        assert_eq!((d.background, d.border), (Fill::Auto, Fill::Auto));
+        let y = with_chart_area(&x, Fill::Color(0xFFF2CC), Fill::Color(0x404040));
+        let d = parse_chart(&y, &[]);
+        assert_eq!(
+            (d.background, d.border),
+            (Fill::Color(0xFFF2CC), Fill::Color(0x404040))
+        );
+        // After the chart, as the schema puts it; a series' fill not taken.
+        assert!(y.find("<c:spPr>") > y.find("</c:chart>"), "{y}");
+        assert!(parse_chart(&y, &[]).series[0].color.is_none());
+        // No border, the background kept; then all automatic: no spPr.
+        let z = with_chart_area(&y, Fill::Color(0xFFF2CC), Fill::None);
+        assert_eq!(parse_chart(&z, &[]).border, Fill::None);
+        assert_eq!(parse_chart(&z, &[]).background, Fill::Color(0xFFF2CC));
+        let z = with_chart_area(&z, Fill::None, Fill::None);
+        assert_eq!(parse_chart(&z, &[]).background, Fill::None);
+        let back = with_chart_area(&z, Fill::Auto, Fill::Auto);
+        assert!(
+            !back[back.find("</c:chart>").unwrap()..].contains("spPr"),
+            "{back}"
+        );
+        // Excel's area: a width on its line stays.
+        let excel = r#"<c:chartSpace xmlns:c="c" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart/><c:spPr><a:solidFill><a:schemeClr val="bg1"/></a:solidFill><a:ln w="9525" cap="flat"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill></a:ln></c:spPr><c:txPr/></c:chartSpace>"#;
+        let e = with_chart_area(excel, Fill::Auto, Fill::Color(0xFF0000));
+        assert!(e.contains(r#"<c:spPr><a:ln w="9525" cap="flat"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln></c:spPr><c:txPr/>"#), "{e}");
     }
 
     #[test]

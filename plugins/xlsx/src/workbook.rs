@@ -2182,6 +2182,13 @@ impl Workbook {
     /// A sheet's charts as they read now: their values from the cells they
     /// name, else from what the file cached.
     pub fn charts(&mut self, idx: usize) -> Result<Vec<kalem_viewer::Chart>> {
+        let paint = |f: chart::Fill| match f {
+            chart::Fill::Auto => kalem_viewer::Paint::Automatic,
+            chart::Fill::None => kalem_viewer::Paint::None,
+            chart::Fill::Color(c) => {
+                kalem_viewer::Paint::Color([(c >> 16) as u8, (c >> 8) as u8, c as u8])
+            }
+        };
         let Some(drawing) = self.sheet_drawing(idx) else {
             return Ok(Vec::new());
         };
@@ -2289,6 +2296,8 @@ impl Workbook {
                     major: def.scale.2,
                     log: def.scale.3,
                 },
+                background: paint(def.background),
+                border: paint(def.border),
                 ..kalem_viewer::Chart::default()
             });
         }
@@ -2870,6 +2879,9 @@ impl Workbook {
         {
             new = x;
         }
+        if (def.background, def.border) != (chart::Fill::Auto, chart::Fill::Auto) {
+            new = chart::with_chart_area(&new, def.background, def.border);
+        }
         let snapshot = (self.batch.is_none()).then(|| self.snapshot());
         self.pkg.set_part(&part, new.into_bytes());
         self.generation += 1;
@@ -3022,6 +3034,49 @@ impl Workbook {
         }
         let new = chart::with_explosion(&old, series, point, percent)
             .ok_or_else(|| Error::Refused("No such series".into()))?;
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Paints the chart area (background and border) of a sheet's chart
+    /// (by its place among [`Workbook::charts`]). One undo step.
+    pub fn set_chart_area(
+        &mut self,
+        idx: usize,
+        index: usize,
+        background: kalem_viewer::Paint,
+        border: kalem_viewer::Paint,
+    ) -> Result<()> {
+        let fill = |p: kalem_viewer::Paint| match p {
+            kalem_viewer::Paint::Automatic => chart::Fill::Auto,
+            kalem_viewer::Paint::None => chart::Fill::None,
+            kalem_viewer::Paint::Color([r, g, b]) => {
+                chart::Fill::Color((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b))
+            }
+        };
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let new = chart::with_chart_area(&old, fill(background), fill(border));
         if new == old {
             return Ok(());
         }

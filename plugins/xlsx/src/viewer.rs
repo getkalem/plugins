@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use kalem_viewer::{
     Align, AxisScale, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule, CondStyle,
     DataLabels, Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, InfoField,
-    LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, PivotSpec, RenderRequest,
-    Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation, ValidationError,
-    ValidationKind, Viewer, ViewerDocument, ViewerError,
+    LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, Paint, PivotSpec,
+    RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation,
+    ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -785,6 +785,19 @@ impl ViewerDocument for XlsxDoc {
     ) -> Result<Vec<usize>> {
         self.book()
             .set_explosion(unit, index, series, point, percent)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_chart_area(
+        &mut self,
+        unit: usize,
+        index: usize,
+        background: Paint,
+        border: Paint,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_chart_area(unit, index, background, border)
             .map_err(err)?;
         Ok(vec![unit])
     }
@@ -1822,6 +1835,20 @@ mod tests {
         assert_eq!(wb.charts(0).unwrap()[before].scale, scale);
         assert!(d.undo().unwrap());
         assert_eq!(d.charts(0)[before].scale, AxisScale::default());
+        // A cream background and a gray border, kept by the change of kind
+        // below.
+        d.set_chart_area(
+            0,
+            before,
+            Paint::Color([0xFF, 0xF2, 0xCC]),
+            Paint::Color([0x40; 3]),
+        )
+        .unwrap();
+        let c = d.charts(0)[before].clone();
+        assert_eq!(
+            (c.background, c.border),
+            (Paint::Color([0xFF, 0xF2, 0xCC]), Paint::Color([0x40; 3]))
+        );
         // Q2 colored red, kept by the change of kind below.
         d.set_series_color(0, before, 1, Some([0xFF, 0, 0]))
             .unwrap();
@@ -1840,6 +1867,7 @@ mod tests {
         assert_eq!(bar.kind, ChartKind::Bar);
         assert_eq!(bar.series, was.series);
         assert_eq!(bar.categories, was.categories);
+        assert_eq!((bar.background, bar.border), (was.background, was.border));
         assert_eq!(
             (bar.title.clone(), bar.legend, bar.labels, bar.scale),
             (was.title.clone(), was.legend, was.labels, was.scale)
