@@ -11,8 +11,8 @@
         "subprocess"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/elixir",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/elixir-v0.1.0/elixir-v0.1.0.tar.gz",
+      "sha256": "786bf53c4f28310fcb4564343dbc9a27406e5b9fa17ccee2bd8fdf4148920dd6",
       "kind": "declarative",
       "languages": [
         {
