@@ -322,6 +322,7 @@ impl Workbook {
     /// Changes the sheets, as one undo step; the sheet to show after it.
     pub fn edit_sheets(&mut self, edit: &kalem_viewer::SheetEdit) -> Result<usize> {
         use kalem_viewer::SheetEdit;
+        self.check_structure()?;
         let n = self.sheets.len();
         let check = |i: usize| {
             if i < n {

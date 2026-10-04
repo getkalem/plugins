@@ -540,6 +540,31 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn sheet_protection(&mut self, unit: usize) -> Option<kalem_viewer::SheetProtection> {
+        self.book().sheet_protection(unit)
+    }
+
+    fn protect_sheet(
+        &mut self,
+        unit: usize,
+        protection: Option<kalem_viewer::SheetProtection>,
+        password: Option<&str>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .protect_sheet(unit, protection.as_ref(), password)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn workbook_protected(&mut self) -> bool {
+        self.book().workbook_protected()
+    }
+
+    fn protect_workbook(&mut self, on: bool, password: Option<&str>) -> Result<Vec<usize>> {
+        self.book().protect_workbook(on, password).map_err(err)?;
+        Ok(self.all_units())
+    }
+
     fn page_setup(&mut self, unit: usize) -> Option<kalem_viewer::PageSetup> {
         self.book().page_setup(unit).ok()
     }
@@ -665,6 +690,7 @@ impl ViewerDocument for XlsxDoc {
                     rotation: style.rotation,
                     shrink: style.shrink,
                     center_across: style.align.as_deref() == Some("centerContinuous"),
+                    unlocked: style.unlocked,
                     borders: style.sides.map(|s| s.map(|(c, _)| rgb(c))),
                     border_thick: style.sides.map(|s| s.is_some_and(|(_, t)| t)),
                     valign: match style.valign.as_deref() {
@@ -3525,5 +3551,67 @@ mod tests {
             assert!(d.undo().unwrap());
         }
         assert_eq!(cell(&mut d, 1, 0).indent, 0);
+    }
+
+    #[test]
+    fn protection() {
+        use kalem_viewer::{SheetEdit, SheetProtection};
+        let mut d = open("openpyxl-budget.xlsx");
+        // B2:B3 unlocked; the sheet protected with a password, sorting
+        // allowed.
+        d.change_style(
+            0,
+            [1, 1, 2, 1],
+            StyleChange {
+                locked: Some(false),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        assert!(d.grid_cells(0, 1..2, 1..2)[0].2.unlocked);
+        let p = SheetProtection {
+            sort: true,
+            ..SheetProtection::default()
+        };
+        d.protect_sheet(0, Some(p), Some("gizli")).unwrap();
+        let read = d.sheet_protection(0).unwrap();
+        assert!(read.has_password && read.sort && !read.format_cells);
+        // Locked cells, formats and rows refused; unlocked cells edited.
+        assert!(d.set_cell(0, 1, 0, "x").is_err());
+        assert!(d.set_cell(0, 1, 1, "5").is_ok());
+        assert!(
+            d.change_style(
+                0,
+                [1, 1, 1, 1],
+                StyleChange {
+                    bold: Some(true),
+                    ..StyleChange::default()
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            d.grid_edit(0, GridEdit::InsertRows { at: 1, count: 1 })
+                .is_err()
+        );
+        // Saved: Excel's SHA-512 protection.
+        let saved = d.save().unwrap().bytes;
+        let pkg = crate::package::Package::read(saved).unwrap();
+        let text = String::from_utf8(pkg.part("xl/worksheets/sheet1.xml").unwrap()).unwrap();
+        assert!(
+            text.contains("algorithmName=\"SHA-512\"") && text.contains("sort=\"0\""),
+            "{text}"
+        );
+        // The wrong password refused, the right one unprotects.
+        assert!(d.protect_sheet(0, None, Some("yanlış")).is_err());
+        d.protect_sheet(0, None, Some("gizli")).unwrap();
+        assert!(d.sheet_protection(0).is_none());
+        assert!(d.set_cell(0, 1, 0, "x").is_ok());
+        // The workbook's structure.
+        d.protect_workbook(true, None).unwrap();
+        assert!(d.workbook_protected());
+        assert!(d.edit_sheets(SheetEdit::Insert(0)).is_err());
+        d.protect_workbook(false, None).unwrap();
+        assert!(d.edit_sheets(SheetEdit::Insert(0)).is_ok());
     }
 }

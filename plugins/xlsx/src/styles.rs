@@ -43,6 +43,8 @@ pub struct CellStyle {
     pub rotation: u16,
     /// Shrunk to fit.
     pub shrink: bool,
+    /// Not locked when the sheet is protected (`<protection locked="0">`).
+    pub unlocked: bool,
     /// Whether any border is drawn.
     pub border: bool,
     /// The sides drawn: top, right, bottom, left, each its color
@@ -425,6 +427,11 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                         push_xf(&mut styles, style);
                     } else {
                         xf = Some((style, 0));
+                    }
+                }
+                "protection" if xf.is_some() => {
+                    if let Some((s, _)) = xf.as_mut() {
+                        s.unlocked = matches!(tag.attr("locked").as_deref(), Some("0" | "false"));
                     }
                 }
                 "alignment" if xf.is_some() => {

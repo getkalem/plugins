@@ -128,6 +128,8 @@ pub struct Sheet {
     pub code_name: Option<String>,
     /// The sheet's AutoFilter.
     pub auto_filter: Option<AutoFilter>,
+    /// The `<sheetProtection>`'s attributes, when the sheet is protected.
+    pub protection: Option<Vec<(String, String)>>,
 }
 
 /// A sheet's AutoFilter (`<autoFilter>`, 18.3.1.2).
@@ -284,6 +286,35 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                         tag.attr("defaultRowHeight").and_then(|v| number(&v));
                 }
                 "cols" => in_cols = !tag.empty,
+                "sheetProtection" => {
+                    let on = tag
+                        .attr("sheet")
+                        .as_deref()
+                        .is_some_and(|v| v == "1" || v == "true");
+                    if on {
+                        sheet.protection = Some(
+                            [
+                                "password",
+                                "algorithmName",
+                                "hashValue",
+                                "saltValue",
+                                "spinCount",
+                                "formatCells",
+                                "formatColumns",
+                                "formatRows",
+                                "insertColumns",
+                                "insertRows",
+                                "deleteColumns",
+                                "deleteRows",
+                                "sort",
+                                "autoFilter",
+                            ]
+                            .iter()
+                            .filter_map(|k| tag.attr(k).map(|v| ((*k).to_owned(), v.into_owned())))
+                            .collect(),
+                        );
+                    }
+                }
                 "col" if in_cols => {
                     let get = |k| tag.attr(k).and_then(|v| v.parse::<u32>().ok());
                     if let (Some(min), Some(max)) = (get("min"), get("max")) {

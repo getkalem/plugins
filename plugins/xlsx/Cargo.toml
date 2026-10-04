@@ -21,6 +21,8 @@ cfb = "0.15.0"
 crc32fast = "1.5.2"
 ironcalc_base = "0.8.3"
 miniz_oxide = "0.9.1"
+# Sheet and workbook protection's password hashes, as Excel writes them.
+sha2 = "0.10"
 
 # `.xls`, `.xlsb` and `.ods` (shown only). calamine's zip pulls typed-path,
 # which does not build for wasm32-wasip2 on stable Rust yet; the bundled

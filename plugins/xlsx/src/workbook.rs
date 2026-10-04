@@ -1135,6 +1135,7 @@ impl Workbook {
     /// calculation chain removed when a formula is removed (Excel rebuilds it).
     pub fn set_input(&mut self, idx: usize, at: CellRef, input: Input) -> Result<()> {
         self.load(idx)?;
+        self.check_cell_edit(idx, at)?;
         self.ensure_engine()?;
         if self.batch.is_some() {
             self.set_input_inner(idx, at, input)?;
@@ -1590,6 +1591,16 @@ impl Workbook {
     }
 
     fn structural(&mut self, idx: usize, op: Op) -> Result<()> {
+        self.load(idx)?;
+        self.check_allowed(
+            idx,
+            match op {
+                Op::InsertRows { .. } => "insertRows",
+                Op::DeleteRows { .. } => "deleteRows",
+                Op::InsertCols { .. } => "insertColumns",
+                Op::DeleteCols { .. } => "deleteColumns",
+            },
+        )?;
         let (Op::InsertRows { n, .. }
         | Op::DeleteRows { n, .. }
         | Op::InsertCols { n, .. }
@@ -2081,6 +2092,27 @@ impl Workbook {
             };
             xf = with_alignment(&xf, "horizontal", v);
         }
+        if let Some(locked) = change.locked {
+            // A cell is locked unless its style says otherwise.
+            let el = if locked {
+                String::new()
+            } else {
+                "<protection locked=\"0\"/>".to_owned()
+            };
+            let p = xf
+                .trim_start_matches('<')
+                .split([' ', '/', '>'])
+                .next()
+                .map_or("", xml::prefix)
+                .to_owned();
+            let el = if p.is_empty() {
+                el
+            } else {
+                el.replacen("<protection", &format!("<{p}protection"), 1)
+            };
+            xf = crate::chart::set_child(&xf, &["protection"], &el, &["alignment"]);
+            xf = xml::set_attr(&xf, "applyProtection", "1");
+        }
         if let Some(across) = change.center_across {
             let v = if across {
                 "centerContinuous"
@@ -2129,6 +2161,7 @@ impl Workbook {
         change: &kalem_viewer::StyleChange,
     ) -> Result<()> {
         self.load(idx)?;
+        self.check_allowed(idx, "formatCells")?;
         if self.sheets[idx].kind != SheetKind::Worksheet {
             return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
         }
@@ -5300,6 +5333,7 @@ impl Workbook {
         header: bool,
     ) -> Result<()> {
         self.load(idx)?;
+        self.check_allowed(idx, "sort")?;
         if self.sheets[idx].kind != SheetKind::Worksheet {
             return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
         }
@@ -5457,6 +5491,7 @@ impl Workbook {
     /// Excel's Filter; `None` takes it off and shows the rows it hid.
     pub fn set_filter(&mut self, idx: usize, range: Option<Range>) -> Result<()> {
         self.load(idx)?;
+        self.check_allowed(idx, "autoFilter")?;
         if self.sheets[idx].kind != SheetKind::Worksheet {
             return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
         }
@@ -5504,6 +5539,7 @@ impl Workbook {
         rule: Option<kalem_viewer::FilterRule>,
     ) -> Result<()> {
         self.load(idx)?;
+        self.check_allowed(idx, "autoFilter")?;
         let Some(af) = self.loaded[&idx].1.auto_filter.clone() else {
             return Err(Error::Refused(
                 "the sheet has no filter; turn it on first".into(),
@@ -7485,6 +7521,7 @@ mod notes;
 mod outline;
 pub use outline::Outline;
 mod page;
+mod protection;
 mod sheet_ops;
 mod tables;
 pub use tables::{TableDef, style_colors};
