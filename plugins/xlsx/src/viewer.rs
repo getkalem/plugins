@@ -1004,6 +1004,23 @@ impl ViewerDocument for XlsxDoc {
         out
     }
 
+    fn calc_options(&mut self) -> kalem_viewer::CalcOptions {
+        self.book().calc_options()
+    }
+
+    fn set_calc_options(&mut self, options: kalem_viewer::CalcOptions) -> Result<Vec<usize>> {
+        self.book().set_calc_options(options).map_err(err)?;
+        Ok(self.all_units())
+    }
+
+    fn circular_references(&mut self) -> Vec<(usize, u32, u32)> {
+        self.book()
+            .circular_references()
+            .into_iter()
+            .map(|(u, at)| (u, at.row, at.col))
+            .collect()
+    }
+
     fn sheet_view(&mut self, unit: usize) -> kalem_viewer::SheetView {
         let raw = self.book().view_raw(unit);
         let split = raw.split.and_then(|sp| {
@@ -4562,5 +4579,78 @@ mod tests {
         assert!(d.undo().unwrap());
         assert!(d.undo().unwrap());
         assert_eq!(d.structure().units.len(), back.sheets().len() - 1);
+    }
+
+    #[test]
+    fn calculation_options() {
+        use kalem_viewer::{CalcMode, CalcOptions};
+        let mut d = open("openpyxl-budget.xlsx");
+        let shown = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .first()
+                .map(|x| x.2.text.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(d.calc_options(), CalcOptions::default());
+        // A circle: K1 reads L1, L1 reads K1.
+        d.set_cell(0, 0, 10, "=L1+1").unwrap();
+        d.set_cell(0, 0, 11, "=K1*0.5").unwrap();
+        assert_eq!(d.circular_references(), vec![(0, 0, 10), (0, 0, 11)]);
+        // Iterated, it settles: K1 = 2, L1 = 1.
+        let it = CalcOptions {
+            iterate: true,
+            max_iterations: 100,
+            max_change: 0.000_001,
+            ..CalcOptions::default()
+        };
+        d.set_calc_options(it).unwrap();
+        assert!(d.circular_references().is_empty());
+        let num = |d: &mut Box<dyn ViewerDocument>, r, c| shown(d, r, c).parse::<f64>().unwrap();
+        assert!((num(&mut d, 0, 10) - 2.0).abs() < 1e-4);
+        assert!((num(&mut d, 0, 11) - 1.0).abs() < 1e-4);
+        // Edited again, iterated again.
+        d.set_cell(0, 0, 11, "=K1*0.75").unwrap();
+        assert!(
+            (num(&mut d, 0, 10) - 4.0).abs() < 1e-3,
+            "{}",
+            shown(&mut d, 0, 10)
+        );
+        // Manual: what reads a changed cell waits for Calculate Now.
+        d.set_calc_options(CalcOptions {
+            mode: CalcMode::Manual,
+            ..CalcOptions::default()
+        })
+        .unwrap();
+        d.set_cell(0, 4, 10, "3").unwrap();
+        d.set_cell(0, 4, 11, "=K5*2").unwrap();
+        assert_eq!(shown(&mut d, 4, 11), "6");
+        d.set_cell(0, 4, 10, "10").unwrap();
+        assert_eq!(shown(&mut d, 4, 11), "6");
+        d.recalculate().unwrap();
+        assert_eq!(shown(&mut d, 4, 11), "20");
+        // Automatic: a data table follows its input at once.
+        d.set_calc_options(CalcOptions::default()).unwrap();
+        d.set_cell(0, 7, 10, "=K5*2").unwrap();
+        d.set_cell(0, 8, 9, "1").unwrap();
+        d.set_cell(0, 9, 9, "2").unwrap();
+        d.create_data_table(0, [7, 9, 9, 10], None, Some((4, 10)))
+            .unwrap();
+        assert_eq!(shown(&mut d, 9, 10), "4");
+        d.set_cell(0, 9, 9, "5").unwrap();
+        assert_eq!(shown(&mut d, 9, 10), "10");
+        // Kept in the file.
+        d.set_calc_options(CalcOptions {
+            mode: CalcMode::AutomaticExceptTables,
+            ..it
+        })
+        .unwrap();
+        let back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
+        let o = back.calc_options();
+        assert_eq!(
+            (o.mode, o.iterate, o.max_iterations),
+            (CalcMode::AutomaticExceptTables, true, 100)
+        );
+        assert!(d.undo().unwrap());
+        assert_eq!(d.calc_options().mode, CalcMode::Automatic);
     }
 }

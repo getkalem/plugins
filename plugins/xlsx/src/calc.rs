@@ -89,7 +89,9 @@ impl Engine {
         names: &[(String, Option<usize>, String)],
         tables: &[EngineTable],
     ) -> Result<Self, String> {
-        let mut model = Model::new_empty("workbook", "en", "UTC", "en")?;
+        // In the user's time zone, as Excel computes NOW() and TODAY().
+        let mut model = Model::new_empty("workbook", "en", local_timezone(), "en")
+            .or_else(|_| Model::new_empty("workbook", "en", "UTC", "en"))?;
         let mut map = Vec::new();
         let mut count = 0u32;
         for (name, sheet) in sheets {
@@ -267,6 +269,75 @@ impl Engine {
             return Ok(());
         }
         set_value(&mut self.model, idx, r, c, value)
+    }
+}
+
+/// The user's time zone by its IANA name; UTC when it cannot be told.
+/// Asked once: the engine keeps it for as long as it lives.
+fn local_timezone() -> &'static str {
+    static TZ: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TZ.get_or_init(|| {
+        #[cfg(target_arch = "wasm32")]
+        {
+            kalem_plugin::viewer::kalem::plugin::clock::timezone()
+        }
+        #[cfg(all(not(target_arch = "wasm32"), not(target_family = "wasm")))]
+        {
+            iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into())
+        }
+        #[cfg(all(not(target_arch = "wasm32"), target_family = "wasm"))]
+        {
+            "UTC".to_string()
+        }
+    })
+}
+
+impl Engine {
+    /// Circular references computed over and over (iterative
+    /// calculation): each cell of `circ` (sheet, cell, formula) starts from
+    /// its value in `start`, and each round every formula is computed with
+    /// the others' values from the round before, until none changes by more
+    /// than `max_change` or `max_iterations` rounds. The cells are left in
+    /// the engine as those values, for the formulas reading them.
+    pub fn iterate(
+        &mut self,
+        circ: &[(usize, CellRef, String)],
+        start: Vec<f64>,
+        max_iterations: u32,
+        max_change: f64,
+    ) -> Vec<f64> {
+        let mut vals = start;
+        let mut by_sheet: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+        for (i, (s, _, _)) in circ.iter().enumerate() {
+            by_sheet.entry(*s).or_default().push(i);
+        }
+        for _ in 0..max_iterations.max(1) {
+            for ((s, at, _), v) in circ.iter().zip(&vals) {
+                let _ = self.set(*s, *at, None, &Value::Number(*v));
+            }
+            let mut new = vals.clone();
+            for (sheet, idxs) in &by_sheet {
+                let formulas: Vec<String> = idxs.iter().map(|&i| circ[i].2.clone()).collect();
+                for (&i, r) in idxs.iter().zip(self.eval_scratch_many(*sheet, &formulas)) {
+                    if let Some(Value::Number(n)) = r {
+                        new[i] = n;
+                    }
+                }
+            }
+            let change = vals
+                .iter()
+                .zip(&new)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f64::max);
+            vals = new;
+            if change <= max_change {
+                break;
+            }
+        }
+        for ((s, at, _), v) in circ.iter().zip(&vals) {
+            let _ = self.set(*s, *at, None, &Value::Number(*v));
+        }
+        vals
     }
 }
 

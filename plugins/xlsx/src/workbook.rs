@@ -308,6 +308,9 @@ pub struct Workbook {
     /// How sheets are shown, as set since opening: written when saving,
     /// untouched by undo.
     views: HashMap<usize, ViewRaw>,
+    /// Circular formulas the last iterative calculation left in the engine
+    /// as values: sheet, cell, formula.
+    circ_overrides: Vec<(usize, CellRef, String)>,
     /// Each sheet's sparklines and threads, at the generation they were
     /// read (a grid asks for them at every frame).
     spark_cache: HashMap<usize, (u64, Vec<Spark>)>,
@@ -436,6 +439,7 @@ impl Workbook {
             batch_changed: false,
             filling_table: false,
             views: HashMap::new(),
+            circ_overrides: Vec::new(),
             spark_cache: HashMap::new(),
             thread_cache: HashMap::new(),
         };
@@ -775,10 +779,11 @@ impl Workbook {
             self.batch_edited.push((idx, at));
             return Ok(());
         }
-        let after = engine.evaluate(&cells).clone();
-        let before = std::mem::take(&mut self.computed);
-        self.write_results(&before, after, &cells, &[(idx, at)]);
-        Ok(())
+        let Some(after) = self.evaluate_all(&cells) else {
+            return Ok(());
+        };
+        self.write_computed(after, &cells, &[(idx, at)]);
+        self.after_change()
     }
 
     /// Computes the cells entered during a batch and writes their results.
@@ -788,13 +793,34 @@ impl Workbook {
         }
         let edited = std::mem::take(&mut self.batch_edited);
         let cells = self.formula_cells();
-        let Some(Ok(engine)) = self.engine.as_mut() else {
+        let Some(after) = self.evaluate_all(&cells) else {
             return Ok(());
         };
-        let after = engine.evaluate(&cells).clone();
+        self.write_computed(after, &cells, &edited);
+        self.after_change()
+    }
+
+    /// Computed results written: all of them, or under Manual
+    /// calculation only the cells just entered, the others kept as they
+    /// were until Calculate Now.
+    fn write_computed(
+        &mut self,
+        after: HashMap<(usize, CellRef), Value>,
+        cells: &[(usize, CellRef)],
+        edited: &[(usize, CellRef)],
+    ) {
         let before = std::mem::take(&mut self.computed);
-        self.write_results(&before, after, &cells, &edited);
-        Ok(())
+        if self.calc_options().mode == kalem_viewer::CalcMode::Manual {
+            let mut kept = before.clone();
+            for k in edited {
+                if let Some(v) = after.get(k) {
+                    kept.insert(*k, v.clone());
+                }
+            }
+            self.write_results(&before, kept, cells, edited);
+        } else {
+            self.write_results(&before, after, cells, edited);
+        }
     }
 
     /// Starts a batch of edits that undo as one step and compute when read:
@@ -1364,6 +1390,7 @@ impl Workbook {
         self.generation += 1;
         // The engine holds the cells as they were; it is built again when needed.
         self.engine = None;
+        self.circ_overrides.clear();
     }
 
     /// Undoes the last edit; `false` when there is none.
@@ -7678,6 +7705,7 @@ mod sheet_ops;
 mod sparklines;
 pub use sparklines::Spark;
 mod bulk;
+mod calculation;
 mod copy_sheet;
 mod tables;
 mod views;
