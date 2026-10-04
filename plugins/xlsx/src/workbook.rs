@@ -1341,6 +1341,37 @@ impl Workbook {
         Ok(())
     }
 
+    /// Freezes the first `rows` rows and `cols` columns, as Excel's Freeze
+    /// Panes (none of either unfreezes): the first sheet view's `<pane>`.
+    pub fn set_frozen(&mut self, idx: usize, rows: u32, cols: u32) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        if rows >= MAX_ROW || cols >= MAX_COL {
+            return Err(Error::Refused("No such row or column".into()));
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        let text = self.loaded[&idx].0.clone();
+        let new = frozen_text(&text, &self.loaded[&idx].1.prefix, rows, cols);
+        if new != text {
+            let model = sheet::parse(&new, &self.strings, self.date1904);
+            self.loaded.insert(idx, (new, model));
+            self.generation += 1;
+            if !self.dirty_sheets.contains(&idx) {
+                self.dirty_sheets.push(idx);
+            }
+            match snapshot {
+                Some(s) => {
+                    self.undo.push(s);
+                    self.redo.clear();
+                }
+                None => self.batch_changed = true,
+            }
+        }
+        Ok(())
+    }
+
     /// Hides rows (`rows`) or columns `from..=to`, or shows them again, as
     /// Excel's Hide and Unhide: `hidden` on their `<row>`s or `<col>`s.
     pub fn set_hidden(
@@ -5687,6 +5718,87 @@ fn col_attrs_text(text: &str, col: u32, set: &dyn Fn(&str) -> String) -> String 
             None => text.to_owned(),
         },
     }
+}
+
+/// A sheet part with its first view's panes frozen at `rows` and `cols`
+/// (none: not frozen): its `<pane>` and the selections of panes replaced.
+fn frozen_text(text: &str, p: &str, rows: u32, cols: u32) -> String {
+    let pane = if rows == 0 && cols == 0 {
+        String::new()
+    } else {
+        let active = match (rows > 0, cols > 0) {
+            (true, true) => "bottomRight",
+            (true, false) => "bottomLeft",
+            _ => "topRight",
+        };
+        let mut a = String::new();
+        if cols > 0 {
+            a.push_str(&format!(" xSplit=\"{cols}\""));
+        }
+        if rows > 0 {
+            a.push_str(&format!(" ySplit=\"{rows}\""));
+        }
+        format!(
+            "<{p}pane{a} topLeftCell=\"{}\" activePane=\"{active}\" state=\"frozen\"/>",
+            CellRef::new(rows, cols)
+        )
+    };
+    let mut r = Reader::new(text);
+    while let Some(t) = r.next_token() {
+        let Token::Start(tag) = t else { continue };
+        match tag.name {
+            "sheetView" => {
+                if tag.empty {
+                    if pane.is_empty() {
+                        return text.to_owned();
+                    }
+                    let el = &text[tag.span.clone()];
+                    let open = el.trim_end_matches("/>").trim_end();
+                    return splice(
+                        text,
+                        vec![(tag.span.clone(), format!("{open}>{pane}</{p}sheetView>"))],
+                    );
+                }
+                // The old pane and its selections out, the new pane first.
+                let open_end = tag.span.end;
+                let mut splices = vec![(open_end..open_end, pane)];
+                while let Some(t) = r.next_token() {
+                    match t {
+                        Token::Start(k) => {
+                            // Children of the view only: each skipped whole.
+                            let gone = k.name == "pane"
+                                || (k.name == "selection" && k.attr("pane").is_some());
+                            let end = if k.empty {
+                                k.span.end
+                            } else {
+                                r.skip_element()
+                            };
+                            if gone {
+                                splices.push((k.span.start..end, String::new()));
+                            }
+                        }
+                        Token::End {
+                            name: "sheetView", ..
+                        } => break,
+                        _ => {}
+                    }
+                }
+                return splice(text, splices);
+            }
+            "sheetData" => break,
+            _ => {}
+        }
+    }
+    if pane.is_empty() {
+        return text.to_owned();
+    }
+    insert_top_level(
+        text,
+        &["sheetFormatPr", "cols", "sheetData"],
+        &format!(
+            "<{p}sheetViews><{p}sheetView workbookViewId=\"0\">{pane}</{p}sheetView></{p}sheetViews>"
+        ),
+    )
 }
 
 /// A sheet part with rows `from..=to` (zero-based) hidden or shown: the

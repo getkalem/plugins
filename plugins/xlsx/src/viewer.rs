@@ -550,6 +550,11 @@ impl ViewerDocument for XlsxDoc {
             .unwrap_or_default()
     }
 
+    fn set_frozen(&mut self, unit: usize, rows: u32, cols: u32) -> Result<Vec<usize>> {
+        self.book().set_frozen(unit, rows, cols).map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn set_hidden(
         &mut self,
         unit: usize,
@@ -2601,5 +2606,32 @@ mod tests {
         }
         let l = layout(&mut d);
         assert!(l.hidden_rows.is_empty() && l.hidden_cols.is_empty());
+    }
+
+    #[test]
+    fn panes_frozen() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let frozen = |d: &mut Box<dyn ViewerDocument>| d.grid(0).unwrap().frozen;
+        // The budget's header row is frozen already.
+        let first = frozen(&mut d);
+        assert_eq!(first, (1, 0));
+        d.set_frozen(0, 0, 3).unwrap();
+        assert_eq!(frozen(&mut d), (0, 3));
+        d.set_frozen(0, 2, 1).unwrap();
+        assert_eq!(frozen(&mut d), (2, 1));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-frozen-test.xlsx"), &saved).unwrap();
+        }
+        let pkg = crate::package::Package::read(saved).unwrap();
+        let sheet = String::from_utf8(pkg.part("xl/worksheets/sheet1.xml").unwrap()).unwrap();
+        assert_eq!(sheet.matches("<pane ").count(), 1, "{sheet}");
+        assert!(sheet.contains(r#"<pane xSplit="1" ySplit="2" topLeftCell="B3" activePane="bottomRight" state="frozen"/>"#), "{sheet}");
+        d.set_frozen(0, 0, 0).unwrap();
+        assert_eq!(frozen(&mut d), (0, 0));
+        for _ in 0..3 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(frozen(&mut d), first);
     }
 }
