@@ -952,6 +952,8 @@ impl ViewerDocument for XlsxDoc {
                     unlocked: style.unlocked,
                     borders: style.sides.map(|s| s.map(|(c, _)| rgb(c))),
                     border_thick: style.sides.map(|s| s.is_some_and(|(_, t)| t)),
+                    border_styles: style.lines,
+                    fill_pattern: style.pattern.clone(),
                     valign: match style.valign.as_deref() {
                         Some("top") => VAlign::Top,
                         Some("center" | "justify" | "distributed") => VAlign::Middle,
@@ -1067,6 +1069,45 @@ impl ViewerDocument for XlsxDoc {
             self.view_changed = true;
         }
         Ok(vec![unit])
+    }
+
+    fn cell_styles(&mut self) -> Vec<String> {
+        self.book().cell_styles()
+    }
+
+    fn apply_cell_style(&mut self, unit: usize, range: [u32; 4], name: &str) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book().apply_cell_style(unit, r, name).map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn new_cell_style(
+        &mut self,
+        name: &str,
+        unit: usize,
+        row: u32,
+        col: u32,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .new_cell_style(name, unit, CellRef::new(row, col))
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn theme_name(&mut self) -> Option<String> {
+        self.book().theme_name()
+    }
+
+    fn theme_names(&mut self) -> Vec<String> {
+        crate::Workbook::theme_names()
+    }
+
+    fn set_theme(&mut self, name: &str) -> Result<Vec<usize>> {
+        self.book().set_theme(name).map_err(err)?;
+        Ok(self.all_units())
     }
 
     fn tab_color(&mut self, unit: usize) -> Option<[u8; 3]> {
@@ -4692,5 +4733,92 @@ mod tests {
             .unwrap();
         let col: Vec<String> = (20..24).map(|r| d.cell_input(0, r, 0)).collect();
         assert_eq!(col, ["a", "c", "b", "d"]);
+    }
+
+    #[test]
+    fn formatting_more() {
+        use kalem_viewer::{BorderSet, FillPattern, LineStyle, StyleChange};
+        let mut d = open("openpyxl-budget.xlsx");
+        let cell = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .into_iter()
+                .next()
+                .map(|x| x.2)
+                .unwrap_or_default()
+        };
+        // A double bottom line.
+        d.change_style(
+            0,
+            [10, 1, 10, 1],
+            StyleChange {
+                borders: Some((BorderSet::Bottom, Some([0, 0, 0]))),
+                border_style: Some(LineStyle::Double),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            cell(&mut d, 10, 1).border_styles[2],
+            Some(LineStyle::Double)
+        );
+        // A pattern, and a gradient.
+        let grid = FillPattern::Pattern {
+            kind: "darkGrid".into(),
+            color: [0x44, 0x72, 0xC4],
+            background: [0xFF, 0xFF, 0xFF],
+        };
+        let fade = FillPattern::Gradient {
+            angle: 90,
+            from: [0xFF, 0xFF, 0xFF],
+            to: [0x44, 0x72, 0xC4],
+        };
+        for (c, f) in [(2, &grid), (3, &fade)] {
+            d.change_style(
+                0,
+                [10, c, 10, c],
+                StyleChange {
+                    fill_pattern: Some(Some(f.clone())),
+                    ..StyleChange::default()
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(cell(&mut d, 10, 2).fill_pattern, Some(grid.clone()));
+        assert_eq!(cell(&mut d, 10, 3).fill_pattern, Some(fade.clone()));
+        // A named style, made once.
+        d.apply_cell_style(0, [12, 1, 13, 2], "Good").unwrap();
+        d.apply_cell_style(0, [14, 1, 14, 1], "good").unwrap();
+        let good = cell(&mut d, 12, 1);
+        assert_eq!(
+            (good.fill, good.color),
+            (Some([0xC6, 0xEF, 0xCE]), Some([0x00, 0x61, 0x00]))
+        );
+        assert_eq!(d.cell_styles().iter().filter(|n| *n == "Good").count(), 1);
+        assert!(d.apply_cell_style(0, [12, 1, 12, 1], "Nonesuch").is_err());
+        // One of the user's own, from a cell.
+        d.new_cell_style("Mine", 0, 10, 2).unwrap();
+        assert!(d.cell_styles().contains(&"Mine".to_string()));
+        assert!(d.new_cell_style("Mine", 0, 10, 2).is_err());
+        // The theme.
+        let before = d.theme_name();
+        d.set_theme("Blue").unwrap();
+        assert_eq!(d.theme_name().as_deref(), Some("Blue"));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-formatting-test.xlsx"), &saved).unwrap();
+        }
+        let back = crate::Workbook::open(saved).unwrap();
+        assert_eq!(back.theme_name().as_deref(), Some("Blue"));
+        assert!(back.cell_styles().contains(&"Good".to_string()));
+        assert!(d.undo().unwrap());
+        assert_eq!(d.theme_name(), before);
+        // A workbook without a theme gets one.
+        let mut d = open("libreoffice-budget.xlsx");
+        assert_eq!(d.theme_name(), None);
+        d.set_theme("Green").unwrap();
+        let back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert_eq!(back.theme_name().as_deref(), Some("Green"));
+        assert!(d.undo().unwrap());
+        assert_eq!(d.theme_name(), None);
     }
 }

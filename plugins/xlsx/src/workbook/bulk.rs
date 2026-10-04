@@ -118,12 +118,7 @@ impl Workbook {
         let (text, model) = &self.loaded[&idx];
         let p = model.prefix.clone();
         let mut splices: Vec<(Span<usize>, String)> = Vec::new();
-        // New cells by the place they go: in a row that is there, after
-        // the cell before them; new rows after the row before them.
-        let mut in_rows: BTreeMap<usize, Vec<String>> = BTreeMap::new();
-        let mut open_rows: BTreeMap<u32, Vec<String>> = BTreeMap::new();
-        let mut new_rows: BTreeMap<u32, Vec<String>> = BTreeMap::new();
-        let mut widest: BTreeMap<u32, u32> = BTreeMap::new();
+        let mut news: Vec<(CellRef, String)> = Vec::new();
         let mut grown: Option<Range> = None;
         for (at, c) in &xml {
             if c.is_some() {
@@ -142,82 +137,10 @@ impl Workbook {
                 (Some(old), Some(c)) => splices.push((old.span.clone(), c.clone())),
                 (Some(old), None) => splices.push((old.span.clone(), String::new())),
                 (None, None) => {}
-                (None, Some(c)) => match model.rows.get(&at.row) {
-                    Some(row) if row.end.is_some() => {
-                        let before = model
-                            .cells
-                            .range(CellRef::new(at.row, 0)..*at)
-                            .next_back()
-                            .map_or(row.start.end, |(_, cell)| cell.span.end);
-                        in_rows.entry(before).or_default().push(c.clone());
-                        let w = widest.entry(at.row).or_insert(at.col);
-                        *w = (*w).max(at.col);
-                    }
-                    Some(_) => {
-                        open_rows.entry(at.row).or_default().push(c.clone());
-                        let w = widest.entry(at.row).or_insert(at.col);
-                        *w = (*w).max(at.col);
-                    }
-                    None => new_rows.entry(at.row).or_default().push(c.clone()),
-                },
+                (None, Some(c)) => news.push((*at, c.clone())),
             }
         }
-        // Cells are in column order already (the edits are sorted).
-        for (pos, cs) in in_rows {
-            splices.push((pos..pos, cs.concat()));
-        }
-        for (r, w) in &widest {
-            let Some(row) = model.rows.get(r) else {
-                continue;
-            };
-            let tag = &text[row.start.clone()];
-            let widened = widen_spans(tag, *w);
-            match open_rows.remove(r) {
-                // `<row …/>` opens up to hold its cells.
-                Some(cs) => {
-                    let open = widened
-                        .trim_end_matches('>')
-                        .trim_end_matches('/')
-                        .trim_end();
-                    splices.push((
-                        row.start.clone(),
-                        format!("{open}>{}</{p}row>", cs.concat()),
-                    ));
-                }
-                None if widened != tag => splices.push((row.start.clone(), widened)),
-                None => {}
-            }
-        }
-        if !new_rows.is_empty() {
-            let Some((sd_start, sd_end)) = &model.sheet_data else {
-                return Err(Error::Refused("the sheet part has no sheetData".into()));
-            };
-            let mut at_pos: BTreeMap<usize, String> = BTreeMap::new();
-            for (r, cs) in &new_rows {
-                let row = format!("<{p}row r=\"{}\">{}</{p}row>", r + 1, cs.concat());
-                let pos = match sd_end {
-                    None => usize::MAX,
-                    Some(_) => model
-                        .rows
-                        .range(..*r)
-                        .next_back()
-                        .map_or(sd_start.end, |(_, x)| {
-                            x.end.as_ref().map_or(x.start.end, |e| e.end)
-                        }),
-                };
-                at_pos.entry(pos).or_default().push_str(&row);
-            }
-            for (pos, rows) in at_pos {
-                if pos == usize::MAX {
-                    // `<sheetData/>` opens up.
-                    let tag = &text[sd_start.clone()];
-                    let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
-                    splices.push((sd_start.clone(), format!("{open}>{rows}</{p}sheetData>")));
-                } else {
-                    splices.push((pos..pos, rows));
-                }
-            }
-        }
+        splices.extend(new_cells(text, model, &p, &news)?);
         if let (Some((span, dim)), Some(g)) = (&model.dimension, grown) {
             let whole = match Range::parse(dim) {
                 Some(r) => Range {
@@ -247,4 +170,131 @@ impl Workbook {
         }
         Ok(())
     }
+
+    /// Cells given styles (an index each) in one pass over the sheet's text:
+    /// a cell there gets its `s`, a missing one is made empty with it.
+    pub(crate) fn style_many(&mut self, idx: usize, cells: &[(CellRef, u32)]) -> Result<()> {
+        if cells.is_empty() {
+            return Ok(());
+        }
+        let (text, model) = &self.loaded[&idx];
+        let p = model.prefix.clone();
+        let mut splices: Vec<(Span<usize>, String)> = Vec::new();
+        let mut news: Vec<(CellRef, String)> = Vec::new();
+        let mut sorted: Vec<(CellRef, u32)> = cells.to_vec();
+        sorted.sort_by_key(|c| c.0);
+        sorted.dedup_by_key(|c| c.0);
+        for (at, style) in &sorted {
+            match model.cells.get(at) {
+                Some(c) => {
+                    let el = &text[c.span.clone()];
+                    let tag_end = el.find('>').map_or(el.len(), |q| q + 1);
+                    let head = if *style == 0 {
+                        xml::remove_attr(&el[..tag_end], "s")
+                    } else {
+                        xml::set_attr(&el[..tag_end], "s", &style.to_string())
+                    };
+                    splices.push((c.span.start..c.span.start + tag_end, head));
+                }
+                None if *style == 0 => {}
+                None => news.push((*at, format!("<{p}c r=\"{at}\" s=\"{style}\"/>"))),
+            }
+        }
+        splices.extend(new_cells(text, model, &p, &news)?);
+        let new_text = splice(text, splices);
+        self.replace_sheet_text(idx, new_text);
+        Ok(())
+    }
+}
+
+/// Where new cells' `<c>`s (in order) go in a sheet's text: in a row that
+/// is there after the cell before them (its `spans` widened), a `<row/>`
+/// opened up, or new rows after the row before them.
+fn new_cells(
+    text: &str,
+    model: &Sheet,
+    p: &str,
+    news: &[(CellRef, String)],
+) -> Result<Vec<(Span<usize>, String)>> {
+    let mut splices = Vec::new();
+    let mut in_rows: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    let mut open_rows: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    let mut new_rows: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    let mut widest: BTreeMap<u32, u32> = BTreeMap::new();
+    for (at, c) in news {
+        match model.rows.get(&at.row) {
+            Some(row) if row.end.is_some() => {
+                let before = model
+                    .cells
+                    .range(CellRef::new(at.row, 0)..*at)
+                    .next_back()
+                    .map_or(row.start.end, |(_, cell)| cell.span.end);
+                in_rows.entry(before).or_default().push(c.clone());
+                let w = widest.entry(at.row).or_insert(at.col);
+                *w = (*w).max(at.col);
+            }
+            Some(_) => {
+                open_rows.entry(at.row).or_default().push(c.clone());
+                let w = widest.entry(at.row).or_insert(at.col);
+                *w = (*w).max(at.col);
+            }
+            None => new_rows.entry(at.row).or_default().push(c.clone()),
+        }
+    }
+    for (pos, cs) in in_rows {
+        splices.push((pos..pos, cs.concat()));
+    }
+    for (r, w) in &widest {
+        let Some(row) = model.rows.get(r) else {
+            continue;
+        };
+        let tag = &text[row.start.clone()];
+        let widened = widen_spans(tag, *w);
+        match open_rows.remove(r) {
+            // `<row …/>` opens up to hold its cells.
+            Some(cs) => {
+                let open = widened
+                    .trim_end_matches('>')
+                    .trim_end_matches('/')
+                    .trim_end();
+                splices.push((
+                    row.start.clone(),
+                    format!("{open}>{}</{p}row>", cs.concat()),
+                ));
+            }
+            None if widened != tag => splices.push((row.start.clone(), widened)),
+            None => {}
+        }
+    }
+    if !new_rows.is_empty() {
+        let Some((sd_start, sd_end)) = &model.sheet_data else {
+            return Err(Error::Refused("the sheet part has no sheetData".into()));
+        };
+        let mut at_pos: BTreeMap<usize, String> = BTreeMap::new();
+        for (r, cs) in &new_rows {
+            let row = format!("<{p}row r=\"{}\">{}</{p}row>", r + 1, cs.concat());
+            let pos = match sd_end {
+                None => usize::MAX,
+                Some(_) => model
+                    .rows
+                    .range(..*r)
+                    .next_back()
+                    .map_or(sd_start.end, |(_, x)| {
+                        x.end.as_ref().map_or(x.start.end, |e| e.end)
+                    }),
+            };
+            at_pos.entry(pos).or_default().push_str(&row);
+        }
+        for (pos, rows) in at_pos {
+            if pos == usize::MAX {
+                // `<sheetData/>` opens up.
+                let tag = &text[sd_start.clone()];
+                let open = tag.trim_end_matches('>').trim_end_matches('/').trim_end();
+                splices.push((sd_start.clone(), format!("{open}>{rows}</{p}sheetData>")));
+            } else {
+                splices.push((pos..pos, rows));
+            }
+        }
+    }
+    Ok(splices)
 }

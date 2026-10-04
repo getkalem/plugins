@@ -1391,6 +1391,8 @@ impl Workbook {
         // The engine holds the cells as they were; it is built again when needed.
         self.engine = None;
         self.circ_overrides.clear();
+        // The theme as the package has it again.
+        self.reload_theme();
     }
 
     /// Undoes the last edit; `false` when there is none.
@@ -2095,6 +2097,39 @@ impl Workbook {
             xf = xml::set_attr(&xf, "fontId", &fid.to_string());
             xf = xml::set_attr(&xf, "applyFont", "1");
         }
+        if let Some(pattern) = &change.fill_pattern {
+            let hex = |[r, g, b]: [u8; 3]| format!("FF{r:02X}{g:02X}{b:02X}");
+            let fid = match pattern {
+                None => 0,
+                Some(kalem_viewer::FillPattern::Pattern {
+                    kind,
+                    color,
+                    background,
+                }) => {
+                    let el = format!(
+                        "<fill><patternFill patternType=\"{}\"><fgColor rgb=\"{}\"/><bgColor rgb=\"{}\"/></patternFill></fill>",
+                        xml::escape(kind),
+                        hex(*color),
+                        hex(*background)
+                    );
+                    let (t, fid) = add_style_child(&text, "fills", &el);
+                    text = t;
+                    fid
+                }
+                Some(kalem_viewer::FillPattern::Gradient { angle, from, to }) => {
+                    let el = format!(
+                        "<fill><gradientFill degree=\"{angle}\"><stop position=\"0\"><color rgb=\"{}\"/></stop><stop position=\"1\"><color rgb=\"{}\"/></stop></gradientFill></fill>",
+                        hex(*from),
+                        hex(*to)
+                    );
+                    let (t, fid) = add_style_child(&text, "fills", &el);
+                    text = t;
+                    fid
+                }
+            };
+            xf = xml::set_attr(&xf, "fillId", &fid.to_string());
+            xf = xml::set_attr(&xf, "applyFill", "1");
+        }
         if let Some(fill) = change.fill {
             let fid = match fill {
                 None => 0,
@@ -2127,10 +2162,16 @@ impl Workbook {
             let (set, color) = change
                 .borders
                 .unwrap_or((kalem_viewer::BorderSet::None, None));
-            let weight = if set == kalem_viewer::BorderSet::ThickOutside {
-                "medium"
-            } else {
-                "thin"
+            let weight = match change.border_style {
+                Some(kalem_viewer::LineStyle::Medium) => "medium",
+                Some(kalem_viewer::LineStyle::Thick) => "thick",
+                Some(kalem_viewer::LineStyle::Dashed) => "dashed",
+                Some(kalem_viewer::LineStyle::Dotted) => "dotted",
+                Some(kalem_viewer::LineStyle::Double) => "double",
+                Some(kalem_viewer::LineStyle::Hair) => "hair",
+                Some(kalem_viewer::LineStyle::Thin) => "thin",
+                None if set == kalem_viewer::BorderSet::ThickOutside => "medium",
+                None => "thin",
             };
             let color = color.map_or(format!("<{p}color auto=\"1\"/>"), |[r, g, b]| {
                 format!("<{p}color rgb=\"FF{r:02X}{g:02X}{b:02X}\"/>")
@@ -2260,6 +2301,7 @@ impl Workbook {
         }
         let result = (|| -> Result<()> {
             let mut made: HashMap<(u32, [Option<bool>; 4]), u32> = HashMap::new();
+            let mut writes: Vec<(CellRef, u32)> = Vec::new();
             let others = kalem_viewer::StyleChange {
                 borders: None,
                 ..change.clone()
@@ -2286,11 +2328,12 @@ impl Workbook {
                         }
                     };
                     if new != old || !self.loaded[&idx].1.cells.contains_key(&at) {
-                        self.apply_style(idx, at, new)?;
+                        writes.push((at, new));
                     }
                 }
             }
-            Ok(())
+            // Every cell's new style written in one pass.
+            self.style_many(idx, &writes)
         })();
         self.batch_changed = true;
         if own {
@@ -7717,6 +7760,7 @@ mod sparklines;
 pub use sparklines::Spark;
 mod bulk;
 mod calculation;
+mod cellstyles;
 mod copy_sheet;
 mod tables;
 mod views;
