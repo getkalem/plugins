@@ -540,6 +540,30 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn evaluate_formulas(&mut self, unit: usize, formulas: &[String]) -> Vec<Option<String>> {
+        let Ok(values) = self.book().evaluate_formulas(unit, formulas) else {
+            return vec![None; formulas.len()];
+        };
+        values
+            .into_iter()
+            .map(|v| {
+                v.map(|v| match v {
+                    Value::Number(n) => {
+                        if n.fract() == 0.0 && n.abs() < 1e15 {
+                            format!("{}", n as i64)
+                        } else {
+                            format!("{n}")
+                        }
+                    }
+                    Value::Text(t) => format!("\"{}\"", t.replace('"', "\"\"")),
+                    Value::Bool(b) => if b { "TRUE" } else { "FALSE" }.into(),
+                    Value::Error(e) => e,
+                    Value::Empty => "0".into(),
+                })
+            })
+            .collect()
+    }
+
     fn sheet_protection(&mut self, unit: usize) -> Option<kalem_viewer::SheetProtection> {
         self.book().sheet_protection(unit)
     }
@@ -3613,5 +3637,30 @@ mod tests {
         assert!(d.edit_sheets(SheetEdit::Insert(0)).is_err());
         d.protect_workbook(false, None).unwrap();
         assert!(d.edit_sheets(SheetEdit::Insert(0)).is_ok());
+    }
+
+    #[test]
+    fn formulas_evaluated() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let out = d.evaluate_formulas(
+            0,
+            &[
+                "B2+1".into(),
+                "A2".into(),
+                "1/0".into(),
+                "B2>1000".into(),
+                "B9".into(),
+            ],
+        );
+        assert_eq!(
+            out,
+            vec![
+                Some("1201".into()),
+                Some("\"Rent\"".into()),
+                Some("#DIV/0!".into()),
+                Some("TRUE".into()),
+                Some("0".into())
+            ]
+        );
     }
 }
