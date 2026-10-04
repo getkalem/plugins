@@ -225,7 +225,7 @@ impl Workbook {
 
 /// The prefix a sheet part gives the relationships namespace, or the
 /// declaration an element needs when it has none.
-fn sheet_r_prefix(text: &str) -> (String, String) {
+pub(super) fn sheet_r_prefix(text: &str) -> (String, String) {
     const NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     let head_end = text.find("<sheetData").unwrap_or(text.len());
     text[..head_end]

@@ -3977,16 +3977,33 @@ mod tests {
         use kalem_viewer::PageSetup;
         let mut d = open("openpyxl-budget.xlsx");
         let first = d.page_setup(0).unwrap();
+        const PNG: [u8; 69] = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xC9, 0xFE, 0x92,
+            0xEF, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
         let s = PageSetup {
             landscape: true,
             paper: 8,
             margins: [0.25, 0.25, 0.5, 0.5],
-            fit_width: true,
+            fit: Some((1, 0)),
+            scale: 100,
             print_area: Some([0, 0, 4, 3]),
             title_rows: Some((0, 0)),
-            header: "&C&A".into(),
+            title_cols: Some((0, 1)),
+            header: "&L&G&C&A".into(),
             footer: "&CPage &P of &N".into(),
             row_breaks: vec![3],
+            col_breaks: vec![2],
+            gridlines: true,
+            headings: true,
+            pictures: vec![kalem_viewer::HeaderPicture {
+                place: "LH".into(),
+                data: PNG.to_vec(),
+                size: (36.0, 18.0),
+            }],
         };
         d.set_page_setup(0, &s).unwrap();
         assert_eq!(d.page_setup(0).unwrap(), s);
@@ -3994,9 +4011,19 @@ mod tests {
         if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
             std::fs::write(format!("{dir}/kalem-page-test.xlsx"), &saved).unwrap();
         }
-        let wb = Workbook::open(saved).unwrap();
+        let mut wb = Workbook::open(saved).unwrap();
         let names: Vec<&str> = wb.defined_names().iter().map(|n| n.name.as_str()).collect();
         assert!(names.contains(&"_xlnm.Print_Area") && names.contains(&"_xlnm.Print_Titles"));
+        assert_eq!(wb.page_setup(0).unwrap(), s);
+        // Scaled to a percentage, not fitted.
+        let half = PageSetup {
+            fit: None,
+            scale: 50,
+            ..s.clone()
+        };
+        d.set_page_setup(0, &half).unwrap();
+        assert_eq!(d.page_setup(0).unwrap(), half);
+        assert!(d.undo().unwrap());
         // Back to none of it; undone.
         d.set_page_setup(0, &PageSetup::default()).unwrap();
         assert_eq!(d.page_setup(0).unwrap().print_area, None);
