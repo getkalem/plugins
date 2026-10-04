@@ -1684,7 +1684,12 @@ impl Workbook {
     /// A copy of the style at index `style` with `change` made: a new
     /// `<font>` and `<fill>` where the change touches them, and a new
     /// `<xf>`; each the same one again when `styles.xml` has it already.
-    fn restyle(&mut self, style: u32, change: &kalem_viewer::StyleChange) -> Result<u32> {
+    fn restyle(
+        &mut self,
+        style: u32,
+        change: &kalem_viewer::StyleChange,
+        sides: [Option<bool>; 4],
+    ) -> Result<u32> {
         let (_, mut text) = self.styles_now()?;
         let xfs = style_children(&text, "cellXfs")
             .ok_or_else(|| Error::Refused("styles.xml has no cell formats".into()))?;
@@ -1781,6 +1786,57 @@ impl Workbook {
             xf = xml::set_attr(&xf, "fillId", &fid.to_string());
             xf = xml::set_attr(&xf, "applyFill", "1");
         }
+        if sides.iter().any(Option::is_some) {
+            let borders = style_children(&text, "borders")
+                .ok_or_else(|| Error::Refused("styles.xml has no borders".into()))?;
+            let src = borders
+                .get(id(&xf, "borderId"))
+                .map(|s| text[s.clone()].to_owned())
+                .unwrap_or_else(|| "<border/>".into());
+            let p = xml::prefix(
+                src.trim_start_matches('<')
+                    .split([' ', '/', '>'])
+                    .next()
+                    .unwrap_or(""),
+            )
+            .to_owned();
+            let (set, color) = change
+                .borders
+                .unwrap_or((kalem_viewer::BorderSet::None, None));
+            let weight = if set == kalem_viewer::BorderSet::ThickOutside {
+                "medium"
+            } else {
+                "thin"
+            };
+            let color = color.map_or(format!("<{p}color auto=\"1\"/>"), |[r, g, b]| {
+                format!("<{p}color rgb=\"FF{r:02X}{g:02X}{b:02X}\"/>")
+            });
+            let mut f = src;
+            // CT_Border's order: left (start), right (end), top, bottom.
+            let order: [(&[&str], &str, &[&str]); 4] = [
+                (&["top"], "top", &["left", "start", "right", "end"]),
+                (&["right", "end"], "right", &["left", "start"]),
+                (
+                    &["bottom"],
+                    "bottom",
+                    &["left", "start", "right", "end", "top"],
+                ),
+                (&["left", "start"], "left", &[]),
+            ];
+            for (draw, (names, name, after)) in sides.iter().zip(order) {
+                let Some(draw) = draw else { continue };
+                let el = if *draw {
+                    format!("<{p}{name} style=\"{weight}\">{color}</{p}{name}>")
+                } else {
+                    format!("<{p}{name}/>")
+                };
+                f = crate::chart::set_child(&f, names, &el, after);
+            }
+            let (t, bid) = add_style_child(&text, "borders", &f);
+            text = t;
+            xf = xml::set_attr(&xf, "borderId", &bid.to_string());
+            xf = xml::set_attr(&xf, "applyBorder", "1");
+        }
         if let Some(a) = change.align {
             let v = match a {
                 kalem_viewer::Align::Left => "left",
@@ -1828,20 +1884,29 @@ impl Workbook {
             self.begin_batch()?;
         }
         let result = (|| -> Result<()> {
-            let mut made: HashMap<u32, u32> = HashMap::new();
+            let mut made: HashMap<(u32, [Option<bool>; 4]), u32> = HashMap::new();
+            let others = kalem_viewer::StyleChange {
+                borders: None,
+                ..change.clone()
+            } != kalem_viewer::StyleChange::default();
             for row in range.start.row..=range.end.row {
                 for col in range.start.col..=range.end.col {
                     let at = CellRef::new(row, col);
+                    let sides = border_sides(change, range, at);
+                    // A cell inside an outside border has nothing to change.
+                    if !others && sides.iter().all(Option::is_none) {
+                        continue;
+                    }
                     let old = self.loaded[&idx]
                         .1
                         .cells
                         .get(&at)
                         .map_or_else(|| self.row_or_col_style(idx, at), |c| c.style);
-                    let new = match made.get(&old) {
+                    let new = match made.get(&(old, sides)) {
                         Some(n) => *n,
                         None => {
-                            let n = self.restyle(old, change)?;
-                            made.insert(old, n);
+                            let n = self.restyle(old, change, sides)?;
+                            made.insert((old, sides), n);
                             n
                         }
                     };
@@ -5652,6 +5717,35 @@ fn style_children(text: &str, list: &str) -> Option<Vec<Span<usize>>> {
 
 /// `styles.xml` with `el` the last child of its list `list` (`count` kept
 /// right), and its index; the one already there when the list has it.
+/// Which of a cell's sides a change's borders draw (`Some(true)`), take
+/// away (`Some(false)`) or leave: top, right, bottom, left.
+fn border_sides(
+    change: &kalem_viewer::StyleChange,
+    range: Range,
+    at: CellRef,
+) -> [Option<bool>; 4] {
+    use kalem_viewer::BorderSet;
+    let Some((set, _)) = change.borders else {
+        return [None; 4];
+    };
+    let edge = [
+        at.row == range.start.row,
+        at.col == range.end.col,
+        at.row == range.end.row,
+        at.col == range.start.col,
+    ];
+    let on = |i: usize| edge[i].then_some(true);
+    match set {
+        BorderSet::All => [Some(true); 4],
+        BorderSet::None => [Some(false); 4],
+        BorderSet::Outside | BorderSet::ThickOutside => [on(0), on(1), on(2), on(3)],
+        BorderSet::Top => [on(0), None, None, None],
+        BorderSet::Right => [None, on(1), None, None],
+        BorderSet::Bottom => [None, None, on(2), None],
+        BorderSet::Left => [None, None, None, on(3)],
+    }
+}
+
 fn add_style_child(text: &str, list: &str, el: &str) -> (String, usize) {
     let kids = style_children(text, list).unwrap_or_default();
     if let Some(i) = kids.iter().position(|k| text[k.clone()] == *el) {

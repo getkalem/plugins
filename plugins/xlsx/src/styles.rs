@@ -39,6 +39,9 @@ pub struct CellStyle {
     pub wrap: bool,
     /// Whether any border is drawn.
     pub border: bool,
+    /// The sides drawn: top, right, bottom, left, each its color
+    /// (automatic as black) and whether it is thicker than thin.
+    pub sides: [Option<(Rgb, bool)>; 4],
     /// A leading apostrophe was typed: the value is text even if it reads as a number.
     pub quote_prefix: bool,
 }
@@ -267,7 +270,7 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
     let mut fmts: HashMap<u32, String> = HashMap::new();
     let mut fonts: Vec<Font> = Vec::new();
     let mut fills: Vec<Option<Rgb>> = Vec::new();
-    let mut borders: Vec<bool> = Vec::new();
+    let mut borders: Vec<Sides> = Vec::new();
     let mut styles = Styles::default();
     let mut r = Reader::new(xml);
     // Which list is open: the same `<xf>`, `<font>` and `<color>` tags mean
@@ -276,7 +279,9 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
     let mut font: Option<Font> = None;
     let mut fill: Option<Option<Rgb>> = None;
     let mut fill_pattern_solid = false;
-    let mut border: Option<bool> = None;
+    let mut border: Option<Sides> = None;
+    // The side open in a `<border>`: its index, and it is drawn.
+    let mut side: Option<usize> = None;
     let mut xf: Option<(CellStyle, u32)> = None;
     while let Some(t) = r.next_token() {
         match t {
@@ -340,15 +345,39 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                 }
                 "stop" if fill.is_some() => {}
                 "border" if section == "borders" => {
-                    border = Some(false);
+                    border = Some(Sides::default());
                     if tag.empty {
-                        borders.push(false);
+                        borders.push(Sides::default());
                         border = None;
                     }
                 }
                 "left" | "right" | "top" | "bottom" | "start" | "end" if border.is_some() => {
-                    if tag.attr("style").is_some_and(|s| s != "none") {
-                        border = Some(true);
+                    side = None;
+                    if let Some(st) = tag.attr("style").filter(|s| s != "none") {
+                        let i = match tag.name {
+                            "top" => 0,
+                            "right" | "end" => 1,
+                            "bottom" => 2,
+                            _ => 3,
+                        };
+                        let thick = !matches!(
+                            &*st,
+                            "thin" | "hair" | "dotted" | "dashed" | "dashDot" | "dashDotDot"
+                        );
+                        if let Some(b) = border.as_mut() {
+                            b[i] = Some((0, thick));
+                        }
+                        if !tag.empty {
+                            side = Some(i);
+                        }
+                    }
+                }
+                "color" if side.is_some() => {
+                    if let (Some(i), Some(b)) = (side, border.as_mut())
+                        && let Some(c) = color(&tag, theme)
+                        && let Some(s) = b[i].as_mut()
+                    {
+                        s.0 = c;
                     }
                 }
                 "xf" if section == "cellXfs" => {
@@ -376,7 +405,10 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                         font: f.name,
                         color: f.color,
                         fill: fills.get(get("fillId")).copied().flatten(),
-                        border: borders.get(get("borderId")).copied().unwrap_or(false),
+                        border: borders
+                            .get(get("borderId"))
+                            .is_some_and(|b| b.iter().any(Option::is_some)),
+                        sides: borders.get(get("borderId")).copied().unwrap_or_default(),
                         quote_prefix: tag
                             .attr("quotePrefix")
                             .as_deref()
@@ -413,10 +445,12 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                     }
                 }
                 "border" if section == "borders" => {
+                    side = None;
                     if let Some(b) = border.take() {
                         borders.push(b);
                     }
                 }
+                "left" | "right" | "top" | "bottom" | "start" | "end" => side = None,
                 "xf" if section == "cellXfs" => {
                     if let Some((s, _)) = xf.take() {
                         push_xf(&mut styles, s);
@@ -432,6 +466,9 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
     styles.theme = theme.to_vec();
     styles
 }
+
+/// A border's sides, as [`CellStyle::sides`].
+type Sides = [Option<(Rgb, bool)>; 4];
 
 fn push_xf(styles: &mut Styles, s: CellStyle) {
     styles.date.push(numfmt::is_date_format(&s.num_fmt));

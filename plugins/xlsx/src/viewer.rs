@@ -512,6 +512,8 @@ impl ViewerDocument for XlsxDoc {
                         .filter(|s| Some(*s) != base.size)
                         .map(|s| (s * 10.0).round() as u16),
                     face: style.font.clone().filter(|f| Some(f) != base.font.as_ref()),
+                    borders: style.sides.map(|s| s.map(|(c, _)| rgb(c))),
+                    border_thick: style.sides.map(|s| s.is_some_and(|(_, t)| t)),
                     valign: match style.valign.as_deref() {
                         Some("top") => VAlign::Top,
                         Some("center" | "justify" | "distributed") => VAlign::Middle,
@@ -2354,5 +2356,64 @@ mod tests {
         }
         let a2 = c(&mut d, 1, 0);
         assert_eq!((a2.align, a2.valign), (Align::General, VAlign::Bottom));
+    }
+
+    #[test]
+    fn borders() {
+        use kalem_viewer::BorderSet;
+        let mut d = open("openpyxl-budget.xlsx");
+        let set = |d: &mut Box<dyn ViewerDocument>, r: [u32; 4], b, c| {
+            d.change_style(
+                0,
+                r,
+                StyleChange {
+                    borders: Some((b, c)),
+                    ..StyleChange::default()
+                },
+            )
+            .unwrap();
+        };
+        let cell = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .into_iter()
+                .next()
+                .map(|c| c.2)
+                .unwrap_or_default()
+        };
+        // Blue around B2:D4: its corners have two sides, its middle none.
+        let blue = Some([0, 0, 0xFF]);
+        set(&mut d, [1, 1, 3, 3], BorderSet::Outside, blue);
+        let b2 = cell(&mut d, 1, 1);
+        assert_eq!(b2.borders, [blue, None, None, blue]);
+        let d4 = cell(&mut d, 3, 3);
+        assert_eq!(d4.borders, [None, blue, blue, None]);
+        assert_eq!(cell(&mut d, 2, 2).borders, [None; 4]);
+        assert_eq!(b2.border_thick, [false; 4]);
+        // The bottom of B2:D4 thick: D4 keeps its right side.
+        set(&mut d, [1, 1, 3, 3], BorderSet::ThickOutside, None);
+        let d4 = cell(&mut d, 3, 3);
+        assert_eq!(d4.border_thick, [false, true, true, false]);
+        assert_eq!(d4.borders, [None, Some([0, 0, 0]), Some([0, 0, 0]), None]);
+        // Every side of A2, kept through saving as Excel reads it.
+        set(&mut d, [1, 0, 1, 0], BorderSet::All, None);
+        assert!(cell(&mut d, 1, 0).borders.iter().all(Option::is_some));
+        set(&mut d, [5, 0, 5, 0], BorderSet::Bottom, blue);
+        assert_eq!(cell(&mut d, 5, 0).borders, [None, None, blue, None]);
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-border-test.xlsx"), &saved).unwrap();
+        }
+        let mut wb = Workbook::open(saved).unwrap();
+        let s = wb.sheet(0).unwrap().cells[&CellRef::new(3, 3)].style;
+        assert_eq!(wb.style(s).sides[2], Some((0, true)));
+        // None takes them away; each change one undo step.
+        set(&mut d, [1, 0, 3, 3], BorderSet::None, None);
+        assert_eq!(cell(&mut d, 3, 3).borders, [None; 4]);
+        assert_eq!(cell(&mut d, 1, 0).borders, [None; 4]);
+        for _ in 0..5 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(cell(&mut d, 1, 1).borders, [None; 4]);
+        assert_eq!(cell(&mut d, 5, 0).borders, [None; 4]);
     }
 }
