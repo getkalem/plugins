@@ -16,28 +16,32 @@ With a server running, in either of Kalem's editors:
 
 | Feature | Vim profile | Word-like profile | Command |
 |---|---|---|---|
-| Completion | as you type, `.` and `:` | as you type | |
+| Completion, with each item's documentation beside the list | as you type, `.` and `:` | as you type | |
+| A call's signature while typing its arguments (ElixirLS) | after `(` and `,` | after `(` and `,` | |
 | Documentation at the cursor | `K`, `SPC c k` | | `code.documentation` |
 | Go to definition | `gd`, `SPC c d` | F12 | `code.definition` |
 | References | `gD`, `SPC c D` | Shift+F12 | `code.references` |
+| Rename, with a preview of the changes | `SPC c r` | F2 | `code.rename` |
+| Code actions (fixes, refactorings) | `SPC c a` | Ctrl+. | `code.actions` |
 | Problems of the file, of open files | `SPC c x`, `SPC c X` | | `code.problems`, `code.allProblems` |
-| Format the document | `SPC c f` | | `edit.formatDocument` |
-| The problem on the cursor's line, the server's progress | the status bar | the status bar | |
+| Format the document (`mix format` when no server runs) | `SPC c f` | | `edit.formatDocument` |
+| Problems underlined, the line number colored, the message under the mouse | in the text | in the text | |
+| The problem on the cursor's line, the server's progress (Expert's build too) | the status bar | the status bar | |
 
-Diagnostics are the compiler's, and dialyzer's and Credo's where the server runs them.
+Diagnostics are the compiler's, and Credo's and dialyzer's where the server runs them. Dialyzer is off by default: its first run builds a large table and takes minutes (turn it on with `dialyzerEnabled`, below). Files changed outside the editor (a checkout, `mix deps.get`) are told to the server, which compiles again.
 
 ## The server
 
 The first of these that is installed is used; set `server` to choose one.
 
 1. **Expert**, the Elixir team's language server: `expert --stdio` on the `PATH`. Releases: <https://github.com/expert-lsp/expert/releases>.
-2. **ElixirLS**: `elixir-ls` or `language_server.sh` on the `PATH`, or `~/.elixir-ls/release/language_server.sh`. `brew install elixir-ls`, or a release from <https://github.com/elixir-lsp/elixir-ls/releases> unzipped to `~/.elixir-ls/release`.
+2. **ElixirLS**: `elixir-ls` or `language_server.sh` (`language_server.bat` on Windows) on the `PATH`, or in `~/.elixir-ls/release/`. `brew install elixir-ls`, or a release from <https://github.com/elixir-lsp/elixir-ls/releases> unzipped to `~/.elixir-ls/release`.
 
 Expert builds its engine for the project's Elixir the first time (about forty seconds, cached after), then compiles and indexes the project; until then it answers about the standard library but not yet about the project's own code. Both servers were checked with `corpus/hello`: Expert 0.1.11 and ElixirLS 0.27.2, on Elixir 1.20 with OTP 28.
 
 Kalem never installs a server by itself. When none is found, the status bar says so with these instructions.
 
-The root is the outermost folder with a `mix.exs`, so an umbrella project is one workspace, and its applications under `apps/` are workspace folders of their own. A file outside a Mix project is served with its folder as the root.
+The root is the outermost folder with a `mix.exs`, so an umbrella project is one workspace, and its applications under `apps/` are workspace folders of their own. A file outside a Mix project (a script beside no `mix.exs`) is highlighted but gets no server: starting one per folder is heavy, and ElixirLS would leave an `.elixir_ls` folder there. The status bar says so.
 
 ## Settings
 
@@ -50,7 +54,7 @@ server = "auto"            # "expert", "elixir-ls", or "off"
 # Merged over the server's own settings (sent as `workspace/configuration`).
 [plugins."org.kalem.elixir".settings.elixirLS]
 mixEnv = "dev"             # MIX_ENV for the server's builds; the plugin's default is "test"
-dialyzerEnabled = false
+dialyzerEnabled = true     # off by default
 fetchDeps = false
 
 # Another program for a server, with its arguments, and its environment.
@@ -71,7 +75,6 @@ To work on the plugin itself, point Kalem at this repository's `plugins/` folder
 
 - No embedded `iex`. Kalem ships no REPL (its D28); the terminal is one key away.
 - Running tests at the cursor (`mix test FILE:LINE`) and the project's tests: the manifest lists the commands, and the editor runs them when Kalem's project run and test keys land (its tasks T2.7i.8 and T3.8.4).
-- Rename, code actions, signature help and the server's own commands come with Kalem's task T3.8.2.
 - Regular expressions in `~r` are highlighted as strings: the PCRE syntax of the upstream package uses subroutine calls, which the pure-Rust regex engine of Kalem's highlighter does not have.
 
 ## Sources and licenses

@@ -20,6 +20,9 @@ publish = false
 serde_json = "1"
 # The highlighter Kalem uses, to check that the syntaxes load and compile.
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy", "yaml-load"] }
+# Kalem's highlighter, to check HEEx and EEx through its `extends`
+# resolution as Kalem loads them (syntect alone does not know `extends`).
+kalem-highlight = { git = "https://github.com/getkalem/kalem", rev = "dfd6c1d11a61eb76e1e11d2dbe196cbb8c32e1dd" }
 
 [lints]
 workspace = true

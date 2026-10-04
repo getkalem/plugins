@@ -140,3 +140,49 @@ fn elixir_is_highlighted() {
         }
     }
 }
+
+/// HEEx and EEx extend Sublime Text's HTML: loaded as Kalem loads them,
+/// `extends` resolved by Kalem's highlighter, they highlight a template.
+#[test]
+fn templates_through_kalem() {
+    let m = manifest();
+    let mut sources = Vec::new();
+    for (key, base_only) in [("syntaxes", false), ("syntaxBases", true)] {
+        for f in list(&m[key]) {
+            sources.push(kalem_highlight::SyntaxSource {
+                file: f.rsplit('/').next().unwrap_or(&f).to_string(),
+                text: std::fs::read_to_string(dir().join(&f)).expect("syntax"),
+                base_only,
+            });
+        }
+    }
+    let r = kalem_highlight::register(&sources);
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let heex = kalem_highlight::Language::find("heex").expect("HEEx");
+    assert_eq!(heex.name(), "HTML (HEEx)");
+    let spans = kalem_highlight::highlight(
+        heex,
+        "<div class={@cls}><.button>Hi <%= @name %></.button></div>\n",
+    );
+    let kinds: Vec<kalem_highlight::Kind> = spans[0].iter().map(|s| s.kind).collect();
+    use kalem_highlight::Kind::{Function, Tag, Variable};
+    assert!(kinds.contains(&Tag), "{kinds:?}");
+    assert!(kinds.contains(&Function), "the component: {kinds:?}");
+    assert!(kinds.contains(&Variable), "the assigns: {kinds:?}");
+    // `~H` inside Elixir is HEEx too.
+    let ex = kalem_highlight::Language::find("ex").expect("Elixir");
+    let spans = kalem_highlight::highlight(ex, "~H\"\"\"\n<div>{@x}</div>\n\"\"\"\n");
+    assert!(spans[1].iter().any(|s| s.kind == Tag), "{:?}", spans[1]);
+    // `.html` stays the built-in HTML: the bases are not languages.
+    assert_ne!(
+        kalem_highlight::Language::find("html").map(|l| l.name()),
+        Some("HTML (Plain)")
+    );
+    // Every language's syntax, by the name the manifest gives (Kalem maps
+    // the language's extensions to it).
+    for l in m["languages"].as_array().expect("languages") {
+        let syntax = l["syntax"].as_str().expect("syntax");
+        let found = kalem_highlight::Language::find(syntax).map(|x| x.name());
+        assert_eq!(found, Some(syntax), "{}", l["id"]);
+    }
+}

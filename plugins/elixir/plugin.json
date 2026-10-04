@@ -54,6 +54,8 @@
       "command": ["expert", "--stdio"],
       "rootMarkers": ["mix.exs"],
       "rootOutermost": true,
+      "requireRoot": true,
+      "busyLog": { "start": ["Starting project"], "done": ["Compiled "] },
       "install": "Download the release for your platform from https://github.com/expert-lsp/expert/releases and put `expert` on the PATH"
     },
     "elixir-ls": {
@@ -63,13 +65,16 @@
         "elixir-ls",
         "language_server.sh",
         "~/.elixir-ls/release/language_server.sh",
+        "language_server.bat",
+        "~/.elixir-ls/release/language_server.bat",
         "~/.local/share/elixir-ls/language_server.sh"
       ],
       "rootMarkers": ["mix.exs"],
       "rootOutermost": true,
+      "requireRoot": true,
       "settings": {
         "elixirLS": {
-          "dialyzerEnabled": true,
+          "dialyzerEnabled": false,
           "fetchDeps": false,
           "suggestSpecs": true,
           "mixEnv": "test"
@@ -79,7 +84,7 @@
     }
   },
   "commands": {
-    "format": ["mix", "format", "-"],
+    "format": ["mix", "format", "--stdin-filename", "{file}", "-"],
     "test": ["mix", "test"],
     "testAtPoint": ["mix", "test", "{file}:{line}"],
     "run": ["mix", "run"]

@@ -795,6 +795,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalem-highlight"
+version = "0.0.1"
+source = "git+https://github.com/getkalem/kalem?rev=dfd6c1d11a61eb76e1e11d2dbe196cbb8c32e1dd#dfd6c1d11a61eb76e1e11d2dbe196cbb8c32e1dd"
+dependencies = [
+ "serde",
+ "syntect",
+ "two-face",
+ "yaml-rust",
+]
+
+[[package]]
 name = "kalem-plugin"
 version = "0.0.1"
 source = "git+https://github.com/getkalem/kalem?branch=main#436293b7e885a3057c7a53be5c7db54c723505ce"
@@ -807,6 +818,7 @@ dependencies = [
 name = "kalem-plugin-elixir"
 version = "0.1.0"
 dependencies = [
+ "kalem-highlight",
  "serde_json",
  "syntect",
 ]
@@ -1653,6 +1665,17 @@ dependencies = [
  "arrayref",
  "bytemuck",
  "strict-num",
+]
+
+[[package]]
+name = "two-face"
+version = "0.5.2+bat-0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "915be7adc2ff6f4338acbf71f3eda0a146f46003b992a1669c674308610efdac"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "syntect",
 ]
 
 [[package]]
