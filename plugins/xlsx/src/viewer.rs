@@ -870,6 +870,44 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn sort_range_by(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        keys: &[kalem_viewer::SortKey],
+        header: bool,
+    ) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .sort_range_keys(unit, r, keys, header)
+            .map_err(err)?;
+        Ok(self.all_units())
+    }
+
+    fn filter_column_by(
+        &mut self,
+        unit: usize,
+        col: u32,
+        rule: Option<kalem_viewer::FilterRule>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .filter_column_rule(unit, col, rule)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn column_filter(&mut self, unit: usize, col: u32) -> Option<kalem_viewer::FilterRule> {
+        self.book().column_filter(unit, col)
+    }
+
+    fn reapply_filter(&mut self, unit: usize) -> Result<Vec<usize>> {
+        self.book().reapply_filter(unit).map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn move_cells_between(
         &mut self,
         from: usize,
@@ -3043,5 +3081,106 @@ mod tests {
         assert!(c.wrap && c.text == "Kira\nOcak", "{c:?}");
         assert!(d.undo().unwrap());
         assert_eq!(d.cell_input(0, 9, 0), "");
+    }
+
+    #[test]
+    fn custom_sort_and_filters() {
+        use kalem_viewer::{FilterOp, FilterRule, SortKey};
+        let mut d = open("openpyxl-budget.xlsx");
+        // A table at F1:G6: month and amount.
+        let rows = [
+            ["Ay", "Tutar"],
+            ["Mart", "30"],
+            ["Ocak", "10"],
+            ["Şubat", "20"],
+            ["Ocak", "5"],
+            ["Mart", "40"],
+        ];
+        for (r, row) in rows.iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
+                d.set_cell(0, r as u32, 8 + c as u32, v).unwrap();
+            }
+        }
+        let col = |d: &mut Box<dyn ViewerDocument>, c: u32| -> Vec<String> {
+            (1..6).map(|r| d.cell_input(0, r, c)).collect()
+        };
+        // By month in the calendar's order, then amount largest first.
+        let months: Vec<String> = ["Ocak", "Şubat", "Mart"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let keys = [
+            SortKey {
+                col: 8,
+                descending: false,
+                list: Some(months),
+            },
+            SortKey {
+                col: 9,
+                descending: true,
+                list: None,
+            },
+        ];
+        d.sort_range_by(0, [0, 8, 5, 9], &keys, true).unwrap();
+        assert_eq!(col(&mut d, 8), ["Ocak", "Ocak", "Şubat", "Mart", "Mart"]);
+        assert_eq!(col(&mut d, 9), ["10", "5", "20", "40", "30"]);
+        // A filter: amounts over 15 and under 35.
+        d.set_filter(0, Some([0, 8, 5, 9])).unwrap();
+        let rule = FilterRule::Custom {
+            first: (FilterOp::Greater, "15".into()),
+            second: Some((true, FilterOp::Less, "35".into())),
+        };
+        d.filter_column_by(0, 9, Some(rule.clone())).unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![1, 2, 4]);
+        assert_eq!(d.column_filter(0, 9), Some(rule));
+        // Months beginning with "o"; the top two amounts; above the average.
+        d.filter_column_by(0, 9, None).unwrap();
+        let begins = FilterRule::Custom {
+            first: (FilterOp::BeginsWith, "o".into()),
+            second: None,
+        };
+        d.filter_column_by(0, 8, Some(begins.clone())).unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![3, 4, 5]);
+        assert_eq!(d.column_filter(0, 8), Some(begins));
+        d.filter_column_by(0, 8, None).unwrap();
+        d.filter_column_by(
+            0,
+            9,
+            Some(FilterRule::Top {
+                count: 2,
+                percent: false,
+                bottom: false,
+            }),
+        )
+        .unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![1, 2, 3]);
+        d.filter_column_by(0, 9, Some(FilterRule::Average { above: true }))
+            .unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![1, 2, 3]);
+        // Reapply after an edit: 5 becomes 50.
+        d.set_cell(0, 2, 9, "50").unwrap();
+        d.reapply_filter(0).unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![1, 3, 5]);
+        // A fill color.
+        d.change_style(
+            0,
+            [3, 9, 3, 9],
+            StyleChange {
+                fill: Some(Some([0xFF, 0xFF, 0])),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        d.filter_column_by(0, 9, Some(FilterRule::Fill([0xFF, 0xFF, 0])))
+            .unwrap();
+        assert_eq!(d.grid(0).unwrap().hidden_rows, vec![1, 2, 4, 5]);
+        assert_eq!(
+            d.column_filter(0, 9),
+            Some(FilterRule::Fill([0xFF, 0xFF, 0]))
+        );
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-filters-test.xlsx"), &saved).unwrap();
+        }
     }
 }

@@ -5230,11 +5230,36 @@ impl Workbook {
         descending: bool,
         header: bool,
     ) -> Result<()> {
+        let key = kalem_viewer::SortKey {
+            col: key,
+            descending,
+            list: None,
+        };
+        self.sort_range_keys(idx, range, &[key], header)
+    }
+
+    /// Sorts the rows of a range by several columns in turn, as Excel's
+    /// Custom Sort: each level ascending or descending, or in the order of
+    /// a custom list (its values first, the others after as usual); ties
+    /// keep their order. As [`Workbook::sort_range`] otherwise.
+    pub fn sort_range_keys(
+        &mut self,
+        idx: usize,
+        range: Range,
+        keys: &[kalem_viewer::SortKey],
+        header: bool,
+    ) -> Result<()> {
         self.load(idx)?;
         if self.sheets[idx].kind != SheetKind::Worksheet {
             return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
         }
-        if !(range.start.col..=range.end.col).contains(&key) {
+        if keys.is_empty() {
+            return Err(Error::Refused("Sort by which column?".into()));
+        }
+        if keys
+            .iter()
+            .any(|k| !(range.start.col..=range.end.col).contains(&k.col))
+        {
             return Err(Error::Refused(
                 "the sort column is outside the range".into(),
             ));
@@ -5265,7 +5290,11 @@ impl Workbook {
         // Each row: its key and its cells as entered, with their styles.
         let mut rows = Vec::new();
         for r in first..=range.end.row {
-            let k = self.value(idx, CellRef::new(r, key))?;
+            let mut k = Vec::new();
+            for key in keys {
+                let at = CellRef::new(r, key.col);
+                k.push((self.value(idx, at)?, self.display(idx, at)?.to_lowercase()));
+            }
             let mut cells = Vec::new();
             for c in range.start.col..=range.end.col {
                 let at = CellRef::new(r, c);
@@ -5288,22 +5317,47 @@ impl Workbook {
             Value::Error(_) => 3,
             Value::Empty => 4,
         };
-        rows.sort_by(|a, b| {
-            let (ra, rb) = (rank(&a.1), rank(&b.1));
+        let lists: Vec<Option<Vec<String>>> = keys
+            .iter()
+            .map(|k| {
+                k.list
+                    .as_ref()
+                    .map(|l| l.iter().map(|x| x.to_lowercase()).collect())
+            })
+            .collect();
+        let one = |i: usize, a: &(Value, String), b: &(Value, String)| {
+            let (ra, rb) = (rank(&a.0), rank(&b.0));
             // Empty cells last, ascending or descending.
             if ra == 4 || rb == 4 {
                 return ra.cmp(&rb);
             }
-            let o = ra.cmp(&rb).then_with(|| match (&a.1, &b.1) {
-                (Value::Number(x), Value::Number(y)) => {
-                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
-                }
-                (Value::Text(x), Value::Text(y)) => x.to_lowercase().cmp(&y.to_lowercase()),
-                (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
-                (Value::Error(x), Value::Error(y)) => x.cmp(y),
-                _ => std::cmp::Ordering::Equal,
-            });
-            if descending { o.reverse() } else { o }
+            // A custom list's values in its order, before the others.
+            let place = |x: &(Value, String)| {
+                lists[i]
+                    .as_ref()
+                    .and_then(|l| l.iter().position(|v| *v == x.1))
+            };
+            let o = match (place(a), place(b)) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => ra.cmp(&rb).then_with(|| match (&a.0, &b.0) {
+                    (Value::Number(x), Value::Number(y)) => {
+                        x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
+                    }
+                    (Value::Text(x), Value::Text(y)) => x.to_lowercase().cmp(&y.to_lowercase()),
+                    (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+                    (Value::Error(x), Value::Error(y)) => x.cmp(y),
+                    _ => std::cmp::Ordering::Equal,
+                }),
+            };
+            if keys[i].descending { o.reverse() } else { o }
+        };
+        rows.sort_by(|a, b| {
+            (0..keys.len())
+                .map(|i| one(i, &a.1[i], &b.1[i]))
+                .find(|o| o.is_ne())
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         if rows
             .iter()
@@ -5385,6 +5439,20 @@ impl Workbook {
         col: u32,
         values: Option<Vec<String>>,
     ) -> Result<()> {
+        self.filter_column_rule(idx, col, values.map(kalem_viewer::FilterRule::Values))
+    }
+
+    /// Filters column `col` of the AutoFilter by a rule, as Excel's Text,
+    /// Number and Color Filters write it (`<filters>`, `<customFilters>`,
+    /// `<top10>`, `<dynamicFilter>`, `<colorFilter>` with its `<dxf>`), or
+    /// clears its filter with `None`; then hides the rows the filters
+    /// hide. One undo step.
+    pub fn filter_column_rule(
+        &mut self,
+        idx: usize,
+        col: u32,
+        rule: Option<kalem_viewer::FilterRule>,
+    ) -> Result<()> {
         self.load(idx)?;
         let Some(af) = self.loaded[&idx].1.auto_filter.clone() else {
             return Err(Error::Refused(
@@ -5402,26 +5470,12 @@ impl Workbook {
             .filter(|c| c.col_id != col_id)
             .cloned()
             .collect();
-        if let Some(vs) = values {
-            let blank = vs.iter().any(String::is_empty);
-            let shown: Vec<String> = vs.into_iter().filter(|v| !v.is_empty()).collect();
-            let mut raw = format!(
-                "<{p}filterColumn colId=\"{col_id}\"><{p}filters{}>",
-                if blank { " blank=\"1\"" } else { "" }
-            );
-            for v in &shown {
-                raw.push_str(&format!("<{p}filter val=\"{}\"/>", xml::escape(v)));
-            }
-            raw.push_str(&format!("</{p}filters></{p}filterColumn>"));
-            columns.push(crate::sheet::FilterColumn {
-                col_id,
-                values: Some(shown),
-                blank,
-                raw,
-            });
-            columns.sort_by_key(|c| c.col_id);
-        }
         self.in_one_step(|wb| {
+            if let Some(rule) = &rule {
+                let fc = wb.filter_column_xml(&p, col_id, rule)?;
+                columns.push(fc);
+                columns.sort_by_key(|c| c.col_id);
+            }
             let inner: String = columns.iter().map(|c| c.raw.as_str()).collect();
             let xml = if inner.is_empty() {
                 format!("<{p}autoFilter ref=\"{}\"/>", af.range)
@@ -5433,27 +5487,311 @@ impl Workbook {
             };
             let text = wb.loaded[&idx].0.clone();
             wb.replace_sheet_text(idx, splice(&text, vec![(af.span.clone(), xml)]));
-            // Which rows show: every filter of a known kind must let them.
-            let mut rows = Vec::new();
-            for r in af.range.start.row + 1..=af.range.end.row {
-                let mut show = true;
-                for c in columns.iter().filter(|c| c.values.is_some()) {
-                    let shown = wb.display(idx, CellRef::new(r, af.range.start.col + c.col_id))?;
-                    let ok = if shown.is_empty() {
-                        c.blank
-                    } else {
-                        c.values.as_ref().is_some_and(|v| v.contains(&shown))
-                    };
-                    if !ok {
-                        show = false;
-                        break;
-                    }
-                }
-                rows.push((r, !show));
-            }
+            let rows = wb.filtered_rows(idx, af.range, &columns)?;
             wb.set_rows_hidden(idx, &rows);
             wb.batch_changed = true;
             Ok(())
+        })
+    }
+
+    /// A filter column's element for a rule, and what it is.
+    fn filter_column_xml(
+        &mut self,
+        p: &str,
+        col_id: u32,
+        rule: &kalem_viewer::FilterRule,
+    ) -> Result<crate::sheet::FilterColumn> {
+        use crate::sheet::{FilterColumn, FilterKind};
+        use kalem_viewer::{FilterOp, FilterRule};
+        let open = format!("<{p}filterColumn colId=\"{col_id}\">");
+        let close = format!("</{p}filterColumn>");
+        let mut fc = FilterColumn {
+            col_id,
+            values: None,
+            blank: false,
+            raw: String::new(),
+            kind: None,
+        };
+        match rule {
+            FilterRule::Values(vs) => {
+                let blank = vs.iter().any(String::is_empty);
+                let shown: Vec<String> = vs.iter().filter(|v| !v.is_empty()).cloned().collect();
+                let mut raw = format!(
+                    "{open}<{p}filters{}>",
+                    if blank { " blank=\"1\"" } else { "" }
+                );
+                for v in &shown {
+                    raw.push_str(&format!("<{p}filter val=\"{}\"/>", xml::escape(v)));
+                }
+                raw.push_str(&format!("</{p}filters>{close}"));
+                fc.values = Some(shown);
+                fc.blank = blank;
+                fc.raw = raw;
+            }
+            FilterRule::Custom { first, second } => {
+                let cond = |op: FilterOp, v: &str| -> (String, String) {
+                    let (o, v) = match op {
+                        FilterOp::Equal => ("equal", v.to_owned()),
+                        FilterOp::NotEqual => ("notEqual", v.to_owned()),
+                        FilterOp::Greater => ("greaterThan", v.to_owned()),
+                        FilterOp::GreaterOrEqual => ("greaterThanOrEqual", v.to_owned()),
+                        FilterOp::Less => ("lessThan", v.to_owned()),
+                        FilterOp::LessOrEqual => ("lessThanOrEqual", v.to_owned()),
+                        FilterOp::BeginsWith => ("equal", format!("{v}*")),
+                        FilterOp::EndsWith => ("equal", format!("*{v}")),
+                        FilterOp::Contains => ("equal", format!("*{v}*")),
+                        FilterOp::NotContains => ("notEqual", format!("*{v}*")),
+                    };
+                    (o.to_owned(), v)
+                };
+                let mut conditions = vec![cond(first.0, &first.1)];
+                let and = second.as_ref().is_some_and(|s| s.0);
+                if let Some((_, op, v)) = second {
+                    conditions.push(cond(*op, v));
+                }
+                let mut raw = format!(
+                    "{open}<{p}customFilters{}>",
+                    if and { " and=\"1\"" } else { "" }
+                );
+                for (o, v) in &conditions {
+                    let op = if o == "equal" {
+                        String::new()
+                    } else {
+                        format!(" operator=\"{o}\"")
+                    };
+                    raw.push_str(&format!(
+                        "<{p}customFilter{op} val=\"{}\"/>",
+                        xml::escape(v)
+                    ));
+                }
+                raw.push_str(&format!("</{p}customFilters>{close}"));
+                fc.raw = raw;
+                fc.kind = Some(FilterKind::Custom { and, conditions });
+            }
+            FilterRule::Top {
+                count,
+                percent,
+                bottom,
+            } => {
+                fc.raw = format!(
+                    "{open}<{p}top10{}{} val=\"{count}\"/>{close}",
+                    if *bottom { " top=\"0\"" } else { "" },
+                    if *percent { " percent=\"1\"" } else { "" }
+                );
+                fc.kind = Some(FilterKind::Top {
+                    top: !bottom,
+                    percent: *percent,
+                    count: f64::from(*count),
+                });
+            }
+            FilterRule::Average { above } => {
+                let t = if *above {
+                    "aboveAverage"
+                } else {
+                    "belowAverage"
+                };
+                fc.raw = format!("{open}<{p}dynamicFilter type=\"{t}\"/>{close}");
+                fc.kind = Some(FilterKind::Dynamic(t.into()));
+            }
+            FilterRule::Fill([r, g, b]) => {
+                let dxf = format!(
+                    "<dxf><fill><patternFill patternType=\"solid\"><bgColor rgb=\"FF{r:02X}{g:02X}{b:02X}\"/></patternFill></fill></dxf>"
+                );
+                let id = self.add_dxf(&dxf)?;
+                fc.raw = format!("{open}<{p}colorFilter dxfId=\"{id}\"/>{close}");
+                fc.kind = Some(FilterKind::Color(id));
+            }
+        }
+        Ok(fc)
+    }
+
+    /// Which rows of a filter's range its columns hide: every column of a
+    /// kind read here must let a row show.
+    fn filtered_rows(
+        &mut self,
+        idx: usize,
+        range: Range,
+        columns: &[crate::sheet::FilterColumn],
+    ) -> Result<Vec<(u32, bool)>> {
+        use crate::sheet::FilterKind;
+        let body = range.start.row + 1..=range.end.row;
+        // What the top ten and the average compare with, by column.
+        let mut limits: HashMap<u32, f64> = HashMap::new();
+        for c in columns {
+            let col = range.start.col + c.col_id;
+            let numbers = |wb: &mut Self| -> Result<Vec<f64>> {
+                let mut v = Vec::new();
+                for r in body.clone() {
+                    if let Value::Number(n) = wb.value(idx, CellRef::new(r, col))? {
+                        v.push(n);
+                    }
+                }
+                Ok(v)
+            };
+            match &c.kind {
+                Some(FilterKind::Top {
+                    top,
+                    percent,
+                    count,
+                }) => {
+                    let mut v = numbers(self)?;
+                    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    if *top {
+                        v.reverse();
+                    }
+                    let n = if *percent {
+                        ((v.len() as f64) * count / 100.0).ceil() as usize
+                    } else {
+                        *count as usize
+                    };
+                    if let Some(x) = v.get(n.clamp(1, v.len().max(1)) - 1) {
+                        limits.insert(c.col_id, *x);
+                    }
+                }
+                Some(FilterKind::Dynamic(_)) => {
+                    let v = numbers(self)?;
+                    if !v.is_empty() {
+                        limits.insert(c.col_id, v.iter().sum::<f64>() / v.len() as f64);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut rows = Vec::new();
+        for r in body {
+            let mut show = true;
+            for c in columns {
+                let at = CellRef::new(r, range.start.col + c.col_id);
+                let ok = match (&c.values, &c.kind) {
+                    (Some(values), _) => {
+                        let shown = self.display(idx, at)?;
+                        if shown.is_empty() {
+                            c.blank
+                        } else {
+                            values.contains(&shown)
+                        }
+                    }
+                    (_, Some(FilterKind::Custom { and, conditions })) => {
+                        let value = self.value(idx, at)?;
+                        let shown = self.display(idx, at)?;
+                        let mut results = conditions
+                            .iter()
+                            .map(|(op, v)| filter_condition(op, v, &value, &shown));
+                        if *and {
+                            results.all(|x| x)
+                        } else {
+                            results.any(|x| x)
+                        }
+                    }
+                    (_, Some(FilterKind::Top { top, .. })) => {
+                        match (self.value(idx, at)?, limits.get(&c.col_id)) {
+                            (Value::Number(n), Some(l)) => {
+                                if *top {
+                                    n >= *l
+                                } else {
+                                    n <= *l
+                                }
+                            }
+                            _ => false,
+                        }
+                    }
+                    (_, Some(FilterKind::Dynamic(t))) => {
+                        match (self.value(idx, at)?, limits.get(&c.col_id)) {
+                            (Value::Number(n), Some(l)) if t == "aboveAverage" => n > *l,
+                            (Value::Number(n), Some(l)) if t == "belowAverage" => n < *l,
+                            (_, _) if t == "aboveAverage" || t == "belowAverage" => false,
+                            // Dates and the rest are not computed here.
+                            _ => true,
+                        }
+                    }
+                    (_, Some(FilterKind::Color(dxf))) => {
+                        let want = self.styles.dxfs.get(*dxf as usize).and_then(|d| d.fill);
+                        let style = self.loaded[&idx].1.cells.get(&at).map_or(0, |c| c.style);
+                        want.is_some() && self.styles.get(style).fill == want
+                    }
+                    _ => true,
+                };
+                if !ok {
+                    show = false;
+                    break;
+                }
+            }
+            rows.push((r, !show));
+        }
+        Ok(rows)
+    }
+
+    /// Reapply: the filter's rules applied again to the rows as they are
+    /// now. One undo step.
+    pub fn reapply_filter(&mut self, idx: usize) -> Result<()> {
+        self.load(idx)?;
+        let Some(af) = self.loaded[&idx].1.auto_filter.clone() else {
+            return Err(Error::Refused("the sheet has no filter".into()));
+        };
+        self.in_one_step(|wb| {
+            let rows = wb.filtered_rows(idx, af.range, &af.columns)?;
+            wb.set_rows_hidden(idx, &rows);
+            wb.batch_changed = true;
+            Ok(())
+        })
+    }
+
+    /// The rule of filter column `col`, when it is one the rules tell.
+    pub fn column_filter(&mut self, idx: usize, col: u32) -> Option<kalem_viewer::FilterRule> {
+        use crate::sheet::FilterKind;
+        use kalem_viewer::{FilterOp, FilterRule};
+        self.load(idx).ok()?;
+        let af = self.loaded[&idx].1.auto_filter.clone()?;
+        let col_id = col.checked_sub(af.range.start.col)?;
+        let c = af.columns.into_iter().find(|c| c.col_id == col_id)?;
+        if let Some(mut v) = c.values {
+            if c.blank {
+                v.push(String::new());
+            }
+            return Some(FilterRule::Values(v));
+        }
+        Some(match c.kind? {
+            FilterKind::Custom { and, conditions } => {
+                let cond = |(o, v): &(String, String)| -> (FilterOp, String) {
+                    let star_first = v.starts_with('*');
+                    let star_last = v.ends_with('*') && v.len() > 1;
+                    let inner = v.trim_matches('*').to_owned();
+                    match o.as_str() {
+                        "notEqual" if star_first && star_last => (FilterOp::NotContains, inner),
+                        "notEqual" => (FilterOp::NotEqual, v.clone()),
+                        "greaterThan" => (FilterOp::Greater, v.clone()),
+                        "greaterThanOrEqual" => (FilterOp::GreaterOrEqual, v.clone()),
+                        "lessThan" => (FilterOp::Less, v.clone()),
+                        "lessThanOrEqual" => (FilterOp::LessOrEqual, v.clone()),
+                        _ if star_first && star_last => (FilterOp::Contains, inner),
+                        _ if star_last => (FilterOp::BeginsWith, inner),
+                        _ if star_first => (FilterOp::EndsWith, inner),
+                        _ => (FilterOp::Equal, v.clone()),
+                    }
+                };
+                let first = cond(conditions.first()?);
+                let second = conditions.get(1).map(|c| {
+                    let (op, v) = cond(c);
+                    (and, op, v)
+                });
+                FilterRule::Custom { first, second }
+            }
+            FilterKind::Top {
+                top,
+                percent,
+                count,
+            } => FilterRule::Top {
+                count: count as u32,
+                percent,
+                bottom: !top,
+            },
+            FilterKind::Dynamic(t) if t == "aboveAverage" => FilterRule::Average { above: true },
+            FilterKind::Dynamic(t) if t == "belowAverage" => FilterRule::Average { above: false },
+            FilterKind::Dynamic(_) => return None,
+            FilterKind::Color(dxf) => {
+                let fill = self.styles.dxfs.get(dxf as usize)?.fill?;
+                FilterRule::Fill([(fill >> 16) as u8, (fill >> 8) as u8, fill as u8])
+            }
         })
     }
 
@@ -6482,6 +6820,54 @@ fn with_num_fmt(text: &str, code: &str) -> (String, u32) {
             (splice(text, vec![(root.end..root.end, el)]), id)
         }
     }
+}
+
+/// Whether a cell passes a filter's custom condition (Excel's operators;
+/// `*` and `?` wildcards in text, compared in either case; numbers by
+/// value).
+fn filter_condition(op: &str, want: &str, value: &Value, shown: &str) -> bool {
+    use std::cmp::Ordering;
+    let order = match (value, want.trim().parse::<f64>()) {
+        (Value::Number(n), Ok(w)) => n.partial_cmp(&w),
+        _ => Some(shown.to_lowercase().cmp(&want.to_lowercase())),
+    };
+    let equal = match (value, want.trim().parse::<f64>()) {
+        (Value::Number(n), Ok(w)) => *n == w,
+        _ => wildcard(&want.to_lowercase(), &shown.to_lowercase()),
+    };
+    match op {
+        "notEqual" => !equal,
+        "greaterThan" => order == Some(Ordering::Greater),
+        "greaterThanOrEqual" => matches!(order, Some(Ordering::Greater | Ordering::Equal)),
+        "lessThan" => order == Some(Ordering::Less),
+        "lessThanOrEqual" => matches!(order, Some(Ordering::Less | Ordering::Equal)),
+        _ => equal,
+    }
+}
+
+/// Whether `text` matches `pattern`, `*` any run and `?` any character.
+fn wildcard(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    let (mut i, mut j) = (0, 0);
+    let (mut star, mut mark) = (None, 0);
+    while j < t.len() {
+        if i < p.len() && (p[i] == '?' || p[i] == t[j]) {
+            i += 1;
+            j += 1;
+        } else if i < p.len() && p[i] == '*' {
+            star = Some(i);
+            mark = j;
+            i += 1;
+        } else if let Some(s) = star {
+            i = s + 1;
+            mark += 1;
+            j = mark;
+        } else {
+            return false;
+        }
+    }
+    p[i..].iter().all(|c| *c == '*')
 }
 
 /// Which of a cell's sides a change's borders draw (`Some(true)`), take

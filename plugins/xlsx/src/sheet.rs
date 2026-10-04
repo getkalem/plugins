@@ -149,6 +149,34 @@ pub struct FilterColumn {
     /// The element as written, kept for kinds not edited here (custom,
     /// top ten, dynamic, color).
     pub(crate) raw: String,
+    /// A filter of another kind than values, when one read here.
+    pub kind: Option<FilterKind>,
+}
+
+/// A filter column's kind other than its values.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FilterKind {
+    /// `<customFilters>`: one or two conditions (operator and value, with
+    /// `*` and `?` wildcards), joined with and when `and`.
+    Custom {
+        /// Both must hold.
+        and: bool,
+        /// The conditions.
+        conditions: Vec<(String, String)>,
+    },
+    /// `<top10>`: the largest (`top`) or smallest items or percent.
+    Top {
+        /// The largest.
+        top: bool,
+        /// `count` is a percent.
+        percent: bool,
+        /// How many.
+        count: f64,
+    },
+    /// `<dynamicFilter type>` (`aboveAverage`, `belowAverage`, …).
+    Dynamic(String),
+    /// `<colorFilter dxfId>`: cells filled as that differential format.
+    Color(u32),
 }
 
 fn number(s: &str) -> Option<f64> {
@@ -464,6 +492,7 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                                     let fc_start = fc.span.start;
                                     let mut values: Option<Vec<String>> = None;
                                     let mut blank = false;
+                                    let mut kind: Option<FilterKind> = None;
                                     let fc_end = if fc.empty {
                                         fc.span.end
                                     } else {
@@ -484,6 +513,57 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                                                         vs.push(v.into_owned());
                                                     }
                                                 }
+                                                Token::Start(f) if f.name == "customFilters" => {
+                                                    kind = Some(FilterKind::Custom {
+                                                        and: f.attr("and").as_deref().is_some_and(
+                                                            |v| v == "1" || v == "true",
+                                                        ),
+                                                        conditions: Vec::new(),
+                                                    });
+                                                }
+                                                Token::Start(f) if f.name == "customFilter" => {
+                                                    if let Some(FilterKind::Custom {
+                                                        conditions,
+                                                        ..
+                                                    }) = kind.as_mut()
+                                                    {
+                                                        conditions.push((
+                                                            f.attr("operator").map_or_else(
+                                                                || "equal".to_owned(),
+                                                                |v| v.into_owned(),
+                                                            ),
+                                                            f.attr("val")
+                                                                .map(|v| v.into_owned())
+                                                                .unwrap_or_default(),
+                                                        ));
+                                                    }
+                                                }
+                                                Token::Start(f) if f.name == "top10" => {
+                                                    let flag = |k: &str, d: bool| {
+                                                        f.attr(k)
+                                                            .as_deref()
+                                                            .map_or(d, |v| v == "1" || v == "true")
+                                                    };
+                                                    kind = Some(FilterKind::Top {
+                                                        top: flag("top", true),
+                                                        percent: flag("percent", false),
+                                                        count: f
+                                                            .attr("val")
+                                                            .and_then(|v| v.parse().ok())
+                                                            .unwrap_or(10.0),
+                                                    });
+                                                }
+                                                Token::Start(f) if f.name == "dynamicFilter" => {
+                                                    kind = f.attr("type").map(|t| {
+                                                        FilterKind::Dynamic(t.into_owned())
+                                                    });
+                                                }
+                                                Token::Start(f) if f.name == "colorFilter" => {
+                                                    kind = f
+                                                        .attr("dxfId")
+                                                        .and_then(|v| v.parse().ok())
+                                                        .map(FilterKind::Color);
+                                                }
                                                 Token::End {
                                                     name: "filterColumn",
                                                     span,
@@ -501,6 +581,7 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                                         values,
                                         blank,
                                         raw: text[fc_start..fc_end].to_owned(),
+                                        kind,
                                     });
                                 }
                                 Token::End {
