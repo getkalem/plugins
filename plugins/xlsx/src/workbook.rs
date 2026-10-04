@@ -756,8 +756,14 @@ impl Workbook {
             Some(c) => (c.formula.as_ref().map(|f| f.text.clone()), c.value.clone()),
             None => (None, Value::Empty),
         };
-        let cells = self.formula_cells();
         let batch = self.batch.is_some();
+        // Every formula cell is listed only when computing now: in a batch,
+        // a cell at a time, that would be the whole sheet each cell.
+        let cells = if batch {
+            Vec::new()
+        } else {
+            self.formula_cells()
+        };
         let Some(Ok(engine)) = self.engine.as_mut() else {
             return Ok(());
         };
@@ -881,6 +887,8 @@ impl Workbook {
         edited: &[(usize, CellRef)],
     ) {
         let mut writes: BTreeMap<usize, Vec<(CellRef, Option<Value>)>> = BTreeMap::new();
+        // Looked up for every formula cell: a set, not the list.
+        let edited: HashSet<&(usize, CellRef)> = edited.iter().collect();
         for key in cells {
             let new = after.get(key);
             let changed = match (before.get(key), new) {
@@ -926,13 +934,19 @@ impl Workbook {
             if splices.is_empty() {
                 continue;
             }
+            // A few results: the model patched; many: read again.
+            let patches = (splices.len() <= 5000).then(|| {
+                cells
+                    .iter()
+                    .filter_map(|(p, _)| {
+                        let span = &model.cells.get(p)?.span;
+                        let new = splices.iter().find(|(s, _)| s == span)?;
+                        Some((span.clone(), new.1.len(), sheet::Patch::Replace(*p)))
+                    })
+                    .collect::<Vec<_>>()
+            });
             let new_text = splice(text, splices);
-            let model = sheet::parse(&new_text, &self.strings, self.date1904);
-            self.loaded.insert(sheet_idx, (new_text, model));
-            self.generation += 1;
-            if !self.dirty_sheets.contains(&sheet_idx) {
-                self.dirty_sheets.push(sheet_idx);
-            }
+            self.set_sheet_text_patched(sheet_idx, new_text, patches);
         }
     }
 
@@ -1107,22 +1121,21 @@ impl Workbook {
         if own {
             self.begin_batch()?;
         }
-        let result = (|| -> Result<()> {
-            for r in range.start.row..=range.end.row {
-                for c in range.start.col..=range.end.col {
-                    let input = match Input::parse(entry, self.date1904) {
-                        Input::Formula(f) => Input::Formula(formula::shift(
-                            &f,
-                            i64::from(r) - i64::from(at.row),
-                            i64::from(c) - i64::from(at.col),
-                        )),
-                        other => other,
-                    };
-                    self.set_input(idx, CellRef::new(r, c), input)?;
-                }
+        let mut edits = Vec::new();
+        for r in range.start.row..=range.end.row {
+            for c in range.start.col..=range.end.col {
+                let input = match Input::parse(entry, self.date1904) {
+                    Input::Formula(f) => Input::Formula(formula::shift(
+                        &f,
+                        i64::from(r) - i64::from(at.row),
+                        i64::from(c) - i64::from(at.col),
+                    )),
+                    other => other,
+                };
+                edits.push((CellRef::new(r, c), input));
             }
-            Ok(())
-        })();
+        }
+        let result = self.set_inputs(idx, edits);
         self.batch_changed = true;
         if own {
             match &result {
@@ -1225,6 +1238,9 @@ impl Workbook {
         let is_formula = matches!(input, Input::Formula(_));
         let removes_formula = old.as_ref().is_some_and(|c| c.formula.is_some()) && !is_formula;
         let mut splices: Vec<(Span<usize>, String)> = Vec::new();
+        // What each replacement does, to bring the model along without
+        // reading the sheet again; `None` when it must be read.
+        let mut patches: Option<Vec<(Span<usize>, usize, sheet::Patch)>> = Some(Vec::new());
         let new_c = cell_xml(&prefix, at, style, &input);
         // A shared group's first cell overwritten: its next cell takes the text.
         if let Some(Cell {
@@ -1257,17 +1273,34 @@ impl Workbook {
                     rewrite_shared_master(&text[fc.span.clone()], &prefix, si, range, ftext);
                 splices.push((fc.span.clone(), replaced));
             }
+            patches = None;
         }
         match &old {
             Some(c) => {
                 if matches!(input, Input::Clear) && style == 0 {
                     splices.push((c.span.clone(), String::new()));
+                    if let Some(p) = patches.as_mut() {
+                        p.push((c.span.clone(), 0, sheet::Patch::Remove(at)));
+                    }
                 } else {
+                    if let Some(p) = patches.as_mut() {
+                        p.push((c.span.clone(), new_c.len(), sheet::Patch::Replace(at)));
+                    }
                     splices.push((c.span.clone(), new_c));
                 }
             }
             None if matches!(input, Input::Clear) && style == 0 => return Ok(()),
-            None => splices.extend(insert_cell(text, model, at, new_c)?),
+            None => {
+                let ins = insert_cell(text, model, at, new_c)?;
+                // Into a row that holds cells, its tag unchanged: patched.
+                match (patches.as_mut(), ins.as_slice()) {
+                    (Some(p), [(span, c)]) if span.is_empty() => {
+                        p.push((span.clone(), c.len(), sheet::Patch::Insert(at)));
+                    }
+                    _ => patches = None,
+                }
+                splices.extend(ins);
+            }
         }
         if let Some((span, dim)) = &model.dimension {
             let grown = match Range::parse(dim) {
@@ -1279,19 +1312,15 @@ impl Workbook {
                 None => Some(Range { start: at, end: at }),
             };
             if let Some(g) = grown.filter(|_| !matches!(input, Input::Clear)) {
-                splices.push((
-                    span.clone(),
-                    xml::set_attr(&text[span.clone()], "ref", &g.to_string()),
-                ));
+                let d = xml::set_attr(&text[span.clone()], "ref", &g.to_string());
+                if let Some(p) = patches.as_mut() {
+                    p.push((span.clone(), d.len(), sheet::Patch::Dimension));
+                }
+                splices.push((span.clone(), d));
             }
         }
         let new_text = splice(text, splices);
-        let model = sheet::parse(&new_text, &self.strings, self.date1904);
-        self.loaded.insert(idx, (new_text, model));
-        self.generation += 1;
-        if !self.dirty_sheets.contains(&idx) {
-            self.dirty_sheets.push(idx);
-        }
+        self.set_sheet_text_patched(idx, new_text, patches);
         self.recompute_after(idx, at)?;
         if is_formula || self.any_formula()? {
             self.set_full_calc_on_load();
@@ -5032,6 +5061,62 @@ impl Workbook {
         Ok(count)
     }
 
+    /// A sheet's new text with its model patched by `patches` (see
+    /// [`sheet::Sheet::patch`]), or read again without them or when that
+    /// fails. Counts as a change.
+    fn set_sheet_text_patched(
+        &mut self,
+        idx: usize,
+        new: String,
+        patches: Option<Vec<(Span<usize>, usize, sheet::Patch)>>,
+    ) {
+        let patched = patches.and_then(|p| {
+            let (_, mut model) = self.loaded.remove(&idx)?;
+            model
+                .patch(&new, &p, &self.strings, self.date1904)
+                .then_some(model)
+        });
+        let model = patched.unwrap_or_else(|| sheet::parse(&new, &self.strings, self.date1904));
+        // The plugin's tests check every patch against the sheet read again
+        // (not a debug build of Kalem, where it would undo the gain).
+        #[cfg(test)]
+        {
+            let read = sheet::parse(&new, &self.strings, self.date1904);
+            assert_eq!(
+                format!(
+                    "{:?}",
+                    (
+                        &model.cells,
+                        &model.rows,
+                        &model.dimension,
+                        &model.sheet_data,
+                        &model.data_tables
+                    )
+                ),
+                format!(
+                    "{:?}",
+                    (
+                        &read.cells,
+                        &read.rows,
+                        &read.dimension,
+                        &read.sheet_data,
+                        &read.data_tables
+                    )
+                ),
+                "a patched sheet differs from its text"
+            );
+            assert_eq!(
+                model.auto_filter.as_ref().map(|f| f.span.clone()),
+                read.auto_filter.as_ref().map(|f| f.span.clone())
+            );
+        }
+        self.loaded.insert(idx, (new, model));
+        self.generation += 1;
+        if !self.dirty_sheets.contains(&idx) {
+            self.dirty_sheets.push(idx);
+        }
+    }
+
     fn replace_sheet_text(&mut self, idx: usize, new: String) {
         let model = sheet::parse(&new, &self.strings, self.date1904);
         self.loaded.insert(idx, (new, model));
@@ -5048,30 +5133,43 @@ impl Workbook {
         if self.sheets[idx].kind != SheetKind::Worksheet {
             return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
         }
-        let own = self.batch.is_none();
-        if own {
-            self.begin_batch()?;
-        }
-        let mut result = Ok(());
+        self.enter_typed(idx, cells.iter().map(|(at, v)| (*at, v.as_str())))
+    }
+
+    /// Texts entered into cells as typed, in one undo step: most written at
+    /// once, the few that need more (wrapped text, a table growing) as
+    /// `set_cell` writes them.
+    fn enter_typed<'a>(
+        &mut self,
+        idx: usize,
+        cells: impl Iterator<Item = (CellRef, &'a str)>,
+    ) -> Result<()> {
+        let tables = self.sheet_tables(idx);
+        let mut fast = Vec::new();
+        let mut special = Vec::new();
         for (at, v) in cells {
-            result = self.set_cell(idx, *at, v);
-            if result.is_err() {
-                break;
+            let input = Input::parse(v, self.date1904);
+            let wraps = matches!(&input, Input::Text(t) if t.contains('\n'));
+            let grows = !matches!(input, Input::Clear)
+                && tables.iter().any(|t| {
+                    !t.totals
+                        && at.row == t.range.end.row + 1
+                        && (t.range.start.col..=t.range.end.col).contains(&at.col)
+                });
+            if wraps || grows {
+                special.push((at, v.to_owned()));
+            } else {
+                fast.push((at, input));
             }
         }
-        if own {
-            match &result {
-                Ok(()) => {
-                    self.end_batch()?;
-                }
-                Err(_) => {
-                    if let Some(s) = self.batch.take() {
-                        self.restore(s);
-                    }
-                }
+        self.in_one_step(|wb| {
+            wb.set_inputs(idx, fast)?;
+            for (at, v) in special {
+                wb.set_cell(idx, at, &v)?;
             }
-        }
-        result
+            wb.batch_changed = true;
+            Ok(())
+        })
     }
 
     /// Enters rows of texts from `at` on, each as typed, as Excel's Paste of
@@ -5089,32 +5187,17 @@ impl Workbook {
                 "the pasted cells go past the end of the sheet".into(),
             ));
         }
-        let own = self.batch.is_none();
-        if own {
-            self.begin_batch()?;
-        }
-        let mut result = Ok(());
-        'rows: for (i, line) in values.iter().enumerate() {
-            for (j, v) in line.iter().enumerate() {
-                result = self.set_cell(idx, CellRef::new(at.row + i as u32, at.col + j as u32), v);
-                if result.is_err() {
-                    break 'rows;
-                }
-            }
-        }
-        if own {
-            match &result {
-                Ok(()) => {
-                    self.end_batch()?;
-                }
-                Err(_) => {
-                    if let Some(s) = self.batch.take() {
-                        self.restore(s);
-                    }
-                }
-            }
-        }
-        result
+        self.enter_typed(
+            idx,
+            values.iter().enumerate().flat_map(|(i, line)| {
+                line.iter().enumerate().map(move |(j, v)| {
+                    (
+                        CellRef::new(at.row + i as u32, at.col + j as u32),
+                        v.as_str(),
+                    )
+                })
+            }),
+        )
     }
 
     /// Moves a range's cells to start at `to`, as Excel's Cut and Paste:
@@ -5486,36 +5569,38 @@ impl Workbook {
         }
         let date1904 = self.date1904;
         self.in_one_step(|wb| {
-            let cleared: Vec<(CellRef, bool, u32)> = wb.loaded[&idx]
-                .1
-                .cells
-                .iter()
-                .filter(|(p, _)| body.contains(**p))
-                .map(|(p, c)| (*p, c.value != Value::Empty || c.formula.is_some(), c.style))
-                .collect();
-            for (p, filled, style) in cleared {
-                if filled {
-                    wb.set_input(idx, p, Input::Clear)?;
-                }
-                if style != 0 {
-                    wb.apply_style(idx, p, 0)?;
-                }
-            }
+            // Every cell of the body as it will be, written at once: the
+            // sorted rows' cells, and the cells left empty without style.
+            let mut target: BTreeMap<CellRef, (Input, Option<u32>)> = BTreeMap::new();
             for (i, (old, _, cells)) in rows.into_iter().enumerate() {
                 let new = first + i as u32;
                 for (c, text, style) in cells {
                     let at = CellRef::new(new, c);
-                    if let Some(f) = text.strip_prefix('=') {
-                        let moved = formula::shift(f, i64::from(new) - i64::from(old), 0);
-                        wb.set_input(idx, at, Input::Formula(moved))?;
-                    } else if !text.is_empty() {
-                        wb.set_input(idx, at, Input::parse(&text, date1904))?;
-                    }
-                    if style != 0 {
-                        wb.apply_style(idx, at, style)?;
-                    }
+                    let input = if let Some(f) = text.strip_prefix('=') {
+                        Input::Formula(formula::shift(f, i64::from(new) - i64::from(old), 0))
+                    } else if text.is_empty() {
+                        Input::Clear
+                    } else {
+                        Input::parse(&text, date1904)
+                    };
+                    target.insert(at, (input, Some(style)));
                 }
             }
+            let mut edits: Vec<(CellRef, Input, Option<u32>)> = Vec::new();
+            let was: Vec<CellRef> = wb.loaded[&idx]
+                .1
+                .cells
+                .keys()
+                .filter(|p| body.contains(**p))
+                .copied()
+                .collect();
+            for p in was {
+                if !target.contains_key(&p) {
+                    edits.push((p, Input::Clear, Some(0)));
+                }
+            }
+            edits.extend(target.into_iter().map(|(at, (i, s))| (at, i, s)));
+            wb.set_inputs_styled(idx, edits)?;
             wb.batch_changed = true;
             Ok(())
         })
@@ -6237,13 +6322,10 @@ impl Workbook {
         if own {
             self.begin_batch()?;
         }
-        let mut result = Ok(());
-        for at in filled {
-            result = self.set_input(idx, at, Input::Clear);
-            if result.is_err() {
-                break;
-            }
-        }
+        let result = self.set_inputs(
+            idx,
+            filled.into_iter().map(|at| (at, Input::Clear)).collect(),
+        );
         if own {
             match &result {
                 Ok(()) => {
@@ -7341,13 +7423,32 @@ fn remove_merge(text: &str, range: Range) -> String {
     splice(text, vec![(open, new_open), (item, String::new())])
 }
 
-/// Applies non-overlapping replacements to a text.
-fn splice(text: &str, mut edits: Vec<(Span<usize>, String)>) -> String {
-    edits.sort_by_key(|(s, _)| std::cmp::Reverse((s.start, s.end)));
-    let mut out = text.to_owned();
-    for (span, with) in edits {
-        out.replace_range(span, &with);
+/// Applies non-overlapping replacements to a text, in one pass: the
+/// text between them copied once (a replacement at a time moved the rest
+/// of a large sheet's text each time). Insertions at one place go in the
+/// reverse of their order in `edits`, as they always have.
+fn splice(text: &str, edits: Vec<(Span<usize>, String)>) -> String {
+    let mut order: Vec<(usize, (Span<usize>, String))> = edits.into_iter().enumerate().collect();
+    order
+        .sort_by(|(i, (a, _)), (j, (b, _))| (a.start, a.end).cmp(&(b.start, b.end)).then(j.cmp(i)));
+    let overlapping = order.windows(2).any(|w| w[1].1.0.start < w[0].1.0.end);
+    if overlapping {
+        // As it was: from the end back.
+        let mut out = text.to_owned();
+        for (_, (span, with)) in order.into_iter().rev() {
+            out.replace_range(span, &with);
+        }
+        return out;
     }
+    let grown: usize = order.iter().map(|(_, (_, w))| w.len()).sum();
+    let mut out = String::with_capacity(text.len() + grown);
+    let mut at = 0;
+    for (_, (span, with)) in order {
+        out.push_str(&text[at..span.start]);
+        out.push_str(&with);
+        at = span.end;
+    }
+    out.push_str(&text[at..]);
     out
 }
 
@@ -7576,6 +7677,7 @@ mod protection;
 mod sheet_ops;
 mod sparklines;
 pub use sparklines::Spark;
+mod bulk;
 mod tables;
 mod views;
 pub use views::{SplitRaw, ViewRaw};

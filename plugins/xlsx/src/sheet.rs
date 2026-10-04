@@ -727,7 +727,153 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
     sheet
 }
 
+/// What a replacement in a sheet part's text did, for [`Sheet::patch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Patch {
+    /// A cell's `<c>` replaced by another.
+    Replace(CellRef),
+    /// A new cell's `<c>` put into a row that holds cells.
+    Insert(CellRef),
+    /// A cell's `<c>` taken out.
+    Remove(CellRef),
+    /// The `<dimension>` written again.
+    Dimension,
+}
+
 impl Sheet {
+    /// The model made to match its text after replacements (each the old
+    /// bytes, the new bytes' length and what it did), without reading the
+    /// whole text again: the new cells read from their own elements, every
+    /// place after a replacement moved by what it grew or shrank. `false`
+    /// when it cannot (the model is then to be read again).
+    pub(crate) fn patch(
+        &mut self,
+        text: &str,
+        edits: &[(Span<usize>, usize, Patch)],
+        strings: &[String],
+        date1904: bool,
+    ) -> bool {
+        let mut edits: Vec<&(Span<usize>, usize, Patch)> = edits.iter().collect();
+        edits.sort_by_key(|e| (e.0.start, e.0.end));
+        if edits.windows(2).any(|w| w[1].0.start < w[0].0.end) {
+            return false;
+        }
+        // How far a place in the old text has moved: the growth of every
+        // replacement that ends at or before it.
+        let mut ends: Vec<(usize, isize)> = Vec::with_capacity(edits.len());
+        let mut total = 0isize;
+        for e in &edits {
+            total += e.1 as isize - e.0.len() as isize;
+            ends.push((e.0.end, total));
+        }
+        let moved = |pos: usize| -> usize {
+            let k = ends.partition_point(|(end, _)| *end <= pos);
+            let d = if k == 0 { 0 } else { ends[k - 1].1 };
+            (pos as isize + d) as usize
+        };
+        let shift = |sp: &mut Span<usize>| {
+            let len = sp.len();
+            sp.start = moved(sp.start);
+            sp.end = sp.start + len;
+        };
+        let first = edits.first().map_or(usize::MAX, |e| e.0.start);
+        for c in self.cells.values_mut() {
+            if c.span.start >= first {
+                shift(&mut c.span);
+            }
+        }
+        for r in self.rows.values_mut() {
+            if r.start.start >= first {
+                shift(&mut r.start);
+            }
+            if let Some(e) = r.end.as_mut()
+                && e.start >= first
+            {
+                shift(e);
+            }
+        }
+        if let Some((start, end)) = self.sheet_data.as_mut() {
+            if start.start >= first {
+                shift(start);
+            }
+            if let Some(e) = end.as_mut()
+                && e.start >= first
+            {
+                shift(e);
+            }
+        }
+        if let Some(f) = self.auto_filter.as_mut()
+            && f.span.start >= first
+        {
+            shift(&mut f.span);
+        }
+        let dim_edited = edits.iter().any(|e| e.2 == Patch::Dimension);
+        if let Some((sp, _)) = self.dimension.as_mut()
+            && sp.start >= first
+            && !dim_edited
+        {
+            shift(sp);
+        }
+        let p = self.prefix.clone();
+        for e in &edits {
+            // Where the replacement now lies.
+            let start = moved(e.0.start);
+            let new = start..start + e.1;
+            match e.2 {
+                // A data table's first cell or an array's: the sheet read again.
+                Patch::Remove(at) | Patch::Replace(at)
+                    if self.cells.get(&at).is_some_and(|c| {
+                        !matches!(
+                            c.formula.as_ref().map(|f| &f.kind),
+                            None | Some(FormulaKind::Normal)
+                                | Some(FormulaKind::Shared { master: false, .. })
+                        )
+                    }) =>
+                {
+                    return false;
+                }
+                Patch::Remove(at) => {
+                    self.cells.remove(&at);
+                }
+                Patch::Replace(at) | Patch::Insert(at) => {
+                    let el = &text[new.clone()];
+                    let one = parse(
+                        &format!(
+                            "<{p}worksheet><{p}sheetData><{p}row r=\"{}\">{el}</{p}row></{p}sheetData></{p}worksheet>",
+                            at.row + 1
+                        ),
+                        strings,
+                        date1904,
+                    );
+                    let Some(mut cell) = one.cells.get(&at).cloned() else {
+                        return false;
+                    };
+                    if !matches!(
+                        cell.formula.as_ref().map(|f| &f.kind),
+                        None | Some(FormulaKind::Normal)
+                    ) {
+                        // Shared and array formulas need the whole sheet.
+                        return false;
+                    }
+                    cell.span = new;
+                    cell.in_array_of = self.cells.get(&at).and_then(|c| c.in_array_of);
+                    self.cells.insert(at, cell);
+                }
+                Patch::Dimension => {
+                    let el = &text[new.clone()];
+                    let Some(Token::Start(tag)) = Reader::new(el).next_token() else {
+                        return false;
+                    };
+                    let Some(r) = tag.attr("ref").map(|v| v.into_owned()) else {
+                        return false;
+                    };
+                    self.dimension = Some((new, r));
+                }
+            }
+        }
+        true
+    }
+
     /// The used range: every cell that exists, `None` for an empty sheet.
     pub fn used_range(&self) -> Option<Range> {
         let mut it = self.cells.keys();
