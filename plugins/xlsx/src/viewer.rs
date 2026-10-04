@@ -550,6 +550,10 @@ impl ViewerDocument for XlsxDoc {
             .unwrap_or_default()
     }
 
+    fn formula_functions(&mut self) -> Vec<(String, String)> {
+        crate::functions::list()
+    }
+
     fn set_note(
         &mut self,
         unit: usize,
