@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use kalem_viewer::{
     Align, AxisScale, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule, CondStyle,
-    DataLabels, Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, InfoField,
-    LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, Paint, PivotSpec,
+    DataLabels, Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, Gridlines,
+    InfoField, LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, Paint, PivotSpec,
     RenderRequest, Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation,
     ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
@@ -812,6 +812,11 @@ impl ViewerDocument for XlsxDoc {
         self.book()
             .set_plot_area(unit, index, background, border)
             .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_gridlines(&mut self, unit: usize, index: usize, lines: Gridlines) -> Result<Vec<usize>> {
+        self.book().set_gridlines(unit, index, lines).map_err(err)?;
         Ok(vec![unit])
     }
 
@@ -1866,6 +1871,15 @@ mod tests {
         d.set_plot_area(0, before, Paint::Color([0xF2; 3]), Paint::Automatic)
             .unwrap();
         assert_eq!(d.charts(0)[before].plot_background, Paint::Color([0xF2; 3]));
+        // Minor horizontal lines too, kept by the change of kind below
+        // (turned with the value axis).
+        let lines = Gridlines {
+            horizontal_major: true,
+            horizontal_minor: true,
+            ..Gridlines::default()
+        };
+        d.set_gridlines(0, before, lines).unwrap();
+        assert_eq!(d.charts(0)[before].gridlines, lines);
         // Q2 colored red, kept by the change of kind below.
         d.set_series_color(0, before, 1, Some([0xFF, 0, 0]))
             .unwrap();
@@ -1886,6 +1900,14 @@ mod tests {
         assert_eq!(bar.categories, was.categories);
         assert_eq!((bar.background, bar.border), (was.background, was.border));
         assert_eq!(bar.plot_background, was.plot_background);
+        assert_eq!(
+            bar.gridlines,
+            Gridlines {
+                vertical_major: true,
+                vertical_minor: true,
+                ..Gridlines::default()
+            }
+        );
         assert_eq!(
             (bar.title.clone(), bar.legend, bar.labels, bar.scale),
             (was.title.clone(), was.legend, was.labels, was.scale)

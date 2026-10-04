@@ -177,6 +177,8 @@ pub struct ChartDef {
     pub plot_background: Fill,
     /// The plot area's border.
     pub plot_border: Fill,
+    /// Gridlines: horizontal major and minor, vertical major and minor.
+    pub gridlines: (bool, bool, bool, bool),
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -244,6 +246,7 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     let mut title = String::new();
     let mut title_ref: Option<String> = None;
     let (mut axis_title, mut axis_pos) = (String::new(), String::new());
+    let mut axis_grid = (false, false);
     let mut point: Option<(Option<usize>, Option<Rgb>)> = None;
     let mut point_explosion: Option<u32> = None;
     let mut axis_scale: Scale = (None, None, None, false);
@@ -378,6 +381,8 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     "axPos" if parent.ends_with("Ax") => {
                         axis_pos = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
                     }
+                    "majorGridlines" if parent.ends_with("Ax") => axis_grid.0 = true,
+                    "minorGridlines" if parent.ends_with("Ax") => axis_grid.1 = true,
                     // The chart area's own fill and line.
                     "noFill" | "solidFill" | "srgbClr" | "schemeClr"
                         if (stack.len() >= 2 && stack[1] == "spPr" && stack[0] == "chartSpace")
@@ -483,6 +488,17 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                     }
                 }
                 if name.ends_with("Ax") && stack.last().is_some_and(|s| s == "plotArea") {
+                    // An axis's gridlines run across it.
+                    let (major, minor) = std::mem::take(&mut axis_grid);
+                    if name != "serAx" {
+                        if matches!(axis_pos.as_str(), "l" | "r") {
+                            def.gridlines.0 |= major;
+                            def.gridlines.1 |= minor;
+                        } else {
+                            def.gridlines.2 |= major;
+                            def.gridlines.3 |= minor;
+                        }
+                    }
                     let sc = std::mem::take(&mut axis_scale);
                     if name == "valAx" {
                         value_axes.push((axis_pos.clone(), sc));
@@ -1609,6 +1625,76 @@ pub fn with_plot_area(text: &str, background: Fill, border: Fill) -> String {
     out
 }
 
+/// A chart part with its gridlines shown or hidden (horizontal major and
+/// minor, from the vertical axis; vertical major and minor, from the
+/// horizontal axis): a line kept as it is when it stays, written after
+/// the axis's position when it comes. `None` when the chart has no axes.
+pub fn with_gridlines(text: &str, lines: (bool, bool, bool, bool)) -> Option<String> {
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut axes: Vec<(Span<usize>, String)> = Vec::new();
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if tag.name.ends_with("Ax")
+                    && tag.name != "serAx"
+                    && stack.last().is_some_and(|s| s == "plotArea")
+                    && !tag.empty
+                {
+                    let end = r.skip_element();
+                    axes.push((tag.span.start..end, xml::prefix(tag.qname).to_owned()));
+                    continue;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    if axes.is_empty() {
+        return None;
+    }
+    let mut out = text.to_owned();
+    // From the last, so the earlier spans hold.
+    for (span, p) in axes.into_iter().rev() {
+        let el = &text[span.clone()];
+        let vertical = matches!(
+            child(el, "axPos").and_then(|a| a.split("val=\"").nth(1)?.split('"').next()),
+            Some("l" | "r")
+        );
+        let (major, minor) = if vertical {
+            (lines.0, lines.1)
+        } else {
+            (lines.2, lines.3)
+        };
+        let mut new = el.to_owned();
+        for (name, want, after) in [
+            (
+                "majorGridlines",
+                major,
+                &["axId", "scaling", "delete", "axPos"][..],
+            ),
+            (
+                "minorGridlines",
+                minor,
+                &["axId", "scaling", "delete", "axPos", "majorGridlines"][..],
+            ),
+        ] {
+            match (child(&new, name).is_some(), want) {
+                (true, false) => new = set_child(&new, &[name], "", &[]),
+                (false, true) => new = set_child(&new, &[name], &format!("<{p}{name}/>"), after),
+                _ => {}
+            }
+        }
+        out.replace_range(span, &new);
+    }
+    Some(out)
+}
+
 /// An absolute reference to a range of a sheet, as charts write them.
 pub fn reference(sheet: &str, r: crate::cellref::Range) -> String {
     let abs = |c: crate::cellref::CellRef| {
@@ -2315,6 +2401,53 @@ mod tests {
                 x.matches("<c:spPr>").count()
             );
         }
+    }
+
+    #[test]
+    fn gridlines_shown_and_hidden() {
+        let s = NewSeries {
+            name: None,
+            cat: Some(("S!$A$2:$A$3".into(), vec!["1".into(), "2".into()], false)),
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
+        };
+        // A column chart's value axis is vertical: its lines horizontal; a
+        // bar chart's the other way round.
+        let col = chart_xml(ChartKind::Column, None, std::slice::from_ref(&s));
+        assert_eq!(
+            parse_chart(&col, &[]).gridlines,
+            (true, false, false, false)
+        );
+        let bar = chart_xml(ChartKind::Bar, None, std::slice::from_ref(&s));
+        assert_eq!(
+            parse_chart(&bar, &[]).gridlines,
+            (false, false, true, false)
+        );
+        for x in [
+            col,
+            bar,
+            chart_xml(ChartKind::Scatter, None, std::slice::from_ref(&s)),
+        ] {
+            let all = with_gridlines(&x, (true, true, true, true)).unwrap();
+            assert_eq!(parse_chart(&all, &[]).gridlines, (true, true, true, true));
+            // After the position, major before minor.
+            for ax in all.split("Ax>").filter(|a| a.contains("<c:axPos")) {
+                let pos = ax.find("<c:axPos").unwrap();
+                let major = ax.find("<c:majorGridlines").unwrap();
+                assert!(
+                    pos < major && major < ax.find("<c:minorGridlines").unwrap(),
+                    "{ax}"
+                );
+            }
+            let none = with_gridlines(&all, (false, false, false, false)).unwrap();
+            assert!(!none.contains("Gridlines"));
+        }
+        // Excel's formatted gridlines stay as they are when kept.
+        let excel = r#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea><c:valAx><c:axId val="1"/><c:axPos val="l"/><c:majorGridlines><c:spPr>gray</c:spPr></c:majorGridlines><c:numFmt/></c:valAx></c:plotArea></c:chart></c:chartSpace>"#;
+        let kept = with_gridlines(excel, (true, true, false, false)).unwrap();
+        assert!(kept.contains("<c:majorGridlines><c:spPr>gray</c:spPr></c:majorGridlines><c:minorGridlines/><c:numFmt/>"), "{kept}");
+        let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
+        assert!(with_gridlines(&pie, (true, false, false, false)).is_none());
     }
 
     #[test]

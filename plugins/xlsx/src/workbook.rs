@@ -2300,6 +2300,12 @@ impl Workbook {
                 border: paint(def.border),
                 plot_background: paint(def.plot_background),
                 plot_border: paint(def.plot_border),
+                gridlines: kalem_viewer::Gridlines {
+                    horizontal_major: def.gridlines.0,
+                    horizontal_minor: def.gridlines.1,
+                    vertical_major: def.gridlines.2,
+                    vertical_minor: def.gridlines.3,
+                },
                 ..kalem_viewer::Chart::default()
             });
         }
@@ -2887,6 +2893,24 @@ impl Workbook {
         if (def.plot_background, def.plot_border) != (chart::Fill::Auto, chart::Fill::Auto) {
             new = chart::with_plot_area(&new, def.plot_background, def.plot_border);
         }
+        // Gridlines go with their axis's role: a column chart's value lines
+        // (horizontal) are a bar chart's vertical ones.
+        let g = def.gridlines;
+        let (cat_lines, val_lines) = if def.kind == K::Bar {
+            ((g.0, g.1), (g.2, g.3))
+        } else {
+            ((g.2, g.3), (g.0, g.1))
+        };
+        let lines = if kind == K::Bar {
+            (cat_lines.0, cat_lines.1, val_lines.0, val_lines.1)
+        } else {
+            (val_lines.0, val_lines.1, cat_lines.0, cat_lines.1)
+        };
+        if !matches!(def.kind, K::Pie | K::Doughnut)
+            && let Some(x) = chart::with_gridlines(&new, lines)
+        {
+            new = x;
+        }
         let snapshot = (self.batch.is_none()).then(|| self.snapshot());
         self.pkg.set_part(&part, new.into_bytes());
         self.generation += 1;
@@ -3126,6 +3150,50 @@ impl Workbook {
             .ok_or_else(|| Error::Refused("No such chart".into()))?;
         let old = text_of(self.pkg.part(&part)?, &part)?;
         let new = chart::with_plot_area(&old, fill(background), fill(border));
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Shows or hides the gridlines of a sheet's chart (by its place among
+    /// [`Workbook::charts`]). One undo step.
+    pub fn set_gridlines(
+        &mut self,
+        idx: usize,
+        index: usize,
+        lines: kalem_viewer::Gridlines,
+    ) -> Result<()> {
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        let new = chart::with_gridlines(
+            &old,
+            (
+                lines.horizontal_major,
+                lines.horizontal_minor,
+                lines.vertical_major,
+                lines.vertical_minor,
+            ),
+        )
+        .ok_or_else(|| Error::Refused("This chart has no axes".into()))?;
         if new == old {
             return Ok(());
         }
