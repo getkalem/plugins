@@ -573,6 +573,39 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn clear_range(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        contents: bool,
+        formats: bool,
+    ) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .clear_parts(unit, r, contents, formats)
+            .map_err(err)?;
+        self.notes.remove(&unit);
+        Ok(self.all_units())
+    }
+
+    fn fill_formats(
+        &mut self,
+        from: (usize, [u32; 4]),
+        to: (usize, [u32; 4]),
+    ) -> Result<Vec<usize>> {
+        let range = |r: [u32; 4]| crate::Range {
+            start: CellRef::new(r[0], r[1]),
+            end: CellRef::new(r[2], r[3]),
+        };
+        self.book()
+            .fill_formats((from.0, range(from.1)), (to.0, range(to.1)))
+            .map_err(err)?;
+        Ok(vec![to.0])
+    }
+
     fn formula_functions(&mut self) -> Vec<(String, String)> {
         crate::functions::list()
     }
@@ -2758,5 +2791,40 @@ mod tests {
         }
         assert_eq!(d.cell_input(0, 9, 7), "");
         assert_eq!(text(&mut d, 19, 0), "");
+    }
+
+    #[test]
+    fn clear_and_paint_formats() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let text = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .first()
+                .map(|x| x.2.clone())
+                .unwrap_or_default()
+        };
+        // B2's format cleared: the number shows as General, still there.
+        assert_eq!(text(&mut d, 1, 1).text, "1,200.00");
+        d.clear_range(0, [1, 1, 1, 1], false, true).unwrap();
+        assert_eq!(text(&mut d, 1, 1).text, "1200");
+        // Painted back from B3 over B2:C2.
+        d.fill_formats((0, [2, 1, 2, 1]), (0, [1, 1, 1, 2]))
+            .unwrap();
+        assert_eq!(text(&mut d, 1, 1).text, "1,200.00");
+        // A header's bold painted over an empty cell, which keeps it.
+        d.fill_formats((0, [0, 0, 0, 0]), (0, [9, 9, 9, 9]))
+            .unwrap();
+        d.set_cell(0, 9, 9, "x").unwrap();
+        assert!(text(&mut d, 9, 9).bold);
+        // Clear All: A2's value, format and note gone.
+        assert!(d.cell_note(0, 1, 0).is_some());
+        d.clear_range(0, [1, 0, 1, 0], true, true).unwrap();
+        assert_eq!(d.cell_input(0, 1, 0), "");
+        assert!(d.cell_note(0, 1, 0).is_none());
+        // One undo step each.
+        for _ in 0..5 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(text(&mut d, 1, 1).text, "1,200.00");
+        assert!(d.cell_note(0, 1, 0).is_some());
     }
 }

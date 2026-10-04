@@ -5434,6 +5434,135 @@ impl Workbook {
             self.replace_sheet_text(idx, new);
         }
     }
+    /// Clears a range as Excel's Clear: its contents, its formats (the
+    /// cells' style the workbook's default), or both with its notes (Clear
+    /// All). One undo step.
+    pub fn clear_parts(
+        &mut self,
+        idx: usize,
+        range: Range,
+        contents: bool,
+        formats: bool,
+    ) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = (|| -> Result<()> {
+            if contents {
+                self.clear_range(idx, range)?;
+            }
+            if formats {
+                let styled: Vec<CellRef> = self.loaded[&idx]
+                    .1
+                    .cells
+                    .iter()
+                    .filter(|(p, c)| range.contains(**p) && c.style != 0)
+                    .map(|(p, _)| *p)
+                    .collect();
+                for at in styled {
+                    self.apply_style(idx, at, 0)?;
+                }
+            }
+            if contents && formats {
+                let notes: Vec<CellRef> = self
+                    .comments(idx)?
+                    .into_iter()
+                    .map(|c| c.cell)
+                    .filter(|p| range.contains(*p))
+                    .collect();
+                for at in notes {
+                    self.set_comment(idx, at, None)?;
+                }
+            }
+            Ok(())
+        })();
+        self.batch_changed = true;
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Gives the cells of `to` the formats of `from`, repeated over it as
+    /// Excel's Format Painter paints a larger selection. One undo step.
+    pub fn fill_formats(&mut self, from: (usize, Range), to: (usize, Range)) -> Result<()> {
+        let ((si, src), (di, dst)) = (from, to);
+        for i in [si, di] {
+            self.load(i)?;
+            if self.sheets[i].kind != SheetKind::Worksheet {
+                return Err(Error::NotAWorksheet(self.sheets[i].name.clone()));
+            }
+        }
+        let area =
+            u64::from(dst.end.row - dst.start.row + 1) * u64::from(dst.end.col - dst.start.col + 1);
+        if area > 200_000 {
+            return Err(Error::Refused("Select fewer cells: 200,000 at most".into()));
+        }
+        let (h, w) = (
+            src.end.row - src.start.row + 1,
+            src.end.col - src.start.col + 1,
+        );
+        let mut styles = Vec::new();
+        for r in 0..h {
+            for c in 0..w {
+                let p = CellRef::new(src.start.row + r, src.start.col + c);
+                let style = self.loaded[&si]
+                    .1
+                    .cells
+                    .get(&p)
+                    .map_or_else(|| self.row_or_col_style(si, p), |c| c.style);
+                styles.push(style);
+            }
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = (|| -> Result<()> {
+            for r in dst.start.row..=dst.end.row {
+                for c in dst.start.col..=dst.end.col {
+                    let at = CellRef::new(r, c);
+                    let i = ((r - dst.start.row) % h) * w + (c - dst.start.col) % w;
+                    let style = styles[i as usize];
+                    let now = self.loaded[&di].1.cells.get(&at).map(|c| c.style);
+                    if now.unwrap_or_else(|| self.row_or_col_style(di, at)) != style
+                        || (now.is_none() && style != 0)
+                    {
+                        self.apply_style(di, at, style)?;
+                    }
+                }
+            }
+            Ok(())
+        })();
+        self.batch_changed = true;
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
 
     /// Clears the values and formulas of a range, formats kept, as Excel's
     /// Delete on a selection: one undo step.
