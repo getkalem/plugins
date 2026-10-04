@@ -561,6 +561,23 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn fill(
+        &mut self,
+        unit: usize,
+        source: [u32; 4],
+        target: [u32; 4],
+        series: bool,
+    ) -> Result<Vec<usize>> {
+        let r = |a: [u32; 4]| crate::cellref::Range {
+            start: CellRef::new(a[0], a[1]),
+            end: CellRef::new(a[2], a[3]),
+        };
+        self.book()
+            .fill(unit, r(source), r(target), series)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn sort_range(
         &mut self,
         unit: usize,
@@ -2087,5 +2104,39 @@ mod tests {
         if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
             std::fs::write(format!("{dir}/kalem-chart-test.xlsx"), bytes).unwrap();
         }
+    }
+
+    #[test]
+    fn fill_handle() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // A10 "Item 1", B10:B11 10 and 20, C10 a formula reading B10.
+        d.set_cell(0, 9, 0, "Item 1").unwrap();
+        d.set_cell(0, 9, 1, "10").unwrap();
+        d.set_cell(0, 10, 1, "20").unwrap();
+        d.set_cell(0, 9, 2, "=B10*2").unwrap();
+        // The text and its number down four rows.
+        d.fill(0, [9, 0, 9, 0], [9, 0, 12, 0], true).unwrap();
+        assert_eq!(d.cell_input(0, 12, 0), "Item 4");
+        // 10, 20, … goes on: 30, 40.
+        d.fill(0, [9, 1, 10, 1], [9, 1, 12, 1], true).unwrap();
+        assert_eq!(
+            (d.cell_input(0, 11, 1), d.cell_input(0, 12, 1)),
+            ("30".into(), "40".into())
+        );
+        // The formula moves its reference.
+        d.fill(0, [9, 2, 9, 2], [9, 2, 12, 2], true).unwrap();
+        assert_eq!(d.cell_input(0, 12, 2), "=B13*2");
+        assert_eq!(d.grid_cells(0, 12..13, 2..3)[0].2.text, "80");
+        // Copied, not a series (Fill Down): 10, 20, 10, 20.
+        d.fill(0, [9, 1, 10, 1], [9, 1, 12, 1], false).unwrap();
+        assert_eq!(d.cell_input(0, 11, 1), "10");
+        // Right, with the header's style: Q1's bold header to the next cell.
+        d.fill(0, [0, 1, 0, 1], [0, 1, 0, 4], true).unwrap();
+        assert_eq!(d.cell_input(0, 0, 4), "Q4");
+        assert!(d.grid_cells(0, 0..1, 4..5)[0].2.bold);
+        // One undo step each; refused two ways at once.
+        assert!(d.undo().unwrap());
+        assert_eq!(d.cell_input(0, 0, 4), "");
+        assert!(d.fill(0, [9, 1, 10, 1], [9, 1, 12, 3], true).is_err());
     }
 }

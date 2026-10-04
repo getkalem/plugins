@@ -3448,6 +3448,143 @@ impl Workbook {
         Ok(())
     }
 
+    /// Fills `target` from `source` (which it holds, going past it one
+    /// way), as Excel's fill handle: with `series`, numbers, dates,
+    /// numbered text and month or day names go on; else the source is
+    /// copied over again (Fill Down, Fill Right). Formulas move their
+    /// relative references, and filled cells take the source's style. One
+    /// undo step; a cell Excel would refuse (in a merged cell, part of an
+    /// array) refuses the whole fill.
+    pub fn fill(&mut self, idx: usize, source: Range, target: Range, series: bool) -> Result<()> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let contains = target.start.row <= source.start.row
+            && target.start.col <= source.start.col
+            && target.end.row >= source.end.row
+            && target.end.col >= source.end.col;
+        let same_cols = (target.start.col, target.end.col) == (source.start.col, source.end.col);
+        let same_rows = (target.start.row, target.end.row) == (source.start.row, source.end.row);
+        if !contains || (!same_cols && !same_rows) || target == source {
+            return Err(Error::Refused(
+                "A fill goes one way from its cells: down, up, right or left".into(),
+            ));
+        }
+        if target.end.row >= MAX_ROW || target.end.col >= MAX_COL {
+            return Err(Error::Refused(
+                "The fill goes past the end of the sheet".into(),
+            ));
+        }
+        let down = same_cols;
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = self.fill_inner(idx, source, target, series, down);
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn fill_inner(
+        &mut self,
+        idx: usize,
+        source: Range,
+        target: Range,
+        series: bool,
+        down: bool,
+    ) -> Result<()> {
+        // Each column of a fill down (each row of a fill right) on its own.
+        let (lines, s0, s1, t0, t1) = if down {
+            (
+                source.start.col..=source.end.col,
+                source.start.row,
+                source.end.row,
+                target.start.row,
+                target.end.row,
+            )
+        } else {
+            (
+                source.start.row..=source.end.row,
+                source.start.col,
+                source.end.col,
+                target.start.col,
+                target.end.col,
+            )
+        };
+        let at = |line: u32, k: u32| {
+            if down {
+                CellRef::new(k, line)
+            } else {
+                CellRef::new(line, k)
+            }
+        };
+        for line in lines {
+            let mut items = Vec::new();
+            let mut cells = Vec::new();
+            for k in s0..=s1 {
+                let c = at(line, k);
+                let value = self.value(idx, c)?;
+                let cell = self.loaded[&idx].1.cells.get(&c).cloned();
+                let style = cell.as_ref().map_or(0, |c| c.style);
+                items.push(crate::fill::Item {
+                    value,
+                    formula: cell.as_ref().is_some_and(|c| c.formula.is_some()),
+                    date: self.styles.is_date(style),
+                });
+                cells.push((cell, style));
+            }
+            let pattern = crate::fill::analyze(&items, series);
+            for k in t0..=t1 {
+                if (s0..=s1).contains(&k) {
+                    continue;
+                }
+                let p = i64::from(k) - i64::from(s0);
+                let n = items.len() as i64;
+                let from = p.rem_euclid(n) as usize;
+                let dest = at(line, k);
+                let input = match pattern.at(p) {
+                    crate::fill::Out::Number(v) => Input::Number(v, None),
+                    crate::fill::Out::Text(t) => Input::Text(t),
+                    crate::fill::Out::Copy(i) => {
+                        let offset = i64::from(k) - i64::from(s0) - i as i64;
+                        match (&cells[i].0, &items[i].value) {
+                            (Some(c), _) if c.formula.is_some() => {
+                                let f = &c.formula.as_ref().expect("checked").text;
+                                let (dr, dc) = if down { (offset, 0) } else { (0, offset) };
+                                Input::Formula(formula::shift(f, dr, dc))
+                            }
+                            (_, Value::Number(v)) => Input::Number(*v, None),
+                            (_, Value::Text(t)) => Input::Text(t.clone()),
+                            (_, Value::Bool(b)) => Input::Bool(*b),
+                            (_, Value::Error(e)) => Input::Error(e.clone()),
+                            _ => Input::Clear,
+                        }
+                    }
+                };
+                self.set_input(idx, dest, input)?;
+                // The source's format, the number format with it.
+                let style = cells[from].1;
+                let now = self.loaded[&idx].1.cells.get(&dest).map_or(0, |c| c.style);
+                if now != style {
+                    self.apply_style(idx, dest, style)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Removes a sheet's chart (by its place among [`Workbook::charts`]):
     /// its anchor, its part and what hangs on it. One undo step.
     pub fn delete_chart(&mut self, idx: usize, index: usize) -> Result<()> {
