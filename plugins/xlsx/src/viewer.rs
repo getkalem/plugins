@@ -4513,4 +4513,54 @@ mod tests {
         assert_eq!(back.view_raw(0), crate::workbook::ViewRaw::default());
         assert_eq!(back.sheet(0).unwrap().frozen, Some((1, 0)));
     }
+
+    #[test]
+    fn a_sheet_copied() {
+        use kalem_viewer::SheetEdit;
+        let mut d = open("openpyxl-budget.xlsx");
+        let name = d.structure().units[0].label.clone();
+        let png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0,
+            0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89, 0, 0, 0, 13, 0x49, 0x44,
+            0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0, 0x1F, 0, 5, 0, 1, 0xFF, 0x89,
+            0x99, 0x3D, 0x1D, 0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        d.insert_picture(0, [20, 1, 22, 2], &png, "png").unwrap();
+        let table = d
+            .create_table(0, [30, 0, 32, 1], false, "TableStyleMedium2")
+            .unwrap();
+        d.add_thread_comment(0, 1, 4, "A", "Bak", "2026-10-04T10:00:00")
+            .unwrap();
+        let charts = d.charts(0).len();
+        assert!(charts > 0);
+        // Copied next to it, named as Excel names a copy.
+        let at = d.edit_sheets(SheetEdit::Copy(0, 1)).unwrap();
+        assert_eq!(at, 1);
+        assert_eq!(d.structure().units[1].label, format!("{name} (2)"));
+        assert_eq!(d.cell_input(1, 1, 0), d.cell_input(0, 1, 0));
+        assert_eq!(d.charts(1).len(), charts);
+        assert_eq!(d.drawings(1).len(), d.drawings(0).len());
+        assert!(d.cell_note(1, 1, 0).is_some() == d.cell_note(0, 1, 0).is_some());
+        assert_eq!(d.threads(1).len(), 1);
+        let tables = d.tables(1);
+        assert_eq!(tables.len(), 1);
+        assert_ne!(tables[0].name, table);
+        // The copy's chart reads the copy.
+        let before = d.charts(0)[0].series[0].values.clone();
+        d.set_cell(1, 1, 1, "9999").unwrap();
+        assert_eq!(d.charts(0)[0].series[0].values, before);
+        assert_ne!(d.charts(1)[0].series[0].values, before);
+        // Saved and read again: the same.
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-copy-sheet-test.xlsx"), &saved).unwrap();
+        }
+        let back = crate::Workbook::open(saved).unwrap();
+        assert_eq!(back.sheets()[1].name, format!("{name} (2)"));
+        assert_eq!(back.sheet_tables(1).len(), 1);
+        // Undone, whole.
+        assert!(d.undo().unwrap());
+        assert!(d.undo().unwrap());
+        assert_eq!(d.structure().units.len(), back.sheets().len() - 1);
+    }
 }

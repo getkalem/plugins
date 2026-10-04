@@ -7678,6 +7678,7 @@ mod sheet_ops;
 mod sparklines;
 pub use sparklines::Spark;
 mod bulk;
+mod copy_sheet;
 mod tables;
 mod views;
 pub use views::{SplitRaw, ViewRaw};

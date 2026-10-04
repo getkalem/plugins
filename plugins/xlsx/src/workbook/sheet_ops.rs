@@ -367,6 +367,12 @@ impl Workbook {
                     ));
                 }
             }
+            SheetEdit::Copy(i, at) => {
+                check(*i)?;
+                if *at > n {
+                    return Err(Error::Refused("No such place".into()));
+                }
+            }
         }
         let snapshot = self.snapshot();
         let result = self.edit_sheets_now(edit);
@@ -387,7 +393,7 @@ impl Workbook {
         }
     }
 
-    fn edit_sheets_now(&mut self, edit: &kalem_viewer::SheetEdit) -> Result<usize> {
+    pub(crate) fn edit_sheets_now(&mut self, edit: &kalem_viewer::SheetEdit) -> Result<usize> {
         use kalem_viewer::SheetEdit;
         self.settle_sheets()?;
         match edit {
@@ -402,6 +408,7 @@ impl Workbook {
                 self.move_sheet(*from, *to);
                 Ok(*to)
             }
+            SheetEdit::Copy(i, at) => self.copy_sheet(*i, *at),
             SheetEdit::Rename(i, name) => {
                 let old = self.sheets[*i].name.clone();
                 let els = self.sheet_elements();
