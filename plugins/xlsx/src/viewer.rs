@@ -952,6 +952,8 @@ impl ViewerDocument for XlsxDoc {
                     unlocked: style.unlocked,
                     borders: style.sides.map(|s| s.map(|(c, _)| rgb(c))),
                     border_thick: style.sides.map(|s| s.is_some_and(|(_, t)| t)),
+                    border_styles: style.lines,
+                    fill_pattern: style.pattern.clone(),
                     valign: match style.valign.as_deref() {
                         Some("top") => VAlign::Top,
                         Some("center" | "justify" | "distributed") => VAlign::Middle,
@@ -1004,6 +1006,23 @@ impl ViewerDocument for XlsxDoc {
         out
     }
 
+    fn calc_options(&mut self) -> kalem_viewer::CalcOptions {
+        self.book().calc_options()
+    }
+
+    fn set_calc_options(&mut self, options: kalem_viewer::CalcOptions) -> Result<Vec<usize>> {
+        self.book().set_calc_options(options).map_err(err)?;
+        Ok(self.all_units())
+    }
+
+    fn circular_references(&mut self) -> Vec<(usize, u32, u32)> {
+        self.book()
+            .circular_references()
+            .into_iter()
+            .map(|(u, at)| (u, at.row, at.col))
+            .collect()
+    }
+
     fn sheet_view(&mut self, unit: usize) -> kalem_viewer::SheetView {
         let raw = self.book().view_raw(unit);
         let split = raw.split.and_then(|sp| {
@@ -1050,6 +1069,45 @@ impl ViewerDocument for XlsxDoc {
             self.view_changed = true;
         }
         Ok(vec![unit])
+    }
+
+    fn cell_styles(&mut self) -> Vec<String> {
+        self.book().cell_styles()
+    }
+
+    fn apply_cell_style(&mut self, unit: usize, range: [u32; 4], name: &str) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book().apply_cell_style(unit, r, name).map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn new_cell_style(
+        &mut self,
+        name: &str,
+        unit: usize,
+        row: u32,
+        col: u32,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .new_cell_style(name, unit, CellRef::new(row, col))
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn theme_name(&mut self) -> Option<String> {
+        self.book().theme_name()
+    }
+
+    fn theme_names(&mut self) -> Vec<String> {
+        crate::Workbook::theme_names()
+    }
+
+    fn set_theme(&mut self, name: &str) -> Result<Vec<usize>> {
+        self.book().set_theme(name).map_err(err)?;
+        Ok(self.all_units())
     }
 
     fn tab_color(&mut self, unit: usize) -> Option<[u8; 3]> {
@@ -3800,11 +3858,13 @@ mod tests {
                 col: 8,
                 descending: false,
                 list: Some(months),
+                color: None,
             },
             SortKey {
                 col: 9,
                 descending: true,
                 list: None,
+                color: None,
             },
         ];
         d.sort_range_by(0, [0, 8, 5, 9], &keys, true).unwrap();
@@ -3917,16 +3977,33 @@ mod tests {
         use kalem_viewer::PageSetup;
         let mut d = open("openpyxl-budget.xlsx");
         let first = d.page_setup(0).unwrap();
+        const PNG: [u8; 69] = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xC9, 0xFE, 0x92,
+            0xEF, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
         let s = PageSetup {
             landscape: true,
             paper: 8,
             margins: [0.25, 0.25, 0.5, 0.5],
-            fit_width: true,
+            fit: Some((1, 0)),
+            scale: 100,
             print_area: Some([0, 0, 4, 3]),
             title_rows: Some((0, 0)),
-            header: "&C&A".into(),
+            title_cols: Some((0, 1)),
+            header: "&L&G&C&A".into(),
             footer: "&CPage &P of &N".into(),
             row_breaks: vec![3],
+            col_breaks: vec![2],
+            gridlines: true,
+            headings: true,
+            pictures: vec![kalem_viewer::HeaderPicture {
+                place: "LH".into(),
+                data: PNG.to_vec(),
+                size: (36.0, 18.0),
+            }],
         };
         d.set_page_setup(0, &s).unwrap();
         assert_eq!(d.page_setup(0).unwrap(), s);
@@ -3934,9 +4011,19 @@ mod tests {
         if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
             std::fs::write(format!("{dir}/kalem-page-test.xlsx"), &saved).unwrap();
         }
-        let wb = Workbook::open(saved).unwrap();
+        let mut wb = Workbook::open(saved).unwrap();
         let names: Vec<&str> = wb.defined_names().iter().map(|n| n.name.as_str()).collect();
         assert!(names.contains(&"_xlnm.Print_Area") && names.contains(&"_xlnm.Print_Titles"));
+        assert_eq!(wb.page_setup(0).unwrap(), s);
+        // Scaled to a percentage, not fitted.
+        let half = PageSetup {
+            fit: None,
+            scale: 50,
+            ..s.clone()
+        };
+        d.set_page_setup(0, &half).unwrap();
+        assert_eq!(d.page_setup(0).unwrap(), half);
+        assert!(d.undo().unwrap());
         // Back to none of it; undone.
         d.set_page_setup(0, &PageSetup::default()).unwrap();
         assert_eq!(d.page_setup(0).unwrap().print_area, None);
@@ -4512,5 +4599,253 @@ mod tests {
         let mut back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
         assert_eq!(back.view_raw(0), crate::workbook::ViewRaw::default());
         assert_eq!(back.sheet(0).unwrap().frozen, Some((1, 0)));
+    }
+
+    #[test]
+    fn a_sheet_copied() {
+        use kalem_viewer::SheetEdit;
+        let mut d = open("openpyxl-budget.xlsx");
+        let name = d.structure().units[0].label.clone();
+        let png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0,
+            0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89, 0, 0, 0, 13, 0x49, 0x44,
+            0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0, 0x1F, 0, 5, 0, 1, 0xFF, 0x89,
+            0x99, 0x3D, 0x1D, 0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        d.insert_picture(0, [20, 1, 22, 2], &png, "png").unwrap();
+        let table = d
+            .create_table(0, [30, 0, 32, 1], false, "TableStyleMedium2")
+            .unwrap();
+        d.add_thread_comment(0, 1, 4, "A", "Bak", "2026-10-04T10:00:00")
+            .unwrap();
+        let charts = d.charts(0).len();
+        assert!(charts > 0);
+        // Copied next to it, named as Excel names a copy.
+        let at = d.edit_sheets(SheetEdit::Copy(0, 1)).unwrap();
+        assert_eq!(at, 1);
+        assert_eq!(d.structure().units[1].label, format!("{name} (2)"));
+        assert_eq!(d.cell_input(1, 1, 0), d.cell_input(0, 1, 0));
+        assert_eq!(d.charts(1).len(), charts);
+        assert_eq!(d.drawings(1).len(), d.drawings(0).len());
+        assert!(d.cell_note(1, 1, 0).is_some() == d.cell_note(0, 1, 0).is_some());
+        assert_eq!(d.threads(1).len(), 1);
+        let tables = d.tables(1);
+        assert_eq!(tables.len(), 1);
+        assert_ne!(tables[0].name, table);
+        // The copy's chart reads the copy.
+        let before = d.charts(0)[0].series[0].values.clone();
+        d.set_cell(1, 1, 1, "9999").unwrap();
+        assert_eq!(d.charts(0)[0].series[0].values, before);
+        assert_ne!(d.charts(1)[0].series[0].values, before);
+        // Saved and read again: the same.
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-copy-sheet-test.xlsx"), &saved).unwrap();
+        }
+        let back = crate::Workbook::open(saved).unwrap();
+        assert_eq!(back.sheets()[1].name, format!("{name} (2)"));
+        assert_eq!(back.sheet_tables(1).len(), 1);
+        // Undone, whole.
+        assert!(d.undo().unwrap());
+        assert!(d.undo().unwrap());
+        assert_eq!(d.structure().units.len(), back.sheets().len() - 1);
+    }
+
+    #[test]
+    fn calculation_options() {
+        use kalem_viewer::{CalcMode, CalcOptions};
+        let mut d = open("openpyxl-budget.xlsx");
+        let shown = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .first()
+                .map(|x| x.2.text.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(d.calc_options(), CalcOptions::default());
+        // A circle: K1 reads L1, L1 reads K1.
+        d.set_cell(0, 0, 10, "=L1+1").unwrap();
+        d.set_cell(0, 0, 11, "=K1*0.5").unwrap();
+        assert_eq!(d.circular_references(), vec![(0, 0, 10), (0, 0, 11)]);
+        // Iterated, it settles: K1 = 2, L1 = 1.
+        let it = CalcOptions {
+            iterate: true,
+            max_iterations: 100,
+            max_change: 0.000_001,
+            ..CalcOptions::default()
+        };
+        d.set_calc_options(it).unwrap();
+        assert!(d.circular_references().is_empty());
+        let num = |d: &mut Box<dyn ViewerDocument>, r, c| shown(d, r, c).parse::<f64>().unwrap();
+        assert!((num(&mut d, 0, 10) - 2.0).abs() < 1e-4);
+        assert!((num(&mut d, 0, 11) - 1.0).abs() < 1e-4);
+        // Edited again, iterated again.
+        d.set_cell(0, 0, 11, "=K1*0.75").unwrap();
+        assert!(
+            (num(&mut d, 0, 10) - 4.0).abs() < 1e-3,
+            "{}",
+            shown(&mut d, 0, 10)
+        );
+        // Manual: what reads a changed cell waits for Calculate Now.
+        d.set_calc_options(CalcOptions {
+            mode: CalcMode::Manual,
+            ..CalcOptions::default()
+        })
+        .unwrap();
+        d.set_cell(0, 4, 10, "3").unwrap();
+        d.set_cell(0, 4, 11, "=K5*2").unwrap();
+        assert_eq!(shown(&mut d, 4, 11), "6");
+        d.set_cell(0, 4, 10, "10").unwrap();
+        assert_eq!(shown(&mut d, 4, 11), "6");
+        d.recalculate().unwrap();
+        assert_eq!(shown(&mut d, 4, 11), "20");
+        // Automatic: a data table follows its input at once.
+        d.set_calc_options(CalcOptions::default()).unwrap();
+        d.set_cell(0, 7, 10, "=K5*2").unwrap();
+        d.set_cell(0, 8, 9, "1").unwrap();
+        d.set_cell(0, 9, 9, "2").unwrap();
+        d.create_data_table(0, [7, 9, 9, 10], None, Some((4, 10)))
+            .unwrap();
+        assert_eq!(shown(&mut d, 9, 10), "4");
+        d.set_cell(0, 9, 9, "5").unwrap();
+        assert_eq!(shown(&mut d, 9, 10), "10");
+        // Kept in the file.
+        d.set_calc_options(CalcOptions {
+            mode: CalcMode::AutomaticExceptTables,
+            ..it
+        })
+        .unwrap();
+        let back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
+        let o = back.calc_options();
+        assert_eq!(
+            (o.mode, o.iterate, o.max_iterations),
+            (CalcMode::AutomaticExceptTables, true, 100)
+        );
+        assert!(d.undo().unwrap());
+        assert_eq!(d.calc_options().mode, CalcMode::Automatic);
+    }
+
+    #[test]
+    fn sorted_by_color() {
+        use kalem_viewer::{SortColor, SortKey, StyleChange};
+        let mut d = open("openpyxl-budget.xlsx");
+        for (r, v) in ["a", "b", "c", "d"].iter().enumerate() {
+            d.set_cell(0, 20 + r as u32, 0, v).unwrap();
+        }
+        let red = [0xC0, 0x00, 0x00];
+        for r in [21, 23] {
+            d.change_style(
+                0,
+                [r, 0, r, 0],
+                StyleChange {
+                    fill: Some(Some(red)),
+                    ..StyleChange::default()
+                },
+            )
+            .unwrap();
+        }
+        let key = |descending| SortKey {
+            col: 0,
+            descending,
+            color: Some(SortColor {
+                font: false,
+                rgb: red,
+            }),
+            ..SortKey::default()
+        };
+        d.sort_range_by(0, [20, 0, 23, 0], &[key(false)], false)
+            .unwrap();
+        let col: Vec<String> = (20..24).map(|r| d.cell_input(0, r, 0)).collect();
+        assert_eq!(col, ["b", "d", "a", "c"]);
+        d.sort_range_by(0, [20, 0, 23, 0], &[key(true)], false)
+            .unwrap();
+        let col: Vec<String> = (20..24).map(|r| d.cell_input(0, r, 0)).collect();
+        assert_eq!(col, ["a", "c", "b", "d"]);
+    }
+
+    #[test]
+    fn formatting_more() {
+        use kalem_viewer::{BorderSet, FillPattern, LineStyle, StyleChange};
+        let mut d = open("openpyxl-budget.xlsx");
+        let cell = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .into_iter()
+                .next()
+                .map(|x| x.2)
+                .unwrap_or_default()
+        };
+        // A double bottom line.
+        d.change_style(
+            0,
+            [10, 1, 10, 1],
+            StyleChange {
+                borders: Some((BorderSet::Bottom, Some([0, 0, 0]))),
+                border_style: Some(LineStyle::Double),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            cell(&mut d, 10, 1).border_styles[2],
+            Some(LineStyle::Double)
+        );
+        // A pattern, and a gradient.
+        let grid = FillPattern::Pattern {
+            kind: "darkGrid".into(),
+            color: [0x44, 0x72, 0xC4],
+            background: [0xFF, 0xFF, 0xFF],
+        };
+        let fade = FillPattern::Gradient {
+            angle: 90,
+            from: [0xFF, 0xFF, 0xFF],
+            to: [0x44, 0x72, 0xC4],
+        };
+        for (c, f) in [(2, &grid), (3, &fade)] {
+            d.change_style(
+                0,
+                [10, c, 10, c],
+                StyleChange {
+                    fill_pattern: Some(Some(f.clone())),
+                    ..StyleChange::default()
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(cell(&mut d, 10, 2).fill_pattern, Some(grid.clone()));
+        assert_eq!(cell(&mut d, 10, 3).fill_pattern, Some(fade.clone()));
+        // A named style, made once.
+        d.apply_cell_style(0, [12, 1, 13, 2], "Good").unwrap();
+        d.apply_cell_style(0, [14, 1, 14, 1], "good").unwrap();
+        let good = cell(&mut d, 12, 1);
+        assert_eq!(
+            (good.fill, good.color),
+            (Some([0xC6, 0xEF, 0xCE]), Some([0x00, 0x61, 0x00]))
+        );
+        assert_eq!(d.cell_styles().iter().filter(|n| *n == "Good").count(), 1);
+        assert!(d.apply_cell_style(0, [12, 1, 12, 1], "Nonesuch").is_err());
+        // One of the user's own, from a cell.
+        d.new_cell_style("Mine", 0, 10, 2).unwrap();
+        assert!(d.cell_styles().contains(&"Mine".to_string()));
+        assert!(d.new_cell_style("Mine", 0, 10, 2).is_err());
+        // The theme.
+        let before = d.theme_name();
+        d.set_theme("Blue").unwrap();
+        assert_eq!(d.theme_name().as_deref(), Some("Blue"));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-formatting-test.xlsx"), &saved).unwrap();
+        }
+        let back = crate::Workbook::open(saved).unwrap();
+        assert_eq!(back.theme_name().as_deref(), Some("Blue"));
+        assert!(back.cell_styles().contains(&"Good".to_string()));
+        assert!(d.undo().unwrap());
+        assert_eq!(d.theme_name(), before);
+        // A workbook without a theme gets one.
+        let mut d = open("libreoffice-budget.xlsx");
+        assert_eq!(d.theme_name(), None);
+        d.set_theme("Green").unwrap();
+        let back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert_eq!(back.theme_name().as_deref(), Some("Green"));
+        assert!(d.undo().unwrap());
+        assert_eq!(d.theme_name(), None);
     }
 }

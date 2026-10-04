@@ -308,6 +308,9 @@ pub struct Workbook {
     /// How sheets are shown, as set since opening: written when saving,
     /// untouched by undo.
     views: HashMap<usize, ViewRaw>,
+    /// Circular formulas the last iterative calculation left in the engine
+    /// as values: sheet, cell, formula.
+    circ_overrides: Vec<(usize, CellRef, String)>,
     /// Each sheet's sparklines and threads, at the generation they were
     /// read (a grid asks for them at every frame).
     spark_cache: HashMap<usize, (u64, Vec<Spark>)>,
@@ -436,6 +439,7 @@ impl Workbook {
             batch_changed: false,
             filling_table: false,
             views: HashMap::new(),
+            circ_overrides: Vec::new(),
             spark_cache: HashMap::new(),
             thread_cache: HashMap::new(),
         };
@@ -775,10 +779,11 @@ impl Workbook {
             self.batch_edited.push((idx, at));
             return Ok(());
         }
-        let after = engine.evaluate(&cells).clone();
-        let before = std::mem::take(&mut self.computed);
-        self.write_results(&before, after, &cells, &[(idx, at)]);
-        Ok(())
+        let Some(after) = self.evaluate_all(&cells) else {
+            return Ok(());
+        };
+        self.write_computed(after, &cells, &[(idx, at)]);
+        self.after_change()
     }
 
     /// Computes the cells entered during a batch and writes their results.
@@ -788,13 +793,34 @@ impl Workbook {
         }
         let edited = std::mem::take(&mut self.batch_edited);
         let cells = self.formula_cells();
-        let Some(Ok(engine)) = self.engine.as_mut() else {
+        let Some(after) = self.evaluate_all(&cells) else {
             return Ok(());
         };
-        let after = engine.evaluate(&cells).clone();
+        self.write_computed(after, &cells, &edited);
+        self.after_change()
+    }
+
+    /// Computed results written: all of them, or under Manual
+    /// calculation only the cells just entered, the others kept as they
+    /// were until Calculate Now.
+    fn write_computed(
+        &mut self,
+        after: HashMap<(usize, CellRef), Value>,
+        cells: &[(usize, CellRef)],
+        edited: &[(usize, CellRef)],
+    ) {
         let before = std::mem::take(&mut self.computed);
-        self.write_results(&before, after, &cells, &edited);
-        Ok(())
+        if self.calc_options().mode == kalem_viewer::CalcMode::Manual {
+            let mut kept = before.clone();
+            for k in edited {
+                if let Some(v) = after.get(k) {
+                    kept.insert(*k, v.clone());
+                }
+            }
+            self.write_results(&before, kept, cells, edited);
+        } else {
+            self.write_results(&before, after, cells, edited);
+        }
     }
 
     /// Starts a batch of edits that undo as one step and compute when read:
@@ -1364,6 +1390,9 @@ impl Workbook {
         self.generation += 1;
         // The engine holds the cells as they were; it is built again when needed.
         self.engine = None;
+        self.circ_overrides.clear();
+        // The theme as the package has it again.
+        self.reload_theme();
     }
 
     /// Undoes the last edit; `false` when there is none.
@@ -2068,6 +2097,39 @@ impl Workbook {
             xf = xml::set_attr(&xf, "fontId", &fid.to_string());
             xf = xml::set_attr(&xf, "applyFont", "1");
         }
+        if let Some(pattern) = &change.fill_pattern {
+            let hex = |[r, g, b]: [u8; 3]| format!("FF{r:02X}{g:02X}{b:02X}");
+            let fid = match pattern {
+                None => 0,
+                Some(kalem_viewer::FillPattern::Pattern {
+                    kind,
+                    color,
+                    background,
+                }) => {
+                    let el = format!(
+                        "<fill><patternFill patternType=\"{}\"><fgColor rgb=\"{}\"/><bgColor rgb=\"{}\"/></patternFill></fill>",
+                        xml::escape(kind),
+                        hex(*color),
+                        hex(*background)
+                    );
+                    let (t, fid) = add_style_child(&text, "fills", &el);
+                    text = t;
+                    fid
+                }
+                Some(kalem_viewer::FillPattern::Gradient { angle, from, to }) => {
+                    let el = format!(
+                        "<fill><gradientFill degree=\"{angle}\"><stop position=\"0\"><color rgb=\"{}\"/></stop><stop position=\"1\"><color rgb=\"{}\"/></stop></gradientFill></fill>",
+                        hex(*from),
+                        hex(*to)
+                    );
+                    let (t, fid) = add_style_child(&text, "fills", &el);
+                    text = t;
+                    fid
+                }
+            };
+            xf = xml::set_attr(&xf, "fillId", &fid.to_string());
+            xf = xml::set_attr(&xf, "applyFill", "1");
+        }
         if let Some(fill) = change.fill {
             let fid = match fill {
                 None => 0,
@@ -2100,10 +2162,16 @@ impl Workbook {
             let (set, color) = change
                 .borders
                 .unwrap_or((kalem_viewer::BorderSet::None, None));
-            let weight = if set == kalem_viewer::BorderSet::ThickOutside {
-                "medium"
-            } else {
-                "thin"
+            let weight = match change.border_style {
+                Some(kalem_viewer::LineStyle::Medium) => "medium",
+                Some(kalem_viewer::LineStyle::Thick) => "thick",
+                Some(kalem_viewer::LineStyle::Dashed) => "dashed",
+                Some(kalem_viewer::LineStyle::Dotted) => "dotted",
+                Some(kalem_viewer::LineStyle::Double) => "double",
+                Some(kalem_viewer::LineStyle::Hair) => "hair",
+                Some(kalem_viewer::LineStyle::Thin) => "thin",
+                None if set == kalem_viewer::BorderSet::ThickOutside => "medium",
+                None => "thin",
             };
             let color = color.map_or(format!("<{p}color auto=\"1\"/>"), |[r, g, b]| {
                 format!("<{p}color rgb=\"FF{r:02X}{g:02X}{b:02X}\"/>")
@@ -2233,6 +2301,7 @@ impl Workbook {
         }
         let result = (|| -> Result<()> {
             let mut made: HashMap<(u32, [Option<bool>; 4]), u32> = HashMap::new();
+            let mut writes: Vec<(CellRef, u32)> = Vec::new();
             let others = kalem_viewer::StyleChange {
                 borders: None,
                 ..change.clone()
@@ -2259,11 +2328,12 @@ impl Workbook {
                         }
                     };
                     if new != old || !self.loaded[&idx].1.cells.contains_key(&at) {
-                        self.apply_style(idx, at, new)?;
+                        writes.push((at, new));
                     }
                 }
             }
-            Ok(())
+            // Every cell's new style written in one pass.
+            self.style_many(idx, &writes)
         })();
         self.batch_changed = true;
         if own {
@@ -5433,7 +5503,7 @@ impl Workbook {
         let key = kalem_viewer::SortKey {
             col: key,
             descending,
-            list: None,
+            ..Default::default()
         };
         self.sort_range_keys(idx, range, &[key], header)
     }
@@ -5494,6 +5564,17 @@ impl Workbook {
             let mut k = Vec::new();
             for key in keys {
                 let at = CellRef::new(r, key.col);
+                if let Some(color) = key.color {
+                    // Sort by Color: that color's cells first.
+                    let style = self.loaded[&idx].1.cells.get(&at).map_or(0, |c| c.style);
+                    let st = self.styles.get(style);
+                    let has = if color.font { st.color } else { st.fill };
+                    let [r8, g8, b8] = color.rgb;
+                    let want = u32::from(r8) << 16 | u32::from(g8) << 8 | u32::from(b8);
+                    let hit = has.is_some_and(|c| c & 0xFF_FFFF == want);
+                    k.push((Value::Number(if hit { 0.0 } else { 1.0 }), String::new()));
+                    continue;
+                }
                 k.push((self.value(idx, at)?, self.display(idx, at)?.to_lowercase()));
             }
             let mut cells = Vec::new();
@@ -7678,6 +7759,9 @@ mod sheet_ops;
 mod sparklines;
 pub use sparklines::Spark;
 mod bulk;
+mod calculation;
+mod cellstyles;
+mod copy_sheet;
 mod tables;
 mod views;
 pub use views::{SplitRaw, ViewRaw};

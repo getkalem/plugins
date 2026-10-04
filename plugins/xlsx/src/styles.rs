@@ -52,6 +52,24 @@ pub struct CellStyle {
     pub sides: [Option<(Rgb, bool)>; 4],
     /// A leading apostrophe was typed: the value is text even if it reads as a number.
     pub quote_prefix: bool,
+    /// Each side's line (top, right, bottom, left).
+    pub lines: [Option<kalem_viewer::LineStyle>; 4],
+    /// A pattern or gradient fill.
+    pub pattern: Option<kalem_viewer::FillPattern>,
+}
+
+/// A border's `style` as a line.
+fn line_style(st: &str) -> kalem_viewer::LineStyle {
+    use kalem_viewer::LineStyle;
+    match st {
+        "medium" => LineStyle::Medium,
+        "thick" => LineStyle::Thick,
+        "dotted" => LineStyle::Dotted,
+        "double" => LineStyle::Double,
+        "hair" => LineStyle::Hair,
+        "thin" => LineStyle::Thin,
+        _ => LineStyle::Dashed,
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -279,6 +297,14 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
     let mut fonts: Vec<Font> = Vec::new();
     let mut fills: Vec<Option<Rgb>> = Vec::new();
     let mut borders: Vec<Sides> = Vec::new();
+    let mut lines: Vec<[Option<kalem_viewer::LineStyle>; 4]> = Vec::new();
+    let mut line: [Option<kalem_viewer::LineStyle>; 4] = [None; 4];
+    let mut patterns: Vec<Option<kalem_viewer::FillPattern>> = Vec::new();
+    // The fill open: its pattern's name, colors, and a gradient's angle and stops.
+    let mut pattern_kind: Option<String> = None;
+    let mut pattern_colors: (Option<Rgb>, Option<Rgb>) = (None, None);
+    let mut gradient: Option<(u16, Vec<Rgb>)> = None;
+    let mut in_stop = false;
     let mut styles = Styles::default();
     let mut r = Reader::new(xml);
     // Which list is open: the same `<xf>`, `<font>` and `<color>` tags mean
@@ -337,8 +363,12 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                 "fill" if section == "fills" => {
                     fill = Some(None);
                     fill_pattern_solid = false;
+                    pattern_kind = None;
+                    pattern_colors = (None, None);
+                    gradient = None;
                     if tag.empty {
                         fills.push(None);
+                        patterns.push(None);
                         fill = None;
                     }
                 }
@@ -347,15 +377,35 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                         .attr("patternType")
                         .as_deref()
                         .is_some_and(|p| p != "none");
+                    pattern_kind = tag
+                        .attr("patternType")
+                        .map(|v| v.into_owned())
+                        .filter(|p| p != "none" && p != "solid");
                 }
                 "fgColor" if fill.is_some() && fill_pattern_solid => {
-                    fill = Some(color(&tag, theme))
+                    fill = Some(color(&tag, theme));
+                    pattern_colors.0 = color(&tag, theme);
                 }
-                "stop" if fill.is_some() => {}
+                "bgColor" if fill.is_some() => pattern_colors.1 = color(&tag, theme),
+                "gradientFill" if fill.is_some() => {
+                    let degree = tag
+                        .attr("degree")
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    gradient = Some((degree.rem_euclid(360.0) as u16, Vec::new()));
+                }
+                "stop" if fill.is_some() => in_stop = !tag.empty,
+                "color" if in_stop => {
+                    if let (Some(g), Some(c)) = (gradient.as_mut(), color(&tag, theme)) {
+                        g.1.push(c);
+                    }
+                }
                 "border" if section == "borders" => {
                     border = Some(Sides::default());
+                    line = [None; 4];
                     if tag.empty {
                         borders.push(Sides::default());
+                        lines.push([None; 4]);
                         border = None;
                     }
                 }
@@ -375,6 +425,7 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                         if let Some(b) = border.as_mut() {
                             b[i] = Some((0, thick));
                         }
+                        line[i] = Some(line_style(&st));
                         if !tag.empty {
                             side = Some(i);
                         }
@@ -417,6 +468,8 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                             .get(get("borderId"))
                             .is_some_and(|b| b.iter().any(Option::is_some)),
                         sides: borders.get(get("borderId")).copied().unwrap_or_default(),
+                        lines: lines.get(get("borderId")).copied().unwrap_or_default(),
+                        pattern: patterns.get(get("fillId")).cloned().flatten(),
                         quote_prefix: tag
                             .attr("quotePrefix")
                             .as_deref()
@@ -461,15 +514,33 @@ pub fn parse(xml: &str, theme: &[Rgb]) -> Styles {
                         fonts.push(f);
                     }
                 }
+                "stop" => in_stop = false,
                 "fill" if section == "fills" => {
                     if let Some(f) = fill.take() {
                         fills.push(f);
+                        let rgb = |c: Rgb| [(c >> 16) as u8, (c >> 8) as u8, c as u8];
+                        patterns.push(match (&gradient, &pattern_kind) {
+                            (Some((angle, stops)), _) if !stops.is_empty() => {
+                                Some(kalem_viewer::FillPattern::Gradient {
+                                    angle: *angle,
+                                    from: rgb(stops[0]),
+                                    to: rgb(*stops.last().unwrap_or(&stops[0])),
+                                })
+                            }
+                            (_, Some(kind)) => Some(kalem_viewer::FillPattern::Pattern {
+                                kind: kind.clone(),
+                                color: rgb(pattern_colors.0.unwrap_or(0)),
+                                background: rgb(pattern_colors.1.unwrap_or(0xFF_FFFF)),
+                            }),
+                            _ => None,
+                        });
                     }
                 }
                 "border" if section == "borders" => {
                     side = None;
                     if let Some(b) = border.take() {
                         borders.push(b);
+                        lines.push(line);
                     }
                 }
                 "left" | "right" | "top" | "bottom" | "start" | "end" => side = None,

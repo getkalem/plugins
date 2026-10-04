@@ -31,6 +31,9 @@ sha2 = "0.10"
 # (native) plugin has it, the component does not.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 calamine = "0.36.1"
+# The system's time zone, for NOW() and TODAY() as Excel gives them (the
+# component asks Kalem's clock).
+iana-time-zone = "0.1"
 
 # The component's exports (`kalem plugin build`): the Rust contract
 # adapted to the WIT world `spreadsheet-viewer` (the grid's half, with the

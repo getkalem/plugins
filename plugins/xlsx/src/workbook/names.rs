@@ -156,10 +156,17 @@ impl Workbook {
         trusted: HashSet<(usize, CellRef)>,
     ) -> Result<()> {
         self.engine = None;
+        self.circ_overrides.clear();
         self.ensure_engine()?;
         self.trusted = trusted;
-        let after = std::mem::take(&mut self.computed);
         let cells = self.formula_cells();
+        // Circular references computed over and over, when asked.
+        let mut after = std::mem::take(&mut self.computed);
+        if self.calc_options().iterate
+            && let Some(again) = self.evaluate_all(&cells)
+        {
+            after = again;
+        }
         self.write_results(before, after, &cells, &[]);
         self.complete.clear();
         self.scratch.clear();
