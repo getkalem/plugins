@@ -2234,11 +2234,14 @@ impl Workbook {
                 if categories.is_empty() {
                     categories = cats;
                 }
+                // Fields the contract gains later start empty.
+                #[allow(clippy::needless_update)]
                 series.push(kalem_viewer::ChartSeries {
                     name,
                     values,
                     x,
                     color: s.color.map(|c| [(c >> 16) as u8, (c >> 8) as u8, c as u8]),
+                    ..kalem_viewer::ChartSeries::default()
                 });
             }
             // Fields the contract gains later start empty instead of
