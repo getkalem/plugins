@@ -3522,7 +3522,14 @@ impl Workbook {
     /// relative references, and filled cells take the source's style. One
     /// undo step; a cell Excel would refuse (in a merged cell, part of an
     /// array) refuses the whole fill.
-    pub fn fill(&mut self, idx: usize, source: Range, target: Range, series: bool) -> Result<()> {
+    pub fn fill(
+        &mut self,
+        idx: usize,
+        source: Range,
+        target: Range,
+        series: bool,
+        lists: &[Vec<String>],
+    ) -> Result<()> {
         self.load(idx)?;
         if self.sheets[idx].kind != SheetKind::Worksheet {
             return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
@@ -3548,7 +3555,7 @@ impl Workbook {
         if own {
             self.begin_batch()?;
         }
-        let result = self.fill_inner(idx, source, target, series, down);
+        let result = self.fill_inner(idx, source, target, series, down, lists);
         if own {
             match &result {
                 Ok(()) => {
@@ -3571,6 +3578,7 @@ impl Workbook {
         target: Range,
         series: bool,
         down: bool,
+        lists: &[Vec<String>],
     ) -> Result<()> {
         // Each column of a fill down (each row of a fill right) on its own.
         let (lines, s0, s1, t0, t1) = if down {
@@ -3612,7 +3620,7 @@ impl Workbook {
                 });
                 cells.push((cell, style));
             }
-            let pattern = crate::fill::analyze(&items, series);
+            let pattern = crate::fill::analyze_with(&items, series, lists);
             for k in t0..=t1 {
                 if (s0..=s1).contains(&k) {
                     continue;

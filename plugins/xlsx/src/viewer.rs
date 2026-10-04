@@ -98,6 +98,7 @@ impl Viewer for XlsxViewer {
             notes: HashMap::new(),
             cf: HashMap::new(),
             charts: HashMap::new(),
+            fill_lists: Vec::new(),
             name: file.name().to_owned(),
         }))
     }
@@ -116,6 +117,8 @@ struct XlsxDoc {
     cf: HashMap<usize, (u64, crate::conditional::Evaluator)>,
     /// Each sheet's charts, at the generation they were read.
     charts: HashMap<usize, (u64, Vec<Chart>)>,
+    /// The user's own lists a fill goes round.
+    fill_lists: Vec<Vec<String>>,
     name: String,
 }
 
@@ -583,6 +586,10 @@ impl ViewerDocument for XlsxDoc {
         Ok(self.all_units())
     }
 
+    fn set_fill_lists(&mut self, lists: Vec<Vec<String>>) {
+        self.fill_lists = lists;
+    }
+
     fn fill(
         &mut self,
         unit: usize,
@@ -594,8 +601,9 @@ impl ViewerDocument for XlsxDoc {
             start: CellRef::new(a[0], a[1]),
             end: CellRef::new(a[2], a[3]),
         };
+        let lists = self.fill_lists.clone();
         self.book()
-            .fill(unit, r(source), r(target), series)
+            .fill(unit, r(source), r(target), series, &lists)
             .map_err(err)?;
         Ok(vec![unit])
     }
@@ -2164,5 +2172,13 @@ mod tests {
         assert!(d.undo().unwrap());
         assert_eq!(d.cell_input(0, 0, 4), "");
         assert!(d.fill(0, [9, 1, 10, 1], [9, 1, 12, 3], true).is_err());
+        // The user's own list goes round.
+        d.set_fill_lists(vec![vec!["Low".into(), "Mid".into(), "High".into()]]);
+        d.set_cell(0, 20, 0, "Mid").unwrap();
+        d.fill(0, [20, 0, 20, 0], [20, 0, 22, 0], true).unwrap();
+        assert_eq!(
+            (d.cell_input(0, 21, 0), d.cell_input(0, 22, 0)),
+            ("High".into(), "Low".into())
+        );
     }
 }

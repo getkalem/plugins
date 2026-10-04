@@ -86,6 +86,8 @@ pub enum Pattern {
     Numbered(String, i64, i64, usize),
     /// A list, the first item's place in it, the step, and the case.
     List(&'static [&'static str], i64, i64, Case),
+    /// One of the user's own lists, likewise.
+    Custom(Vec<String>, i64, i64, Case),
 }
 
 /// How a list's items are written.
@@ -130,6 +132,12 @@ fn list_of(s: &str) -> Option<(&'static [&'static str], i64)> {
 
 /// What the source makes when filled; `series` off copies it.
 pub fn analyze(src: &[Item], series: bool) -> Pattern {
+    analyze_with(src, series, &[])
+}
+
+/// What the source makes when filled, the user's own `lists` gone round
+/// as the months and days are (and before them).
+pub fn analyze_with(src: &[Item], series: bool, lists: &[Vec<String>]) -> Pattern {
     let n = src.len();
     if !series || n == 0 || src.iter().any(|i| i.formula) {
         return Pattern::Copy(n);
@@ -173,6 +181,30 @@ pub fn analyze(src: &[Item], series: bool) -> Pattern {
     let Some(texts) = texts else {
         return Pattern::Copy(n);
     };
+    // The user's own lists first, then month or day names: the same list
+    // throughout and evenly apart.
+    for list in lists.iter().filter(|l| l.len() >= 2) {
+        let places: Option<Vec<i64>> = texts
+            .iter()
+            .map(|t| {
+                let low = t.to_lowercase();
+                list.iter()
+                    .position(|x| x.to_lowercase() == low)
+                    .map(|i| i as i64)
+            })
+            .collect();
+        if let Some(p) = places {
+            let len = list.len() as i64;
+            let step = if n == 1 {
+                1
+            } else {
+                (p[1] - p[0]).rem_euclid(len)
+            };
+            if p.windows(2).all(|w| (w[1] - w[0]).rem_euclid(len) == step) {
+                return Pattern::Custom(list.clone(), p[0], step, case_of(texts[0]));
+            }
+        }
+    }
     // Month or day names, the same list throughout and evenly apart.
     let places: Option<Vec<(&'static [&'static str], i64)>> =
         texts.iter().map(|t| list_of(t)).collect();
@@ -225,6 +257,17 @@ impl Pattern {
                 let s = items[(start + step * p).rem_euclid(len) as usize];
                 Out::Text(match case {
                     Case::Title => s.to_owned(),
+                    Case::Upper => s.to_uppercase(),
+                    Case::Lower => s.to_lowercase(),
+                })
+            }
+            Pattern::Custom(items, start, step, case) => {
+                let len = items.len() as i64;
+                let s = &items[(start + step * p).rem_euclid(len) as usize];
+                // As the list writes it, unless the source was all capitals
+                // or all small letters.
+                Out::Text(match case {
+                    Case::Title => s.clone(),
                     Case::Upper => s.to_uppercase(),
                     Case::Lower => s.to_lowercase(),
                 })
@@ -289,6 +332,31 @@ mod tests {
         assert_eq!(
             analyze(&[text("Pazartesi")], true).at(-1),
             Out::Text("Pazar".into())
+        );
+        // The user's own list, before the built-in ones.
+        let lists = vec![vec![
+            "Kuzey".to_string(),
+            "Güney".into(),
+            "Doğu".into(),
+            "Batı".into(),
+        ]];
+        assert_eq!(
+            analyze_with(&[text("Doğu")], true, &lists).at(2),
+            Out::Text("Kuzey".into())
+        );
+        assert_eq!(
+            analyze_with(&[text("kuzey"), text("doğu")], true, &lists).at(2),
+            Out::Text("kuzey".into())
+        );
+        let mar = vec![vec!["Mar".to_string(), "Nis".into(), "Ara".into()]];
+        assert_eq!(
+            analyze_with(&[text("Mar")], true, &mar).at(1),
+            Out::Text("Nis".into())
+        );
+        assert_eq!(
+            analyze_with(&[text("Batı")], true, &[]).at(1),
+            Out::Copy(0),
+            "no list, a copy"
         );
         // Anything else, and every copy, the cells over again.
         assert_eq!(analyze(&[text("a"), text("b")], true).at(3), Out::Copy(1));
