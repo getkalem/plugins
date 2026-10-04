@@ -474,6 +474,10 @@ impl Workbook {
                     self.pkg.remove_part(&own_rels);
                 }
                 self.rename_everywhere(&info.name, None)?;
+                // The calculation chain names the sheet by its id: Excel
+                // builds it again, and computes the formulas on opening.
+                self.drop_calc_chain()?;
+                self.set_full_calc_on_load();
                 self.reread_workbook();
                 Ok(i.min(self.sheets.len().saturating_sub(1)))
             }

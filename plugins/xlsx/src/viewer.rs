@@ -2567,6 +2567,8 @@ mod tests {
         if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
             std::fs::write(format!("{dir}/kalem-sheets-test.xlsx"), &saved).unwrap();
         }
+        let pkg = crate::package::Package::read(saved.clone()).unwrap();
+        assert!(!pkg.contains("xl/calcChain.xml"));
         let wb = Workbook::open(saved).unwrap();
         assert_eq!(wb.sheets()[0].name, "Sheet1");
         for _ in 0..7 {
