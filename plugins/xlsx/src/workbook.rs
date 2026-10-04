@@ -310,6 +310,9 @@ pub struct Workbook {
     /// The sheets found to hold no formula without its result, at the
     /// generation they were looked at.
     complete: HashMap<usize, u64>,
+    /// Formulas computed as if in an unused cell, by sheet and text, at
+    /// the generation they were computed.
+    scratch: HashMap<(usize, String), (u64, Option<Value>)>,
 }
 
 /// What an edit changes, kept whole for undo: the package's bytes are
@@ -410,6 +413,7 @@ impl Workbook {
             generation: 0,
             validations: HashMap::new(),
             complete: HashMap::new(),
+            scratch: HashMap::new(),
             styles_xml: None,
             theme,
             has_vba,
@@ -766,13 +770,52 @@ impl Workbook {
     /// A formula computed as if it were in an unused cell of the sheet
     /// (`Evaluate`, `WorksheetFunction`); `None` when the engine cannot.
     pub fn evaluate_formula(&mut self, idx: usize, formula: &str) -> Result<Option<Value>> {
+        Ok(self
+            .evaluate_formulas(idx, &[formula.to_owned()])?
+            .pop()
+            .flatten())
+    }
+
+    /// Formulas computed together, as [`Workbook::evaluate_formula`] one:
+    /// every engine computation recalculates the workbook, so the grid asks
+    /// for what a screenful needs at once. Kept until the workbook changes.
+    pub fn evaluate_formulas(
+        &mut self,
+        idx: usize,
+        formulas: &[String],
+    ) -> Result<Vec<Option<Value>>> {
         self.load(idx)?;
         self.ensure_engine()?;
         self.flush()?;
-        Ok(match self.engine.as_mut() {
-            Some(Ok(e)) => e.eval_scratch(idx, formula.trim_start_matches('=')),
-            _ => None,
-        })
+        let generation = self.generation;
+        let key = |f: &String| (idx, f.trim_start_matches('=').to_owned());
+        let mut missing: Vec<String> = formulas
+            .iter()
+            .filter(|f| {
+                self.scratch
+                    .get(&key(f))
+                    .is_none_or(|(g, _)| *g != generation)
+            })
+            .map(|f| f.trim_start_matches('=').to_owned())
+            .collect();
+        missing.sort();
+        missing.dedup();
+        if !missing.is_empty() {
+            let values = match self.engine.as_mut() {
+                Some(Ok(e)) => e.eval_scratch_many(idx, &missing),
+                _ => vec![None; missing.len()],
+            };
+            if self.scratch.len() > 200_000 {
+                self.scratch.clear();
+            }
+            for (f, v) in missing.into_iter().zip(values) {
+                self.scratch.insert((idx, f), (generation, v));
+            }
+        }
+        Ok(formulas
+            .iter()
+            .map(|f| self.scratch.get(&key(f)).and_then(|(_, v)| v.clone()))
+            .collect())
     }
 
     /// Writes the results that changed between two computations: trusted
@@ -1963,6 +2006,30 @@ impl Workbook {
                 inside == (op != "notBetween")
             }
         })
+    }
+
+    /// Computes together the formulas the validations of `cells` need
+    /// (custom rules, bounds that are formulas), as the grid circles a
+    /// screenful of invalid data: one recalculation, not one a cell.
+    pub fn prefetch_validations(
+        &mut self,
+        idx: usize,
+        cells: &[(CellRef, &validation::DataValidation)],
+    ) {
+        let mut formulas = Vec::new();
+        for (at, dv) in cells {
+            let first = dv.first();
+            let custom = dv.kind == "custom";
+            for f in [&dv.formula1, &dv.formula2].into_iter().flatten() {
+                let t = f.trim().trim_start_matches('=');
+                if custom || (dv.kind != "list" && t.parse::<f64>().is_err()) {
+                    formulas.push(conditional::moved(t, first, *at));
+                }
+            }
+        }
+        if !formulas.is_empty() {
+            let _ = self.evaluate_formulas(idx, &formulas);
+        }
     }
 
     /// The validation an entry breaks if typed into a cell, as Excel checks

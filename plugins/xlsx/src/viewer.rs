@@ -260,6 +260,13 @@ impl XlsxDoc {
             index.insert((at.row, at.col), out.len());
             out.push((at.row, at.col, GridCell::default()));
         }
+        // The formulas the rules need for these cells, computed together.
+        let touched: Vec<CellRef> = index
+            .keys()
+            .map(|&(r, c)| CellRef::new(r, c))
+            .filter(|p| ev.touches(*p))
+            .collect();
+        ev.prefetch(&touched, self.book(), unit);
         let mut unused = Vec::new();
         for (&(row, col), &i) in &index {
             let at = CellRef::new(row, col);
@@ -1033,11 +1040,15 @@ impl ViewerDocument for XlsxDoc {
                 .collect(),
             Err(_) => return Vec::new(),
         };
+        let pairs: Vec<(CellRef, &crate::validation::DataValidation)> = positions
+            .iter()
+            .filter_map(|&at| dvs.iter().find(|d| d.covers(at)).map(|d| (at, d)))
+            .collect();
+        // Their formulas computed together, then each cell judged.
+        self.book().prefetch_validations(unit, &pairs);
         let mut out = Vec::new();
-        for at in positions {
-            if let Some(dv) = dvs.iter().find(|d| d.covers(at))
-                && !self.book().accepts(unit, at, dv).unwrap_or(true)
-            {
+        for (at, dv) in pairs {
+            if !self.book().accepts(unit, at, dv).unwrap_or(true) {
                 out.push((at.row, at.col));
             }
         }

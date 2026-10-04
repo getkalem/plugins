@@ -406,6 +406,46 @@ impl Evaluator {
         }
     }
 
+    /// Computes together what the rules' formulas need for `cells` (each
+    /// cell's moved formulas, the thresholds' formulas), so that reading
+    /// their results costs one recalculation of the workbook, not one a
+    /// cell.
+    pub fn prefetch(&self, cells: &[CellRef], wb: &mut Workbook, idx: usize) {
+        let mut formulas = Vec::new();
+        for (ranges, rule) in &self.rules {
+            let thresholds = rule
+                .scale
+                .iter()
+                .map(|x| &x.0)
+                .chain(rule.bar.iter().flat_map(|b| [&b.0, &b.1]))
+                .chain(rule.icons.iter().flat_map(|i| i.1.iter()));
+            for c in thresholds {
+                if let Cfvo::Formula(f) = c
+                    && constant(f).is_none()
+                {
+                    formulas.push(f.clone());
+                }
+            }
+            if !matches!(rule.kind.as_str(), "cellIs" | "expression") {
+                continue;
+            }
+            for &at in cells {
+                if self.cells.contains_key(&at) || !ranges.iter().any(|r| r.contains(at)) {
+                    continue;
+                }
+                let first = ranges.first().map_or(at, |r| r.start);
+                for f in &rule.formulas {
+                    if constant(f).is_none() {
+                        formulas.push(moved(f, first, at));
+                    }
+                }
+            }
+        }
+        if !formulas.is_empty() {
+            let _ = wb.evaluate_formulas(idx, &formulas);
+        }
+    }
+
     /// Whether there are no rules.
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()

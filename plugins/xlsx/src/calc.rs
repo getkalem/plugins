@@ -154,22 +154,40 @@ impl Engine {
         })
     }
 
-    /// Computes a formula as if it were in a cell of `sheet` that is not
-    /// used: `Application.Evaluate` and `WorksheetFunction` in macros.
-    pub fn eval_scratch(&mut self, sheet: usize, formula: &str) -> Option<Value> {
-        let idx = (*self.map.get(sheet)?)?;
-        // The last cell of the sheet; cleared again afterwards.
-        let (r, c) = (
+    /// Formulas computed together, as if each were in an unused cell of the
+    /// sheet: one recalculation of the workbook for all of them, which is
+    /// what a recalculation costs.
+    pub fn eval_scratch_many(&mut self, sheet: usize, formulas: &[String]) -> Vec<Option<Value>> {
+        let Some(Some(idx)) = self.map.get(sheet).copied() else {
+            return vec![None; formulas.len()];
+        };
+        let (last_row, c) = (
             crate::cellref::MAX_ROW as i32,
             crate::cellref::MAX_COL as i32,
         );
-        self.model
-            .update_cell_with_formula(idx, r, c, engine_formula(formula))
-            .ok()?;
-        self.model.evaluate();
-        let v = self.value(sheet, CellRef::new(r as u32 - 1, c as u32 - 1));
-        let _ = self.model.set_user_input(idx, r, c, String::new());
-        v
+        let mut out = Vec::with_capacity(formulas.len());
+        // The sheet's last column, from its last row up, a chunk at a time.
+        for chunk in formulas.chunks(4096) {
+            let mut placed = Vec::with_capacity(chunk.len());
+            for (k, f) in chunk.iter().enumerate() {
+                let r = last_row - k as i32;
+                let ok = self
+                    .model
+                    .update_cell_with_formula(idx, r, c, engine_formula(f.trim_start_matches('=')))
+                    .is_ok();
+                placed.push((r, ok));
+            }
+            self.model.evaluate();
+            for (r, ok) in placed {
+                out.push(if ok {
+                    self.value(sheet, CellRef::new(r as u32 - 1, c as u32 - 1))
+                } else {
+                    None
+                });
+                let _ = self.model.set_user_input(idx, r, c, String::new());
+            }
+        }
+        out
     }
 
     /// Enters a cell's new content: a formula, a value, or nothing.
