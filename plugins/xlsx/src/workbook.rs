@@ -6615,6 +6615,7 @@ fn widen_spans(row_tag: &str, col: u32) -> String {
     xml::set_attr(row_tag, "spans", &format!("{}:{}", a.min(c), b.max(c)))
 }
 
+mod notes;
 mod sheet_ops;
 
 #[cfg(test)]

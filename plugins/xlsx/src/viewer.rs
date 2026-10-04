@@ -550,6 +550,20 @@ impl ViewerDocument for XlsxDoc {
             .unwrap_or_default()
     }
 
+    fn set_note(
+        &mut self,
+        unit: usize,
+        row: u32,
+        col: u32,
+        text: Option<String>,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_comment(unit, CellRef::new(row, col), text.as_deref())
+            .map_err(err)?;
+        self.notes.remove(&unit);
+        Ok(vec![unit])
+    }
+
     fn set_frozen(&mut self, unit: usize, rows: u32, cols: u32) -> Result<Vec<usize>> {
         self.book().set_frozen(unit, rows, cols).map_err(err)?;
         Ok(vec![unit])
@@ -2635,5 +2649,48 @@ mod tests {
             assert!(d.undo().unwrap());
         }
         assert_eq!(frozen(&mut d), first);
+    }
+
+    #[test]
+    fn notes_written() {
+        use kalem_viewer::SheetEdit;
+        let mut d = open("openpyxl-budget.xlsx");
+        let first = d.cell_note(0, 1, 0);
+        assert!(first.is_some());
+        // Edited, added beside it, then the first taken away.
+        d.set_note(0, 1, 0, Some("Paid <monthly> & on time".into()))
+            .unwrap();
+        assert_eq!(
+            d.cell_note(0, 1, 0).as_deref(),
+            Some("Paid <monthly> & on time")
+        );
+        d.set_note(0, 2, 2, Some("Check".into())).unwrap();
+        assert_eq!(d.cell_note(0, 2, 2).as_deref(), Some("Check"));
+        assert!(d.grid_cells(0, 2..3, 2..3)[0].2.note);
+        d.set_note(0, 1, 0, None).unwrap();
+        assert!(d.cell_note(0, 1, 0).is_none());
+        // A sheet without notes gets its comments part and drawing.
+        d.edit_sheets(SheetEdit::Insert(1)).unwrap();
+        d.set_note(1, 4, 1, Some("Yeni not".into())).unwrap();
+        assert_eq!(d.cell_note(1, 4, 1).as_deref(), Some("Yeni not"));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-notes-test.xlsx"), &saved).unwrap();
+        }
+        let wb = Workbook::open(saved.clone()).unwrap();
+        let notes = wb.comments(1).unwrap();
+        assert_eq!(
+            (notes[0].cell, notes[0].text.as_str()),
+            (CellRef::new(4, 1), "Yeni not")
+        );
+        let pkg = crate::package::Package::read(saved).unwrap();
+        let sheet = String::from_utf8(pkg.part(&wb.sheets()[1].part).unwrap()).unwrap();
+        assert!(sheet.contains("<legacyDrawing r:id="), "{sheet}");
+        // Each change one undo step.
+        for _ in 0..5 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(d.cell_note(0, 1, 0), first);
+        assert!(d.cell_note(0, 2, 2).is_none());
     }
 }
