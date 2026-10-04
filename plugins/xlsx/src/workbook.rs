@@ -308,6 +308,10 @@ pub struct Workbook {
     /// How sheets are shown, as set since opening: written when saving,
     /// untouched by undo.
     views: HashMap<usize, ViewRaw>,
+    /// Each sheet's sparklines and threads, at the generation they were
+    /// read (a grid asks for them at every frame).
+    spark_cache: HashMap<usize, (u64, Vec<Spark>)>,
+    thread_cache: HashMap<usize, (u64, Vec<Thread>)>,
     /// Counts the changes to sheet texts, for what is computed from them.
     generation: u64,
     /// Each sheet's data validations, at the generation they were read.
@@ -432,6 +436,8 @@ impl Workbook {
             batch_changed: false,
             filling_table: false,
             views: HashMap::new(),
+            spark_cache: HashMap::new(),
+            thread_cache: HashMap::new(),
         };
         wb.read_workbook_part();
         Ok(wb)

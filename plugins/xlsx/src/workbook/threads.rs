@@ -180,6 +180,17 @@ impl Workbook {
 
     /// The threads of sheet `idx`.
     pub fn threads(&mut self, idx: usize) -> Vec<Thread> {
+        if let Some((g, v)) = self.thread_cache.get(&idx)
+            && *g == self.generation
+        {
+            return v.clone();
+        }
+        let v = self.read_threads(idx);
+        self.thread_cache.insert(idx, (self.generation, v.clone()));
+        v
+    }
+
+    fn read_threads(&mut self, idx: usize) -> Vec<Thread> {
         let Ok(Some(part)) = self.sheet_part_of_kind(idx, "threadedComment") else {
             return Vec::new();
         };
@@ -241,6 +252,7 @@ impl Workbook {
     /// Writes sheet `idx`'s threads (its part made when new), and the
     /// notes mirroring the threads of `cells`.
     fn write_threads(&mut self, idx: usize, threads: &[Thread], cells: &[CellRef]) -> Result<()> {
+        self.generation += 1;
         let mut items = String::new();
         for t in threads {
             let first = t.comments.first().map(|c| c.id.clone()).unwrap_or_default();

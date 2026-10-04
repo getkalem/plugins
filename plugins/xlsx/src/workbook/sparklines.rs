@@ -148,10 +148,23 @@ fn group_xml(sheet: &str, kind: SparklineKind, mark: bool, lines: &[(Range, Cell
 impl Workbook {
     /// The sparklines of sheet `idx`.
     pub fn sparklines(&mut self, idx: usize) -> Vec<Spark> {
+        if let Some((g, v)) = self.spark_cache.get(&idx)
+            && *g == self.generation
+        {
+            return v.clone();
+        }
         if self.load(idx).is_err() {
             return Vec::new();
         }
-        parse(&self.loaded[&idx].0)
+        // Only a sheet with the extension has any: no scan of the others.
+        let text = &self.loaded[&idx].0;
+        let v = if text.contains("sparklineGroup") {
+            parse(text)
+        } else {
+            Vec::new()
+        };
+        self.spark_cache.insert(idx, (self.generation, v.clone()));
+        v
     }
 
     /// Puts sparklines in `location` (a row or a column of cells) of
