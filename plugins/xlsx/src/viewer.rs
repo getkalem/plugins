@@ -3034,4 +3034,14 @@ mod tests {
         assert!(d.undo().unwrap());
         assert_eq!(d.cell_input(0, 1, 5), "");
     }
+
+    #[test]
+    fn line_breaks_wrap() {
+        let mut d = open("openpyxl-budget.xlsx");
+        d.set_cell(0, 9, 0, "Kira\nOcak").unwrap();
+        let c = d.grid_cells(0, 9..10, 0..1).remove(0).2;
+        assert!(c.wrap && c.text == "Kira\nOcak", "{c:?}");
+        assert!(d.undo().unwrap());
+        assert_eq!(d.cell_input(0, 9, 0), "");
+    }
 }

@@ -1019,7 +1019,32 @@ impl Workbook {
     /// Types an entry into a cell, as typing it in Excel and pressing Enter.
     pub fn set_cell(&mut self, idx: usize, at: CellRef, entry: &str) -> Result<()> {
         let input = Input::parse(entry, self.date1904);
-        self.set_input(idx, at, input)
+        if !(matches!(&input, Input::Text(t) if t.contains('\n'))) {
+            return self.set_input(idx, at, input);
+        }
+        // Text with a line break (Alt+Enter): wrapped, as Excel does, in
+        // the same undo step.
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = self
+            .set_input(idx, at, input)
+            .and_then(|()| self.set_wrap(idx, at, true));
+        self.batch_changed = true;
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result
     }
 
     /// Enters `entry` into every cell of `range`, as Excel's Ctrl+Enter: a
