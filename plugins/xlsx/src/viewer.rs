@@ -550,6 +550,17 @@ impl ViewerDocument for XlsxDoc {
             .unwrap_or_default()
     }
 
+    fn cell_format(&mut self, unit: usize, row: u32, col: u32) -> Option<String> {
+        let style = self
+            .book()
+            .sheet(unit)
+            .ok()?
+            .cells
+            .get(&CellRef::new(row, col))
+            .map_or(0, |c| c.style);
+        Some(self.book().style(style).num_fmt.clone())
+    }
+
     fn cell_note(&mut self, unit: usize, row: u32, col: u32) -> Option<String> {
         self.notes(unit).get(&CellRef::new(row, col)).cloned()
     }
@@ -2415,5 +2426,43 @@ mod tests {
         }
         assert_eq!(cell(&mut d, 1, 1).borders, [None; 4]);
         assert_eq!(cell(&mut d, 5, 0).borders, [None; 4]);
+    }
+
+    #[test]
+    fn number_formats() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let format = |d: &mut Box<dyn ViewerDocument>, r: [u32; 4], code: &str| {
+            d.change_style(
+                0,
+                r,
+                StyleChange {
+                    number_format: Some(code.into()),
+                    ..StyleChange::default()
+                },
+            )
+            .unwrap();
+        };
+        let text = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1).remove(0).2.text
+        };
+        assert_eq!(d.cell_format(0, 1, 1).as_deref(), Some("#,##0.00"));
+        // B2:C2 as a percent, scientific, one decimal, in lira.
+        format(&mut d, [1, 1, 1, 2], "0%");
+        assert_eq!(text(&mut d, 1, 1), "120000%");
+        assert_eq!(d.cell_format(0, 1, 2).as_deref(), Some("0%"));
+        format(&mut d, [1, 1, 1, 1], "0.00E+00");
+        assert_eq!(text(&mut d, 1, 1), "1.20E+03");
+        format(&mut d, [1, 1, 1, 1], "0.0");
+        assert_eq!(text(&mut d, 1, 1), "1200.0");
+        format(&mut d, [1, 1, 1, 1], "#,##0.00 \"₺\"");
+        assert_eq!(text(&mut d, 1, 1), "1,200.00 ₺");
+        // Kept through saving; the font and fill the cell had stay.
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        let s = wb.sheet(0).unwrap().cells[&CellRef::new(1, 1)].style;
+        assert_eq!(wb.style(s).num_fmt, "#,##0.00 \"₺\"");
+        for _ in 0..4 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(text(&mut d, 1, 1), "1,200.00");
     }
 }

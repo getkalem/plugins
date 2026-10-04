@@ -1837,6 +1837,12 @@ impl Workbook {
             xf = xml::set_attr(&xf, "borderId", &bid.to_string());
             xf = xml::set_attr(&xf, "applyBorder", "1");
         }
+        if let Some(code) = &change.number_format {
+            let (t, id) = with_num_fmt(&text, code);
+            text = t;
+            xf = xml::set_attr(&xf, "numFmtId", &id.to_string());
+            xf = xml::set_attr(&xf, "applyNumberFormat", "1");
+        }
         if let Some(a) = change.align {
             let v = match a {
                 kalem_viewer::Align::Left => "left",
@@ -5717,6 +5723,77 @@ fn style_children(text: &str, list: &str) -> Option<Vec<Span<usize>>> {
 
 /// `styles.xml` with `el` the last child of its list `list` (`count` kept
 /// right), and its index; the one already there when the list has it.
+/// The id of number format `code`: a built-in one's, one the style sheet
+/// has, or one added to its `<numFmts>` (made when there is none).
+fn with_num_fmt(text: &str, code: &str) -> (String, u32) {
+    if let Some(id) = (0..=49).find(|&i| crate::numfmt::builtin(i) == Some(code)) {
+        return (text.to_owned(), id);
+    }
+    let mut r = Reader::new(text);
+    let mut root: Option<std::ops::Range<usize>> = None;
+    let mut list: Option<String> = None;
+    let mut top = 163;
+    let mut depth = 0;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 0 {
+                    root = Some(tag.span.clone());
+                } else if depth == 1 && tag.name == "numFmts" {
+                    list = Some(xml::prefix(tag.qname).to_owned());
+                } else if tag.name == "numFmt" && list.is_some() {
+                    let id: u32 = tag
+                        .attr("numFmtId")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0);
+                    if tag.attr("formatCode").as_deref() == Some(code) {
+                        return (text.to_owned(), id);
+                    }
+                    top = top.max(id);
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { name, .. } => {
+                depth -= 1;
+                if name == "numFmts" {
+                    break;
+                }
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let id = top + 1;
+    match list {
+        Some(p) => {
+            let el = format!(
+                "<{p}numFmt numFmtId=\"{id}\" formatCode=\"{}\"/>",
+                xml::escape(code)
+            );
+            (add_style_child(text, "numFmts", &el).0, id)
+        }
+        None => {
+            let Some(root) = root else {
+                return (text.to_owned(), 0);
+            };
+            let p = xml::prefix(
+                text[root.clone()]
+                    .trim_start_matches('<')
+                    .split([' ', '/', '>'])
+                    .next()
+                    .unwrap_or(""),
+            )
+            .to_owned();
+            let el = format!(
+                "<{p}numFmts count=\"1\"><{p}numFmt numFmtId=\"{id}\" formatCode=\"{}\"/></{p}numFmts>",
+                xml::escape(code)
+            );
+            (splice(text, vec![(root.end..root.end, el)]), id)
+        }
+    }
+}
+
 /// Which of a cell's sides a change's borders draw (`Some(true)`), take
 /// away (`Some(false)`) or leave: top, right, bottom, left.
 fn border_sides(
@@ -5758,7 +5835,9 @@ fn add_style_child(text: &str, list: &str, el: &str) -> (String, usize) {
             Token::Start(tag) => {
                 if depth == 1 && tag.name == list {
                     let p = xml::prefix(tag.qname).to_owned();
-                    let el = if p.is_empty() {
+                    // Markup made from the sheet's own elements has the
+                    // prefix already.
+                    let el = if p.is_empty() || el.starts_with(&format!("<{p}")) {
                         el.to_owned()
                     } else {
                         with_prefix(el, &p)
@@ -6277,6 +6356,29 @@ fn widen_spans(row_tag: &str, col: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn number_formats_found_or_added() {
+        // A built-in code is its id; a new one goes past the sheet's own.
+        let x = r#"<styleSheet><numFmts count="1"><numFmt numFmtId="170" formatCode="0.0"/></numFmts><cellXfs/></styleSheet>"#;
+        assert_eq!(with_num_fmt(x, "0.00E+00").1, 11);
+        assert_eq!(with_num_fmt(x, "0.0").1, 170);
+        let (t, id) = with_num_fmt(x, "#,##0.00 \"₺\"");
+        assert_eq!(id, 171);
+        assert!(t.contains(r#"<numFmts count="2">"#), "{t}");
+        assert!(
+            t.contains(r##"formatCode="#,##0.00 &quot;₺&quot;""##),
+            "{t}"
+        );
+        // None yet: the list made first in the sheet, prefixed as it is.
+        let x = r#"<x:styleSheet xmlns:x="s"><x:fonts/></x:styleSheet>"#;
+        let (t, id) = with_num_fmt(x, "0.000");
+        assert_eq!(id, 164);
+        assert!(
+            t.starts_with(r#"<x:styleSheet xmlns:x="s"><x:numFmts count="1"><x:numFmt numFmtId="164" formatCode="0.000"/></x:numFmts><x:fonts/>"#),
+            "{t}"
+        );
+    }
 
     #[test]
     fn entries_read_as_excel_reads_them() {
