@@ -1781,6 +1781,23 @@ impl Workbook {
             xf = xml::set_attr(&xf, "fillId", &fid.to_string());
             xf = xml::set_attr(&xf, "applyFill", "1");
         }
+        if let Some(a) = change.align {
+            let v = match a {
+                kalem_viewer::Align::Left => "left",
+                kalem_viewer::Align::Center => "center",
+                kalem_viewer::Align::Right => "right",
+                _ => "general",
+            };
+            xf = with_alignment(&xf, "horizontal", v);
+        }
+        if let Some(a) = change.valign {
+            let v = match a {
+                kalem_viewer::VAlign::Top => "top",
+                kalem_viewer::VAlign::Middle => "center",
+                _ => "bottom",
+            };
+            xf = with_alignment(&xf, "vertical", v);
+        }
         let (t, xid) = add_style_child(&text, "cellXfs", &xf);
         text = t;
         self.styles = styles::parse(&text, &self.theme);

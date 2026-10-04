@@ -11,7 +11,7 @@ use kalem_viewer::{
     CondStyle, DataLabels, Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout,
     Gridlines, InfoField, LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, Paint,
     PivotSpec, RenderRequest, Rendered, Result, SaveOutput, Structure, StyleChange, Unit, UnitKind,
-    Validation, ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
+    VAlign, Validation, ValidationError, ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -512,6 +512,11 @@ impl ViewerDocument for XlsxDoc {
                         .filter(|s| Some(*s) != base.size)
                         .map(|s| (s * 10.0).round() as u16),
                     face: style.font.clone().filter(|f| Some(f) != base.font.as_ref()),
+                    valign: match style.valign.as_deref() {
+                        Some("top") => VAlign::Top,
+                        Some("center" | "justify" | "distributed") => VAlign::Middle,
+                        _ => VAlign::Bottom,
+                    },
                     // Fields the contract gains later start empty.
                     ..GridCell::default()
                 },
@@ -2290,5 +2295,64 @@ mod tests {
         }
         let c = d.grid_cells(0, 1..2, 1..2).remove(0).2;
         assert!(!c.bold && c.fill.is_none() && c.font_size.is_none());
+    }
+
+    #[test]
+    fn alignment() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // A2:B3 centered at the top; then B2 right, the top kept.
+        d.change_style(
+            0,
+            [1, 0, 2, 1],
+            StyleChange {
+                align: Some(Align::Center),
+                valign: Some(VAlign::Top),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        d.change_style(
+            0,
+            [1, 1, 1, 1],
+            StyleChange {
+                align: Some(Align::Right),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        let c = |d: &mut Box<dyn ViewerDocument>, r: u32, col: u32| {
+            d.grid_cells(0, r..r + 1, col..col + 1).remove(0).2
+        };
+        let (a2, b2) = (c(&mut d, 1, 0), c(&mut d, 1, 1));
+        assert_eq!((a2.align, a2.valign), (Align::Center, VAlign::Top));
+        assert_eq!((b2.align, b2.valign), (Align::Right, VAlign::Top));
+        // B2's number format stays.
+        assert_eq!(b2.text, "1,200.00");
+        // Written in the cell's <alignment>, as Excel reads it.
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        let s = wb.sheet(0).unwrap().cells[&CellRef::new(1, 0)].style;
+        let st = wb.style(s);
+        assert_eq!(
+            (st.align.as_deref(), st.valign.as_deref()),
+            (Some("center"), Some("top"))
+        );
+        // Middle, then General; each one undo step.
+        d.change_style(
+            0,
+            [1, 0, 1, 0],
+            StyleChange {
+                align: Some(Align::General),
+                valign: Some(VAlign::Middle),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        let a2 = c(&mut d, 1, 0);
+        assert_eq!((a2.align, a2.valign), (Align::General, VAlign::Middle));
+        for _ in 0..3 {
+            assert!(d.undo().unwrap());
+        }
+        let a2 = c(&mut d, 1, 0);
+        assert_eq!((a2.align, a2.valign), (Align::General, VAlign::Bottom));
     }
 }
