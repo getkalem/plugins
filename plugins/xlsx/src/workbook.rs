@@ -2246,6 +2246,8 @@ impl Workbook {
                         .iter()
                         .map(|(i, c)| (*i, [(c >> 16) as u8, (c >> 8) as u8, *c as u8]))
                         .collect(),
+                    explosion: s.explosion,
+                    point_explosions: s.point_explosions.clone(),
                     ..kalem_viewer::ChartSeries::default()
                 });
             }
@@ -2810,11 +2812,24 @@ impl Workbook {
         }
         let pie = |k: K| matches!(k, K::Pie | K::Doughnut);
         let mut new = chart::chart_xml(kind, def.title.as_deref(), &series);
-        // Points with colors of their own keep them.
+        // Points with colors of their own keep them; a pie's slices pulled
+        // out stay so in a doughnut, and the other way round.
         for (si, s) in def.series.iter().enumerate() {
             for (pt, c) in &s.points {
                 if let Some(x) = chart::with_point_color(&new, si, *pt, Some(*c)) {
                     new = x;
+                }
+            }
+            if matches!(kind, K::Pie | K::Doughnut) {
+                if s.explosion > 0
+                    && let Some(x) = chart::with_explosion(&new, si, None, s.explosion)
+                {
+                    new = x;
+                }
+                for (pt, e) in &s.point_explosions {
+                    if let Some(x) = chart::with_explosion(&new, si, Some(*pt), *e) {
+                        new = x;
+                    }
                 }
             }
         }
@@ -2946,6 +2961,66 @@ impl Workbook {
         }
         let rgb = color.map(|[r, g, b]| (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b));
         let new = chart::with_point_color(&old, series, point, rgb)
+            .ok_or_else(|| Error::Refused("No such series".into()))?;
+        if new == old {
+            return Ok(());
+        }
+        let snapshot = (self.batch.is_none()).then(|| self.snapshot());
+        self.pkg.set_part(&part, new.into_bytes());
+        self.generation += 1;
+        match snapshot {
+            Some(s) => {
+                self.undo.push(s);
+                self.redo.clear();
+            }
+            None => self.batch_changed = true,
+        }
+        Ok(())
+    }
+
+    /// Pulls a pie's slice (or every slice) of a sheet's chart (by its
+    /// place among [`Workbook::charts`]) out by `percent` of the radius.
+    /// One undo step.
+    pub fn set_explosion(
+        &mut self,
+        idx: usize,
+        index: usize,
+        series: usize,
+        point: Option<usize>,
+        percent: u32,
+    ) -> Result<()> {
+        if percent > 400 {
+            return Err(Error::Refused(
+                "A slice stands out 400 percent at most".into(),
+            ));
+        }
+        let drawing = self
+            .sheet_drawing(idx)
+            .ok_or_else(|| Error::Refused("This sheet has no charts".into()))?;
+        let text = text_of(self.pkg.part(&drawing)?, &drawing)?;
+        let part = chart::parse_drawing(&text)
+            .into_iter()
+            .filter_map(|a| self.rel_target(&drawing, &a.rid))
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such chart".into()))?;
+        let old = text_of(self.pkg.part(&part)?, &part)?;
+        if !matches!(
+            chart::parse_chart(&old, &self.theme).kind,
+            kalem_viewer::ChartKind::Pie | kalem_viewer::ChartKind::Doughnut
+        ) {
+            return Err(Error::Refused(
+                "Only a pie's or a doughnut's slices stand out".into(),
+            ));
+        }
+        let points = self
+            .charts(idx)?
+            .get(index)
+            .and_then(|c| c.series.get(series))
+            .map_or(0, |s| s.values.len());
+        if point.is_some_and(|p| p >= points) {
+            return Err(Error::Refused("No such slice".into()));
+        }
+        let new = chart::with_explosion(&old, series, point, percent)
             .ok_or_else(|| Error::Refused("No such series".into()))?;
         if new == old {
             return Ok(());

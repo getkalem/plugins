@@ -775,6 +775,20 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_explosion(
+        &mut self,
+        unit: usize,
+        index: usize,
+        series: usize,
+        point: Option<usize>,
+        percent: u32,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_explosion(unit, index, series, point, percent)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1876,12 +1890,24 @@ mod tests {
             d.set_point_color(0, before, 0, 99, Some([1, 1, 1]))
                 .is_err()
         );
+        // Its first slice pulled out a quarter of the radius, kept in a
+        // doughnut; refused past 400 percent.
+        d.set_explosion(0, before, 0, Some(0), 25).unwrap();
+        assert_eq!(
+            d.charts(0)[before].series[0].point_explosions,
+            vec![(0, 25)]
+        );
+        assert!(d.set_explosion(0, before, 0, Some(0), 500).is_err());
         d.set_chart_kind(0, before, ChartKind::Doughnut).unwrap();
         assert_eq!(
             d.charts(0)[before].series[0].point_colors,
             vec![(1, [0xFF, 0, 0])]
         );
-        assert!(d.undo().unwrap());
+        assert_eq!(
+            d.charts(0)[before].series[0].point_explosions,
+            vec![(0, 25)]
+        );
+        assert!(d.undo().unwrap() && d.undo().unwrap());
         d.set_point_color(0, before, 0, 1, None).unwrap();
         assert!(d.charts(0)[before].series[0].point_colors.is_empty());
         assert!(d.undo().unwrap() && d.undo().unwrap());

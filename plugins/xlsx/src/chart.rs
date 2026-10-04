@@ -130,6 +130,10 @@ pub struct SeriesDef {
     pub color: Option<Rgb>,
     /// Points with colors of their own: point, color.
     pub points: Vec<(usize, Rgb)>,
+    /// How far every slice stands out, in percent of the radius.
+    pub explosion: u32,
+    /// Slices standing out on their own: point, percent.
+    pub point_explosions: Vec<(usize, u32)>,
 }
 
 /// A chart part as Kalem reads it.
@@ -221,6 +225,7 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     let mut title_ref: Option<String> = None;
     let (mut axis_title, mut axis_pos) = (String::new(), String::new());
     let mut point: Option<(Option<usize>, Option<Rgb>)> = None;
+    let mut point_explosion: Option<u32> = None;
     let mut axis_scale: Scale = (None, None, None, false);
     // Each value axis: its side and scale.
     let mut value_axes: Vec<(String, Scale)> = Vec::new();
@@ -354,6 +359,19 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                         axis_pos = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
                     }
                     "dPt" if ser.is_some() && !tag.empty => point = Some((None, None)),
+                    "explosion" if parent == "ser" || parent == "dPt" => {
+                        let v = tag
+                            .attr("val")
+                            .and_then(|v| v.parse::<u32>().ok())
+                            .unwrap_or(0);
+                        if parent == "ser" {
+                            if let Some(s) = ser.as_mut() {
+                                s.explosion = v;
+                            }
+                        } else {
+                            point_explosion = Some(v);
+                        }
+                    }
                     "idx" if parent == "dPt" => {
                         if let Some(pt) = point.as_mut() {
                             pt.0 = tag.attr("val").and_then(|v| v.parse::<usize>().ok());
@@ -401,11 +419,17 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
             }
             Token::End { name, .. } => {
                 stack.pop();
-                if name == "dPt"
-                    && let Some((Some(i), Some(c))) = point.take()
-                    && let Some(s) = ser.as_mut()
-                {
-                    s.points.push((i, c));
+                if name == "dPt" {
+                    let pt = point.take();
+                    let ex = point_explosion.take();
+                    if let (Some((Some(i), c)), Some(s)) = (pt, ser.as_mut()) {
+                        if let Some(c) = c {
+                            s.points.push((i, c));
+                        }
+                        if let Some(e) = ex.filter(|e| *e > 0) {
+                            s.point_explosions.push((i, e));
+                        }
+                    }
                 }
                 if name.ends_with("Ax") && stack.last().is_some_and(|s| s == "plotArea") {
                     let sc = std::mem::take(&mut axis_scale);
@@ -1184,20 +1208,10 @@ pub fn with_series_color(
     Some(out)
 }
 
-/// A chart part with point `point` of series `series` (a pie's slice)
-/// given `color`, or its series' again (`None`): the point's `<c:dPt>`
-/// written, in the order of the points, or taken away. `None` when there
-/// is no such series.
-pub fn with_point_color(
-    text: &str,
-    series: usize,
-    point: usize,
-    color: Option<Rgb>,
-) -> Option<String> {
-    const DRAWING: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+/// Series `series` of a chart part's plot: its bytes and prefix.
+fn series_span(text: &str, series: usize) -> Option<(Span<usize>, String)> {
     let mut r = Reader::new(text);
     let mut stack: Vec<String> = Vec::new();
-    let mut found = None;
     let mut n = 0;
     while let Some(t) = r.next_token() {
         match t {
@@ -1210,8 +1224,7 @@ pub fn with_point_color(
                         r.skip_element()
                     };
                     if n == series {
-                        found = Some((tag.span.start..end, xml::prefix(tag.qname).to_owned()));
-                        break;
+                        return Some((tag.span.start..end, xml::prefix(tag.qname).to_owned()));
                     }
                     n += 1;
                     continue;
@@ -1226,18 +1239,42 @@ pub fn with_point_color(
             Token::Text { .. } => {}
         }
     }
-    let (span, p) = found?;
+    None
+}
+
+/// The DrawingML prefix a part declares, or `a` and its declaration.
+fn drawing_prefix(text: &str) -> (String, String) {
+    const DRAWING: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
     let a = text.split("xmlns:").skip(1).find_map(|d| {
         let (pfx, rest) = d.split_once("=\"")?;
         (rest.split('"').next()? == DRAWING).then(|| pfx.to_owned())
     });
-    let (a, decl) = match a {
+    match a {
         Some(a) => (a, String::new()),
         None => ("a".to_owned(), format!(" xmlns:a=\"{DRAWING}\"")),
-    };
-    let fill = color
-        .map(|c| format!("<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>"));
-    let ser = &text[span.clone()];
+    }
+}
+
+/// Whether a `<c:dPt>` says nothing beyond which point it is: no
+/// explosion, marker or formatting.
+fn trivial_point(el: &str) -> bool {
+    let (_, _, _, kids) = open_up(el);
+    kids.iter().all(|(name, sp)| match name.as_str() {
+        "idx" | "bubble3D" | "invertIfNegative" => true,
+        "spPr" => open_up(&el[sp.clone()]).3.is_empty(),
+        _ => false,
+    })
+}
+
+/// A series with the `<c:dPt>` of `point` made by `f` from the one there
+/// (or none), taken away when `f` gives `None`; a new one goes in the
+/// order of the points, after the series' own properties.
+fn edit_point(
+    ser: &str,
+    p: &str,
+    point: usize,
+    f: impl Fn(Option<&str>) -> Option<String>,
+) -> String {
     let (ser_text, open_end, close, kids) = open_up(ser);
     let idx_of = |el: &str| -> Option<usize> {
         el.split("idx val=\"")
@@ -1247,14 +1284,6 @@ pub fn with_point_color(
             .parse()
             .ok()
     };
-    let mut out = String::from(&ser_text[..open_end]);
-    let mut placed = fill.is_none();
-    let new_point = |fill: &str| {
-        format!(
-            "<{p}dPt><{p}idx val=\"{point}\"/><{p}bubble3D val=\"0\"/><{p}spPr>{fill}</{p}spPr></{p}dPt>"
-        )
-    };
-    // Children the points come after, and the point's place among them.
     let before_points = [
         "idx",
         "order",
@@ -1265,54 +1294,133 @@ pub fn with_point_color(
         "marker",
         "explosion",
     ];
-    let last_head = kids
-        .iter()
-        .rposition(|k| before_points.contains(&k.0.as_str()));
-    for (i, (name, sp)) in kids.iter().enumerate() {
+    let mut out = String::from(&ser_text[..open_end]);
+    let mut placed = false;
+    let put_new = |out: &mut String| {
+        if let Some(el) = f(None) {
+            out.push_str(&el);
+        }
+    };
+    let _ = p;
+    for (name, sp) in &kids {
         let el = &ser_text[sp.clone()];
-        if name == "dPt" {
-            match idx_of(el) {
-                Some(k) if k == point => {
-                    if let Some(f) = &fill {
-                        let spr = match child(el, "spPr") {
-                            Some(spr) => {
-                                set_child(spr, &FILLS, f, &["xfrm", "custGeom", "prstGeom"])
-                            }
-                            None => format!("<{p}spPr>{f}</{p}spPr>"),
-                        };
-                        out.push_str(&set_child(
-                            el,
-                            &["spPr"],
-                            &spr,
-                            &["idx", "invertIfNegative", "marker", "bubble3D", "explosion"],
-                        ));
-                        placed = true;
+        if !placed {
+            let here = match name.as_str() {
+                "dPt" => idx_of(el).is_some_and(|k| k >= point),
+                n => !before_points.contains(&n),
+            };
+            if here {
+                placed = true;
+                if name == "dPt" && idx_of(el) == Some(point) {
+                    if let Some(new) = f(Some(el)) {
+                        out.push_str(&new);
                     }
                     continue;
                 }
-                Some(k) if k > point && !placed => {
-                    out.push_str(&new_point(fill.as_deref().unwrap_or("")));
-                    placed = true;
-                }
-                _ => {}
+                put_new(&mut out);
             }
-        } else if !placed && !before_points.contains(&name.as_str()) && name != "dPt" {
-            out.push_str(&new_point(fill.as_deref().unwrap_or("")));
-            placed = true;
         }
         out.push_str(el);
-        if !placed && Some(i) == last_head && kids.get(i + 1).is_none_or(|k| k.0 != "dPt") {
-            out.push_str(&new_point(fill.as_deref().unwrap_or("")));
-            placed = true;
-        }
     }
     if !placed {
-        out.push_str(&new_point(fill.as_deref().unwrap_or("")));
+        put_new(&mut out);
     }
     out.push_str(&ser_text[close..]);
-    let mut whole = text.to_owned();
-    whole.replace_range(span, &out);
-    Some(whole)
+    out
+}
+
+/// A chart part with point `point` of series `series` (a pie's slice)
+/// given `color`, or its series' again (`None`): the point's `<c:dPt>`
+/// written, in the order of the points, or taken away when nothing else
+/// is said of the point. `None` when there is no such series.
+pub fn with_point_color(
+    text: &str,
+    series: usize,
+    point: usize,
+    color: Option<Rgb>,
+) -> Option<String> {
+    let (span, p) = series_span(text, series)?;
+    let (a, decl) = drawing_prefix(text);
+    let fill = color.map_or(String::new(), |c| {
+        format!("<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>")
+    });
+    let after = ["idx", "invertIfNegative", "marker", "bubble3D", "explosion"];
+    let new_ser = edit_point(&text[span.clone()], &p, point, |old| {
+        let base = old.map_or_else(
+            || format!("<{p}dPt><{p}idx val=\"{point}\"/><{p}bubble3D val=\"0\"/></{p}dPt>"),
+            str::to_owned,
+        );
+        let spr = match child(&base, "spPr") {
+            Some(spr) => set_child(spr, &FILLS, &fill, &["xfrm", "custGeom", "prstGeom"]),
+            None if fill.is_empty() => String::new(),
+            None => format!("<{p}spPr>{fill}</{p}spPr>"),
+        };
+        let el = if spr.is_empty() {
+            base
+        } else {
+            set_child(&base, &["spPr"], &spr, &after)
+        };
+        (!trivial_point(&el)).then_some(el)
+    });
+    let mut out = text.to_owned();
+    out.replace_range(span, &new_ser);
+    Some(out)
+}
+
+/// A chart part with a pie's slice (point `point` of series `series`)
+/// pulled `percent` of the radius out of it, or every slice (`None`: the
+/// series' own explosion, the slices' own ones taken away); 0 puts it
+/// back. `None` when there is no such series.
+pub fn with_explosion(
+    text: &str,
+    series: usize,
+    point: Option<usize>,
+    percent: u32,
+) -> Option<String> {
+    let (span, p) = series_span(text, series)?;
+    let value = if percent > 0 {
+        format!("<{p}explosion val=\"{percent}\"/>")
+    } else {
+        String::new()
+    };
+    let ser = &text[span.clone()];
+    let new_ser = match point {
+        Some(point) => edit_point(ser, &p, point, |old| {
+            let base = old.map_or_else(
+                || format!("<{p}dPt><{p}idx val=\"{point}\"/><{p}bubble3D val=\"0\"/></{p}dPt>"),
+                str::to_owned,
+            );
+            let el = set_child(
+                &base,
+                &["explosion"],
+                &value,
+                &["idx", "invertIfNegative", "marker", "bubble3D"],
+            );
+            (!trivial_point(&el)).then_some(el)
+        }),
+        None => {
+            let with_own = set_child(ser, &["explosion"], &value, &["idx", "order", "tx", "spPr"]);
+            // The slices' own explosions give way to the series'.
+            let (t, open_end, close, kids) = open_up(&with_own);
+            let mut out = String::from(&t[..open_end]);
+            for (name, sp) in &kids {
+                let el = &t[sp.clone()];
+                if name == "dPt" {
+                    let el = set_child(el, &["explosion"], "", &[]);
+                    if !trivial_point(&el) {
+                        out.push_str(&el);
+                    }
+                    continue;
+                }
+                out.push_str(el);
+            }
+            out.push_str(&t[close..]);
+            out
+        }
+    };
+    let mut out = text.to_owned();
+    out.replace_range(span, &new_ser);
+    Some(out)
 }
 
 /// An absolute reference to a range of a sheet, as charts write them.
@@ -1893,6 +2001,53 @@ mod tests {
                 < m.find("idx val=\"2\"/><c:bubble3D").unwrap()
         );
         assert!(with_point_color(&x, 4, 0, Some(1)).is_none());
+    }
+
+    #[test]
+    fn slices_pulled_out() {
+        let s = NewSeries {
+            name: None,
+            cat: Some((
+                "S!$A$2:$A$4".into(),
+                vec!["a".into(), "b".into(), "c".into()],
+                false,
+            )),
+            val: ("S!$B$2:$B$4".into(), vec![Some(1.0), Some(2.0), Some(3.0)]),
+            color: None,
+        };
+        let x = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
+        // One slice out, colored too; its color and explosion share a dPt.
+        let y = with_explosion(&x, 0, Some(1), 25).unwrap();
+        let y = with_point_color(&y, 0, 1, Some(0xFF0000)).unwrap();
+        let d = parse_chart(&y, &[]);
+        assert_eq!(d.series[0].point_explosions, vec![(1, 25)]);
+        assert_eq!(d.series[0].points, vec![(1, 0xFF0000)]);
+        assert_eq!(y.matches("<c:dPt>").count(), 1);
+        let pt = &y[y.find("<c:dPt>").unwrap()..y.find("</c:dPt>").unwrap()];
+        assert!(pt.find("<c:explosion") < pt.find("<c:spPr"), "{pt}");
+        // Its color taken away: the explosion stays; back in: nothing left.
+        let z = with_point_color(&y, 0, 1, None).unwrap();
+        assert_eq!(
+            parse_chart(&z, &[]).series[0].point_explosions,
+            vec![(1, 25)]
+        );
+        let z = with_explosion(&z, 0, Some(1), 0).unwrap();
+        assert!(!z.contains("dPt"), "{z}");
+        // Every slice: the series' explosion, after its properties, the
+        // slices' own given way.
+        let all = with_explosion(&y, 0, None, 10).unwrap();
+        let d = parse_chart(&all, &[]);
+        assert_eq!(
+            (d.series[0].explosion, d.series[0].point_explosions.clone()),
+            (10, vec![])
+        );
+        assert_eq!(d.series[0].points, vec![(1, 0xFF0000)], "the color stays");
+        let ser = &all[all.find("<c:ser>").unwrap()..];
+        assert!(ser.find("<c:explosion") < ser.find("<c:dPt>"));
+        assert!(ser.find("<c:explosion") > ser.find("<c:order"));
+        let none = with_explosion(&all, 0, None, 0).unwrap();
+        assert_eq!(parse_chart(&none, &[]).series[0].explosion, 0);
+        assert!(with_explosion(&x, 2, None, 5).is_none());
     }
 
     #[test]
