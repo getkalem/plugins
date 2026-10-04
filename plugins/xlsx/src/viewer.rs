@@ -948,6 +948,81 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn goal_seek(
+        &mut self,
+        unit: usize,
+        set: (u32, u32),
+        target: f64,
+        by: (u32, u32),
+    ) -> Result<Option<f64>> {
+        self.book()
+            .goal_seek(
+                unit,
+                CellRef::new(set.0, set.1),
+                target,
+                CellRef::new(by.0, by.1),
+            )
+            .map_err(err)
+    }
+
+    fn create_data_table(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        row_input: Option<(u32, u32)>,
+        col_input: Option<(u32, u32)>,
+    ) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        let cell = |c: Option<(u32, u32)>| c.map(|(r, c)| CellRef::new(r, c));
+        self.book()
+            .create_data_table(unit, r, cell(row_input), cell(col_input))
+            .map_err(err)?;
+        Ok(self.all_units())
+    }
+
+    fn scenarios(&mut self, unit: usize) -> Vec<kalem_viewer::Scenario> {
+        self.book()
+            .scenarios(unit)
+            .into_iter()
+            .map(|s| kalem_viewer::Scenario {
+                name: s.name,
+                comment: s.comment,
+                cells: s
+                    .cells
+                    .into_iter()
+                    .map(|(at, v)| (at.row, at.col, v))
+                    .collect(),
+            })
+            .collect()
+    }
+
+    fn add_scenario(
+        &mut self,
+        unit: usize,
+        name: &str,
+        cells: &[(u32, u32)],
+        comment: &str,
+    ) -> Result<Vec<usize>> {
+        let cells: Vec<CellRef> = cells.iter().map(|&(r, c)| CellRef::new(r, c)).collect();
+        self.book()
+            .add_scenario(unit, name, &cells, comment)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn show_scenario(&mut self, unit: usize, name: &str) -> Result<Vec<usize>> {
+        self.book().show_scenario(unit, name).map_err(err)?;
+        Ok(self.all_units())
+    }
+
+    fn delete_scenario(&mut self, unit: usize, name: &str) -> Result<Vec<usize>> {
+        self.book().delete_scenario(unit, name).map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn cell_input(&mut self, unit: usize, row: u32, col: u32) -> String {
         self.book()
             .edit_text(unit, CellRef::new(row, col))
@@ -4036,5 +4111,93 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn what_if() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let at = |d: &mut Box<dyn ViewerDocument>, r, c| d.cell_input(0, r, c);
+        let shown = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .first()
+                .map(|x| x.2.text.clone())
+                .unwrap_or_default()
+        };
+        // A loan: rate in K1, months in K2, amount in K3, payment in K4.
+        for (r, v) in ["0.01", "12", "1000", "=-PMT(K1,K2,K3)"].iter().enumerate() {
+            d.set_cell(0, r as u32, 10, v).unwrap();
+        }
+        // Goal Seek: the amount whose payment is 100.
+        let x = d.goal_seek(0, (3, 10), 100.0, (2, 10)).unwrap().unwrap();
+        assert!((x - 1125.5077).abs() < 0.01, "{x}");
+        assert!(
+            shown(&mut d, 3, 10).starts_with("100"),
+            "{}",
+            shown(&mut d, 3, 10)
+        );
+        assert!(d.undo().unwrap());
+        assert_eq!(at(&mut d, 2, 10), "1000");
+        // Refused: a formula as the changing cell, no formula to set.
+        assert!(d.goal_seek(0, (3, 10), 1.0, (3, 10)).is_err());
+        assert!(d.goal_seek(0, (2, 10), 1.0, (1, 10)).is_err());
+        // One variable down a column: rates in M2:M4, the payment in N1.
+        d.set_cell(0, 0, 13, "=K4").unwrap();
+        for (r, v) in ["0", "0.01", "0.02"].iter().enumerate() {
+            d.set_cell(0, 1 + r as u32, 12, v).unwrap();
+        }
+        d.create_data_table(0, [0, 12, 3, 13], None, Some((0, 10)))
+            .unwrap();
+        let pay = |rate: f64| 1000.0 * rate / (1.0 - (1.0 + rate).powi(-12));
+        let n = |s: String| s.replace(',', "").parse::<f64>().unwrap();
+        assert!((n(shown(&mut d, 1, 13)) - 1000.0 / 12.0).abs() < 0.01);
+        assert!((n(shown(&mut d, 3, 13)) - pay(0.02)).abs() < 0.01);
+        // Its cells are changed only as a whole.
+        assert!(d.set_cell(0, 2, 13, "5").is_err());
+        // Two variables: months along P1:R1, rates down O2:O3, K4 at O1.
+        d.set_cell(0, 0, 14, "=K4").unwrap();
+        for (c, v) in ["6", "12", "24"].iter().enumerate() {
+            d.set_cell(0, 0, 15 + c as u32, v).unwrap();
+        }
+        d.set_cell(0, 1, 14, "0.01").unwrap();
+        d.set_cell(0, 2, 14, "0.02").unwrap();
+        d.create_data_table(0, [0, 14, 2, 17], Some((1, 10)), Some((0, 10)))
+            .unwrap();
+        assert!((n(shown(&mut d, 2, 16)) - pay(0.02)).abs() < 0.01);
+        // Calculate Now after the amount changed: both tables follow.
+        d.set_cell(0, 2, 10, "2000").unwrap();
+        d.recalculate().unwrap();
+        assert!((n(shown(&mut d, 3, 13)) - 2.0 * pay(0.02)).abs() < 0.01);
+        assert!((n(shown(&mut d, 2, 16)) - 2.0 * pay(0.02)).abs() < 0.01);
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-whatif-test.xlsx"), &saved).unwrap();
+        }
+        // Cleared whole, from any of its cells.
+        d.set_cell(0, 2, 13, "").unwrap();
+        assert_eq!(shown(&mut d, 1, 13), "");
+        d.set_cell(0, 2, 13, "5").unwrap();
+        // Scenarios: kept, shown, deleted.
+        d.add_scenario(0, "Low", &[(0, 10), (1, 10)], "cheap")
+            .unwrap();
+        d.set_cell(0, 0, 10, "0.05").unwrap();
+        d.set_cell(0, 1, 10, "36").unwrap();
+        d.add_scenario(0, "High", &[(0, 10), (1, 10)], "").unwrap();
+        let all = d.scenarios(0);
+        assert_eq!(all.len(), 2);
+        assert_eq!(
+            all[0].cells,
+            vec![(0, 10, "0.01".into()), (1, 10, "12".into())]
+        );
+        d.show_scenario(0, "low").unwrap();
+        assert_eq!(
+            (at(&mut d, 0, 10), at(&mut d, 1, 10)),
+            ("0.01".into(), "12".into())
+        );
+        assert!(d.undo().unwrap());
+        assert_eq!(at(&mut d, 1, 10), "36");
+        d.delete_scenario(0, "High").unwrap();
+        assert_eq!(d.scenarios(0).len(), 1);
+        let mut back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert_eq!(back.scenarios(0)[0].comment, "cheap");
     }
 }

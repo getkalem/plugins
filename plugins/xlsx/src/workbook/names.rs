@@ -174,7 +174,8 @@ impl Workbook {
         self.ensure_engine()?;
         let before = self.computed.clone();
         let trusted = self.trusted.clone();
-        self.compute_again(&before, trusted)
+        self.compute_again(&before, trusted)?;
+        self.refill_data_tables()
     }
 }
 

@@ -130,6 +130,23 @@ pub struct Sheet {
     pub auto_filter: Option<AutoFilter>,
     /// The `<sheetProtection>`'s attributes, when the sheet is protected.
     pub protection: Option<Vec<(String, String)>>,
+    /// The what-if data tables.
+    pub data_tables: Vec<DataTableDef>,
+}
+
+/// A what-if data table (`<f t="dataTable">` on its first result cell).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataTableDef {
+    /// Its results' cells (`ref`).
+    pub range: Range,
+    /// Of two variables (`dt2D`).
+    pub two: bool,
+    /// Of one variable whose values run along a row (`dtr`).
+    pub row: bool,
+    /// The input cell (`r1`; for two variables, the row's).
+    pub r1: Option<CellRef>,
+    /// The column's input cell of a table of two variables (`r2`).
+    pub r2: Option<CellRef>,
 }
 
 /// A sheet's AutoFilter (`<autoFilter>`, 18.3.1.2).
@@ -378,6 +395,7 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                     // The text, `t`, `si` and `ref` of `<f>`.
                     type RawFormula = (String, Option<String>, Option<String>, Option<String>);
                     let mut f: Option<RawFormula> = None;
+                    let mut table: Option<DataTableDef> = None;
                     let end = if tag.empty {
                         tag.span.end
                     } else {
@@ -390,6 +408,29 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                                         let ft = child.attr("t").map(|v| v.into_owned());
                                         let si = child.attr("si").map(|v| v.into_owned());
                                         let rf = child.attr("ref").map(|v| v.into_owned());
+                                        if ft.as_deref() == Some("dataTable") {
+                                            let on = |k: &str| {
+                                                child
+                                                    .attr(k)
+                                                    .is_some_and(|v| v == "1" || v == "true")
+                                            };
+                                            let cell = |k: &str| {
+                                                child.attr(k).and_then(|v| CellRef::parse(v.trim()))
+                                            };
+                                            table = Some(DataTableDef {
+                                                range: rf
+                                                    .as_deref()
+                                                    .and_then(Range::parse)
+                                                    .unwrap_or(Range {
+                                                        start: pos,
+                                                        end: pos,
+                                                    }),
+                                                two: on("dt2D"),
+                                                row: on("dtr"),
+                                                r1: cell("r1"),
+                                                r2: cell("r2"),
+                                            });
+                                        }
                                         let body = if child.empty {
                                             String::new()
                                         } else {
@@ -460,6 +501,7 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                             .and_then(|v| number(&v))
                             .map_or(Value::Empty, Value::Number),
                     };
+                    sheet.data_tables.extend(table);
                     let formula = f.map(|(body, ft, si, rf)| {
                         let si_n = si.as_deref().and_then(|s| s.parse::<u32>().ok());
                         match (ft.as_deref(), si_n) {

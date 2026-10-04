@@ -303,6 +303,8 @@ pub struct Workbook {
     batch_edited: Vec<(usize, CellRef)>,
     /// Whether the batch changed anything.
     batch_changed: bool,
+    /// A data table's own cells being written, past the guard on them.
+    filling_table: bool,
     /// Counts the changes to sheet texts, for what is computed from them.
     generation: u64,
     /// Each sheet's data validations, at the generation they were read.
@@ -425,6 +427,7 @@ impl Workbook {
             batch: None,
             batch_edited: Vec::new(),
             batch_changed: false,
+            filling_table: false,
         };
         wb.read_workbook_part();
         Ok(wb)
@@ -1136,6 +1139,21 @@ impl Workbook {
     pub fn set_input(&mut self, idx: usize, at: CellRef, input: Input) -> Result<()> {
         self.load(idx)?;
         self.check_cell_edit(idx, at)?;
+        if !self.filling_table
+            && let Some(t) = self.loaded[&idx]
+                .1
+                .data_tables
+                .iter()
+                .find(|t| t.range.contains(at))
+                .cloned()
+        {
+            if !matches!(input, Input::Clear) {
+                return Err(Error::Refused(format!(
+                    "{at} is part of a data table; clear it to take the table away"
+                )));
+            }
+            return self.clear_data_table(idx, t.range);
+        }
         self.ensure_engine()?;
         if self.batch.is_some() {
             self.set_input_inner(idx, at, input)?;
@@ -1176,7 +1194,7 @@ impl Workbook {
                             "{at} holds an array formula over {range}; an array is changed as a whole"
                         )));
                     }
-                    FormulaKind::DataTable => {
+                    FormulaKind::DataTable if !self.filling_table => {
                         return Err(Error::Refused(format!("{at} is part of a data table")));
                     }
                     _ => {}
@@ -7527,7 +7545,9 @@ mod sheet_ops;
 mod sparklines;
 pub use sparklines::Spark;
 mod tables;
+mod whatif;
 pub use tables::{TableDef, style_colors};
+pub use whatif::ScenarioDef;
 
 #[cfg(test)]
 mod tests {
