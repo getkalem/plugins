@@ -852,6 +852,13 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![unit])
     }
 
+    fn set_legend_font(&mut self, unit: usize, index: usize, font: AxisFont) -> Result<Vec<usize>> {
+        self.book()
+            .set_legend_font(unit, index, &font)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
     fn delete_chart(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
         self.book().delete_chart(unit, index).map_err(err)?;
         Ok(vec![unit])
@@ -1954,6 +1961,14 @@ mod tests {
         d.set_chart_title(0, before, Some("Spending".into()))
             .unwrap();
         assert_eq!(d.charts(0)[before].title_font, big);
+        // The legend small and gray, kept by the change of kind below.
+        let small = AxisFont {
+            size: Some(8.0),
+            color: Some([0x59; 3]),
+            ..AxisFont::default()
+        };
+        d.set_legend_font(0, before, small.clone()).unwrap();
+        assert_eq!(d.charts(0)[before].legend_font, small);
         // Q2 colored red, kept by the change of kind below.
         d.set_series_color(0, before, 1, Some([0xFF, 0, 0]))
             .unwrap();
@@ -1976,6 +1991,7 @@ mod tests {
         assert_eq!(bar.plot_background, was.plot_background);
         assert_eq!(bar.axis_format, was.axis_format);
         assert_eq!(bar.title_font, was.title_font);
+        assert_eq!(bar.legend_font, was.legend_font);
         assert_eq!(
             bar.vertical_font, was.horizontal_font,
             "the categories' font"

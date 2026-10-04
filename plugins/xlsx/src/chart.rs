@@ -209,6 +209,8 @@ pub struct ChartDef {
     pub vertical_font: Font,
     /// The title's font.
     pub title_font: Font,
+    /// The legend's font.
+    pub legend_font: Font,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -489,6 +491,37 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                             _ if parent == "solidFill" => {
                                 let v = tag.attr("val").unwrap_or_default();
                                 def.title_font.color = if name == "srgbClr" {
+                                    u32::from_str_radix(&v, 16).ok()
+                                } else {
+                                    scheme(&v, theme)
+                                };
+                            }
+                            _ => {}
+                        }
+                    }
+                    // The legend's font.
+                    "defRPr" | "latin" | "srgbClr" | "schemeClr"
+                        if stack.len() >= 3
+                            && stack[1] == "chart"
+                            && stack[2] == "legend"
+                            && stack.iter().any(|s| s == "txPr")
+                            && (name == "defRPr" || stack.iter().any(|s| s == "defRPr")) =>
+                    {
+                        let flag = |k: &str| tag.attr(k).is_some_and(|v| v == "1" || v == "true");
+                        let f = &mut def.legend_font;
+                        match name {
+                            "defRPr" => {
+                                f.size = tag
+                                    .attr("sz")
+                                    .and_then(|v| v.parse::<f32>().ok())
+                                    .map(|v| v / 100.0);
+                                f.bold = flag("b");
+                                f.italic = flag("i");
+                            }
+                            "latin" => f.face = tag.attr("typeface").map(|v| v.into_owned()),
+                            _ if parent == "solidFill" => {
+                                let v = tag.attr("val").unwrap_or_default();
+                                f.color = if name == "srgbClr" {
                                     u32::from_str_radix(&v, 16).ok()
                                 } else {
                                     scheme(&v, theme)
@@ -1943,6 +1976,65 @@ pub fn with_axis_format(text: &str, format: Option<&str>, scatter: bool) -> Opti
     Some(out)
 }
 
+/// The `<c:txPr>` giving an element's text `font` (its text body's
+/// rotation kept), or nothing for the default font.
+fn font_txpr(el: &str, p: &str, (a, decl): (&str, &str), font: &Font) -> String {
+    if font.is_default() {
+        return String::new();
+    }
+    let body = child(el, "txPr")
+        .and_then(|t| child(t, "bodyPr"))
+        .map_or_else(|| format!("<{a}:bodyPr{decl}/>"), str::to_owned);
+    let (attrs, inner) = run_font(font, a, decl);
+    format!(
+        "<{p}txPr>{body}<{a}:lstStyle{decl}/><{a}:p{decl}><{a}:pPr><{a}:defRPr{attrs}>{inner}</{a}:defRPr></{a}:pPr><{a}:endParaRPr lang=\"en-US\"/></{a}:p></{p}txPr>"
+    )
+}
+
+/// A chart part with its legend's text in `font`: the legend's
+/// `<c:txPr>` written where the schema puts it, or taken away for the
+/// default font. `None` when the chart has no legend.
+pub fn with_legend_font(text: &str, font: &Font) -> Option<String> {
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut found = None;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if tag.name == "legend" && stack.last().is_some_and(|s| s == "chart") {
+                    let end = if tag.empty {
+                        tag.span.end
+                    } else {
+                        r.skip_element()
+                    };
+                    found = Some((tag.span.start..end, xml::prefix(tag.qname).to_owned()));
+                    break;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let (span, p) = found?;
+    let el = &text[span.clone()];
+    let (a, decl) = drawing_prefix(text);
+    let tx = font_txpr(el, &p, (&a, &decl), font);
+    let new = set_child(
+        el,
+        &["txPr"],
+        &tx,
+        &["legendPos", "legendEntry", "layout", "overlay", "spPr"],
+    );
+    let mut out = text.to_owned();
+    out.replace_range(span, &new);
+    Some(out)
+}
+
 /// A chart part with the labels of its horizontal (`vertical` false) or
 /// vertical axis in `font`: the axis's `<c:txPr>` written again where the
 /// schema puts it (its text body's rotation kept), or taken away for the
@@ -1988,37 +2080,7 @@ pub fn with_axis_font(text: &str, vertical: bool, font: &Font) -> Option<String>
     let (span, p) = found?;
     let el = &text[span.clone()];
     let (a, decl) = drawing_prefix(text);
-    let tx = if font.is_default() {
-        String::new()
-    } else {
-        let body = child(el, "txPr")
-            .and_then(|t| child(t, "bodyPr"))
-            .map_or_else(|| format!("<{a}:bodyPr{decl}/>"), str::to_owned);
-        let mut attrs = String::new();
-        if let Some(sz) = font.size {
-            attrs.push_str(&format!(" sz=\"{}\"", (sz * 100.0).round() as u32));
-        }
-        attrs.push_str(&format!(
-            " b=\"{}\" i=\"{}\"",
-            u8::from(font.bold),
-            u8::from(font.italic)
-        ));
-        let mut inner = String::new();
-        if let Some(c) = font.color {
-            inner.push_str(&format!(
-                "<{a}:solidFill{decl}><{a}:srgbClr val=\"{c:06X}\"/></{a}:solidFill>"
-            ));
-        }
-        if let Some(face) = &font.face {
-            inner.push_str(&format!(
-                "<{a}:latin{decl} typeface=\"{}\"/>",
-                xml::escape(face)
-            ));
-        }
-        format!(
-            "<{p}txPr>{body}<{a}:lstStyle{decl}/><{a}:p{decl}><{a}:pPr><{a}:defRPr{attrs}>{inner}</{a}:defRPr></{a}:pPr><{a}:endParaRPr lang=\"en-US\"/></{a}:p></{p}txPr>"
-        )
-    };
+    let tx = font_txpr(el, &p, (&a, &decl), font);
     let new = set_child(
         el,
         &["txPr"],
@@ -2922,6 +2984,37 @@ mod tests {
         assert!(parse_chart(&e, &[]).horizontal_font.bold);
         let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
         assert!(with_axis_font(&pie, true, &font).is_none());
+    }
+
+    #[test]
+    fn legend_fonts() {
+        let s = NewSeries {
+            name: Some(("S!$B$1".into(), "Q1".into())),
+            cat: None,
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(2.0)]),
+            color: None,
+        };
+        let x = chart_xml(ChartKind::Column, None, &[s.clone(), s.clone()]);
+        let font = Font {
+            size: Some(8.0),
+            italic: true,
+            color: Some(0x595959),
+            ..Font::default()
+        };
+        let y = with_legend_font(&x, &font).unwrap();
+        let d = parse_chart(&y, &[]);
+        assert_eq!(d.legend_font, font);
+        assert!(d.title_font.is_default() && d.vertical_font.is_default());
+        let lg = &y[y.find("<c:legend>").unwrap()..y.find("</c:legend>").unwrap()];
+        assert!(lg.find("<c:overlay") < lg.find("<c:txPr>"), "{lg}");
+        // Moved, it keeps its font; default, the txPr goes.
+        let moved = with_legend(&y, Some("t"));
+        assert_eq!(parse_chart(&moved, &[]).legend_font, font);
+        let back = with_legend_font(&moved, &Font::default()).unwrap();
+        assert!(!back.contains("txPr"));
+        // No legend: none to set.
+        let one = chart_xml(ChartKind::Column, None, std::slice::from_ref(&s));
+        assert!(with_legend_font(&one, &font).is_none());
     }
 
     #[test]
