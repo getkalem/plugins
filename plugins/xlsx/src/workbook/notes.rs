@@ -105,7 +105,12 @@ impl Workbook {
         }
     }
 
-    fn set_comment_now(&mut self, idx: usize, at: CellRef, text: Option<&str>) -> Result<()> {
+    pub(crate) fn set_comment_now(
+        &mut self,
+        idx: usize,
+        at: CellRef,
+        text: Option<&str>,
+    ) -> Result<()> {
         let sheet_part = self.sheets[idx].part.clone();
         // The comments part.
         let comments = match self.sheet_part_of(idx, kind::COMMENTS)? {
@@ -208,6 +213,53 @@ impl Workbook {
             (None, None) => vtext.clone(),
         };
         self.pkg.set_part(&vml, new_vml.into_bytes());
+        Ok(())
+    }
+
+    /// Cell `at`'s note given author `name` (added to the authors).
+    pub(crate) fn set_note_author(&mut self, idx: usize, at: CellRef, name: &str) -> Result<()> {
+        let Some(part) = self.sheet_part_of(idx, kind::COMMENTS)? else {
+            return Ok(());
+        };
+        let text = text_of(self.pkg.part(&part)?, &part)?;
+        let p = {
+            let mut r = Reader::new(&text);
+            match r.next_token() {
+                Some(Token::Start(tag)) => xml::prefix(tag.qname).to_owned(),
+                _ => String::new(),
+            }
+        };
+        let mut authors = Vec::new();
+        let mut r = Reader::new(&text);
+        while let Some(t) = r.next_token() {
+            if let Token::Start(tag) = t
+                && tag.name == "author"
+                && !tag.empty
+            {
+                authors.push(r.text_until_end("author").0);
+            }
+        }
+        let (text, n) = match authors.iter().position(|a| a == name) {
+            Some(n) => (text, n),
+            None => (
+                insert_into(
+                    &text,
+                    "authors",
+                    &format!("<{p}author>{}</{p}author>", xml::escape(name)),
+                    &p,
+                ),
+                authors.len(),
+            ),
+        };
+        let Some(span) = find_element(&text, "comment", at) else {
+            return Ok(());
+        };
+        let open_end = text[span.start..]
+            .find('>')
+            .map_or(span.end, |e| span.start + e + 1);
+        let tag = xml::set_attr(&text[span.start..open_end], "authorId", &n.to_string());
+        let new = splice(&text, vec![(span.start..open_end, tag)]);
+        self.pkg.set_part(&part, new.into_bytes());
         Ok(())
     }
 

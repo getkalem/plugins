@@ -329,6 +329,8 @@ impl XlsxDoc {
                 .comments(unit)
                 .unwrap_or_default()
                 .into_iter()
+                // A thread's note is the thread's, shown as the thread.
+                .filter(|c| !c.author.starts_with("tc="))
                 .map(|c| (c.cell, c.text))
                 .collect();
             self.notes.insert(unit, n);
@@ -920,7 +922,100 @@ impl ViewerDocument for XlsxDoc {
             }
         }
         self.sparklines(unit, &rows, &cols, &mut out);
+        for t in self.book().threads(unit) {
+            let at = t.cell;
+            if !rows.contains(&at.row) || !cols.contains(&at.col) {
+                continue;
+            }
+            match out
+                .iter_mut()
+                .find(|(r, c, _)| (*r, *c) == (at.row, at.col))
+            {
+                Some((_, _, cell)) => cell.thread = true,
+                None => out.push((
+                    at.row,
+                    at.col,
+                    GridCell {
+                        thread: true,
+                        ..GridCell::default()
+                    },
+                )),
+            }
+        }
         out
+    }
+
+    fn tab_color(&mut self, unit: usize) -> Option<[u8; 3]> {
+        self.book().tab_color(unit).map(rgb)
+    }
+
+    fn set_tab_color(&mut self, unit: usize, color: Option<[u8; 3]>) -> Result<Vec<usize>> {
+        self.book().set_tab_color(unit, color).map_err(err)?;
+        Ok(self.all_units())
+    }
+
+    fn threads(&mut self, unit: usize) -> Vec<kalem_viewer::CommentThread> {
+        self.book()
+            .threads(unit)
+            .into_iter()
+            .map(|t| kalem_viewer::CommentThread {
+                row: t.cell.row,
+                col: t.cell.col,
+                done: t.done,
+                comments: t
+                    .comments
+                    .into_iter()
+                    .map(|c| kalem_viewer::ThreadComment {
+                        author: c.author,
+                        text: c.text,
+                        time: c.time,
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    fn add_thread_comment(
+        &mut self,
+        unit: usize,
+        row: u32,
+        col: u32,
+        author: &str,
+        text: &str,
+        time: &str,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .add_thread_comment(unit, CellRef::new(row, col), author, text, time)
+            .map_err(err)?;
+        self.notes.remove(&unit);
+        Ok(vec![unit])
+    }
+
+    fn resolve_thread(
+        &mut self,
+        unit: usize,
+        row: u32,
+        col: u32,
+        done: bool,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .resolve_thread(unit, CellRef::new(row, col), done)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn delete_thread_comment(
+        &mut self,
+        unit: usize,
+        row: u32,
+        col: u32,
+        index: usize,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .delete_thread_comment(unit, CellRef::new(row, col), index)
+            .map_err(err)?;
+        self.notes.remove(&unit);
+        Ok(vec![unit])
     }
 
     fn add_sparklines(
@@ -4201,5 +4296,75 @@ mod tests {
         assert_eq!(d.scenarios(0).len(), 1);
         let mut back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
         assert_eq!(back.scenarios(0)[0].comment, "cheap");
+    }
+
+    #[test]
+    fn threads_and_tab_colors() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // A thread on E2: a comment, a reply; marked on the cell.
+        d.add_thread_comment(
+            0,
+            1,
+            4,
+            "Ayşe",
+            "Bu tutar doğru mu?",
+            "2026-10-04T10:00:00.00",
+        )
+        .unwrap();
+        d.add_thread_comment(
+            0,
+            1,
+            4,
+            "Mehmet",
+            "Evet, faturaya baktım.",
+            "2026-10-04T10:05:00.00",
+        )
+        .unwrap();
+        let t = d.threads(0);
+        assert_eq!(t.len(), 1);
+        assert_eq!((t[0].row, t[0].col, t[0].done), (1, 4, false));
+        let who: Vec<&str> = t[0].comments.iter().map(|c| c.author.as_str()).collect();
+        assert_eq!(who, ["Ayşe", "Mehmet"]);
+        assert!(d.grid_cells(0, 1..2, 4..5)[0].2.thread);
+        // Its note for older readers is not a note of its own.
+        assert!(d.cell_note(0, 1, 4).is_none());
+        // Refused where a note is.
+        d.set_note(0, 1, 5, Some("not".into())).unwrap();
+        assert!(
+            d.add_thread_comment(0, 1, 5, "A", "x", "2026-10-04T10:00:00")
+                .is_err()
+        );
+        assert!(d.undo().unwrap());
+        d.resolve_thread(0, 1, 4, true).unwrap();
+        assert!(d.threads(0)[0].done);
+        d.set_tab_color(0, Some([0xC0, 0x50, 0x4D])).unwrap();
+        assert_eq!(d.tab_color(0), Some([0xC0, 0x50, 0x4D]));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-threads-test.xlsx"), &saved).unwrap();
+        }
+        let mut back = crate::Workbook::open(saved).unwrap();
+        let t = back.threads(0);
+        assert_eq!((t[0].comments.len(), t[0].done), (2, true));
+        assert!(
+            back.comments(0)
+                .unwrap()
+                .iter()
+                .any(|c| c.author.starts_with("tc=")
+                    && c.text.contains("Bu tutar doğru mu?")
+                    && c.text.contains("Reply:"))
+        );
+        // The reply deleted, then the thread; then all undone.
+        d.delete_thread_comment(0, 1, 4, 1).unwrap();
+        assert_eq!(d.threads(0)[0].comments.len(), 1);
+        d.delete_thread_comment(0, 1, 4, 0).unwrap();
+        assert!(d.threads(0).is_empty());
+        assert!(!d.grid_cells(0, 1..2, 4..5).iter().any(|c| c.2.thread));
+        d.set_tab_color(0, None).unwrap();
+        assert_eq!(d.tab_color(0), None);
+        for _ in 0..6 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(d.threads(0)[0].comments.len(), 1);
     }
 }

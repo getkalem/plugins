@@ -4416,6 +4416,13 @@ impl Workbook {
 
     /// Adds a relationship from `source` to `target` (a part name); its id.
     fn add_rel(&mut self, source: &str, kind: &str, target: &str) -> Result<String> {
+        let ty = self.rel_type(kind);
+        self.add_rel_typed(source, &ty, target)
+    }
+
+    /// A relationship of type `ty` (its whole URI) from `source` to `target`.
+    fn add_rel_typed(&mut self, source: &str, ty: &str, target: &str) -> Result<String> {
+        let kind = ty.rsplit('/').next().unwrap_or_default().to_owned();
         let rels_path = rels::rels_path(source);
         let text = if self.pkg.contains(&rels_path) {
             text_of(self.pkg.part(&rels_path)?, &rels_path)?
@@ -4435,8 +4442,7 @@ impl Workbook {
         let mut rel: Vec<&str> = vec![".."; from.len() - common];
         rel.extend(&to[common..]);
         let item = format!(
-            "<Relationship Id=\"{id}\" Type=\"{}\" Target=\"{}\"/>",
-            self.rel_type(kind),
+            "<Relationship Id=\"{id}\" Type=\"{ty}\" Target=\"{}\"/>",
             rel.join("/")
         );
         let close = text.rfind("</").unwrap_or(text.len());
@@ -4445,7 +4451,7 @@ impl Workbook {
         if source == self.workbook_part {
             self.workbook_rels.push(Rel {
                 id: id.clone(),
-                kind: kind.to_owned(),
+                kind,
                 target: rel.join("/"),
                 external: false,
             });
@@ -7545,6 +7551,8 @@ mod sheet_ops;
 mod sparklines;
 pub use sparklines::Spark;
 mod tables;
+mod threads;
+pub use threads::{Thread, ThreadEntry};
 mod whatif;
 pub use tables::{TableDef, style_colors};
 pub use whatif::ScenarioDef;
