@@ -35,6 +35,17 @@ Each edit has its inverse for Kalem's undo. Nothing else is offered for any form
 
 Format, size, file size, color type as stored, ICC profile, frames and duration, orientation, and from EXIF (read by `kamadak-exif`): camera, lens, date taken, exposure, aperture, ISO, focal length, color space, position, software, artist, copyright.
 
+## As a component
+
+The crate is a viewer of the Rust contract, which Kalem bundles, and on `wasm32` a component of the WIT world `document-viewer` through `kalem_plugin::export_viewer_of!`: it reads the file through the handle Kalem gives it and nothing else.
+
+```sh
+kalem plugin build plugins/image-viewer
+kalem plugin install plugins/image-viewer
+```
+
+Installed, the component takes the place of the bundled viewer.
+
 ## Tests
 
 `cargo test -p kalem-plugin-image-viewer`: one file per format made by the test itself (no picture whose license would need recording) and decoded against the pixels it was made from; the eight orientations; a turn and a save that differ from the original in the tag only; an animated GIF; a 50-megapixel picture under the budget; the manifest's conformance.

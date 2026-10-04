@@ -24,6 +24,11 @@ kalem-viewer = { git = "https://github.com/getkalem/kalem", branch = "main" }
 hayro = "0.7"
 kurbo = "0.13"
 
+# The component's exports (`kalem plugin build`): the Rust contract
+# adapted to the WIT world `document-viewer`, on wasm32 only.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main" }
+
 [dev-dependencies]
 serde_json = "1"
 

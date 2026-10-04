@@ -33,6 +33,17 @@ Search reads every page's text once, fonts parsed once for all pages, and keeps 
 
 Nothing yet. Highlights, notes and form filling written as incremental updates appended after the original bytes are Kalem's task T3.7.3b.
 
+## As a component
+
+The crate is a viewer of the Rust contract, which Kalem bundles, and on `wasm32` a component of the WIT world `document-viewer` through `kalem_plugin::export_viewer_of!`: it reads the file through the handle Kalem gives it and nothing else.
+
+```sh
+kalem plugin build plugins/pdf-viewer
+kalem plugin install plugins/pdf-viewer
+```
+
+Installed, the component takes the place of the bundled viewer.
+
 ## Tests
 
 `cargo test -p kalem-plugin-pdf-viewer`: PDF files the tests write themselves (no file whose license would need recording): detection, page labels, the outline through each kind of destination, text, search and links, the information panel, rendering at scales, a turned page and the dark theme, a page past the memory budget, an outline with a cycle, and every cut of a file failing without a panic; the manifest's conformance.

@@ -471,3 +471,8 @@ mod tests {
         assert_eq!(file_size(2_500), "2.5 kB");
     }
 }
+
+// The component: this viewer as the WIT world `document-viewer`
+// (`kalem plugin build`); bundled builds leave it out.
+#[cfg(target_arch = "wasm32")]
+kalem_plugin::export_viewer_of!(PdfViewer);

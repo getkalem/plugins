@@ -25,10 +25,12 @@ todo = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
 
-# Components are built with this profile: small and fast. A plugin never
-# unwinds across the component boundary, so panics abort.
+# Components are built with this profile, for speed: built for size
+# (`opt-level = "s"`), the PDF viewer renders a page twelve times slower
+# and is no smaller, its fonts being most of it (Kalem's D28 record). A
+# plugin never unwinds across the component boundary, so panics abort.
 [profile.release]
-opt-level = "s"
+opt-level = 3
 lto = true
 codegen-units = 1
 strip = "symbols"
