@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 
 use kalem_viewer::{
-    Align, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule, CondStyle, DataLabels,
-    Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, InfoField, LegendPosition,
-    MacroEntry, MacroOutcome, MacroQuestion, MacroUi, PivotSpec, RenderRequest, Rendered, Result,
-    SaveOutput, Structure, Unit, UnitKind, Validation, ValidationError, ValidationKind, Viewer,
-    ViewerDocument, ViewerError,
+    Align, AxisScale, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule, CondStyle,
+    DataLabels, Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, InfoField,
+    LegendPosition, MacroEntry, MacroOutcome, MacroQuestion, MacroUi, PivotSpec, RenderRequest,
+    Rendered, Result, SaveOutput, Structure, Unit, UnitKind, Validation, ValidationError,
+    ValidationKind, Viewer, ViewerDocument, ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -727,6 +727,18 @@ impl ViewerDocument for XlsxDoc {
     ) -> Result<Vec<usize>> {
         self.book()
             .set_data_labels(unit, index, labels)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_axis_scale(
+        &mut self,
+        unit: usize,
+        index: usize,
+        scale: AxisScale,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_axis_scale(unit, index, scale)
             .map_err(err)?;
         Ok(vec![unit])
     }
@@ -1740,6 +1752,30 @@ mod tests {
         d.set_data_labels(0, before, DataLabels::default()).unwrap();
         assert!(!d.charts(0)[before].labels.any());
         assert!(d.undo().unwrap() && d.undo().unwrap());
+        // The value axis from 0 to 5000 in steps of 1000; refused upside
+        // down; saved; back to automatic with undo.
+        let scale = AxisScale {
+            min: Some(0.0),
+            max: Some(5000.0),
+            major: Some(1000.0),
+            log: false,
+        };
+        d.set_axis_scale(0, before, scale).unwrap();
+        assert_eq!(d.charts(0)[before].scale, scale);
+        let wrong = AxisScale {
+            min: Some(10.0),
+            max: Some(1.0),
+            ..scale
+        };
+        assert!(d.set_axis_scale(0, before, wrong).is_err());
+        let scaled = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-scale-test.xlsx"), &scaled).unwrap();
+        }
+        let mut wb = Workbook::open(scaled).unwrap();
+        assert_eq!(wb.charts(0).unwrap()[before].scale, scale);
+        assert!(d.undo().unwrap());
+        assert_eq!(d.charts(0)[before].scale, AxisScale::default());
         // Removed, then back with undo.
         d.delete_chart(0, before).unwrap();
         assert_eq!(d.charts(0).len(), before);

@@ -8,6 +8,9 @@ use kalem_viewer::ChartKind;
 use crate::styles::Rgb;
 use crate::xml::{self, Reader, Token};
 
+/// A value axis's scale: min, max, major unit, logarithmic.
+pub type Scale = (Option<f64>, Option<f64>, Option<f64>, bool);
+
 /// A chart's place in a drawing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Anchor {
@@ -146,6 +149,8 @@ pub struct ChartDef {
     pub legend: Option<String>,
     /// Its data labels: value, category, series, percent.
     pub labels: (bool, bool, bool, bool),
+    /// Its value axis's scale: min, max, major unit, logarithmic.
+    pub scale: Scale,
     /// Its series, of its first plot.
     pub series: Vec<SeriesDef>,
 }
@@ -213,6 +218,9 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
     let mut title = String::new();
     let mut title_ref: Option<String> = None;
     let (mut axis_title, mut axis_pos) = (String::new(), String::new());
+    let mut axis_scale: Scale = (None, None, None, false);
+    // Each value axis: its side and scale.
+    let mut value_axes: Vec<(String, Scale)> = Vec::new();
     while let Some(t) = r.next_token() {
         match t {
             Token::Start(tag) => {
@@ -328,6 +336,17 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
                         }
                         continue;
                     }
+                    "min" | "max" | "logBase" if parent == "scaling" => {
+                        let v = tag.attr("val").and_then(|v| v.trim().parse::<f64>().ok());
+                        match name {
+                            "min" => axis_scale.0 = v,
+                            "max" => axis_scale.1 = v,
+                            _ => axis_scale.3 = v.is_some(),
+                        }
+                    }
+                    "majorUnit" if parent.ends_with("Ax") => {
+                        axis_scale.2 = tag.attr("val").and_then(|v| v.trim().parse::<f64>().ok());
+                    }
                     "axPos" if parent.ends_with("Ax") => {
                         axis_pos = tag.attr("val").map(|v| v.into_owned()).unwrap_or_default();
                     }
@@ -355,6 +374,10 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
             Token::End { name, .. } => {
                 stack.pop();
                 if name.ends_with("Ax") && stack.last().is_some_and(|s| s == "plotArea") {
+                    let sc = std::mem::take(&mut axis_scale);
+                    if name == "valAx" {
+                        value_axes.push((axis_pos.clone(), sc));
+                    }
                     let t = std::mem::take(&mut axis_title);
                     if !t.trim().is_empty() {
                         let slot = if matches!(axis_pos.as_str(), "l" | "r") {
@@ -378,6 +401,17 @@ pub fn parse_chart(text: &str, theme: &[Rgb]) -> ChartDef {
         }
     }
     let _ = title_ref;
+    // The value axis: a scatter chart's vertical one, else the only one.
+    let pick = if def.kind == ChartKind::Scatter {
+        value_axes
+            .iter()
+            .find(|a| matches!(a.0.as_str(), "l" | "r"))
+    } else {
+        value_axes.first()
+    };
+    if let Some(a) = pick {
+        def.scale = a.1;
+    }
     if !title.trim().is_empty() {
         def.title = Some(title);
     }
@@ -753,6 +787,158 @@ pub fn with_labels(text: &str, labels: (bool, bool, bool, bool), pie: bool) -> S
     }
     out.push_str(&text[at..]);
     out
+}
+
+/// A chart part with its value axis's scale set (min, max, major unit,
+/// logarithmic; `None` leaves the choice to the spreadsheet): the axis's
+/// `<c:scaling>` written again in the schema's order and its
+/// `<c:majorUnit>` after `<c:crossBetween>`. `None` when the chart has no
+/// value axis (a pie).
+pub fn with_scale(text: &str, scale: Scale, scatter: bool) -> Option<String> {
+    // The value axes in the plot: their bytes and side.
+    let mut r = Reader::new(text);
+    let mut stack: Vec<String> = Vec::new();
+    let mut axes: Vec<(Span<usize>, String, String)> = Vec::new();
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if tag.name == "valAx"
+                    && stack.last().is_some_and(|s| s == "plotArea")
+                    && !tag.empty
+                {
+                    let start = tag.span.start;
+                    let prefix = xml::prefix(tag.qname).to_owned();
+                    let end = r.skip_element();
+                    let el = &text[start..end];
+                    let pos = el
+                        .split("axPos val=\"")
+                        .nth(1)
+                        .and_then(|v| v.split('"').next())
+                        .unwrap_or("l")
+                        .to_owned();
+                    axes.push((start..end, pos, prefix));
+                    continue;
+                }
+                if !tag.empty {
+                    stack.push(tag.name.to_owned());
+                }
+            }
+            Token::End { .. } => {
+                stack.pop();
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let (span, _, p) = if scatter {
+        axes.into_iter()
+            .find(|a| matches!(a.1.as_str(), "l" | "r"))?
+    } else {
+        axes.into_iter().next()?
+    };
+    let el = &text[span.clone()];
+    // The axis's children, by name and bytes.
+    let mut r = Reader::new(el);
+    let mut depth = 0;
+    let mut kids: Vec<(String, Span<usize>)> = Vec::new();
+    let (mut open_end, mut close) = (0, el.len());
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 0 {
+                    open_end = tag.span.end;
+                    depth += 1;
+                    continue;
+                }
+                let end = if tag.empty {
+                    tag.span.end
+                } else {
+                    r.skip_element()
+                };
+                kids.push((tag.name.to_owned(), tag.span.start..end));
+            }
+            Token::End { span, .. } => {
+                close = span.start;
+                break;
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    let num = |v: f64| format!("{v}");
+    // The scaling's orientation and extensions kept.
+    let old_scaling = kids
+        .iter()
+        .find(|k| k.0 == "scaling")
+        .map(|k| &el[k.1.clone()])
+        .unwrap_or("");
+    let keep = |name: &str| -> String {
+        let mut r = Reader::new(old_scaling);
+        while let Some(t) = r.next_token() {
+            if let Token::Start(tag) = t
+                && tag.name == name
+            {
+                let end = if tag.empty {
+                    tag.span.end
+                } else {
+                    r.skip_element()
+                };
+                return old_scaling[tag.span.start..end].to_owned();
+            }
+        }
+        String::new()
+    };
+    let orientation = Some(keep("orientation"))
+        .filter(|o| !o.is_empty())
+        .unwrap_or_else(|| format!("<{p}orientation val=\"minMax\"/>"));
+    let mut scaling = format!("<{p}scaling>");
+    if scale.3 {
+        scaling.push_str(&format!("<{p}logBase val=\"10\"/>"));
+    }
+    scaling.push_str(&orientation);
+    if let Some(v) = scale.1 {
+        scaling.push_str(&format!("<{p}max val=\"{}\"/>", num(v)));
+    }
+    if let Some(v) = scale.0 {
+        scaling.push_str(&format!("<{p}min val=\"{}\"/>", num(v)));
+    }
+    scaling.push_str(&keep("extLst"));
+    scaling.push_str(&format!("</{p}scaling>"));
+    let major = scale
+        .2
+        .map(|v| format!("<{p}majorUnit val=\"{}\"/>", num(v)));
+    let mut out = String::from(&el[..open_end]);
+    let mut placed = major.is_none();
+    let mut scaled = false;
+    for (name, sp) in &kids {
+        match name.as_str() {
+            "scaling" => {
+                out.push_str(&scaling);
+                scaled = true;
+                continue;
+            }
+            "majorUnit" => continue,
+            "minorUnit" | "dispUnits" | "extLst" if !placed => {
+                out.push_str(major.as_deref().unwrap_or(""));
+                placed = true;
+            }
+            _ => {}
+        }
+        if !scaled && name == "delete" {
+            out.push_str(&scaling);
+            scaled = true;
+        }
+        out.push_str(&el[sp.clone()]);
+        if !placed && name == "crossBetween" {
+            out.push_str(major.as_deref().unwrap_or(""));
+            placed = true;
+        }
+    }
+    if !placed {
+        out.push_str(major.as_deref().unwrap_or(""));
+    }
+    out.push_str(&el[close..]);
+    let mut whole = text.to_owned();
+    whole.replace_range(span, &out);
+    Some(whole)
 }
 
 /// An absolute reference to a range of a sheet, as charts write them.
@@ -1182,6 +1368,51 @@ mod tests {
         let set = with_labels(plot, (false, true, false, false), false);
         assert_eq!(set.matches("<c:dLbls>").count(), 1);
         assert_eq!(parse_chart(&set, &[]).labels, (false, true, false, false));
+    }
+
+    #[test]
+    fn value_axis_scales() {
+        let s = NewSeries {
+            name: None,
+            cat: Some(("S!$A$2:$A$3".into(), vec!["1".into(), "2".into()], false)),
+            val: ("S!$B$2:$B$3".into(), vec![Some(1.0), Some(200.0)]),
+        };
+        for kind in [
+            ChartKind::Column,
+            ChartKind::Bar,
+            ChartKind::Line,
+            ChartKind::Scatter,
+        ] {
+            let x = chart_xml(kind, None, std::slice::from_ref(&s));
+            let scatter = kind == ChartKind::Scatter;
+            assert_eq!(parse_chart(&x, &[]).scale, (None, None, None, false));
+            let y = with_scale(&x, (Some(0.0), Some(250.0), Some(50.0), false), scatter).unwrap();
+            assert_eq!(
+                parse_chart(&y, &[]).scale,
+                (Some(0.0), Some(250.0), Some(50.0), false),
+                "{kind:?}"
+            );
+            // The schema's order: orientation, max, min; majorUnit after crossBetween.
+            let ax = &y[y.rfind("<c:valAx>").unwrap()..];
+            let ax = &ax[..ax.find("</c:valAx>").unwrap()];
+            if !scatter || ax.contains("<c:max") {
+                let o = ax.find("<c:orientation").unwrap();
+                assert!(
+                    o < ax.find("<c:max").unwrap() && ax.find("<c:max") < ax.find("<c:min"),
+                    "{ax}"
+                );
+                assert!(ax.find("<c:crossBetween") < ax.find("<c:majorUnit"), "{ax}");
+            }
+            // Logarithmic, the bounds left to the spreadsheet.
+            let z = with_scale(&y, (None, None, None, true), scatter).unwrap();
+            assert_eq!(parse_chart(&z, &[]).scale, (None, None, None, true));
+            assert!(z.contains("<c:logBase val=\"10\"/><c:orientation"));
+            assert!(!z.contains("majorUnit"));
+            let back = with_scale(&z, (None, None, None, false), scatter).unwrap();
+            assert_eq!(parse_chart(&back, &[]).scale, (None, None, None, false));
+        }
+        let pie = chart_xml(ChartKind::Pie, None, std::slice::from_ref(&s));
+        assert!(with_scale(&pie, (Some(1.0), None, None, false), false).is_none());
     }
 
     #[test]
