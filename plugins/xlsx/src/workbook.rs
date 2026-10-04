@@ -5497,6 +5497,121 @@ impl Workbook {
         result
     }
 
+    /// Removes the rows of `range` that repeat an earlier one in `columns`
+    /// (what the cells show, small and capital letters alike), as Excel's
+    /// Remove Duplicates: the rows kept move up within the range, formulas
+    /// and formats with them. One undo step; how many rows went.
+    pub fn remove_duplicates(
+        &mut self,
+        idx: usize,
+        range: Range,
+        columns: &[u32],
+        header: bool,
+    ) -> Result<usize> {
+        self.load(idx)?;
+        if self.sheets[idx].kind != SheetKind::Worksheet {
+            return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        let first = range.start.row + u32::from(header);
+        if first > range.end.row {
+            return Ok(0);
+        }
+        let cols: Vec<u32> = if columns.is_empty() {
+            (range.start.col..=range.end.col).collect()
+        } else {
+            columns
+                .iter()
+                .copied()
+                .filter(|c| (range.start.col..=range.end.col).contains(c))
+                .collect()
+        };
+        let mut seen = HashSet::new();
+        let mut kept = Vec::new();
+        for r in first..=range.end.row {
+            let mut key = Vec::new();
+            for &c in &cols {
+                key.push(self.display(idx, CellRef::new(r, c))?.to_lowercase());
+            }
+            if seen.insert(key) {
+                kept.push(r);
+            }
+        }
+        let removed = (range.end.row - first + 1) as usize - kept.len();
+        if removed == 0 {
+            return Ok(0);
+        }
+        // Every row's cells, read before any is written.
+        let mut rows: HashMap<u32, Vec<(Option<String>, Value, u32)>> = HashMap::new();
+        for r in first..=range.end.row {
+            let mut line = Vec::new();
+            for c in range.start.col..=range.end.col {
+                let at = CellRef::new(r, c);
+                let cell = self.loaded[&idx].1.cells.get(&at).cloned();
+                let value = self.value(idx, at)?;
+                let style = cell.as_ref().map_or(0, |c| c.style);
+                line.push((cell.and_then(|c| c.formula.map(|f| f.text)), value, style));
+            }
+            rows.insert(r, line);
+        }
+        let own = self.batch.is_none();
+        if own {
+            self.begin_batch()?;
+        }
+        let result = (|| -> Result<()> {
+            for (t, row) in (first..=range.end.row).enumerate() {
+                let source = kept.get(t).copied();
+                if source == Some(row) {
+                    continue;
+                }
+                for (k, c) in (range.start.col..=range.end.col).enumerate() {
+                    let at = CellRef::new(row, c);
+                    let (input, style) = match source {
+                        Some(src) => {
+                            let (formula, value, style) = rows[&src][k].clone();
+                            let input = match (formula, value) {
+                                (Some(f), _) => Input::Formula(formula::shift(
+                                    &f,
+                                    i64::from(row) - i64::from(src),
+                                    0,
+                                )),
+                                (_, Value::Number(v)) => Input::Number(v, None),
+                                (_, Value::Text(t)) => Input::Text(t),
+                                (_, Value::Bool(b)) => Input::Bool(b),
+                                (_, Value::Error(e)) => Input::Error(e),
+                                (_, Value::Empty) => Input::Clear,
+                            };
+                            (input, style)
+                        }
+                        None => (Input::Clear, 0),
+                    };
+                    let had = self.loaded[&idx].1.cells.get(&at).map(|c| c.style);
+                    if had.is_some() || !matches!(input, Input::Clear) {
+                        self.set_input(idx, at, input)?;
+                    }
+                    let now = self.loaded[&idx].1.cells.get(&at).map(|c| c.style);
+                    if now.is_some_and(|s| s != style) || (now.is_none() && style != 0) {
+                        self.apply_style(idx, at, style)?;
+                    }
+                }
+            }
+            Ok(())
+        })();
+        self.batch_changed = true;
+        if own {
+            match &result {
+                Ok(()) => {
+                    self.end_batch()?;
+                }
+                Err(_) => {
+                    if let Some(s) = self.batch.take() {
+                        self.restore(s);
+                    }
+                }
+            }
+        }
+        result.map(|()| removed)
+    }
+
     /// Gives the cells of `to` the formats of `from`, repeated over it as
     /// Excel's Format Painter paints a larger selection. One undo step.
     pub fn fill_formats(&mut self, from: (usize, Range), to: (usize, Range)) -> Result<()> {

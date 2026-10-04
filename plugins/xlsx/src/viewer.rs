@@ -606,6 +606,22 @@ impl ViewerDocument for XlsxDoc {
         Ok(vec![to.0])
     }
 
+    fn remove_duplicates(
+        &mut self,
+        unit: usize,
+        range: [u32; 4],
+        columns: &[u32],
+        header: bool,
+    ) -> Result<usize> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book()
+            .remove_duplicates(unit, r, columns, header)
+            .map_err(err)
+    }
+
     fn formula_functions(&mut self) -> Vec<(String, String)> {
         crate::functions::list()
     }
@@ -2826,5 +2842,37 @@ mod tests {
         }
         assert_eq!(text(&mut d, 1, 1).text, "1,200.00");
         assert!(d.cell_note(0, 1, 0).is_some());
+    }
+
+    #[test]
+    fn duplicates_removed() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // Rows 7-11: three kinds, one repeated twice in another case.
+        for (r, row) in [
+            ["Kira", "10"],
+            ["Yemek", "20"],
+            ["kira", "10"],
+            ["Yol", "30"],
+            ["KIRA", "11"],
+        ]
+        .iter()
+        .enumerate()
+        {
+            for (c, v) in row.iter().enumerate() {
+                d.set_cell(0, 6 + r as u32, 6 + c as u32, v).unwrap();
+            }
+        }
+        // By the name only: the two other "kira" rows go.
+        let removed = d.remove_duplicates(0, [6, 6, 10, 7], &[6], false).unwrap();
+        assert_eq!(removed, 2);
+        let col: Vec<String> = (6..11).map(|r| d.cell_input(0, r, 6)).collect();
+        assert_eq!(col, ["Kira", "Yemek", "Yol", "", ""]);
+        assert_eq!(d.cell_input(0, 8, 7), "30");
+        assert!(d.undo().unwrap());
+        // By both columns: only the exact repeat goes.
+        let removed = d.remove_duplicates(0, [6, 6, 10, 7], &[], false).unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(d.cell_input(0, 9, 6), "KIRA");
+        assert_eq!(d.remove_duplicates(0, [6, 6, 9, 7], &[], false).unwrap(), 0);
     }
 }
