@@ -485,6 +485,7 @@ impl ViewerDocument for XlsxDoc {
                 Some("right") => Align::Right,
                 _ => Align::General,
             };
+            #[allow(clippy::needless_update)]
             out.push((
                 at.row,
                 at.col,
@@ -503,6 +504,8 @@ impl ViewerDocument for XlsxDoc {
                     note: notes.contains(&at),
                     bar: None,
                     icon: None,
+                    // Fields the contract gains later start empty.
+                    ..GridCell::default()
                 },
             ));
         }
