@@ -133,11 +133,9 @@ impl Workbook {
                         s.row_breaks.push(id);
                     }
                 }
-                "colBreaks" => {
-                    // Its `<brk>`s are columns: skipped.
-                    if !tag.empty {
-                        r.skip_element();
-                    }
+                // The column breaks' `<brk>`s are not rows.
+                "colBreaks" if !tag.empty => {
+                    r.skip_element();
                 }
                 _ => {}
             }
