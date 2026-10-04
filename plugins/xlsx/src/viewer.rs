@@ -343,6 +343,98 @@ impl XlsxDoc {
     /// Tables drawn in their style: the header row filled and bold, the
     /// data rows banded, the total row bold; a cell's own fill and font
     /// color first. Empty cells of a table get its look too.
+    /// The sparklines drawn in the cells shown: their points scaled to
+    /// 0..1000 from their data's values.
+    fn sparklines(
+        &mut self,
+        unit: usize,
+        rows: &std::ops::Range<u32>,
+        cols: &std::ops::Range<u32>,
+        out: &mut Vec<(u32, u32, GridCell)>,
+    ) {
+        use kalem_viewer::{Sparkline, SparklineKind};
+        for s in self.book().sparklines(unit) {
+            if !rows.contains(&s.cell.row) || !cols.contains(&s.cell.col) {
+                continue;
+            }
+            let sheet = match &s.sheet {
+                Some(name) => match self.book().sheet_index(name) {
+                    Some(i) => i,
+                    None => continue,
+                },
+                None => unit,
+            };
+            let mut values = Vec::new();
+            for r in s.data.start.row..=s.data.end.row {
+                for c in s.data.start.col..=s.data.end.col {
+                    values.push(match self.book().value(sheet, CellRef::new(r, c)) {
+                        Ok(Value::Number(n)) if n.is_finite() => Some(n),
+                        _ => None,
+                    });
+                }
+            }
+            let known = values.iter().flatten().copied();
+            let (min, max) = known.fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| {
+                (a.min(v), b.max(v))
+            });
+            let mut line = Sparkline {
+                kind: s.kind,
+                color: s.color,
+                marker: s.marker,
+                ..Sparkline::default()
+            };
+            if min.is_finite() {
+                // Columns stand on zero; a line spans its values.
+                let (lo, hi) = match s.kind {
+                    SparklineKind::Column => (min.min(0.0), max.max(0.0)),
+                    _ => (min, max),
+                };
+                let scale = |v: f64| {
+                    if hi > lo {
+                        ((v - lo) / (hi - lo) * 1000.0).round() as u16
+                    } else {
+                        500
+                    }
+                };
+                line.points = values
+                    .iter()
+                    .map(|v| {
+                        v.map(|v| match s.kind {
+                            SparklineKind::WinLoss if v > 0.0 => 1000,
+                            SparklineKind::WinLoss if v < 0.0 => 0,
+                            SparklineKind::WinLoss => 500,
+                            _ => scale(v),
+                        })
+                    })
+                    .collect();
+                line.zero = match s.kind {
+                    SparklineKind::WinLoss => Some(500),
+                    _ if lo <= 0.0 && hi >= 0.0 && hi > lo => Some(scale(0.0)),
+                    _ => None,
+                };
+                let at = |want: f64| values.iter().position(|v| *v == Some(want));
+                line.high = s.high.then(|| at(max)).flatten();
+                line.low = s.low.then(|| at(min)).flatten();
+            } else {
+                line.points = vec![None; values.len()];
+            }
+            match out
+                .iter_mut()
+                .find(|(r, c, _)| (*r, *c) == (s.cell.row, s.cell.col))
+            {
+                Some((_, _, cell)) => cell.sparkline = Some(line),
+                None => out.push((
+                    s.cell.row,
+                    s.cell.col,
+                    GridCell {
+                        sparkline: Some(line),
+                        ..GridCell::default()
+                    },
+                )),
+            }
+        }
+    }
+
     fn table_look(
         &mut self,
         unit: usize,
@@ -825,7 +917,35 @@ impl ViewerDocument for XlsxDoc {
                 ));
             }
         }
+        self.sparklines(unit, &rows, &cols, &mut out);
         out
+    }
+
+    fn add_sparklines(
+        &mut self,
+        unit: usize,
+        data: [u32; 4],
+        location: [u32; 4],
+        kind: kalem_viewer::SparklineKind,
+        mark: bool,
+    ) -> Result<Vec<usize>> {
+        let range = |a: [u32; 4]| crate::Range {
+            start: CellRef::new(a[0], a[1]),
+            end: CellRef::new(a[2], a[3]),
+        };
+        self.book()
+            .add_sparklines(unit, range(data), range(location), kind, mark)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn clear_sparklines(&mut self, unit: usize, range: [u32; 4]) -> Result<Vec<usize>> {
+        let r = crate::Range {
+            start: CellRef::new(range[0], range[1]),
+            end: CellRef::new(range[2], range[3]),
+        };
+        self.book().clear_sparklines(unit, r).map_err(err)?;
+        Ok(vec![unit])
     }
 
     fn cell_input(&mut self, unit: usize, row: u32, col: u32) -> String {
@@ -3833,5 +3953,88 @@ mod tests {
             assert!(d.undo().unwrap());
         }
         assert!(d.drawings(0).is_empty());
+    }
+
+    #[test]
+    fn sparklines() {
+        use kalem_viewer::SparklineKind;
+        let mut d = open("openpyxl-budget.xlsx");
+        let rows: Vec<Vec<String>> = [["3", "-1", "4", "1"], ["2", "7", "1", "8"]]
+            .iter()
+            .map(|r| r.iter().map(|v| v.to_string()).collect())
+            .collect();
+        d.set_cells(0, 30, 0, &rows).unwrap();
+        // A line for each row in the column on its right, high and low
+        // marked; win/loss for the first row in one cell.
+        d.add_sparklines(0, [30, 0, 31, 3], [30, 4, 31, 4], SparklineKind::Line, true)
+            .unwrap();
+        d.add_sparklines(
+            0,
+            [30, 0, 30, 3],
+            [33, 0, 33, 0],
+            SparklineKind::WinLoss,
+            false,
+        )
+        .unwrap();
+        let cells = d.grid_cells(0, 30..34, 0..5);
+        let at = |r, c| {
+            cells
+                .iter()
+                .find(|(a, b, _)| (*a, *b) == (r, c))
+                .and_then(|(_, _, g)| g.sparkline.clone())
+                .unwrap()
+        };
+        let first = at(30, 4);
+        assert_eq!(first.kind, SparklineKind::Line);
+        assert_eq!(
+            first.points,
+            vec![Some(800), Some(0), Some(1000), Some(400)]
+        );
+        assert_eq!(
+            (first.high, first.low, first.zero),
+            (Some(2), Some(1), Some(200))
+        );
+        assert_eq!(at(31, 4).points[3], Some(1000));
+        let wl = at(33, 0);
+        assert_eq!(
+            (wl.kind, wl.points),
+            (
+                SparklineKind::WinLoss,
+                vec![Some(1000), Some(0), Some(1000), Some(1000)]
+            )
+        );
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-sparklines-test.xlsx"), &saved).unwrap();
+        }
+        // Read back from the saved file.
+        let mut back = crate::Workbook::open(saved).unwrap();
+        assert_eq!(back.sparklines(0).len(), 3);
+        // One cleared, then the rest; then undone.
+        d.clear_sparklines(0, [31, 4, 31, 4]).unwrap();
+        assert!(
+            d.grid_cells(0, 31..32, 4..5)
+                .iter()
+                .all(|(_, _, g)| g.sparkline.is_none())
+        );
+        assert!(d.grid_cells(0, 30..31, 4..5)[0].2.sparkline.is_some());
+        d.clear_sparklines(0, [0, 0, 100, 10]).unwrap();
+        assert!(
+            d.grid_cells(0, 30..34, 0..5)
+                .iter()
+                .all(|(_, _, g)| g.sparkline.is_none())
+        );
+        let mut back = crate::Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert!(back.sparklines(0).is_empty());
+        for _ in 0..2 {
+            assert!(d.undo().unwrap());
+        }
+        assert_eq!(
+            d.grid_cells(0, 30..34, 0..5)
+                .iter()
+                .filter(|(_, _, g)| g.sparkline.is_some())
+                .count(),
+            3
+        );
     }
 }

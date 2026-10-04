@@ -7524,6 +7524,8 @@ mod page;
 mod pictures;
 mod protection;
 mod sheet_ops;
+mod sparklines;
+pub use sparklines::Spark;
 mod tables;
 pub use tables::{TableDef, style_colors};
 
