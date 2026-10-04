@@ -3817,11 +3817,13 @@ mod tests {
                 col: 8,
                 descending: false,
                 list: Some(months),
+                color: None,
             },
             SortKey {
                 col: 9,
                 descending: true,
                 list: None,
+                color: None,
             },
         ];
         d.sort_range_by(0, [0, 8, 5, 9], &keys, true).unwrap();
@@ -4652,5 +4654,43 @@ mod tests {
         );
         assert!(d.undo().unwrap());
         assert_eq!(d.calc_options().mode, CalcMode::Automatic);
+    }
+
+    #[test]
+    fn sorted_by_color() {
+        use kalem_viewer::{SortColor, SortKey, StyleChange};
+        let mut d = open("openpyxl-budget.xlsx");
+        for (r, v) in ["a", "b", "c", "d"].iter().enumerate() {
+            d.set_cell(0, 20 + r as u32, 0, v).unwrap();
+        }
+        let red = [0xC0, 0x00, 0x00];
+        for r in [21, 23] {
+            d.change_style(
+                0,
+                [r, 0, r, 0],
+                StyleChange {
+                    fill: Some(Some(red)),
+                    ..StyleChange::default()
+                },
+            )
+            .unwrap();
+        }
+        let key = |descending| SortKey {
+            col: 0,
+            descending,
+            color: Some(SortColor {
+                font: false,
+                rgb: red,
+            }),
+            ..SortKey::default()
+        };
+        d.sort_range_by(0, [20, 0, 23, 0], &[key(false)], false)
+            .unwrap();
+        let col: Vec<String> = (20..24).map(|r| d.cell_input(0, r, 0)).collect();
+        assert_eq!(col, ["b", "d", "a", "c"]);
+        d.sort_range_by(0, [20, 0, 23, 0], &[key(true)], false)
+            .unwrap();
+        let col: Vec<String> = (20..24).map(|r| d.cell_input(0, r, 0)).collect();
+        assert_eq!(col, ["a", "c", "b", "d"]);
     }
 }

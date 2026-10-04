@@ -5460,7 +5460,7 @@ impl Workbook {
         let key = kalem_viewer::SortKey {
             col: key,
             descending,
-            list: None,
+            ..Default::default()
         };
         self.sort_range_keys(idx, range, &[key], header)
     }
@@ -5521,6 +5521,17 @@ impl Workbook {
             let mut k = Vec::new();
             for key in keys {
                 let at = CellRef::new(r, key.col);
+                if let Some(color) = key.color {
+                    // Sort by Color: that color's cells first.
+                    let style = self.loaded[&idx].1.cells.get(&at).map_or(0, |c| c.style);
+                    let st = self.styles.get(style);
+                    let has = if color.font { st.color } else { st.fill };
+                    let [r8, g8, b8] = color.rgb;
+                    let want = u32::from(r8) << 16 | u32::from(g8) << 8 | u32::from(b8);
+                    let hit = has.is_some_and(|c| c & 0xFF_FFFF == want);
+                    k.push((Value::Number(if hit { 0.0 } else { 1.0 }), String::new()));
+                    continue;
+                }
                 k.push((self.value(idx, at)?, self.display(idx, at)?.to_lowercase()));
             }
             let mut cells = Vec::new();
