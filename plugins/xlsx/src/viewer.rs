@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 
 use kalem_viewer::{
-    Align, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule, CondStyle, Detection,
-    ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, InfoField, MacroEntry, MacroOutcome,
-    MacroQuestion, MacroUi, PivotSpec, RenderRequest, Rendered, Result, SaveOutput, Structure,
-    Unit, UnitKind, Validation, ValidationError, ValidationKind, Viewer, ViewerDocument,
-    ViewerError,
+    Align, Bitmap, Chart, ChartAxis, ChartKind, CompareOp, CondRule, CondStyle, DataLabels,
+    Detection, ErrorStyle, FileHandle, GridCell, GridEdit, GridLayout, InfoField, LegendPosition,
+    MacroEntry, MacroOutcome, MacroQuestion, MacroUi, PivotSpec, RenderRequest, Rendered, Result,
+    SaveOutput, Structure, Unit, UnitKind, Validation, ValidationError, ValidationKind, Viewer,
+    ViewerDocument, ViewerError,
 };
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -705,6 +705,28 @@ impl ViewerDocument for XlsxDoc {
     ) -> Result<Vec<usize>> {
         self.book()
             .set_axis_title(unit, index, axis == ChartAxis::Vertical, title.as_deref())
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_legend(
+        &mut self,
+        unit: usize,
+        index: usize,
+        position: Option<LegendPosition>,
+    ) -> Result<Vec<usize>> {
+        self.book().set_legend(unit, index, position).map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn set_data_labels(
+        &mut self,
+        unit: usize,
+        index: usize,
+        labels: DataLabels,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .set_data_labels(unit, index, labels)
             .map_err(err)?;
         Ok(vec![unit])
     }
@@ -1693,6 +1715,31 @@ mod tests {
         );
         assert!(d.undo().unwrap() && d.undo().unwrap());
         assert_eq!(d.charts(0)[before].vertical_title, None);
+        // Two series: a legend at the bottom, moved left, then none.
+        assert_eq!(d.charts(0)[before].legend, Some(LegendPosition::Bottom));
+        d.set_legend(0, before, Some(LegendPosition::Left)).unwrap();
+        assert_eq!(d.charts(0)[before].legend, Some(LegendPosition::Left));
+        d.set_legend(0, before, None).unwrap();
+        assert_eq!(d.charts(0)[before].legend, None);
+        let mut wb = Workbook::open(d.save().unwrap().bytes).unwrap();
+        assert_eq!(wb.charts(0).unwrap()[before].legend, None);
+        assert!(d.undo().unwrap() && d.undo().unwrap());
+        // Values labeled, saved, then no labels.
+        let values = DataLabels {
+            value: true,
+            ..DataLabels::default()
+        };
+        d.set_data_labels(0, before, values).unwrap();
+        assert_eq!(d.charts(0)[before].labels, values);
+        let labeled = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-labels-test.xlsx"), &labeled).unwrap();
+        }
+        let mut wb = Workbook::open(labeled).unwrap();
+        assert_eq!(wb.charts(0).unwrap()[before].labels, values);
+        d.set_data_labels(0, before, DataLabels::default()).unwrap();
+        assert!(!d.charts(0)[before].labels.any());
+        assert!(d.undo().unwrap() && d.undo().unwrap());
         // Removed, then back with undo.
         d.delete_chart(0, before).unwrap();
         assert_eq!(d.charts(0).len(), before);
