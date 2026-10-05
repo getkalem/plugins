@@ -7,5 +7,6 @@
   "api": "^0.1",
   "activation": ["onDocument"],
   "permissions": [],
+  "limits": { "memory_mb": 4096 },
   "opens": [".xlsx", ".xlsm", ".xltx", ".xltm", ".xls", ".xlsb", ".ods"]
 }
