@@ -91,6 +91,70 @@ pub struct LegacyWorkbook {
     pub looks: Option<crate::ods_style::Looks>,
 }
 
+/// An ISO 8601 date, or date and time (`2026-10-03`,
+/// `2026-10-03T14:30:00`, with fractions of a second), as a serial in the
+/// 1900 date system and its kind.
+fn iso_date_time(s: &str) -> Option<(f64, DateKind)> {
+    let (date, time) = match s.split_once('T') {
+        Some((d, t)) => (d, Some(t)),
+        None => (s, None),
+    };
+    let mut parts = date.splitn(3, '-');
+    let y: i64 = parts.next()?.parse().ok()?;
+    let m: u32 = parts.next()?.parse().ok()?;
+    let d: u32 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let day = crate::numfmt::date_to_serial(y, m, d, false) as f64;
+    match time {
+        None => Some((day, DateKind::Date)),
+        Some(t) => Some((day + clock(t)?, DateKind::DateTime)),
+    }
+}
+
+/// `hh:mm:ss` (seconds with a fraction, optional) as a fraction of a day.
+fn clock(t: &str) -> Option<f64> {
+    let mut parts = t.splitn(3, ':');
+    let h: f64 = parts.next()?.parse().ok()?;
+    let m: f64 = parts.next()?.parse().ok()?;
+    let s: f64 = parts.next().map_or(Some(0.0), |s| s.parse().ok())?;
+    Some((h * 3600.0 + m * 60.0 + s) / 86_400.0)
+}
+
+/// An ISO 8601 duration as OpenDocument writes a time (`PT09H15M00S`,
+/// `P1DT2H`, `-PT30M`) in days.
+fn iso_duration(s: &str) -> Option<f64> {
+    let (sign, rest) = match s.strip_prefix('-') {
+        Some(r) => (-1.0, r),
+        None => (1.0, s),
+    };
+    let rest = rest.strip_prefix('P')?;
+    let (days, time) = match rest.split_once('T') {
+        Some((d, t)) => (d, t),
+        None => (rest, ""),
+    };
+    let mut total = 0.0;
+    if !days.is_empty() {
+        total += days.strip_suffix('D')?.parse::<f64>().ok()?;
+    }
+    let mut number = String::new();
+    for ch in time.chars() {
+        let scale = match ch {
+            'H' => 1.0 / 24.0,
+            'M' => 1.0 / 1440.0,
+            'S' => 1.0 / 86_400.0,
+            _ => {
+                number.push(ch);
+                continue;
+            }
+        };
+        total += number.parse::<f64>().ok()? * scale;
+        number.clear();
+    }
+    number.is_empty().then_some(sign * total)
+}
+
 fn date_kind(v: f64, duration: bool) -> DateKind {
     if duration {
         DateKind::Duration
@@ -141,9 +205,19 @@ impl LegacyWorkbook {
                             let v = dt.as_f64();
                             (Value::Number(v), Some(date_kind(v, dt.is_duration())))
                         }
-                        Data::DateTimeIso(s) | Data::DurationIso(s) => {
-                            (Value::Text(s.clone()), None)
-                        }
+                        // OpenDocument's dates and times come as ISO 8601
+                        // text: as numbers with their kind, as Excel's do.
+                        Data::DateTimeIso(s) => match iso_date_time(s) {
+                            Some((v, kind)) => (Value::Number(v), Some(kind)),
+                            None => (Value::Text(s.clone()), None),
+                        },
+                        Data::DurationIso(s) => match iso_duration(s) {
+                            Some(v) if (0.0..1.0).contains(&v) => {
+                                (Value::Number(v), Some(DateKind::Time))
+                            }
+                            Some(v) => (Value::Number(v), Some(DateKind::Duration)),
+                            None => (Value::Text(s.clone()), None),
+                        },
                     };
                     cells.insert(
                         at,
@@ -330,6 +404,29 @@ fn show(c: &LegacyCell) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::DateKind;
+
+    #[test]
+    fn iso_dates_and_times_are_numbers() {
+        // 2026-10-03 is serial 46298 in Excel's 1900 system.
+        assert_eq!(
+            super::iso_date_time("2026-10-03"),
+            Some((46298.0, DateKind::Date))
+        );
+        let (v, kind) = super::iso_date_time("2026-10-03T14:30:00").unwrap();
+        assert_eq!(kind, DateKind::DateTime);
+        assert!((v - (46298.0 + 14.5 / 24.0)).abs() < 1e-9);
+        assert!(super::iso_date_time("2026-13-03").is_none());
+        assert!(super::iso_date_time("tomorrow").is_none());
+        let t = super::iso_duration("PT09H15M00S").unwrap();
+        assert!((t - 9.25 / 24.0).abs() < 1e-9);
+        let d = super::iso_duration("P1DT2H30M").unwrap();
+        assert!((d - (1.0 + 2.5 / 24.0)).abs() < 1e-9);
+        assert!((super::iso_duration("-PT30M").unwrap() + 0.5 / 24.0).abs() < 1e-9);
+        assert!(super::iso_duration("PT9X").is_none());
+        assert!(super::iso_duration("9H").is_none());
+    }
+
     #[test]
     fn open_formula_reads_as_a1() {
         assert_eq!(super::odf_to_a1("of:=SUM([.D2:.D4])"), "=SUM(D2:D4)");

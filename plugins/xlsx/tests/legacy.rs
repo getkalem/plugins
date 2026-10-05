@@ -39,6 +39,10 @@ fn xls_and_ods_show_the_same_workbook() {
             "{f}: {shown}"
         );
         assert_eq!(wb.display(1, at("A1")), "2026-10-03", "{f}");
+        // A date and time, and a time: numbers in both formats (an `.ods`
+        // file's came as ISO text).
+        assert_eq!(wb.display(1, at("A2")), "2026-10-03 14:30:00", "{f}");
+        assert_eq!(wb.display(1, at("A3")), "09:15:00", "{f}");
         assert_eq!(wb.display(1, at("A7")), "Türkçe ğüşıöç İ", "{f}");
         assert_eq!(wb.grid(0)[0][0], "Item", "{f}");
     }

@@ -317,6 +317,12 @@ pub struct Workbook {
     thread_cache: HashMap<usize, (u64, Vec<Thread>)>,
     /// Counts the changes to sheet texts, for what is computed from them.
     generation: u64,
+    /// Which content the workbook has along its history: each edit gives
+    /// it a new number, undo and redo bring back the number of the state
+    /// they return to ([`Workbook::state`]).
+    state: u64,
+    /// The last number given to a state.
+    last_state: u64,
     /// Each sheet's data validations, at the generation they were read.
     validations: HashMap<usize, (u64, Vec<validation::DataValidation>)>,
     /// The sheets found to hold no formula without its result, at the
@@ -331,6 +337,8 @@ pub struct Workbook {
 /// shared, so a snapshot costs the edited texts.
 #[derive(Clone)]
 struct Snapshot {
+    /// The state's number ([`Workbook::state`]).
+    state: u64,
     pkg: Package,
     sheets: Vec<SheetInfo>,
     workbook_xml: String,
@@ -423,6 +431,8 @@ impl Workbook {
             dirty_sheets: Vec::new(),
             derived_styles: HashMap::new(),
             generation: 0,
+            state: 0,
+            last_state: 0,
             validations: HashMap::new(),
             complete: HashMap::new(),
             scratch: HashMap::new(),
@@ -845,8 +855,7 @@ impl Workbook {
             return flushed.map(|()| false);
         };
         if self.batch_changed {
-            self.undo.push(before);
-            self.redo.clear();
+            self.record(before);
         }
         flushed.map(|()| self.batch_changed)
     }
@@ -1213,8 +1222,7 @@ impl Workbook {
         let result = self.set_input_inner(idx, at, input);
         match &result {
             Ok(()) => {
-                self.undo.push(snapshot);
-                self.redo.clear();
+                self.record(snapshot);
             }
             Err(_) => self.restore(snapshot),
         }
@@ -1359,6 +1367,7 @@ impl Workbook {
 
     fn snapshot(&self) -> Snapshot {
         Snapshot {
+            state: self.state,
             pkg: self.pkg.clone(),
             sheets: self.sheets.clone(),
             workbook_xml: self.workbook_xml.clone(),
@@ -1375,6 +1384,7 @@ impl Workbook {
     }
 
     fn restore(&mut self, s: Snapshot) {
+        self.state = s.state;
         self.pkg = s.pkg;
         self.sheets = s.sheets;
         self.workbook_xml = s.workbook_xml;
@@ -1427,10 +1437,27 @@ impl Workbook {
         true
     }
 
-    /// How many edits there are to undo: a host compares it with the count
-    /// at its last save to know whether the file is modified.
+    /// How many edits there are to undo.
     pub fn history_len(&self) -> usize {
         self.undo.len()
+    }
+
+    /// The number of the workbook's content along its history: an edit
+    /// gives a new one, undo and redo bring back the one of the state
+    /// they return to. A host keeps it at a save and compares it to know
+    /// whether the file is modified (a count of edits would take an edit
+    /// made after an undo for the saved state).
+    pub fn state(&self) -> u64 {
+        self.state
+    }
+
+    /// Keeps `before`, the state an edit started from, for undo: the
+    /// edit's result is a new state, and what was undone cannot be redone.
+    fn record(&mut self, before: Snapshot) {
+        self.undo.push(before);
+        self.redo.clear();
+        self.last_state += 1;
+        self.state = self.last_state;
     }
 
     /// Whether there is an edit to undo, and one to redo.
@@ -1490,8 +1517,7 @@ impl Workbook {
         }
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -1523,8 +1549,7 @@ impl Workbook {
             }
             match snapshot {
                 Some(s) => {
-                    self.undo.push(s);
-                    self.redo.clear();
+                    self.record(s);
                 }
                 None => self.batch_changed = true,
             }
@@ -1554,8 +1579,7 @@ impl Workbook {
             }
             match snapshot {
                 Some(s) => {
-                    self.undo.push(s);
-                    self.redo.clear();
+                    self.record(s);
                 }
                 None => self.batch_changed = true,
             }
@@ -1622,8 +1646,7 @@ impl Workbook {
             }
             match snapshot {
                 Some(s) => {
-                    self.undo.push(s);
-                    self.redo.clear();
+                    self.record(s);
                 }
                 None => self.batch_changed = true,
             }
@@ -1711,8 +1734,7 @@ impl Workbook {
         let snapshot = self.snapshot();
         match self.structural_inner(idx, op) {
             Ok(()) => {
-                self.undo.push(snapshot);
-                self.redo.clear();
+                self.record(snapshot);
                 Ok(())
             }
             Err(e) => {
@@ -2621,8 +2643,7 @@ impl Workbook {
         self.apply_style(idx, at, new_style)?;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -2723,8 +2744,7 @@ impl Workbook {
         self.replace_sheet_text(idx, new);
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -2772,8 +2792,7 @@ impl Workbook {
         self.replace_sheet_text(idx, new);
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -3113,8 +3132,7 @@ impl Workbook {
         self.replace_sheet_text(idx, new);
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -3476,8 +3494,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -3592,8 +3609,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -3624,8 +3640,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -3665,8 +3680,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -3708,8 +3722,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -3752,8 +3765,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -3810,8 +3822,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4014,8 +4025,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4061,8 +4071,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4109,8 +4118,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4169,8 +4177,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4212,8 +4219,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4256,8 +4262,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4300,8 +4305,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4342,8 +4346,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4391,8 +4394,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4443,8 +4445,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4493,8 +4494,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -4692,8 +4692,7 @@ impl Workbook {
         self.generation += 1;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }
@@ -6860,8 +6859,7 @@ impl Workbook {
         self.replace_sheet_text(idx, new);
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
-                self.redo.clear();
+                self.record(s);
             }
             None => self.batch_changed = true,
         }

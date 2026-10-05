@@ -153,6 +153,7 @@ impl Viewer for XlsxViewer {
         Ok(Box::new(XlsxDoc {
             wb: std::sync::Mutex::new(wb),
             saved_at: 0,
+            saved: false,
             view_changed: false,
             notes: HashMap::new(),
             cf: HashMap::new(),
@@ -167,8 +168,11 @@ impl Viewer for XlsxViewer {
 struct XlsxDoc {
     /// Behind a lock so that `text(&self)` can read sheets lazily.
     wb: std::sync::Mutex<Workbook>,
-    /// The history's length when last saved.
-    saved_at: usize,
+    /// The workbook's state when last saved ([`Workbook::state`]).
+    saved_at: u64,
+    /// Saved at least once: what the workbook had to change as it opened
+    /// (a converted file) is then saved too.
+    saved: bool,
     /// A sheet's view settings changed since the last save.
     view_changed: bool,
     /// Each sheet's notes, read once.
@@ -2381,14 +2385,13 @@ impl ViewerDocument for XlsxDoc {
 
     fn modified(&self) -> bool {
         let wb = self.locked();
-        self.view_changed
-            || wb.history_len() != self.saved_at
-            || (self.saved_at == 0 && wb.is_dirty())
+        self.view_changed || wb.state() != self.saved_at || (!self.saved && wb.is_dirty())
     }
 
     fn save(&mut self) -> Result<SaveOutput> {
         let bytes = self.book().save().map_err(err)?;
-        self.saved_at = self.book().history_len();
+        self.saved_at = self.book().state();
+        self.saved = true;
         self.view_changed = false;
         Ok(SaveOutput {
             bytes,
@@ -2653,6 +2656,17 @@ mod tests {
         assert!(!d.modified());
         let mut again = Workbook::open(out.bytes).unwrap();
         assert_eq!(again.display(0, CellRef::new(1, 1)).unwrap(), "1,300.00");
+        // Undone and redone back to the saved state: not modified.
+        assert!(d.undo().unwrap());
+        assert!(d.modified());
+        assert!(d.redo().unwrap());
+        assert!(!d.modified());
+        // Saved, undone, and another edit made: as many edits as at the
+        // save, but not the saved workbook (Save wrote nothing and closing
+        // did not ask).
+        assert!(d.undo().unwrap());
+        d.set_cell(0, 2, 1, "7").unwrap();
+        assert!(d.modified());
     }
 
     #[test]
