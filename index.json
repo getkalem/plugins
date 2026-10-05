@@ -59,8 +59,8 @@
       "api": "^0.2.1",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pdf-viewer",
-      "download": null,
-      "sha256": null
+      "download": "https://github.com/getkalem/plugins/releases/download/pdf-viewer-v0.0.2/pdf-viewer.wasm",
+      "sha256": "c29dbee56cf1bd28620840fd1b8bca5a590d04eb8ea8a2acdd6a72ad89b6cd1f"
     },
     {
       "id": "org.kalem.xlsx",
