@@ -13,7 +13,14 @@ The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, M
 ## How a plugin is built and shipped
 
 - A plugin is a Rust crate under `plugins/NAME`, compiled to a WebAssembly component (`wasm32-wasip2`). Rust is the plugin language: the contract a plugin implements is the trait Kalem's own modes and completers implement.
-- **Source in, WASM out.** Compiled components are never committed. On a tag `NAME-vX.Y.Z` the release workflow builds the component from the tagged source, hashes it, signs it and publishes it as a release asset; `index.json` lists every published plugin and Kalem reads it as a static file.
+- **Source in, WASM out.** Compiled components are never committed. On a tag `NAME-vX.Y.Z` the release workflow builds the component from the tagged source, hashes it, signs it with Sigstore (keyless, as the workflow) and publishes it as a release asset with `SHA256SUMS` and the signature, `NAME.wasm.sigstore.json`; `index.json` lists every published plugin and Kalem reads it as a static file.
+- **What Kalem checks.** Kalem checks a download against the SHA-256 `index.json` gives, and the plugins it has built in against the SHA-256 its own source pins; it does not check the signature yet. To check one by hand:
+
+  ```sh
+  cosign verify-blob xlsx.wasm --bundle xlsx.wasm.sigstore.json \
+    --certificate-identity https://github.com/getkalem/plugins/.github/workflows/release.yml@refs/tags/xlsx-v0.0.5 \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  ```
 - **Language plugins are declarative** (Kalem's D57): a manifest whose `languages` and `servers` sections name file types, Sublime syntaxes and language servers, the syntax files, and settings. Kalem's core adds the syntaxes to its highlighter (resolving `extends`) and runs the servers through its one language server client; nothing of the plugin runs inside Kalem, so there is no component to build. Such a plugin is published as an archive of its folder, and `index.json` marks it `"kind": "declarative"`. Until Kalem's installer exists, a plugin folder is used from `~/.config/kalem/plugins/` or from the folders of `KALEM_PLUGIN_PATH`.
 - Kalem runs a plugin inside a sandbox: it sees only what the API grants, within a time and memory budget (a viewer's is 1 GB and 10 s a call unless its manifest's `limits` asks for others, as the workbook viewer's 4 GB: a sheet of a million rows needs 2), and never touches the document text, only ranges and edits. The permissions a plugin needs are declared in its `plugin.json` and shown to the user before installing.
 
