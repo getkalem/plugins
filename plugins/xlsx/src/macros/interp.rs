@@ -54,7 +54,7 @@ pub struct Interp<'a> {
     procs: HashMap<String, Vec<ProcRef>>,
     limits: Limits,
     steps: u64,
-    started: std::time::Instant,
+    started: crate::time::Instant,
     depth: usize,
     /// The active sheet and cell (zero-based).
     pub(crate) active_sheet: usize,
@@ -131,7 +131,7 @@ impl<'a> Interp<'a> {
             procs,
             limits,
             steps: 0,
-            started: std::time::Instant::now(),
+            started: crate::time::Instant::now(),
             depth: 0,
             active_sheet: 0,
             active_cell: (0, 0),

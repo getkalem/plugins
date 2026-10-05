@@ -42,6 +42,15 @@ pub mod viewer;
 pub mod workbook;
 pub mod xml;
 
+/// The clock: the system's natively, Kalem's `clock` interface in a
+/// component, where std's panics (wasm32-unknown-unknown has none).
+pub(crate) mod time {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) use web_time::{Instant, SystemTime, UNIX_EPOCH};
+}
+
 pub use cellref::{CellRef, Range};
 pub use sheet::{Cell, Formula, FormulaKind, Sheet, Value};
 pub use viewer::XlsxViewer;

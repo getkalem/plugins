@@ -186,8 +186,8 @@ pub fn format(v: &V, f: &str) -> R<String> {
 }
 
 fn now_serial() -> f64 {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let secs = crate::time::SystemTime::now()
+        .duration_since(crate::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64());
     // UTC: a sandboxed plugin has no time zone; the host may pass one later.
     25_569.0 + secs / 86_400.0
@@ -485,8 +485,8 @@ fn call_inner(name: &str, a: &[V]) -> R<V> {
         ))),
         "rnd" => {
             // A small generator: macros that need randomness get it, not reproducibly.
-            let t = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            let t = crate::time::SystemTime::now()
+                .duration_since(crate::time::UNIX_EPOCH)
                 .map_or(0, |d| d.subsec_nanos());
             let x = (u64::from(t)
                 .wrapping_mul(6_364_136_223_846_793_005)

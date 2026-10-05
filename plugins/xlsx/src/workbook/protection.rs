@@ -122,8 +122,8 @@ fn unbase64(s: &str) -> Option<Vec<u8>> {
 
 /// A salt: sixteen bytes, of the time and what is hashed.
 fn salt(seed: &str) -> Vec<u8> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let nanos = crate::time::SystemTime::now()
+        .duration_since(crate::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     let mut h = Sha512::new();
     h.update(nanos.to_le_bytes());
