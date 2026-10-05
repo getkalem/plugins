@@ -78,6 +78,9 @@ pub struct Row {
     pub hidden: bool,
     /// Its outline level (`outlineLevel`), 0 when ungrouped.
     pub level: u8,
+    /// Its own style (`s` with `customFormat`), the one its empty cells
+    /// show.
+    pub style: Option<u32>,
     /// The start tag's bytes.
     pub(crate) start: Span<usize>,
     /// The end tag's bytes; `None` for `<row/>`.
@@ -97,6 +100,8 @@ pub struct Cols {
     pub hidden: bool,
     /// Their outline level, 0 when ungrouped.
     pub level: u8,
+    /// Their own style (`style`), the one their empty cells show.
+    pub style: Option<u32>,
 }
 
 /// A worksheet.
@@ -347,6 +352,10 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                                 .attr("outlineLevel")
                                 .and_then(|v| v.parse().ok())
                                 .unwrap_or(0),
+                            style: tag
+                                .attr("style")
+                                .and_then(|v| v.parse().ok())
+                                .filter(|s| *s != 0),
                         });
                     }
                 }
@@ -373,6 +382,12 @@ pub fn parse(text: &str, strings: &[String], date1904: bool) -> Sheet {
                                 .attr("outlineLevel")
                                 .and_then(|v| v.parse().ok())
                                 .unwrap_or(0),
+                            style: tag
+                                .attr("customFormat")
+                                .is_some_and(|v| v == "1" || v == "true")
+                                .then(|| tag.attr("s").and_then(|v| v.parse().ok()))
+                                .flatten()
+                                .filter(|s| *s != 0),
                             start: tag.span.clone(),
                             end: None,
                         },

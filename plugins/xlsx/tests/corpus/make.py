@@ -66,6 +66,20 @@ def empty():
     wb.save("openpyxl-empty.xlsx")
 
 
+def colors():
+    # A filled cell, a whole column and a whole row filled.
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Renk"
+    for r in range(1, 8):
+        ws.cell(r, 1, f"a{r}")
+    ws["D2"] = "kırmızı"
+    ws["D2"].fill = PatternFill("solid", fgColor="FF0000")
+    ws.column_dimensions["B"].fill = PatternFill("solid", fgColor="FFFF00")
+    ws.row_dimensions[5].fill = PatternFill("solid", fgColor="00B0F0")
+    wb.save("openpyxl-colors.xlsx")
+
+
 def via_libreoffice(src, dst, filter="xlsx:Calc MS Excel 2007 XML"):
     with tempfile.TemporaryDirectory() as out:
         subprocess.run(
@@ -80,6 +94,8 @@ def via_libreoffice(src, dst, filter="xlsx:Calc MS Excel 2007 XML"):
 if __name__ == "__main__":
     budget()
     empty()
+    colors()
+    via_libreoffice("openpyxl-colors.xlsx", "libreoffice-colors.ods", "ods")
     via_libreoffice("openpyxl-budget.xlsx", "libreoffice-budget.xlsx")
     # The formats shown but not written (T3.7.7).
     via_libreoffice("libreoffice-budget.xlsx", "libreoffice-budget.xls", "xls:MS Excel 97")

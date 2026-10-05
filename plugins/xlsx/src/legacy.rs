@@ -87,6 +87,8 @@ pub struct LegacyWorkbook {
     pub format: LegacyFormat,
     /// The sheets in order.
     pub sheets: Vec<LegacySheet>,
+    /// An OpenDocument spreadsheet's cell styles.
+    pub looks: Option<crate::ods_style::Looks>,
 }
 
 fn date_kind(v: f64, duration: bool) -> DateKind {
@@ -110,6 +112,11 @@ impl LegacyWorkbook {
             LegacyFormat::Ods
         } else {
             LegacyFormat::Xlsb
+        };
+        let looks = if format == LegacyFormat::Ods {
+            crate::ods_style::Looks::read(&bytes)
+        } else {
+            None
         };
         let mut book =
             calamine::open_workbook_auto_from_rs(Cursor::new(bytes)).map_err(|e| e.to_string())?;
@@ -185,7 +192,11 @@ impl LegacyWorkbook {
                 cells,
             });
         }
-        Ok(Self { format, sheets })
+        Ok(Self {
+            format,
+            sheets,
+            looks,
+        })
     }
 
     /// A cell as the grid shows it. The files' number formats are not

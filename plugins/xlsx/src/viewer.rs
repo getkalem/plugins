@@ -984,6 +984,45 @@ impl ViewerDocument for XlsxDoc {
                 },
             ));
         }
+        // Cells not there that their row's or column's style paints.
+        let styled = self.book().sheet(unit).is_ok_and(|s| {
+            s.rows.values().any(|r| r.style.is_some()) || s.cols.iter().any(|c| c.style.is_some())
+        });
+        if styled {
+            let have: std::collections::HashSet<(u32, u32)> =
+                out.iter().map(|c| (c.0, c.1)).collect();
+            let book = self.book();
+            for r in rows.clone() {
+                for c in cols.clone() {
+                    if have.contains(&(r, c)) {
+                        continue;
+                    }
+                    let s = book.row_or_col_style(unit, CellRef::new(r, c));
+                    if s == 0 {
+                        continue;
+                    }
+                    let style = book.style(s);
+                    if style.fill.is_none()
+                        && style.pattern.is_none()
+                        && style.sides.iter().all(Option::is_none)
+                    {
+                        continue;
+                    }
+                    out.push((
+                        r,
+                        c,
+                        GridCell {
+                            fill: style.fill.map(rgb),
+                            fill_pattern: style.pattern.clone(),
+                            borders: style.sides.map(|s| s.map(|(c, _)| rgb(c))),
+                            border_thick: style.sides.map(|s| s.is_some_and(|(_, t)| t)),
+                            border_styles: style.lines,
+                            ..GridCell::default()
+                        },
+                    ));
+                }
+            }
+        }
         self.table_look(unit, &rows, &cols, &mut out);
         self.conditional(unit, &rows, &cols, &mut out);
         // Notes on cells that hold nothing still show their mark.
@@ -2454,9 +2493,15 @@ impl ViewerDocument for LegacyDoc {
     fn grid(&mut self, unit: usize) -> Option<GridLayout> {
         let s = self.wb.sheets.get(unit).filter(|s| s.worksheet)?;
         let used = s.used_range();
+        // As far as the cells' colors go, too.
+        let (paint_rows, paint_cols) = self
+            .wb
+            .looks
+            .as_ref()
+            .map_or((0, 0), |l| l.extent(unit, (10_000, 1_024)));
         Some(GridLayout {
-            rows: used.map_or(0, |u| u.end.row + 1),
-            cols: used.map_or(0, |u| u.end.col + 1),
+            rows: used.map_or(0, |u| u.end.row + 1).max(paint_rows),
+            cols: used.map_or(0, |u| u.end.col + 1).max(paint_cols),
             max_rows: MAX_ROW,
             max_cols: MAX_COL,
             default_width: 8.43,
@@ -2474,10 +2519,14 @@ impl ViewerDocument for LegacyDoc {
         let Some(s) = self.wb.sheets.get(unit) else {
             return Vec::new();
         };
-        s.cells
+        let looks = self.wb.looks.as_ref();
+        let look = |r: u32, c: u32| looks.map(|l| l.at(unit, r, c)).unwrap_or_default();
+        let mut out: Vec<(u32, u32, GridCell)> = s
+            .cells
             .range(CellRef::new(rows.start, 0)..CellRef::new(rows.end, 0))
             .filter(|(p, _)| cols.contains(&p.col))
             .map(|(p, c)| {
+                let l = look(p.row, p.col);
                 (
                     p.row,
                     p.col,
@@ -2485,11 +2534,40 @@ impl ViewerDocument for LegacyDoc {
                         text: self.wb.display(unit, *p),
                         numeric: matches!(c.value, Value::Number(_)),
                         formula: c.formula.is_some(),
+                        fill: l.fill,
+                        color: l.color,
+                        bold: l.bold,
+                        italic: l.italic,
+                        underline: l.underline,
                         ..GridCell::default()
                     },
                 )
             })
-            .collect()
+            .collect();
+        // Empty cells their style paints.
+        if looks.is_some() {
+            let have: std::collections::HashSet<(u32, u32)> =
+                out.iter().map(|c| (c.0, c.1)).collect();
+            for r in rows.clone() {
+                for c in cols.clone() {
+                    if have.contains(&(r, c)) {
+                        continue;
+                    }
+                    let l = look(r, c);
+                    if l.paints() {
+                        out.push((
+                            r,
+                            c,
+                            GridCell {
+                                fill: l.fill,
+                                ..GridCell::default()
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        out
     }
 
     fn cell_input(&mut self, unit: usize, row: u32, col: u32) -> String {
@@ -3034,6 +3112,67 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn colored_cells_columns_and_rows_read() {
+        // Excel's (openpyxl's) and LibreOffice's OpenDocument: a red cell,
+        // column B yellow, row 5 blue, empty cells far off too.
+        for name in ["openpyxl-colors.xlsx", "libreoffice-colors.ods"] {
+            let mut d = open(name);
+            let at = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+                d.grid_cells(0, r..r + 1, c..c + 1)
+                    .first()
+                    .and_then(|x| x.2.fill)
+            };
+            assert_eq!(at(&mut d, 1, 3), Some([255, 0, 0]), "{name}");
+            assert_eq!(at(&mut d, 0, 1), Some([255, 255, 0]), "{name}");
+            assert_eq!(at(&mut d, 500, 1), Some([255, 255, 0]), "{name}");
+            assert_eq!(at(&mut d, 4, 2), Some([0, 176, 240]), "{name}");
+            assert_eq!(at(&mut d, 4, 40), Some([0, 176, 240]), "{name}");
+            assert_eq!(at(&mut d, 2, 2), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn whole_columns_and_rows_colored() {
+        let mut d = open("openpyxl-budget.xlsx");
+        let fill = |c: [u8; 3]| kalem_viewer::StyleChange {
+            fill: Some(Some(c)),
+            ..Default::default()
+        };
+        // Column F yellow, row 12 blue: their own styles.
+        d.change_style(0, [0, 5, 1_048_575, 5], fill([255, 255, 0]))
+            .unwrap();
+        d.change_style(0, [11, 0, 11, 16_383], fill([0, 176, 240]))
+            .unwrap();
+        let at = |d: &mut Box<dyn ViewerDocument>, r: u32, c: u32| {
+            d.grid_cells(0, r..r + 1, c..c + 1)
+                .first()
+                .and_then(|x| x.2.fill)
+        };
+        assert_eq!(at(&mut d, 500, 5), Some([255, 255, 0]));
+        assert_eq!(at(&mut d, 11, 30), Some([0, 176, 240]));
+        assert_eq!(
+            at(&mut d, 11, 5),
+            Some([0, 176, 240]),
+            "the row's over the column's"
+        );
+        assert_eq!(at(&mut d, 1, 1), None);
+        // A value typed in the column keeps its color.
+        d.set_cell(0, 40, 5, "7").unwrap();
+        assert_eq!(at(&mut d, 40, 5), Some([255, 255, 0]));
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_CHART_OUT") {
+            std::fs::write(format!("{dir}/kalem-whole.xlsx"), &saved).unwrap();
+        }
+        let back = std::env::temp_dir().join(format!("kalem-whole-{}.xlsx", std::process::id()));
+        std::fs::write(&back, &saved).unwrap();
+        let mut reopened = XlsxViewer.open(FileHandle::new(back.clone())).unwrap();
+        assert_eq!(at(&mut reopened, 900, 5), Some([255, 255, 0]));
+        let _ = std::fs::remove_file(back);
+        assert!(d.undo().unwrap() && d.undo().unwrap() && d.undo().unwrap());
+        assert_eq!(at(&mut d, 500, 5), None);
     }
 
     #[test]

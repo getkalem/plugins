@@ -1890,10 +1890,148 @@ impl Workbook {
         }
     }
 
-    fn row_or_col_style(&self, _idx: usize, _at: CellRef) -> u32 {
-        // A row's or column's own style (`<row s customFormat>`, `<col style>`)
-        // is what Excel gives a new cell; reading it is a later step.
-        0
+    /// Whole columns (`cols`) or rows restyled: each one's own style
+    /// (`<col style>`, `<row s customFormat>`) and the cells in it. One
+    /// undo step.
+    fn style_whole(
+        &mut self,
+        idx: usize,
+        range: Range,
+        change: &kalem_viewer::StyleChange,
+        cols: bool,
+    ) -> Result<()> {
+        let (lo, hi) = if cols {
+            (range.start.col, range.end.col)
+        } else {
+            (range.start.row, range.end.row)
+        };
+        if hi - lo >= if cols { 1024 } else { 10_000 } {
+            return Err(Error::Refused(
+                "Select fewer columns or rows to format whole".into(),
+            ));
+        }
+        self.in_one_step(|wb| {
+            let mut made: HashMap<u32, u32> = HashMap::new();
+            let mut restyled = |wb: &mut Self, old: u32| -> Result<u32> {
+                if let Some(n) = made.get(&old) {
+                    return Ok(*n);
+                }
+                let n = wb.restyle(old, change, [None; 4])?;
+                made.insert(old, n);
+                Ok(n)
+            };
+            let mut text = wb.loaded[&idx].0.clone();
+            for k in lo..=hi {
+                let model = sheet::parse(&text, &wb.strings, wb.date1904);
+                if cols {
+                    let old = model
+                        .cols
+                        .iter()
+                        .find(|c| (c.min..=c.max).contains(&k))
+                        .and_then(|c| c.style)
+                        .unwrap_or(0);
+                    let new = restyled(wb, old)?;
+                    text = col_attrs_text(&text, k + 1, &|tag: &str| {
+                        let t = if tag.contains("width=") {
+                            tag.to_owned()
+                        } else {
+                            xml::set_attr(tag, "width", "9.140625")
+                        };
+                        if new == 0 {
+                            xml::remove_attr(&t, "style")
+                        } else {
+                            xml::set_attr(&t, "style", &new.to_string())
+                        }
+                    });
+                } else {
+                    let old = model.rows.get(&k).and_then(|r| r.style).unwrap_or(0);
+                    let new = restyled(wb, old)?;
+                    text = match model.rows.get(&k) {
+                        Some(r) => {
+                            let tag = &text[r.start.clone()];
+                            let t = if new == 0 {
+                                xml::remove_attr(&xml::remove_attr(tag, "s"), "customFormat")
+                            } else {
+                                let t = xml::set_attr(tag, "s", &new.to_string());
+                                xml::set_attr(&t, "customFormat", "1")
+                            };
+                            splice(&text, vec![(r.start.clone(), t)])
+                        }
+                        None if new == 0 => text,
+                        None => {
+                            // A row made for its style, after the row before it.
+                            let p = model.prefix.clone();
+                            let el =
+                                format!("<{p}row r=\"{}\" s=\"{new}\" customFormat=\"1\"/>", k + 1);
+                            let after = model
+                                .rows
+                                .range(..k)
+                                .next_back()
+                                .map(|(_, x)| x.end.as_ref().map_or(x.start.end, |e| e.end));
+                            match &model.sheet_data {
+                                Some((open, Some(_))) => {
+                                    let at = after.unwrap_or(open.end);
+                                    splice(&text, vec![(at..at, el)])
+                                }
+                                Some((open, None)) => {
+                                    let tag = &text[open.clone()];
+                                    let o = tag.trim_end_matches("/>").trim_end();
+                                    splice(
+                                        &text,
+                                        vec![(open.clone(), format!("{o}>{el}</{p}sheetData>"))],
+                                    )
+                                }
+                                None => text,
+                            }
+                        }
+                    };
+                }
+            }
+            wb.replace_sheet_text(idx, text);
+            // The cells in them.
+            let cells: Vec<(CellRef, u32)> = wb.loaded[&idx]
+                .1
+                .cells
+                .iter()
+                .filter(|(at, _)| {
+                    let k = if cols { at.col } else { at.row };
+                    (lo..=hi).contains(&k)
+                })
+                .map(|(at, c)| (*at, c.style))
+                .collect();
+            let mut writes = Vec::new();
+            for (at, old) in cells {
+                let new = restyled(wb, old)?;
+                if new != old {
+                    writes.push((at, new));
+                }
+            }
+            wb.style_many(idx, &writes)?;
+            wb.generation += 1;
+            wb.batch_changed = true;
+            Ok(())
+        })
+    }
+
+    /// The style Excel gives a cell that is not there: its row's own
+    /// (`<row s customFormat>`), else its column's (`<col style>`), else
+    /// the default.
+    pub(crate) fn row_or_col_style(&self, idx: usize, at: CellRef) -> u32 {
+        let Some((_, sheet)) = self.loaded.get(&idx) else {
+            return 0;
+        };
+        sheet
+            .rows
+            .get(&at.row)
+            .and_then(|r| r.style)
+            .or_else(|| {
+                sheet
+                    .cols
+                    .iter()
+                    .find(|c| (c.min..=c.max).contains(&at.col))
+                    .and_then(|c| c.style)
+            })
+            .unwrap_or(0)
     }
 
     fn any_formula(&mut self) -> Result<bool> {
@@ -2289,6 +2427,12 @@ impl Workbook {
         self.check_allowed(idx, "formatCells")?;
         if self.sheets[idx].kind != SheetKind::Worksheet {
             return Err(Error::NotAWorksheet(self.sheets[idx].name.clone()));
+        }
+        // Whole columns or rows: their own style, as Excel gives it.
+        let whole_cols = range.start.row == 0 && range.end.row >= MAX_ROW - 1;
+        let whole_rows = range.start.col == 0 && range.end.col >= MAX_COL - 1;
+        if (whole_cols || whole_rows) && change.borders.is_none() {
+            return self.style_whole(idx, range, change, whole_cols);
         }
         let area = u64::from(range.end.row - range.start.row + 1)
             * u64::from(range.end.col - range.start.col + 1);
