@@ -44,9 +44,10 @@ const CACHED_RENDERS: usize = 6;
 /// render larger than this is not kept.
 const CACHED_BYTES: usize = 256 << 20;
 
-/// The error of a file that needs a password; the host asks for one and
-/// opens it with [`PdfViewer::open_with_password`].
-pub const PASSWORD_REQUIRED: &str = "This PDF is protected by a password";
+/// The error of a file that needs a password: the contract's, on which
+/// Kalem asks for one and opens the file with
+/// [`Viewer::open_with_password`].
+pub const PASSWORD_REQUIRED: &str = kalem_viewer::NEEDS_PASSWORD;
 
 /// The PDF viewer.
 #[derive(Debug, Default)]
@@ -85,12 +86,10 @@ impl Viewer for PdfViewer {
     fn open(&self, file: FileHandle) -> Result<Box<dyn ViewerDocument>> {
         self.open_with_password(file, "")
     }
-}
 
-impl PdfViewer {
     /// Opens an encrypted file with its password (the user's or the
     /// owner's); `open` tries the empty one.
-    pub fn open_with_password(
+    fn open_with_password(
         &self,
         file: FileHandle,
         password: &str,
@@ -131,7 +130,7 @@ impl PdfDocument {
         let encrypted = has_encrypt(&bytes);
         let pdf = Pdf::new_with_password(bytes, password).map_err(|e| match e {
             LoadPdfError::Decryption(DecryptionError::PasswordProtected) => {
-                ViewerError(PASSWORD_REQUIRED.into())
+                ViewerError::needs_password()
             }
             LoadPdfError::Decryption(DecryptionError::UnsupportedAlgorithm) => {
                 ViewerError("This PDF is encrypted in a way the viewer does not read".into())
