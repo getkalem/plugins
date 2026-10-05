@@ -38,6 +38,12 @@ pub const MAX_PIXELS: f32 = 40_000_000.0;
 /// the page at the zoom before.
 const CACHED_RENDERS: usize = 6;
 
+/// The most bytes of renders a document keeps (a page at a Retina
+/// display's size is about 15 MB): six pages zoomed far in, 160 MB each,
+/// took a component near its memory limit (Kalem's publish_todo 3.8). A
+/// render larger than this is not kept.
+const CACHED_BYTES: usize = 256 << 20;
+
 /// The error of a file that needs a password; the host asks for one and
 /// opens it with [`PdfViewer::open_with_password`].
 pub const PASSWORD_REQUIRED: &str = "This PDF is protected by a password";
@@ -243,11 +249,19 @@ impl ViewerDocument for PdfDocument {
             recolor(&mut rgba, request.theme);
         }
         let bitmap = Bitmap::new(width as u32, height as u32, rgba);
-        if self.renders.len() >= CACHED_RENDERS {
+        let size = bitmap.rgba.len();
+        let kept = |r: &VecDeque<(usize, u32, Theme, Bitmap)>| {
+            r.iter().map(|x| x.3.rgba.len()).sum::<usize>()
+        };
+        while !self.renders.is_empty()
+            && (self.renders.len() >= CACHED_RENDERS || kept(&self.renders) + size > CACHED_BYTES)
+        {
             self.renders.pop_front();
         }
-        self.renders
-            .push_back((key.0, key.1, key.2, bitmap.clone()));
+        if size <= CACHED_BYTES {
+            self.renders
+                .push_back((key.0, key.1, key.2, bitmap.clone()));
+        }
         Ok(Rendered::Bitmap(bitmap))
     }
 
@@ -459,6 +473,66 @@ mod tests {
         assert_eq!(&px[4..7], &[220, 220, 220]);
         // Red stays redder than it is green.
         assert!(px[8] > px[9]);
+    }
+
+    /// A PDF of `pages` empty A4 pages.
+    fn empty_pdf(pages: usize) -> Vec<u8> {
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            String::new(),
+        ];
+        let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
+        objects[1] = format!(
+            "<< /Type /Pages /Kids [{}] /Count {pages} >>",
+            kids.join(" ")
+        );
+        for _ in 0..pages {
+            objects.push("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>".into());
+        }
+        let mut pdf = String::from("%PDF-1.4\n");
+        let mut offsets = Vec::new();
+        for (i, o) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf += &format!("{} 0 obj\n{o}\nendobj\n", i + 1);
+        }
+        let xref = pdf.len();
+        pdf += &format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1);
+        for o in offsets {
+            pdf += &format!("{o:010} 00000 n \n");
+        }
+        pdf += &format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        );
+        pdf.into_bytes()
+    }
+
+    #[test]
+    fn renders_kept_within_their_bytes() {
+        // Pages zoomed far in, 160 MB each: at most CACHED_BYTES kept.
+        let bytes = std::sync::Arc::new(empty_pdf(4));
+        let len = bytes.len() as u64;
+        let file = FileHandle::from_reader("big.pdf", len, move |at: u64, n: usize| {
+            let a = (at as usize).min(bytes.len());
+            bytes[a..(a + n).min(bytes.len())].to_vec()
+        });
+        let mut doc = PdfDocument::new(file, "").unwrap();
+        for unit in 0..4 {
+            let request = RenderRequest {
+                scale: 12.0,
+                ..RenderRequest::default()
+            };
+            doc.render(unit, request).unwrap();
+            let kept: usize = doc.renders.iter().map(|r| r.3.rgba.len()).sum();
+            assert!(kept <= CACHED_BYTES, "{kept}");
+        }
+        // Pages at a reading size are kept beside the last one zoomed in.
+        for unit in 0..4 {
+            doc.render(unit, RenderRequest::default()).unwrap();
+        }
+        assert_eq!(doc.renders.len(), 5);
+        let kept: usize = doc.renders.iter().map(|r| r.3.rgba.len()).sum();
+        assert!(kept <= CACHED_BYTES, "{kept}");
     }
 
     #[test]
