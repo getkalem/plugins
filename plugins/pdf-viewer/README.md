@@ -42,7 +42,7 @@ kalem plugin build plugins/pdf-viewer
 kalem plugin install plugins/pdf-viewer
 ```
 
-Installed, the component takes the place of the bundled viewer.
+Kalem has this plugin built in, as its released component; an installed copy is used instead only when it is newer.
 
 ## Tests
 

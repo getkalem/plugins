@@ -12,7 +12,7 @@ The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, M
 
 ## How a plugin is built and shipped
 
-- A plugin is a Rust crate under `plugins/NAME`, compiled to a WebAssembly component (`wasm32-wasip2`). Rust is the plugin language: the contract a plugin implements is the trait Kalem's own modes and completers implement.
+- A plugin is a Rust crate under `plugins/NAME`, compiled for `wasm32-unknown-unknown` and wrapped as a WebAssembly component (`kalem plugin build`; Kalem grants no WASI interface). Rust is the plugin language: the contract a viewer implements is the trait Kalem's own viewers implement, so its unit tests run natively.
 - **Source in, WASM out.** Compiled components are never committed. On a tag `NAME-vX.Y.Z` the release workflow builds the component from the tagged source, hashes it, signs it with Sigstore (keyless, as the workflow) and publishes it as a release asset with `SHA256SUMS` and the signature, `NAME.wasm.sigstore.json`; `index.json` lists every published plugin and Kalem reads it as a static file.
 - **What Kalem checks.** Kalem checks a download against the SHA-256 `index.json` gives, and the plugins it has built in against the SHA-256 its own source pins; it does not check the signature yet. To check one by hand:
 
@@ -26,8 +26,8 @@ The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, M
 
 ## Adding a plugin
 
-1. Copy `template/` to `plugins/NAME`, rename the crate to `kalem-plugin-NAME`, fill `plugin.json`.
-2. `cargo test -p kalem-plugin-NAME` runs the conformance tests; `cargo build --release --target wasm32-wasip2 -p kalem-plugin-NAME` builds the component.
+1. `kalem plugin new NAME` copies `template/` to `plugins/NAME` and renames it; fill `plugin.json`.
+2. `cargo test -p kalem-plugin-NAME` runs the conformance tests; `kalem plugin build plugins/NAME` builds the component, and `kalem plugin dev plugins/NAME` builds and installs it again at each change.
 3. Add a line for yourself to `CODEOWNERS` and open a pull request. CI builds every plugin against the current API and runs the conformance suite.
 4. When it is merged, tag `NAME-vX.Y.Z` to publish.
 
