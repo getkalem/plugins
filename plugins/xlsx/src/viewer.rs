@@ -99,14 +99,7 @@ impl Viewer for XlsxViewer {
     }
 
     fn extensions(&self) -> &[&str] {
-        #[cfg(not(target_family = "wasm"))]
-        {
-            &["xlsx", "xlsm", "xltx", "xltm", "xls", "xlsb", "ods"]
-        }
-        #[cfg(target_family = "wasm")]
-        {
-            &OOXML
-        }
+        &["xlsx", "xlsm", "xltx", "xltm", "xls", "xlsb", "ods"]
     }
 
     fn detect(&self, name: &str, head: &[u8]) -> Detection {
@@ -122,9 +115,9 @@ impl Viewer for XlsxViewer {
                 .any(|w| w == b"application/vnd.oasis.opendocument.spreadsheet");
         let ok = match ext.as_str() {
             e if OOXML.contains(&e) => zip,
-            "xlsb" => zip && cfg!(not(target_family = "wasm")),
-            "xls" => ole && cfg!(not(target_family = "wasm")),
-            "ods" => ods && cfg!(not(target_family = "wasm")),
+            "xlsb" => zip,
+            "xls" => ole,
+            "ods" => ods,
             _ => false,
         };
         if ok {
@@ -142,12 +135,9 @@ impl Viewer for XlsxViewer {
         let bytes = file.read_all()?;
         let ext = file.extension();
         if !OOXML.contains(&ext.as_str()) {
-            #[cfg(not(target_family = "wasm"))]
             return Ok(Box::new(LegacyDoc {
                 wb: crate::legacy::LegacyWorkbook::open(bytes).map_err(err)?,
             }));
-            #[cfg(target_family = "wasm")]
-            return Err(ViewerError(format!(".{ext} is not opened by this build")));
         }
         let wb = Workbook::open(bytes).map_err(err)?;
         Ok(Box::new(XlsxDoc {
@@ -2456,12 +2446,10 @@ impl ViewerDocument for XlsxDoc {
 }
 
 /// An `.xls`, `.xlsb` or `.ods` workbook: shown, never edited.
-#[cfg(not(target_family = "wasm"))]
 struct LegacyDoc {
     wb: crate::legacy::LegacyWorkbook,
 }
 
-#[cfg(not(target_family = "wasm"))]
 impl ViewerDocument for LegacyDoc {
     fn structure(&self) -> Structure {
         units(

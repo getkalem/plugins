@@ -7,5 +7,5 @@
   "api": "^0.1",
   "activation": ["onDocument"],
   "permissions": [],
-  "opens": [".xlsx", ".xlsm", ".xltx", ".xltm"]
+  "opens": [".xlsx", ".xlsm", ".xltx", ".xltm", ".xls", ".xlsb", ".ods"]
 }

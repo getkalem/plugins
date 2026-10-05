@@ -26,7 +26,6 @@ pub mod conditional;
 pub mod fill;
 pub mod formula;
 pub mod functions;
-#[cfg(not(target_family = "wasm"))]
 pub mod legacy;
 pub mod macros;
 pub mod numfmt;
