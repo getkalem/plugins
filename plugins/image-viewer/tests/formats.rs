@@ -184,6 +184,35 @@ fn an_animated_gif_is_frames() {
 }
 
 #[test]
+fn an_animation_over_the_budget_keeps_every_frame_smaller() {
+    use image::codecs::gif::GifEncoder;
+    use kalem_plugin_image_viewer::MAX_PIXELS;
+    let d = dir("gif-budget");
+    let p = d.join("a.gif");
+    // Twelve frames of 2000 × 2000 are 48 million pixels, over the budget;
+    // each after the first is one pixel, so they are quick to make.
+    {
+        let mut enc = GifEncoder::new(std::fs::File::create(&p).unwrap());
+        for i in 0..12 {
+            let size = if i == 0 { 2000 } else { 1 };
+            let frame = image::Frame::from_parts(
+                RgbaImage::from_pixel(size, size, Rgba([255, 0, 0, 255])),
+                0,
+                0,
+                image::Delay::from_numer_denom_ms(100, 1),
+            );
+            enc.encode_frame(frame).unwrap();
+        }
+    }
+    let mut doc = open(&p);
+    assert_eq!(doc.structure().units.len(), 12);
+    let last = pixels(&mut doc, 11);
+    assert!(last.width() < 2000 && last.width() == last.height());
+    assert!(u64::from(last.width()) * u64::from(last.height()) * 12 <= MAX_PIXELS);
+    std::fs::remove_dir_all(d).ok();
+}
+
+#[test]
 fn svg() {
     let d = dir("svg");
     let p = d.join("a.svg");

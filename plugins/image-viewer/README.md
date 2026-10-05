@@ -19,7 +19,7 @@ A file is detected by its first bytes, then by its extension (TGA has no magic n
 
 ## Memory
 
-A picture is kept at most 8,192 pixels on its longer side (a GPU texture's limit) and 40 megapixels over all its frames; a larger one is scaled down right after decoding, so a 100-megapixel photograph opens. The information panel then gives both sizes.
+A picture is kept at most 8,192 pixels on its longer side (a GPU texture's limit) and 40 megapixels over all its frames; a larger one is scaled down right after decoding, so a 100-megapixel photograph opens. An animation's frames are counted first and each is scaled as it is decoded, so a long one never stands whole at full size. The information panel then gives both sizes.
 
 ## What it edits
 
@@ -48,6 +48,6 @@ Installed, the component takes the place of the bundled viewer.
 
 ## Tests
 
-`cargo test -p kalem-plugin-image-viewer`: one file per format made by the test itself (no picture whose license would need recording) and decoded against the pixels it was made from; the eight orientations; a turn and a save that differ from the original in the tag only; an animated GIF; a 50-megapixel picture under the budget; the manifest's conformance.
+`cargo test -p kalem-plugin-image-viewer`: one file per format made by the test itself (no picture whose license would need recording) and decoded against the pixels it was made from; the eight orientations; a turn and a save that differ from the original in the tag only; an animated GIF; a 50-megapixel picture and a 48-megapixel animation under the budget; the manifest's conformance.
 
 Not yet: hashes against reference decoders (libpng, libjpeg-turbo, giflib) on a corpus of real files, and the conformance suite against the fake host (T3.1.17).

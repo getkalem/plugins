@@ -36,6 +36,15 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
+# The image viewer's tests decode pictures of millions of pixels, which
+# unoptimized take half a minute.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.gif]
+opt-level = 3
+[profile.dev.package.weezl]
+opt-level = 3
+
 # web-time without the browser's JavaScript, for the plugins built as
 # WebAssembly components (cfb reads its clock): see shims/web-time.
 [patch.crates-io]

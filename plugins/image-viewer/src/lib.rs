@@ -193,8 +193,9 @@ fn scaled(img: DynamicImage, k: f64) -> DynamicImage {
     if k >= 1.0 {
         return img;
     }
-    let w = ((f64::from(img.width()) * k).round() as u32).max(1);
-    let h = ((f64::from(img.height()) * k).round() as u32).max(1);
+    // Rounded down, so that the budget holds.
+    let w = ((f64::from(img.width()) * k).floor() as u32).max(1);
+    let h = ((f64::from(img.height()) * k).floor() as u32).max(1);
     img.resize_exact(w, h, image::imageops::FilterType::Triangle)
 }
 
@@ -260,17 +261,17 @@ fn decode(bytes: &[u8], ext: &str) -> Result<Picture> {
     let exif = decoder.exif_metadata().ok().flatten();
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     drop(decoder);
-    let frames = match animated_frames(bytes, format) {
-        Some(frames) => frames,
+    // An animation's frames come scaled; a still picture is scaled here.
+    let (frames, k) = match animated_frames(bytes, format, width, height) {
+        Some(frames) => (frames, 1.0),
         None => {
             let mut reader = image::ImageReader::new(Cursor::new(bytes));
             reader.set_format(format);
             reader.limits(limits_big());
             let img = reader.decode().map_err(err)?;
-            vec![(img, None)]
+            (vec![(img, None)], budget_scale(width, height, 1))
         }
     };
-    let k = budget_scale(width, height, frames.len());
     let frames = frames
         .into_iter()
         .map(|(img, ms)| {
@@ -298,43 +299,54 @@ fn limits_big() -> image::Limits {
     limits
 }
 
-/// The frames of an animated GIF, WebP or PNG; `None` for a still
-/// picture.
-fn animated_frames(bytes: &[u8], format: ImageFormat) -> Option<Vec<(DynamicImage, Option<u32>)>> {
-    let frames = match format {
-        ImageFormat::Gif => image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
-            .ok()?
-            .into_frames()
-            .collect_frames()
-            .ok()?,
-        ImageFormat::WebP => {
-            let d = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes)).ok()?;
-            if !d.has_animation() {
-                return None;
+/// The frames of an animated GIF, WebP or PNG of `w` × `h`, each scaled
+/// to the budget as it is decoded; `None` for a still picture. Counted
+/// first, nothing kept, so that a long animation never stands whole at
+/// full size (600 frames of 720p took 2.2 GB, Kalem's publish_todo 3.9).
+fn animated_frames(
+    bytes: &[u8],
+    format: ImageFormat,
+    w: u32,
+    h: u32,
+) -> Option<Vec<(DynamicImage, Option<u32>)>> {
+    let frames = || -> Option<image::Frames<'_>> {
+        Some(match format {
+            ImageFormat::Gif => image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
+                .ok()?
+                .into_frames(),
+            ImageFormat::WebP => {
+                let d = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes)).ok()?;
+                if !d.has_animation() {
+                    return None;
+                }
+                d.into_frames()
             }
-            d.into_frames().collect_frames().ok()?
-        }
-        ImageFormat::Png => {
-            let d = image::codecs::png::PngDecoder::new(Cursor::new(bytes)).ok()?;
-            if !d.is_apng().ok()? {
-                return None;
+            ImageFormat::Png => {
+                let d = image::codecs::png::PngDecoder::new(Cursor::new(bytes)).ok()?;
+                if !d.is_apng().ok()? {
+                    return None;
+                }
+                d.apng().ok()?.into_frames()
             }
-            d.apng().ok()?.into_frames().collect_frames().ok()?
-        }
-        _ => return None,
+            _ => return None,
+        })
     };
-    if frames.len() < 2 {
+    let count = frames()?.take_while(|f| f.is_ok()).count();
+    if count < 2 {
         return None;
     }
-    Some(
-        frames
-            .into_iter()
-            .map(|f| {
-                let ms = duration(f.delay());
-                (DynamicImage::ImageRgba8(f.into_buffer()), Some(ms))
-            })
-            .collect(),
-    )
+    let k = budget_scale(w, h, count);
+    frames()?
+        .take(count)
+        .map(|f| {
+            let f = f.ok()?;
+            let ms = duration(f.delay());
+            Some((
+                scaled(DynamicImage::ImageRgba8(f.into_buffer()), k),
+                Some(ms),
+            ))
+        })
+        .collect()
 }
 
 fn decode_svg(bytes: &[u8], dir: Option<&std::path::Path>) -> Result<Picture> {
