@@ -43,35 +43,35 @@
     {
       "id": "org.kalem.image-viewer",
       "name": "Image viewer",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "description": "Shows pictures (PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, QOI, TGA, PNM, DDS, OpenEXR, HDR, SVG) with zoom, pan, turns and their EXIF information; a JPEG is turned or flipped by its orientation tag only",
-      "api": "^0.1",
+      "api": "^0.2.1",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/image-viewer",
-      "download": "https://github.com/getkalem/plugins/releases/download/image-viewer-v0.0.1/image-viewer.wasm",
-      "sha256": "0e2945d89883c6e0ebd64a9d9db29a5333ccc71819725f7abb31669cf639fd28"
+      "download": null,
+      "sha256": null
     },
     {
       "id": "org.kalem.pdf-viewer",
       "name": "PDF viewer",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "description": "Shows PDF files (ISO 32000) page by page with their outline, page labels and links; search, copy and the terminal read the pages' text",
-      "api": "^0.1",
+      "api": "^0.2.1",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pdf-viewer",
-      "download": "https://github.com/getkalem/plugins/releases/download/pdf-viewer-v0.0.1/pdf-viewer.wasm",
-      "sha256": "19471ade7cf5acd2d1824422e149868b836aa4658347eab08b1aa7c7b60df647"
+      "download": null,
+      "sha256": null
     },
     {
       "id": "org.kalem.xlsx",
       "name": "Excel workbooks",
-      "version": "0.0.4",
+      "version": "0.0.5",
       "description": "Opens, edits and saves Excel workbooks (.xlsx, .xlsm) as themselves: only the edited cells change, charts, pivot tables and macros are kept byte for byte",
-      "api": "^0.1",
+      "api": "^0.2.1",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/xlsx",
-      "download": "https://github.com/getkalem/plugins/releases/download/xlsx-v0.0.4/xlsx.wasm",
-      "sha256": "18944d1a13e25dfd59281d61b6a94c44362fbea851263e57f08ba8312c3a4b90"
+      "download": null,
+      "sha256": null
     }
   ]
 }

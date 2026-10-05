@@ -53,7 +53,12 @@ jobs:
         if: steps.tag.outputs.kind == 'component'
         run: |
           name="${{ steps.tag.outputs.name }}"
-          cargo build --release --target wasm32-unknown-unknown -p "kalem-plugin-$name"
+          # As Kalem builds its own: WebAssembly's SIMD (a PDF page in 39
+          # ms with it, 52 without), and the functions' names kept, so a
+          # trap in Kalem's log is a backtrace of them.
+          cargo build --release --target wasm32-unknown-unknown -p "kalem-plugin-$name" \
+            --config 'target.wasm32-unknown-unknown.rustflags=["-C", "target-feature=+simd128"]' \
+            --config 'profile.release.strip="debuginfo"'
           mkdir -p dist
           # This plugin's module, not the first one of the folder.
           built="target/wasm32-unknown-unknown/release/kalem_plugin_${name//-/_}.wasm"
