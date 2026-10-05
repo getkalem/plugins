@@ -4785,6 +4785,7 @@ impl Workbook {
                 let input = match cell {
                     Some(pivot::Out::Text(t)) => Input::Text(t.clone()),
                     Some(pivot::Out::Number(n)) => Input::Number(*n, None),
+                    Some(pivot::Out::Percent(n)) => Input::Number(*n, Some(10)),
                     Some(pivot::Out::Error(e)) => Input::Error(e.clone()),
                     None => continue,
                 };
@@ -4848,7 +4849,7 @@ impl Workbook {
         let rec_rid = "rId1";
         self.add_part(
             &def_part,
-            pivot::cache_definition(p, src, &sheet_name, range, rec_rid),
+            pivot::cache_definition(p, src, &sheet_name, range, rec_rid, cache_id),
             "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml",
         )?;
         self.add_rel(&def_part, "pivotCacheRecords", &rec_part)?;
@@ -4936,7 +4937,7 @@ impl Workbook {
                 .filter_map(|line| line.get(j).cloned().flatten())
                 .map(|c| match c {
                     pivot::Out::Text(t) | pivot::Out::Error(t) => t.chars().count(),
-                    pivot::Out::Number(n) => format!("{n}").len(),
+                    pivot::Out::Number(n) | pivot::Out::Percent(n) => format!("{n}").len(),
                 })
                 .max()
                 .unwrap_or(0);
@@ -5030,6 +5031,23 @@ impl Workbook {
     }
 
     fn refresh_pivot(&mut self, idx: usize, table_part: &str) -> Result<()> {
+        self.write_pivot(idx, table_part, None)
+    }
+
+    /// A table's definition, cache and the source's fields as they are
+    /// now: the table, the cache's part and definition, the source, and
+    /// its layout by the source's fields.
+    fn pivot_parts(
+        &mut self,
+        table_part: &str,
+    ) -> Result<(
+        pivot::TableDef,
+        String,
+        pivot::CacheDef,
+        usize,
+        pivot::Source,
+        pivot::Layout,
+    )> {
         let text = text_of(self.pkg.part(table_part)?, table_part)?;
         let t = pivot::parse_table(&text);
         let refuse = |why: &str| Error::Refused(format!("{}: {why}", t.name));
@@ -5045,46 +5063,61 @@ impl Workbook {
             .map(|r| rels::resolve(table_part, &r.target))
             .ok_or_else(|| refuse("its cache is missing"))?;
         let def = text_of(self.pkg.part(&def_part)?, &def_part)?;
-        let (sheet, range, names, rec_rid) = pivot::parse_cache(&def)
+        let c = pivot::parse_cache(&def)
             .ok_or_else(|| refuse("its source or its fields are not ones Kalem computes"))?;
         let src_idx = self
-            .sheet_index(&sheet)
+            .sheet_index(&c.sheet)
             .ok_or_else(|| refuse("its source sheet is gone"))?;
+        let range = c.range.ok_or_else(|| refuse("its source is missing"))?;
+        self.load(src_idx)?;
         let src = self.pivot_source(src_idx, range)?;
+        let n_cache = c.names.len() - c.calculated.len();
         // The table's fields by name, in the source as it is now.
-        let by_name = |f: usize| -> Result<usize> {
-            let name = names.get(f).ok_or_else(|| refuse("a field is missing"))?;
+        let names = c.names.clone();
+        let n_now = src.names.len();
+        let by_name = |f: usize| -> std::result::Result<usize, String> {
+            if f >= n_cache {
+                return Ok(n_now + (f - n_cache));
+            }
+            let name = names.get(f).ok_or("a field is missing")?;
             src.names
                 .iter()
                 .position(|n| n.eq_ignore_ascii_case(name))
-                .ok_or_else(|| refuse(&format!("the field {name} is no longer in the source")))
+                .ok_or_else(|| format!("the field {name} is no longer in the source"))
         };
-        let layout = pivot::Layout {
-            rows: t.rows.iter().map(|f| by_name(*f)).collect::<Result<_>>()?,
-            cols: t.cols.iter().map(|f| by_name(*f)).collect::<Result<_>>()?,
-            values: t
-                .values
-                .iter()
-                .map(|(f, a)| by_name(*f).map(|x| (x, *a)))
-                .collect::<Result<_>>()?,
-        };
+        let layout = pivot::remap(pivot::layout_of(&t, &c), &by_name).map_err(|e| refuse(&e))?;
+        Ok((t, def_part, c, src_idx, src, layout))
+    }
+
+    /// A table computed again and written: as its definition says, or as
+    /// `layout` says.
+    fn write_pivot(
+        &mut self,
+        idx: usize,
+        table_part: &str,
+        layout: Option<pivot::Layout>,
+    ) -> Result<()> {
+        let (t, def_part, c, _, src, from_file) = self.pivot_parts(table_part)?;
+        let layout = layout.unwrap_or(from_file);
+        let refuse = |why: &str| Error::Refused(format!("{}: {why}", t.name));
         let p = pivot::compute(&src, &layout).map_err(|e| refuse(&e))?;
         let at = t.location.map_or(CellRef::new(2, 0), |l| l.start);
         let style = if t.style.is_empty() {
-            "PivotStyleLight16"
+            "PivotStyleLight16".to_owned()
         } else {
-            t.style.as_str()
+            t.style.clone()
         };
+        let range = c.range.ok_or_else(|| refuse("its source is missing"))?;
         // The records part: the one the cache names, or a new one.
         let def_rels = rels::rels_path(&def_part);
-        let rec_part = rec_rid.as_ref().and_then(|rid| {
+        let rec_part = c.records.as_ref().and_then(|rid| {
             let rels_text = self.pkg.part(&def_rels).ok()?;
             rels::parse(&String::from_utf8_lossy(&rels_text))
                 .into_iter()
                 .find(|r| &r.id == rid)
                 .map(|r| rels::resolve(&def_part, &r.target))
         });
-        let (rec_part, rec_rid) = match (rec_part, rec_rid) {
+        let (rec_part, rec_rid) = match (rec_part, c.records.clone()) {
             (Some(p), Some(rid)) => (p, rid),
             _ => {
                 let part = self.free_part("xl/pivotCache/pivotCacheRecords");
@@ -5099,13 +5132,13 @@ impl Workbook {
         };
         self.pkg.set_part(
             &def_part,
-            pivot::cache_definition(&p, &src, &sheet, range, &rec_rid).into_bytes(),
+            pivot::cache_definition(&p, &src, &c.sheet, range, &rec_rid, t.cache_id).into_bytes(),
         );
         self.pkg
             .set_part(&rec_part, pivot::cache_records(&p, &src).into_bytes());
         self.pkg.set_part(
             table_part,
-            pivot::table_definition(&p, &src, &t.name, t.cache_id, at, style).into_bytes(),
+            pivot::table_definition(&p, &src, &t.name, t.cache_id, at, &style).into_bytes(),
         );
         if let Some(old) = t.location {
             self.clear_range(idx, old)?;
@@ -5113,6 +5146,105 @@ impl Workbook {
         self.write_pivot_cells(idx, &p, at)?;
         self.batch_changed = true;
         Ok(())
+    }
+
+    /// Sheet `idx`'s pivot tables: each one's name, cells, fields and
+    /// layout by the source's fields as they are now. A table Kalem does
+    /// not compute is left out.
+    pub fn pivots(&mut self, idx: usize) -> Vec<kalem_viewer::PivotInfo> {
+        let parts: Vec<String> = self
+            .pivot_tables()
+            .into_iter()
+            .filter(|(i, _)| *i == idx)
+            .map(|(_, p)| p)
+            .collect();
+        let mut out = Vec::new();
+        for part in parts {
+            let Ok((t, _, c, _, src, layout)) = self.pivot_parts(&part) else {
+                continue;
+            };
+            let Some(range) = c.range else { continue };
+            let loc = t.location.unwrap_or(Range {
+                start: CellRef::new(2, 0),
+                end: CellRef::new(2, 0),
+            });
+            let mut fields = src.names.clone();
+            fields.extend(layout.calculated.iter().map(|x| x.name.clone()));
+            out.push(kalem_viewer::PivotInfo {
+                name: t.name.clone(),
+                location: [loc.start.row, loc.start.col, loc.end.row, loc.end.col],
+                fields,
+                spec: pivot::spec_of(&layout, range),
+            });
+        }
+        out
+    }
+
+    /// Pivot table `index` of sheet `idx` made as `spec` says (its source
+    /// kept) and computed again. One undo step.
+    pub fn set_pivot(
+        &mut self,
+        idx: usize,
+        index: usize,
+        spec: &kalem_viewer::PivotSpec,
+    ) -> Result<()> {
+        let part = self
+            .pivot_tables()
+            .into_iter()
+            .filter(|(i, _)| *i == idx)
+            .map(|(_, p)| p)
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such pivot table".into()))?;
+        let layout = pivot::layout_from_spec(spec);
+        self.in_one_step(|wb| wb.write_pivot(idx, &part, Some(layout)))
+    }
+
+    /// A PivotChart of pivot table `index` of sheet `idx`: a chart of its
+    /// values (the grand totals left out) beside it, its part naming the
+    /// table as its source. One undo step.
+    pub fn insert_pivot_chart(
+        &mut self,
+        idx: usize,
+        index: usize,
+        kind: kalem_viewer::ChartKind,
+    ) -> Result<()> {
+        let part = self
+            .pivot_tables()
+            .into_iter()
+            .filter(|(i, _)| *i == idx)
+            .map(|(_, p)| p)
+            .nth(index)
+            .ok_or_else(|| Error::Refused("No such pivot table".into()))?;
+        let (t, _, _, _, src, layout) = self.pivot_parts(&part)?;
+        let p = pivot::compute(&src, &layout).map_err(Error::Refused)?;
+        let at = t.location.map_or(CellRef::new(2, 0), |l| l.start);
+        let data = p.data_range(at);
+        let sheet = self.sheets[idx].name.clone();
+        let before = self.charts(idx)?.len();
+        self.in_one_step(|wb| {
+            wb.insert_chart(idx, data, kind, None)?;
+            let drawing = wb
+                .sheet_drawing(idx)
+                .ok_or_else(|| Error::Refused("the chart's drawing is missing".into()))?;
+            let text = text_of(wb.pkg.part(&drawing)?, &drawing)?;
+            let chart_part = chart::parse_drawing(&text)
+                .into_iter()
+                .filter_map(|a| wb.rel_target(&drawing, &a.rid))
+                .nth(before)
+                .ok_or_else(|| Error::Refused("the chart is missing".into()))?;
+            let ctext = text_of(wb.pkg.part(&chart_part)?, &chart_part)?;
+            let source = format!(
+                "<c:pivotSource><c:name>[Book1.xlsx]{}!{}</c:name><c:fmtId val=\"0\"/></c:pivotSource>",
+                xml::escape(&super::workbook::sheet_ops::qualified(&sheet)),
+                xml::escape(&t.name)
+            );
+            let new = match ctext.find("<c:chart>") {
+                Some(pos) => format!("{}{source}{}", &ctext[..pos], &ctext[pos..]),
+                None => ctext,
+            };
+            wb.pkg.set_part(&chart_part, new.into_bytes());
+            Ok(())
+        })
     }
 
     /// Appends a `<dxf>` to `styles.xml`, making `<dxfs>` where the schema
@@ -7827,6 +7959,7 @@ mod calculation;
 mod cellstyles;
 mod charts_more;
 mod copy_sheet;
+mod slicers;
 mod tables;
 mod views;
 pub use views::{SplitRaw, ViewRaw};

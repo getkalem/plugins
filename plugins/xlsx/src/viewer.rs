@@ -2034,12 +2034,75 @@ impl ViewerDocument for XlsxDoc {
             start: CellRef::new(r[0], r[1]),
             end: CellRef::new(r[2], r[3]),
         };
-        let layout = crate::pivot::Layout {
-            rows: spec.rows.iter().map(|&f| f as usize).collect(),
-            cols: spec.cols.iter().map(|&f| f as usize).collect(),
-            values: spec.values.iter().map(|&(f, a)| (f as usize, a)).collect(),
-        };
+        let layout = crate::pivot::layout_from_spec(&spec);
         self.book().insert_pivot(unit, range, &layout).map_err(err)
+    }
+
+    fn pivots(&mut self, unit: usize) -> Vec<kalem_viewer::PivotInfo> {
+        if !self.worksheet(unit) {
+            return Vec::new();
+        }
+        self.book().pivots(unit)
+    }
+
+    fn set_pivot(&mut self, unit: usize, index: usize, spec: PivotSpec) -> Result<Vec<usize>> {
+        self.book().set_pivot(unit, index, &spec).map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn insert_pivot_chart(
+        &mut self,
+        unit: usize,
+        index: usize,
+        kind: ChartKind,
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .insert_pivot_chart(unit, index, kind)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn slicers(&mut self, unit: usize) -> Vec<kalem_viewer::Slicer> {
+        if !self.worksheet(unit) {
+            return Vec::new();
+        }
+        self.book().slicers(unit)
+    }
+
+    fn insert_slicer(
+        &mut self,
+        unit: usize,
+        pivot: Option<usize>,
+        table: Option<&str>,
+        field: &str,
+        anchor: [u32; 4],
+    ) -> Result<Vec<usize>> {
+        let anchor = crate::cellref::Range {
+            start: CellRef::new(anchor[0], anchor[1]),
+            end: CellRef::new(anchor[2], anchor[3]),
+        };
+        let name = pivot.and_then(|i| self.book().pivots(unit).get(i).map(|p| p.name.clone()));
+        self.book()
+            .insert_slicer(unit, name.as_deref(), table, field, anchor)
+            .map_err(err)?;
+        Ok(vec![unit])
+    }
+
+    fn select_slicer(
+        &mut self,
+        unit: usize,
+        index: usize,
+        selected: &[String],
+    ) -> Result<Vec<usize>> {
+        self.book()
+            .select_slicer(unit, index, selected)
+            .map_err(err)?;
+        Ok((0..self.book().sheets().len()).collect())
+    }
+
+    fn delete_slicer(&mut self, unit: usize, index: usize) -> Result<Vec<usize>> {
+        self.book().delete_slicer(unit, index).map_err(err)?;
+        Ok((0..self.book().sheets().len()).collect())
     }
 
     fn refresh_pivots(&mut self) -> Result<Vec<usize>> {
@@ -2924,7 +2987,11 @@ mod tests {
             range: [0, 0, 4, 2],
             rows: vec![0],
             cols: vec![],
-            values: vec![(1, Aggregate::Sum), (2, Aggregate::Max)],
+            values: vec![
+                PivotSpec::value(1, Aggregate::Sum),
+                PivotSpec::value(2, Aggregate::Max),
+            ],
+            ..PivotSpec::default()
         };
         let unit = d.insert_pivot(0, spec).unwrap();
         assert_eq!(unit, sheets);
@@ -2954,7 +3021,8 @@ mod tests {
             range: [0, 0, 4, 2],
             rows: vec![0],
             cols: vec![2],
-            values: vec![(1, Aggregate::Count)],
+            values: vec![PivotSpec::value(1, Aggregate::Count)],
+            ..PivotSpec::default()
         };
         let unit = d.insert_pivot(0, spec).unwrap();
         assert_eq!(d.cell_input(unit, 2, 1), "Column Labels");
@@ -2966,6 +3034,103 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn pivot_tables_the_rest() {
+        use kalem_viewer::{
+            CalculatedField, PivotFilter, PivotFilterKind, PivotSort, PivotValue, ReportForm,
+            ShowAs,
+        };
+        let mut d = open("openpyxl-budget.xlsx");
+        let spec = PivotSpec {
+            range: [0, 0, 4, 2],
+            rows: vec![0],
+            values: vec![PivotSpec::value(1, Aggregate::Sum)],
+            ..PivotSpec::default()
+        };
+        let unit = d.insert_pivot(0, spec).unwrap();
+        let info = d.pivots(unit);
+        assert_eq!(info.len(), 1);
+        assert_eq!(info[0].name, "PivotTable1");
+        assert_eq!(info[0].fields[..3], ["Item", "Q1", "Q2"]);
+        let mut spec = info[0].spec.clone();
+        // Q1 and a calculated field, a share of the total; the largest
+        // first; one item hidden; the tabular layout.
+        spec.calculated = vec![CalculatedField {
+            name: "Both".into(),
+            formula: "Q1 + Q2".into(),
+        }];
+        spec.values.push(PivotValue {
+            field: 3,
+            show_as: ShowAs::PercentOfTotal,
+            ..PivotValue::default()
+        });
+        spec.sorts = vec![PivotSort {
+            field: 0,
+            descending: true,
+            by_value: Some(0),
+        }];
+        let first = d.cell_input(unit, 3, 0);
+        spec.filters = vec![PivotFilter {
+            field: 0,
+            kind: PivotFilterKind::Items,
+            hidden: vec![first.clone()],
+            ..PivotFilter::default()
+        }];
+        spec.form = ReportForm::Tabular;
+        d.set_pivot(unit, 0, spec.clone()).unwrap();
+        assert_eq!(d.pivots(unit)[0].spec, spec);
+        assert_eq!(d.cell_input(unit, 2, 0), "Item");
+        assert_eq!(d.cell_input(unit, 2, 2), "Sum of Both");
+        let items: Vec<String> = (3..7).map(|r| d.cell_input(unit, r, 0)).collect();
+        assert!(!items.contains(&first), "{items:?}");
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_PIVOT_OUT") {
+            std::fs::write(format!("{dir}/kalem-pivot-rest.xlsx"), &saved).unwrap();
+        }
+        let mut back = Workbook::open(saved).unwrap();
+        assert_eq!(back.pivots(unit)[0].spec, spec);
+        assert!(d.undo().unwrap());
+        assert_eq!(d.pivots(unit)[0].spec.form, ReportForm::Compact);
+        // A PivotChart beside it.
+        d.insert_pivot_chart(unit, 0, ChartKind::Column).unwrap();
+        assert_eq!(d.charts(unit).len(), 1);
+        // A slicer of the items: one chosen, the table filtered so.
+        d.insert_slicer(unit, Some(0), None, "Item", [2, 6, 12, 8])
+            .unwrap();
+        let s = d.slicers(unit);
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].caption, "Item");
+        assert!(s[0].items.iter().all(|i| i.1));
+        let pick = s[0].items[0].0.clone();
+        d.select_slicer(unit, 0, std::slice::from_ref(&pick))
+            .unwrap();
+        let s = d.slicers(unit);
+        assert_eq!(s[0].items.iter().filter(|i| i.1).count(), 1);
+        assert_eq!(d.cell_input(unit, 3, 0), pick);
+        assert_eq!(d.cell_input(unit, 4, 0), "Grand Total");
+        let saved = d.save().unwrap().bytes;
+        if let Ok(dir) = std::env::var("KALEM_PIVOT_OUT") {
+            std::fs::write(format!("{dir}/kalem-slicer.xlsx"), &saved).unwrap();
+        }
+        let mut back = Workbook::open(saved).unwrap();
+        assert_eq!(back.slicers(unit).len(), 1);
+        d.select_slicer(unit, 0, &[]).unwrap();
+        assert!(d.slicers(unit)[0].items.iter().all(|i| i.1));
+        d.delete_slicer(unit, 0).unwrap();
+        assert!(d.slicers(unit).is_empty());
+        // A table's slicer: its rows filtered.
+        let t = d
+            .create_table(0, [0, 0, 4, 2], true, "TableStyleMedium2")
+            .unwrap();
+        d.insert_slicer(0, None, Some(&t), "Item", [10, 5, 18, 7])
+            .unwrap();
+        let s = d.slicers(0);
+        let first = s[0].items[0].0.clone();
+        d.select_slicer(0, 0, std::slice::from_ref(&first)).unwrap();
+        let hidden = d.grid(0).unwrap().hidden_rows;
+        assert_eq!(hidden.len(), 3, "{hidden:?}");
     }
 
     #[test]

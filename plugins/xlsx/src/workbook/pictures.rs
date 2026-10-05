@@ -184,7 +184,7 @@ fn text_body(p: &str, text: &str) -> String {
 impl Workbook {
     /// The sheet's drawing part, made (with its relationship and the
     /// sheet's `<drawing>`) when it has none.
-    fn ensure_drawing(&mut self, idx: usize) -> Result<String> {
+    pub(crate) fn ensure_drawing(&mut self, idx: usize) -> Result<String> {
         if let Some(d) = self.sheet_drawing(idx) {
             return Ok(d);
         }
