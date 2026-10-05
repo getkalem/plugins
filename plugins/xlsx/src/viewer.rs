@@ -21,6 +21,15 @@ use crate::workbook::{SheetKind, Visibility, Workbook};
 /// The extensions of SpreadsheetML workbooks.
 const OOXML: [&str; 4] = ["xlsx", "xlsm", "xltx", "xltm"];
 
+/// Whether `bytes` is an Office document encrypted with a password: a
+/// compound file (OLE) holding an `EncryptionInfo` stream (MS-OFFCRYPTO
+/// 2.3.4), which is what Excel writes for a workbook with a password to
+/// open; its directory names the stream in UTF-16.
+fn encrypted(bytes: &[u8]) -> bool {
+    const NAME: &[u8] = b"E\0n\0c\0r\0y\0p\0t\0i\0o\0n\0I\0n\0f\0o\0";
+    bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]) && bytes.windows(NAME.len()).any(|w| w == NAME)
+}
+
 /// The viewer of Excel workbooks.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct XlsxViewer;
@@ -134,6 +143,11 @@ impl Viewer for XlsxViewer {
         crate::component_clock();
         let bytes = file.read_all()?;
         let ext = file.extension();
+        if OOXML.contains(&ext.as_str()) && encrypted(&bytes) {
+            return Err(err(
+                "This workbook is protected by a password to open, which Kalem cannot open yet",
+            ));
+        }
         if !OOXML.contains(&ext.as_str()) {
             return Ok(Box::new(LegacyDoc {
                 wb: crate::legacy::LegacyWorkbook::open(bytes).map_err(err)?,
@@ -2592,6 +2606,28 @@ mod tests {
         fn input(&mut self, _: &str, _: &str, _: &str) -> Option<Option<String>> {
             None
         }
+    }
+
+    #[test]
+    fn a_workbook_with_a_password_says_so() {
+        // What Excel writes for a password to open: a compound file of the
+        // encryption's description and the encrypted package.
+        let mut cf = cfb::CompoundFile::create(std::io::Cursor::new(Vec::new())).unwrap();
+        for (name, body) in [
+            ("/EncryptionInfo", &b"\x04\x00\x04\x00"[..]),
+            ("/EncryptedPackage", b"x"),
+        ] {
+            let mut s = cf.create_stream(name).unwrap();
+            std::io::Write::write_all(&mut s, body).unwrap();
+        }
+        let bytes = cf.into_inner().into_inner();
+        let dir = std::env::temp_dir().join(format!("xlsx-locked-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("locked.xlsx");
+        std::fs::write(&p, bytes).unwrap();
+        let e = XlsxViewer.open(FileHandle::new(&p)).err().expect("refused");
+        assert!(e.to_string().contains("protected by a password"), "{e}");
+        std::fs::remove_dir_all(dir).ok();
     }
 
     fn open(name: &str) -> Box<dyn ViewerDocument> {

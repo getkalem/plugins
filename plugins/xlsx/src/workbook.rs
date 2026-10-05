@@ -1009,7 +1009,7 @@ impl Workbook {
             return Ok(String::new());
         };
         if let Some(f) = &c.formula {
-            return Ok(format!("={}", f.text));
+            return Ok(format!("={}", formula::without_future_prefixes(&f.text)));
         }
         Ok(match &c.value {
             Value::Number(v) if self.styles.is_date(c.style) => {
@@ -7905,7 +7905,10 @@ fn cell_xml(prefix: &str, at: CellRef, style: u32, input: &Input) -> String {
             )
         }
         // No cached value: Excel computes it on open (fullCalcOnLoad).
-        Input::Formula(f) => format!("<{p}c r=\"{at}\"{s}><{p}f>{}</{p}f></{p}c>", xml::escape(f)),
+        Input::Formula(f) => format!(
+            "<{p}c r=\"{at}\"{s}><{p}f>{}</{p}f></{p}c>",
+            xml::escape(&formula::with_future_prefixes(f))
+        ),
     }
 }
 
@@ -8183,6 +8186,16 @@ mod tests {
         assert_eq!(
             cell_xml("", at, 0, &Input::Formula("A1&\"x\"".into())),
             "<c r=\"B2\"><f>A1&amp;&quot;x&quot;</f></c>"
+        );
+        // Excel's newer functions with the prefix Excel reads them by.
+        assert_eq!(
+            cell_xml(
+                "",
+                at,
+                0,
+                &Input::Formula("TEXTJOIN(\",\",TRUE,A1:A3)".into())
+            ),
+            "<c r=\"B2\"><f>_xlfn.TEXTJOIN(&quot;,&quot;,TRUE,A1:A3)</f></c>"
         );
     }
 

@@ -638,6 +638,267 @@ pub fn adjust_sqref(sqref: &str, op: Op) -> String {
         .join(" ")
 }
 
+/// The functions Excel added after 2007, which a file names with the
+/// prefix `_xlfn.` (MS-XLSX 2.2.2, "future functions"); an Excel that
+/// meets one without it reads an unknown name and shows `#NAME?`.
+const FUTURE: &[&str] = &[
+    "ACOT",
+    "ACOTH",
+    "AGGREGATE",
+    "ANCHORARRAY",
+    "ARABIC",
+    "ARRAYTOTEXT",
+    "BASE",
+    "BETA.DIST",
+    "BETA.INV",
+    "BINOM.DIST",
+    "BINOM.DIST.RANGE",
+    "BINOM.INV",
+    "BITAND",
+    "BITLSHIFT",
+    "BITOR",
+    "BITRSHIFT",
+    "BITXOR",
+    "BYCOL",
+    "BYROW",
+    "CEILING.MATH",
+    "CEILING.PRECISE",
+    "CHISQ.DIST",
+    "CHISQ.DIST.RT",
+    "CHISQ.INV",
+    "CHISQ.INV.RT",
+    "CHISQ.TEST",
+    "CHOOSECOLS",
+    "CHOOSEROWS",
+    "COMBINA",
+    "CONCAT",
+    "CONFIDENCE.NORM",
+    "CONFIDENCE.T",
+    "COT",
+    "COTH",
+    "COVARIANCE.P",
+    "COVARIANCE.S",
+    "CSC",
+    "CSCH",
+    "DAYS",
+    "DECIMAL",
+    "DROP",
+    "ECMA.CEILING",
+    "ERF.PRECISE",
+    "ERFC.PRECISE",
+    "EXPAND",
+    "EXPON.DIST",
+    "F.DIST",
+    "F.DIST.RT",
+    "F.INV",
+    "F.INV.RT",
+    "F.TEST",
+    "FIELDVALUE",
+    "FILTERXML",
+    "FLOOR.MATH",
+    "FLOOR.PRECISE",
+    "FORECAST.ETS",
+    "FORECAST.ETS.CONFINT",
+    "FORECAST.ETS.SEASONALITY",
+    "FORECAST.ETS.STAT",
+    "FORECAST.LINEAR",
+    "FORMULATEXT",
+    "GAMMA",
+    "GAMMA.DIST",
+    "GAMMA.INV",
+    "GAMMALN.PRECISE",
+    "GAUSS",
+    "GROUPBY",
+    "HSTACK",
+    "HYPGEOM.DIST",
+    "IFNA",
+    "IFS",
+    "IMAGE",
+    "IMCOSH",
+    "IMCOT",
+    "IMCSC",
+    "IMCSCH",
+    "IMSEC",
+    "IMSECH",
+    "IMSINH",
+    "IMTAN",
+    "ISFORMULA",
+    "ISO.CEILING",
+    "ISOMITTED",
+    "ISOWEEKNUM",
+    "LAMBDA",
+    "LET",
+    "LOGNORM.DIST",
+    "LOGNORM.INV",
+    "MAKEARRAY",
+    "MAP",
+    "MAXIFS",
+    "MINIFS",
+    "MODE.MULT",
+    "MODE.SNGL",
+    "MUNIT",
+    "NEGBINOM.DIST",
+    "NETWORKDAYS.INTL",
+    "NORM.DIST",
+    "NORM.INV",
+    "NORM.S.DIST",
+    "NORM.S.INV",
+    "NUMBERVALUE",
+    "PDURATION",
+    "PERCENTILE.EXC",
+    "PERCENTILE.INC",
+    "PERCENTOF",
+    "PERCENTRANK.EXC",
+    "PERCENTRANK.INC",
+    "PERMUTATIONA",
+    "PHI",
+    "PIVOTBY",
+    "POISSON.DIST",
+    "QUARTILE.EXC",
+    "QUARTILE.INC",
+    "QUERYSTRING",
+    "RANDARRAY",
+    "RANK.AVG",
+    "RANK.EQ",
+    "REDUCE",
+    "REGEXEXTRACT",
+    "REGEXREPLACE",
+    "REGEXTEST",
+    "RRI",
+    "SCAN",
+    "SEC",
+    "SECH",
+    "SEQUENCE",
+    "SHEET",
+    "SHEETS",
+    "SINGLE",
+    "SKEW.P",
+    "SORTBY",
+    "STDEV.P",
+    "STDEV.S",
+    "STOCKHISTORY",
+    "SWITCH",
+    "T.DIST",
+    "T.DIST.2T",
+    "T.DIST.RT",
+    "T.INV",
+    "T.INV.2T",
+    "T.TEST",
+    "TAKE",
+    "TEXTAFTER",
+    "TEXTBEFORE",
+    "TEXTJOIN",
+    "TEXTSPLIT",
+    "TOCOL",
+    "TOROW",
+    "TRIMRANGE",
+    "UNICHAR",
+    "UNICODE",
+    "UNIQUE",
+    "VALUETOTEXT",
+    "VAR.P",
+    "VAR.S",
+    "VSTACK",
+    "WEBSERVICE",
+    "WEIBULL.DIST",
+    "WORKDAY.INTL",
+    "WRAPCOLS",
+    "WRAPROWS",
+    "XLOOKUP",
+    "XMATCH",
+    "XOR",
+    "Z.TEST",
+];
+
+/// The future functions whose prefix is `_xlfn._xlws.`.
+const WORKSHEET_FUTURE: &[&str] = &["FILTER", "SORT"];
+
+/// The functions `formula` calls, as `(start of the name, name)`: a name
+/// followed by `(`, outside strings and quoted sheet names.
+fn calls(formula: &str) -> Vec<(usize, &str)> {
+    let b = formula.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            q @ (b'"' | b'\'') => {
+                // A string or a quoted sheet name; a doubled quote is one.
+                i += 1;
+                while i < b.len() {
+                    if b[i] == q {
+                        if b.get(i + 1) == Some(&q) {
+                            i += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' => {
+                let start = i;
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'.')
+                {
+                    i += 1;
+                }
+                let after = b[i..]
+                    .iter()
+                    .position(|c| *c != b' ')
+                    .map_or(b.len(), |k| i + k);
+                let qualified = start > 0 && matches!(b[start - 1], b'!' | b']');
+                if b.get(after) == Some(&b'(') && !qualified {
+                    out.push((start, &formula[start..i]));
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// `formula` as a file writes it: Excel's newer functions with their
+/// `_xlfn.` prefix (`_xlfn._xlws.` for `FILTER` and `SORT`), so that Excel
+/// knows them; names already prefixed stay.
+pub fn with_future_prefixes(formula: &str) -> String {
+    let mut out = String::with_capacity(formula.len() + 8);
+    let mut at = 0;
+    for (start, name) in calls(formula) {
+        let up = name.to_ascii_uppercase();
+        let prefix = if WORKSHEET_FUTURE.contains(&up.as_str()) {
+            "_xlfn._xlws."
+        } else if FUTURE.contains(&up.as_str()) {
+            "_xlfn."
+        } else {
+            continue;
+        };
+        out.push_str(&formula[at..start]);
+        out.push_str(prefix);
+        at = start;
+    }
+    out.push_str(&formula[at..]);
+    out
+}
+
+/// `formula` as Excel shows it: without the `_xlfn.` and `_xlws.` prefixes
+/// a file writes before newer functions.
+pub fn without_future_prefixes(formula: &str) -> String {
+    let mut out = String::with_capacity(formula.len());
+    let mut at = 0;
+    for (start, name) in calls(formula) {
+        let up = name.to_ascii_uppercase();
+        let bare = up
+            .strip_prefix("_XLFN.")
+            .map(|r| r.strip_prefix("_XLWS.").unwrap_or(r));
+        if let Some(bare) = bare {
+            out.push_str(&formula[at..start]);
+            at = start + (name.len() - bare.len());
+        }
+    }
+    out.push_str(&formula[at..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -748,6 +1009,42 @@ mod tests {
         assert_eq!(
             adjust_sqref("A1:A3 B5 C1", Op::DeleteCols { at: 1, n: 1 }),
             "A1:A3 B1"
+        );
+    }
+
+    #[test]
+    fn newer_functions_get_their_prefix_for_excel() {
+        assert_eq!(
+            with_future_prefixes("XLOOKUP(A1,B:B,C:C)&concat(\"IFS(\",D1)"),
+            "_xlfn.XLOOKUP(A1,B:B,C:C)&_xlfn.concat(\"IFS(\",D1)"
+        );
+        assert_eq!(
+            with_future_prefixes("FILTER(A1:A9,B1:B9>0)"),
+            "_xlfn._xlws.FILTER(A1:A9,B1:B9>0)"
+        );
+        assert_eq!(
+            with_future_prefixes("_xlfn.CONCAT(A1)+SUM(A1)"),
+            "_xlfn.CONCAT(A1)+SUM(A1)"
+        );
+        // A sheet or a defined name is not a call.
+        assert_eq!(
+            with_future_prefixes("'IFS(1)'!A1+Book!LET"),
+            "'IFS(1)'!A1+Book!LET"
+        );
+        assert_eq!(
+            with_future_prefixes("STDEV.S(A1:A3) + FORECAST(1,A:A,B:B)"),
+            "_xlfn.STDEV.S(A1:A3) + FORECAST(1,A:A,B:B)"
+        );
+        for f in [
+            "_xlfn.XLOOKUP(A1,B:B,C:C)",
+            "_xlfn._xlws.SORT(A1:A3)",
+            "SUM(\"_xlfn.X(\")",
+        ] {
+            assert_eq!(with_future_prefixes(&without_future_prefixes(f)), f);
+        }
+        assert_eq!(
+            without_future_prefixes("_xlfn._xlws.SORT(A1:A3)*_xlfn.IFS(1,2)"),
+            "SORT(A1:A3)*IFS(1,2)"
         );
     }
 }
