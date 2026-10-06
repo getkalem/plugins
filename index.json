@@ -70,8 +70,8 @@
       "api": "^0.2.1",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/xlsx",
-      "download": null,
-      "sha256": null
+      "download": "https://github.com/getkalem/plugins/releases/download/xlsx-v0.0.6/xlsx.wasm",
+      "sha256": "25332d496f7890e0bfcb1685500f414adbfc96a7fcd8a313603812e0225a3302"
     }
   ]
 }
