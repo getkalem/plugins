@@ -23,8 +23,12 @@ crc32fast = "1.5.2"
 # clock and randomness from Kalem's `clock` interface (feature `host`).
 ironcalc_base = { git = "https://github.com/getkalem/ironcalc", branch = "kalem", default-features = false }
 miniz_oxide = "0.9.1"
-# Sheet and workbook protection's password hashes, as Excel writes them.
+# Sheet and workbook protection's password hashes, as Excel writes them,
+# and a workbook with a password to open (MS-OFFCRYPTO): AES, SHA-512,
+# and SHA-1 for the Standard encryption of Excel 2007.
 sha2 = "0.10"
+aes = "0.8"
+sha1 = "0.10"
 
 # `.xls`, `.xlsb` and `.ods` (shown only), in the component too: it
 # builds for wasm32-unknown-unknown and imports nothing.

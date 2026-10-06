@@ -30,6 +30,34 @@ fn encrypted(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]) && bytes.windows(NAME.len()).any(|w| w == NAME)
 }
 
+/// The password Excel encrypts a workbook with when it has none to ask
+/// for (MS-OFFCRYPTO 2.3.6.1's default): such a workbook opens unasked.
+const DEFAULT_PASSWORD: &str = "VelvetSweatshop";
+
+/// 64 random bits for an encrypted workbook's salts and key: from Kalem
+/// in a component (the system's secure source), natively from the
+/// process's random hash keys.
+fn random_bits() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        kalem_plugin::viewer::kalem::plugin::clock::random()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::hash::{BuildHasher, Hasher};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(N.fetch_add(1, Ordering::Relaxed));
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos()),
+        );
+        h.finish()
+    }
+}
+
 /// The viewer of Excel workbooks.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct XlsxViewer;
@@ -139,15 +167,38 @@ impl Viewer for XlsxViewer {
     }
 
     fn open(&self, file: FileHandle) -> Result<Box<dyn ViewerDocument>> {
+        self.open_with_password(file, "")
+    }
+
+    /// A workbook with a password to open, decrypted with `password`
+    /// (MS-OFFCRYPTO, [`crate::crypto`]); `open` tries Excel's default
+    /// one, with which a workbook is encrypted without asking for a
+    /// password, and else asks Kalem for one.
+    fn open_with_password(
+        &self,
+        file: FileHandle,
+        password: &str,
+    ) -> Result<Box<dyn ViewerDocument>> {
         #[cfg(target_arch = "wasm32")]
         crate::component_clock();
         let bytes = file.read_all()?;
         let ext = file.extension();
-        if OOXML.contains(&ext.as_str()) && encrypted(&bytes) {
-            return Err(err(
-                "This workbook is protected by a password to open, which Kalem cannot open yet",
-            ));
-        }
+        let (bytes, password) = if OOXML.contains(&ext.as_str()) && encrypted(&bytes) {
+            let password = if password.is_empty() {
+                DEFAULT_PASSWORD
+            } else {
+                password
+            };
+            match crate::crypto::decrypt(&bytes, password) {
+                Ok(plain) => (plain, Some(password.to_owned())),
+                Err(crate::crypto::CryptoError::WrongPassword) => {
+                    return Err(ViewerError::needs_password());
+                }
+                Err(e) => return Err(err(e)),
+            }
+        } else {
+            (bytes, None)
+        };
         if !OOXML.contains(&ext.as_str()) {
             return Ok(Box::new(LegacyDoc {
                 wb: crate::legacy::LegacyWorkbook::open(bytes).map_err(err)?,
@@ -164,6 +215,7 @@ impl Viewer for XlsxViewer {
             charts: HashMap::new(),
             fill_lists: Vec::new(),
             name: file.name().to_owned(),
+            password,
         }))
     }
 
@@ -206,6 +258,9 @@ struct XlsxDoc {
     /// The user's own lists a fill goes round.
     fill_lists: Vec<Vec<String>>,
     name: String,
+    /// The password the workbook opened with, which it is saved
+    /// encrypted with again.
+    password: Option<String>,
 }
 
 fn units(names: impl Iterator<Item = (String, bool, bool)>) -> Structure {
@@ -288,6 +343,25 @@ impl crate::macros::MacroHost for Ui<'_> {
 }
 
 impl XlsxDoc {
+    /// The workbook's package (the `.xlsx` zip), the workbook marked
+    /// saved.
+    fn save_package(&mut self) -> Result<Vec<u8>> {
+        let bytes = self.book().save().map_err(err)?;
+        self.saved_at = self.book().state();
+        self.saved = true;
+        self.view_changed = false;
+        Ok(bytes)
+    }
+
+    /// `package` as the file is written: encrypted with the password the
+    /// workbook opened with, else as it is.
+    fn sealed(&self, package: Vec<u8>) -> Result<Vec<u8>> {
+        match &self.password {
+            Some(p) => crate::crypto::encrypt(&package, p, &mut random_bits).map_err(err),
+            None => Ok(package),
+        }
+    }
+
     fn book(&mut self) -> &mut Workbook {
         self.wb
             .get_mut()
@@ -2409,13 +2483,12 @@ impl ViewerDocument for XlsxDoc {
         self.view_changed || wb.state() != self.saved_at || (!self.saved && wb.is_dirty())
     }
 
+    /// The workbook saved, encrypted again with the password it opened
+    /// with.
     fn save(&mut self) -> Result<SaveOutput> {
-        let bytes = self.book().save().map_err(err)?;
-        self.saved_at = self.book().state();
-        self.saved = true;
-        self.view_changed = false;
+        let bytes = self.save_package()?;
         Ok(SaveOutput {
-            bytes,
+            bytes: self.sealed(bytes)?,
             losses: Vec::new(),
         })
     }
@@ -2425,21 +2498,25 @@ impl ViewerDocument for XlsxDoc {
     fn save_as(&mut self, extension: &str) -> Result<SaveOutput> {
         let ext = extension.to_ascii_lowercase();
         if crate::formats::KINDS.contains(&ext.as_str()) {
-            let out = self.save()?;
+            let bytes = self.save_package()?;
+            let bytes = crate::formats::retype(bytes, &ext).map_err(err)?;
             return Ok(SaveOutput {
-                bytes: crate::formats::retype(out.bytes, &ext).map_err(err)?,
-                losses: out.losses,
+                bytes: self.sealed(bytes)?,
+                losses: Vec::new(),
             });
         }
         if ext == "ods" {
             let bytes = crate::formats::to_ods(self).map_err(err)?;
             // The workbook's own save marks it saved; its bytes are not
             // what is written.
-            self.save()?;
-            return Ok(SaveOutput {
-                bytes,
-                losses: Vec::new(),
-            });
+            self.save_package()?;
+            let mut losses = Vec::new();
+            if self.password.is_some() {
+                losses.push(
+                    "The password to open: the .ods file is saved without encryption".to_owned(),
+                );
+            }
+            return Ok(SaveOutput { bytes, losses });
         }
         Err(not_written(&ext))
     }
@@ -2663,24 +2740,48 @@ mod tests {
     }
 
     #[test]
-    fn a_workbook_with_a_password_says_so() {
-        // What Excel writes for a password to open: a compound file of the
-        // encryption's description and the encrypted package.
-        let mut cf = cfb::CompoundFile::create(std::io::Cursor::new(Vec::new())).unwrap();
-        for (name, body) in [
-            ("/EncryptionInfo", &b"\x04\x00\x04\x00"[..]),
-            ("/EncryptedPackage", b"x"),
-        ] {
-            let mut s = cf.create_stream(name).unwrap();
-            std::io::Write::write_all(&mut s, body).unwrap();
-        }
-        let bytes = cf.into_inner().into_inner();
+    fn a_workbook_with_a_password_to_open() {
+        // Encrypted as Excel encrypts it: Kalem is asked for the password,
+        // a wrong one asked again, the right one opens it; saved, it is
+        // encrypted again with it.
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
+        let plain = std::fs::read(corpus.join("libreoffice-budget.xlsx")).unwrap();
+        let locked = crate::crypto::encrypt(&plain, "kalem", &mut random_bits).unwrap();
         let dir = std::env::temp_dir().join(format!("xlsx-locked-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("locked.xlsx");
-        std::fs::write(&p, bytes).unwrap();
-        let e = XlsxViewer.open(FileHandle::new(&p)).err().expect("refused");
-        assert!(e.to_string().contains("protected by a password"), "{e}");
+        std::fs::write(&p, &locked).unwrap();
+        let e = XlsxViewer.open(FileHandle::new(&p)).err().expect("asked");
+        assert!(e.is_needs_password(), "{e}");
+        let e = XlsxViewer
+            .open_with_password(FileHandle::new(&p), "Kalem")
+            .err()
+            .expect("asked again");
+        assert!(e.is_needs_password(), "{e}");
+        let mut d = XlsxViewer
+            .open_with_password(FileHandle::new(&p), "kalem")
+            .unwrap();
+        assert_eq!(d.cell_input(0, 1, 3), "=B2+C2");
+        d.set_cell(0, 1, 1, "1300").unwrap();
+        let saved = d.save().unwrap().bytes;
+        assert!(saved.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]), "encrypted");
+        std::fs::write(&p, &saved).unwrap();
+        let mut d = XlsxViewer
+            .open_with_password(FileHandle::new(&p), "kalem")
+            .unwrap();
+        assert_eq!(d.cell_input(0, 1, 1), "1300");
+        // Another kind keeps the password; an .ods file cannot, and says so.
+        let xlsm = d.save_as("xlsm").unwrap();
+        let package = crate::crypto::decrypt(&xlsm.bytes, "kalem").unwrap();
+        assert!(package.starts_with(b"PK"));
+        let ods = d.save_as("ods").unwrap();
+        assert!(ods.bytes.starts_with(b"PK") && ods.losses.len() == 1);
+        // Excel's default password opens a workbook unasked.
+        let default = crate::crypto::encrypt(&plain, DEFAULT_PASSWORD, &mut random_bits).unwrap();
+        std::fs::write(&p, &default).unwrap();
+        let mut d = XlsxViewer.open(FileHandle::new(&p)).unwrap();
+        let again = d.save().unwrap().bytes;
+        assert!(crate::crypto::decrypt(&again, DEFAULT_PASSWORD).is_ok());
         std::fs::remove_dir_all(dir).ok();
     }
 
