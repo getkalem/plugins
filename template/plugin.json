@@ -5,6 +5,7 @@
   "description": "Copy this folder to plugins/NAME and describe your plugin here",
   "main": "dist/template.wasm",
   "api": "^0.2.1",
-  "activation": ["onStartup"],
-  "permissions": []
+  "activation": ["onDocument"],
+  "permissions": [],
+  "opens": [".template"]
 }

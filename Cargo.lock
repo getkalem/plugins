@@ -905,6 +905,8 @@ dependencies = [
 name = "kalem-plugin-template"
 version = "0.0.1"
 dependencies = [
+ "kalem-plugin",
+ "kalem-viewer",
  "serde_json",
 ]
 

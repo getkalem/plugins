@@ -1,8 +1,6 @@
 # Template
 
-Copy this folder to `plugins/NAME`, rename the crate in `Cargo.toml` to `kalem-plugin-NAME`, fill `plugin.json` (the fields are those of section 11.5 of Kalem's design document), and put your code in `src/lib.rs`.
-
-The plugin API bindings (`kalem-plugin`, generated from the WIT definition) are not published yet. Until they are, this template holds the manifest, the conformance test and the build so that CI is green; the stub in `src/lib.rs` says where the code goes.
+The crate a new plugin starts from: a viewer of a small format (a picture drawn in text, `#` and `.`), each part of the contract in its place in `src/lib.rs`. `kalem plugin new NAME`, run anywhere in this repository, copies this folder to `plugins/NAME` and names everything for NAME; then fill `plugin.json` (the fields are those of section 11.5 of Kalem's design document) and replace the format with yours. The Book's "Plugins in practice" walks through it.
 
 ```sh
 cargo test -p kalem-plugin-template
