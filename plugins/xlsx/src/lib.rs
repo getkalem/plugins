@@ -24,6 +24,7 @@ pub mod chart;
 pub mod chart_more;
 pub mod conditional;
 pub mod fill;
+pub mod formats;
 pub mod formula;
 pub mod functions;
 pub mod legacy;

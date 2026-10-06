@@ -166,6 +166,23 @@ impl Viewer for XlsxViewer {
             name: file.name().to_owned(),
         }))
     }
+
+    /// A new workbook of one of the workbook kinds, its cells as typed.
+    fn new_file(&self, extension: &str, sheets: &[kalem_viewer::NewSheet]) -> Result<Vec<u8>> {
+        crate::formats::new_workbook(&extension.to_ascii_lowercase(), sheets).map_err(err)
+    }
+}
+
+/// What Kalem says of a format it reads and does not write.
+fn not_written(extension: &str) -> ViewerError {
+    match extension {
+        "xls" | "xlsb" => err(format!(
+            "Kalem does not write .{extension} files: save it as .xlsx or .ods"
+        )),
+        _ => err(format!(
+            "A workbook is saved as .xlsx or .ods, not .{extension}"
+        )),
+    }
 }
 
 /// An open workbook.
@@ -2403,6 +2420,30 @@ impl ViewerDocument for XlsxDoc {
         })
     }
 
+    /// Another workbook kind, its content declared so; or an OpenDocument
+    /// spreadsheet, the workbook counting as saved.
+    fn save_as(&mut self, extension: &str) -> Result<SaveOutput> {
+        let ext = extension.to_ascii_lowercase();
+        if crate::formats::KINDS.contains(&ext.as_str()) {
+            let out = self.save()?;
+            return Ok(SaveOutput {
+                bytes: crate::formats::retype(out.bytes, &ext).map_err(err)?,
+                losses: out.losses,
+            });
+        }
+        if ext == "ods" {
+            let bytes = crate::formats::to_ods(self).map_err(err)?;
+            // The workbook's own save marks it saved; its bytes are not
+            // what is written.
+            self.save()?;
+            return Ok(SaveOutput {
+                bytes,
+                losses: Vec::new(),
+            });
+        }
+        Err(not_written(&ext))
+    }
+
     fn macros(&mut self) -> Vec<MacroEntry> {
         let Ok(Some(project)) = self.book().vba_project() else {
             return Vec::new();
@@ -2465,6 +2506,19 @@ struct LegacyDoc {
 }
 
 impl ViewerDocument for LegacyDoc {
+    /// An OpenDocument spreadsheet; Kalem makes the workbook kinds from
+    /// the grid (a new workbook the cells are copied into).
+    fn save_as(&mut self, extension: &str) -> Result<SaveOutput> {
+        let ext = extension.to_ascii_lowercase();
+        if ext == "ods" {
+            return Ok(SaveOutput {
+                bytes: crate::formats::to_ods(self).map_err(err)?,
+                losses: Vec::new(),
+            });
+        }
+        Err(not_written(&ext))
+    }
+
     fn structure(&self) -> Structure {
         units(
             self.wb
