@@ -83,6 +83,70 @@
       "install": "brew install elixir-ls, or download a release from https://github.com/elixir-lsp/elixir-ls/releases and unzip it to ~/.elixir-ls/release"
     }
   },
+  "settings": {
+    "settings.elixirLS.mixEnv": {
+      "type": "string", "examples": ["test", "dev", "prod"], "default": "test",
+      "description": "ElixirLS: the Mix environment it builds the project in (MIX_ENV)"
+    },
+    "settings.elixirLS.mixTarget": {
+      "type": "string", "examples": ["host"], "default": "host",
+      "description": "ElixirLS: the Mix target it builds for (MIX_TARGET)"
+    },
+    "settings.elixirLS.projectDir": {
+      "type": "string", "default": "",
+      "description": "ElixirLS: the folder of the Mix project within the workspace, when it is not at its top; empty for the top"
+    },
+    "settings.elixirLS.autoBuild": {
+      "type": "boolean", "default": true,
+      "description": "ElixirLS: build the project when a file is saved, its errors shown as diagnostics"
+    },
+    "settings.elixirLS.fetchDeps": {
+      "type": "boolean", "default": false,
+      "description": "ElixirLS: fetch the project's dependencies (mix deps.get) when they are missing or out of date"
+    },
+    "settings.elixirLS.dialyzerEnabled": {
+      "type": "boolean", "default": false,
+      "description": "ElixirLS: run Dialyzer after a build, its warnings shown as diagnostics (off here: its first run takes minutes)"
+    },
+    "settings.elixirLS.incrementalDialyzer": {
+      "type": "boolean", "default": true,
+      "description": "ElixirLS: Dialyzer's incremental mode (OTP 26 and later), much faster after the first run"
+    },
+    "settings.elixirLS.dialyzerFormat": {
+      "type": "string", "enum": ["dialyxir_long", "dialyxir_short", "dialyzer"], "default": "dialyxir_long",
+      "description": "ElixirLS: how Dialyzer's warnings read: Dialyxir's long or short messages, or Dialyzer's own"
+    },
+    "settings.elixirLS.dialyzerWarnOpts": {
+      "type": "array",
+      "items": {"enum": ["error_handling", "extra_return", "missing_return", "no_behaviours", "no_contracts", "no_extra_return", "no_fail_call", "no_fun_app", "no_improper_lists", "no_match", "no_missing_calls", "no_missing_return", "no_opaque", "no_opaque_union", "no_return", "no_undefined_callbacks", "no_underspecs", "no_unknown", "no_unused", "opaque_union", "overlapping_contract", "overspecs", "specdiffs", "underspecs", "unknown", "unmatched_returns"]},
+      "default": [],
+      "description": "ElixirLS: Dialyzer's warning options (its -W flags), for more warnings or fewer"
+    },
+    "settings.elixirLS.suggestSpecs": {
+      "type": "boolean", "default": true,
+      "description": "ElixirLS: offer a @spec, from what Dialyzer infers, above a function without one"
+    },
+    "settings.elixirLS.signatureAfterComplete": {
+      "type": "boolean", "default": true,
+      "description": "ElixirLS: show a function's signature after completing its name"
+    },
+    "settings.elixirLS.autoInsertRequiredAlias": {
+      "type": "boolean", "default": true,
+      "description": "ElixirLS: add the alias a completed module needs"
+    },
+    "settings.elixirLS.additionalWatchedExtensions": {
+      "type": "array", "default": [],
+      "description": "ElixirLS: more file extensions whose changes rebuild the project, such as .yml"
+    },
+    "settings.elixirLS.envVariables": {
+      "type": "object", "default": {},
+      "description": "ElixirLS: environment variables for its builds, as a JSON table"
+    },
+    "settings.elixirLS.stdlibSrcDir": {
+      "type": "string", "default": "",
+      "description": "ElixirLS: the Elixir sources, for going to the definitions of the standard library; empty for none"
+    }
+  },
   "commands": {
     "format": ["mix", "format", "--stdin-filename", "{file}", "-"],
     "test": ["mix", "test"],

@@ -30,6 +30,50 @@ fn list(v: &Value) -> Vec<String> {
 }
 
 #[test]
+fn settings_describe_what_elixir_ls_is_sent() {
+    // Each setting is one of ElixirLS's (`settings.elixirLS.NAME`, what
+    // the server is sent), of a type Kalem's settings panel knows, with a
+    // default; those the manifest sends itself have its value as default.
+    let m = manifest();
+    let sent = &m["servers"]["elixir-ls"]["settings"]["elixirLS"];
+    let settings = m["settings"].as_object().expect("settings");
+    assert!(!settings.is_empty());
+    for (key, s) in settings {
+        let name = key
+            .strip_prefix("settings.elixirLS.")
+            .unwrap_or_else(|| panic!("`{key}` is ElixirLS's"));
+        let ty = s["type"].as_str().unwrap_or_default();
+        assert!(
+            ["boolean", "string", "array", "object"].contains(&ty),
+            "`{key}`: {ty}"
+        );
+        assert!(!s["default"].is_null(), "`{key}` has a default");
+        assert!(
+            s["description"]
+                .as_str()
+                .is_some_and(|d| d.starts_with("ElixirLS: ")),
+            "`{key}` says it is ElixirLS's"
+        );
+        if let Some(v) = sent.get(name) {
+            assert_eq!(&s["default"], v, "`{key}`'s default is what is sent");
+        }
+        if let Some(choices) = s["enum"].as_array() {
+            assert!(
+                choices.contains(&s["default"]),
+                "`{key}`'s default is a choice"
+            );
+        }
+    }
+    // What the manifest sends is described.
+    for name in sent.as_object().expect("sent settings").keys() {
+        assert!(
+            settings.contains_key(&format!("settings.elixirLS.{name}")),
+            "`{name}` is described"
+        );
+    }
+}
+
+#[test]
 fn manifest_is_complete() {
     let m = manifest();
     for key in ["id", "name", "version", "description", "api"] {
