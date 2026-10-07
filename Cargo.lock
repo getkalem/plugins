@@ -909,6 +909,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalem-plugin-git"
+version = "0.0.1"
+dependencies = [
+ "kalem-plugin",
+ "serde_json",
+]
+
+[[package]]
 name = "kalem-plugin-image-viewer"
 version = "0.0.1"
 dependencies = [

@@ -1,0 +1,97 @@
+{
+  "id": "org.kalem.git",
+  "name": "Git",
+  "version": "0.0.1",
+  "description": "The repository's status as a document: changed files with their diffs, staged by file, hunk or line, committed, pushed and pulled from the editor; blame, log, a file at any revision; on Doom's SPC g keys, with the arrows, Enter and Escape",
+  "main": "dist/git.wasm",
+  "api": "^0.2.4",
+  "activation": ["onStartup"],
+  "permissions": ["subprocess:git"],
+  "settings": {
+    "programs.git": {
+      "type": "string",
+      "default": "",
+      "description": "Where git is, when it is not the one on the PATH: a full path; empty for the PATH's"
+    },
+    "status_placement": {
+      "type": "string",
+      "enum": ["here", "split"],
+      "default": "here",
+      "description": "Where the status opens: in the current pane (Escape returns), or in a pane beside it"
+    },
+    "context_lines": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 3,
+      "description": "Lines of context around each change of a diff"
+    },
+    "untracked": {
+      "type": "string",
+      "enum": ["normal", "all", "no"],
+      "default": "normal",
+      "description": "Untracked files in the status: folders collapsed, every file, or none"
+    },
+    "pull": {
+      "type": "string",
+      "enum": ["config", "rebase", "merge", "ff-only"],
+      "default": "config",
+      "description": "How Pull pulls: as git's pull.rebase says, by rebasing, by merging, or only by fast-forwarding"
+    },
+    "fetch_prune": {
+      "type": "boolean",
+      "default": true,
+      "description": "Fetch removes the remote branches that are gone from the remote"
+    },
+    "log_graph": {
+      "type": "boolean",
+      "default": false,
+      "description": "The log draws its branches' graph at the left"
+    },
+    "log_count": {
+      "type": "integer",
+      "minimum": 20,
+      "maximum": 5000,
+      "default": 200,
+      "description": "Commits a log loads at a time"
+    },
+    "remote_link": {
+      "type": "string",
+      "enum": ["branch", "commit"],
+      "default": "branch",
+      "description": "What a link to the remote names: the branch, or the commit"
+    },
+    "gutter": {
+      "type": "boolean",
+      "default": true,
+      "description": "Marks in the gutter on the lines changed since the base"
+    },
+    "gutter_base": {
+      "type": "string",
+      "enum": ["index", "head"],
+      "default": "index",
+      "description": "What the gutter marks compare with: the staged version, or the last commit"
+    },
+    "panel": {
+      "type": "boolean",
+      "default": true,
+      "description": "The Git side panel"
+    },
+    "confirm_discard": {
+      "type": "boolean",
+      "default": true,
+      "description": "Reverting a file or a hunk asks first"
+    },
+    "signoff": {
+      "type": "boolean",
+      "default": false,
+      "description": "Commits carry a Signed-off-by line"
+    },
+    "glyphs": {
+      "type": "string",
+      "enum": ["unicode", "ascii"],
+      "default": "unicode",
+      "description": "Fold marks and arrows as ▸ ▾ ↑ ↓, or as > v ^ v for a terminal font without them"
+    }
+  }
+}
