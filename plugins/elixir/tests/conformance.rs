@@ -173,6 +173,35 @@ fn templates_through_kalem() {
     let ex = kalem_highlight::Language::find("ex").expect("Elixir");
     let spans = kalem_highlight::highlight(ex, "~H\"\"\"\n<div>{@x}</div>\n\"\"\"\n");
     assert!(spans[1].iter().any(|s| s.kind == Tag), "{:?}", spans[1]);
+    // `<%!-- --%>`, the comment the manifest gives HEEx and EEx, is a
+    // comment whatever it holds, in both and in `~H`.
+    let eex = kalem_highlight::Language::find("HTML (EEx)").expect("EEx");
+    for (lang, text) in [
+        (heex, "<p><%!-- <.x>{@a}</.x> --%></p>\n"),
+        (eex, "<p><%!-- <%= f(@a) %> --%></p>\n"),
+        (ex, "~H\"<p><%!-- {@a} --%></p>\"\n"),
+    ] {
+        let line = &kalem_highlight::highlight(lang, text)[0];
+        let start = text.find("<%!--").expect("comment");
+        let end = text.find("--%>").expect("comment") + 4;
+        let comment = line
+            .iter()
+            .find(|s| s.range.start == start)
+            .unwrap_or_else(|| panic!("{text}: {line:?}"));
+        assert_eq!(comment.kind, kalem_highlight::Kind::Comment, "{text}");
+        assert!(comment.range.end >= end, "{text}: {line:?}");
+    }
+    let comments: Vec<&Value> = m["languages"]
+        .as_array()
+        .expect("languages")
+        .iter()
+        .filter(|l| l["id"] != "elixir")
+        .map(|l| &l["comment"]["block"])
+        .collect();
+    assert!(
+        comments.iter().all(|c| list(c) == ["<%!--", "--%>"]),
+        "{comments:?}"
+    );
     // `.html` stays the built-in HTML: the bases are not languages.
     assert_ne!(
         kalem_highlight::Language::find("html").map(|l| l.name()),

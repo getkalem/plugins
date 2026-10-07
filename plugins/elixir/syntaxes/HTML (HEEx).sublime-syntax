@@ -94,6 +94,16 @@ contexts:
       pop: 1
 
   heex-tag:
+    # Multi-line comments, `<%!-- --%>` (EEx 1.14, HEEx): added to
+    # the upstream syntax, which knows only `<%#`.
+    - match: <%!--
+      scope: punctuation.definition.comment.begin.eex
+      push:
+        - meta_scope: text.html.eex comment.block.eex
+        - match: '--%>'
+          scope: punctuation.definition.comment.end.eex
+          pop: 1
+
     - match: <%#
       scope: punctuation.definition.comment.begin.eex
       push:

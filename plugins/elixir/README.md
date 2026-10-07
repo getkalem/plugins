@@ -69,7 +69,7 @@ env = { ELS_INSTALL_PREFIX = "/opt/elixir-ls" }
 
 From Kalem: the Kalem menu's **Install Plugin…**, then `elixir` (or this folder's link, `https://github.com/getkalem/plugins/tree/main/plugins/elixir`). **Browse Plugins** lists it too. Kalem shows what the plugin is and which programs it may run before installing, and the open Elixir files are highlighted and served at once. On the command line: `kalem plugin install elixir`.
 
-To work on the plugin itself, point Kalem at this repository's `plugins/` folder instead: `KALEM_PLUGIN_PATH=$PWD/plugins kalem`.
+To work on the plugin itself, point Kalem at this repository's `plugins/` folder instead: `KALEM_PLUGIN_PATH=$PWD/plugins kalem`. That copy takes the place of an installed one.
 
 ## Not done
 
@@ -79,6 +79,6 @@ To work on the plugin itself, point Kalem at this repository's `plugins/` folder
 
 ## Sources and licenses
 
-- `syntaxes/*.sublime-syntax`: from [princemaple/elixir-sublime-syntax](https://github.com/princemaple/elixir-sublime-syntax) at `b63f8f0`, MIT (`syntaxes/LICENSE-elixir-sublime-syntax.txt`), unchanged.
+- `syntaxes/*.sublime-syntax`: from [princemaple/elixir-sublime-syntax](https://github.com/princemaple/elixir-sublime-syntax) at `b63f8f0`, MIT (`syntaxes/LICENSE-elixir-sublime-syntax.txt`). One addition: `HTML (EEx)` and `HTML (HEEx)` know the `<%!-- --%>` comment (EEx 1.14, HEEx), which the upstream syntax, older than it, read as Elixir code.
 - `syntaxes/bases/HTML*.sublime-syntax`: from [sublimehq/Packages](https://github.com/sublimehq/Packages) at `b2bdd29`, under its permissive license (`syntaxes/bases/LICENSE-sublimehq-packages.txt`), unchanged. They are bases for `extends` only, not languages of their own, so Kalem's HTML keeps `.html` files.
 - `corpus/hello`: a Mix project for the tests, under this repository's license.

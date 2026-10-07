@@ -34,7 +34,7 @@
       "name": "EEx",
       "syntax": "HTML (EEx)",
       "extensions": ["eex", "html.eex", "leex", "html.leex"],
-      "comment": { "block": ["<%#", "%>"] },
+      "comment": { "block": ["<%!--", "--%>"] },
       "brackets": [["<%", "%>"], ["(", ")"], ["[", "]"], ["{", "}"]],
       "servers": ["expert", "elixir-ls"]
     },
