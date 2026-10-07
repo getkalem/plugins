@@ -82,8 +82,18 @@ fn permissions_are_known_scopes() {
     let m = manifest();
     for p in field(&m, "permissions").as_array().unwrap() {
         let p = p.as_str().expect("a permission is a string");
-        let known =
-            SCOPES.contains(&p) || p.strip_prefix("net:fetch:").is_some_and(|d| !d.is_empty());
+        // `subprocess:PROGRAM` names the one program a plugin runs, a
+        // bare name (the git plugin's design, 9.1).
+        let program = |name: &str| {
+            !name.is_empty()
+                && !name.starts_with('.')
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        };
+        let known = SCOPES.contains(&p)
+            || p.strip_prefix("net:fetch:").is_some_and(|d| !d.is_empty())
+            || p.strip_prefix("subprocess:").is_some_and(program);
         assert!(
             known,
             "unknown permission `{p}`; see section 11.6 of the design document"
