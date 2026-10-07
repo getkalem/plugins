@@ -45,7 +45,7 @@ The root is the outermost folder with a `mix.exs`, so an umbrella project is one
 
 ## Settings
 
-In Kalem's `settings.toml`:
+Kalem's settings panel (`SPC h v`, then **installed plugins**, then **Elixir**) shows them all: which server serves Elixir, the ElixirLS settings the plugin describes (Mix environment, Dialyzer and its warnings, specs, aliases, …) with their values stepped through, and each server's program and environment. Or in Kalem's `settings.toml`:
 
 ```toml
 [plugins."org.kalem.elixir"]
@@ -54,7 +54,7 @@ server = "auto"            # "expert", "elixir-ls", or "off"
 # Merged over the server's own settings (sent as `workspace/configuration`).
 [plugins."org.kalem.elixir".settings.elixirLS]
 mixEnv = "dev"             # MIX_ENV for the server's builds; the plugin's default is "test"
-dialyzerEnabled = true     # off by default
+dialyzerEnabled = true     # off by default: its first run takes minutes
 fetchDeps = false
 
 # Another program for a server, with its arguments, and its environment.
