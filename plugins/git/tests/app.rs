@@ -281,6 +281,10 @@ impl Kalem {
         self.notes.last().map_or("", |n| n.0.as_str())
     }
 
+    fn read(&self, path: &str) -> String {
+        std::fs::read_to_string(self.dir.join(path)).unwrap()
+    }
+
     fn index(&mut self, path: &str) -> String {
         self.git_ok(&["show", &format!(":{path}")])
     }
@@ -316,11 +320,11 @@ fn a_document_opened_shows_its_repository() {
     assert_eq!(k.showed, [k.root()]);
     let text = k.doc_text();
     assert!(
-        text.starts_with("Tab fold · Enter open · s stage"),
+        text.starts_with("Tab diff · Enter open · s stage"),
         "{text}"
     );
     assert!(
-        text.contains("\n▾ Unstaged changes (1)\n▸ modified     a.txt   +1 −1\n"),
+        text.contains("\n  M a.txt   +1 −1\n ?? new.txt\n"),
         "{text}"
     );
 }
@@ -602,24 +606,29 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
     k.command("git.status", Some("a.txt"));
     let text = k.doc_text();
     for part in [
-        "\n▾ Untracked files (1)\n▸ new.txt\n",
-        "\n▾ Unstaged changes (1)\n▸ modified     a.txt   +2 −2\n",
-        "\n▾ Branches (1)\n  * main\n",
-        "\n▾ Recent commits (1)\n",
+        "\n─ Status ─",
+        "\n repo → main  First\n",
+        "\n─ Files ─",
+        "\n  M a.txt   +2 −2\n ?? new.txt\n",
+        "\n─ Local branches ─",
+        "\n * main\n",
+        "\n─ Commits ─",
+        " First\n",
+        "\n─ Stash ─",
     ] {
         assert!(text.contains(part), "{part:?} in\n{text}");
     }
 
     // Tab unfolds the file: its two hunks, read then.
-    k.on("git.toggle", "modified     a.txt");
+    k.on("git.toggle", " M a.txt");
     let text = k.doc_text();
     assert!(
-        text.contains("▾ modified     a.txt   +2 −2\n@@ -1,5 +1,5 @@"),
+        text.contains("  M a.txt   +2 −2\n@@ -1,5 +1,5 @@"),
         "{text}"
     );
     assert!(text.contains("\n-line 2\n+line TWO\n"), "{text}");
     assert!(text.contains("\n+line 29!\n"), "{text}");
-    assert_eq!(k.cursor_line(), "▾ modified     a.txt   +2 −2");
+    assert_eq!(k.cursor_line(), "  M a.txt   +2 −2");
     // Right, on it unfolded: into it. Left folds the hunk, Left again goes
     // to the file, Left again folds it.
     k.here("git.unfold");
@@ -628,9 +637,9 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
     assert!(k.cursor_line().starts_with("@@ -1,5 +1,5 @@"));
     assert!(!k.doc_text().contains("+line TWO"));
     k.here("git.fold");
-    assert_eq!(k.cursor_line(), "▾ modified     a.txt   +2 −2");
+    assert_eq!(k.cursor_line(), "  M a.txt   +2 −2");
     k.here("git.toggle");
-    assert!(k.doc_text().contains("▸ modified     a.txt"));
+    assert!(!k.doc_text().contains("@@ -1,5"));
     k.here("git.toggle");
     // The hunk folded stays so; Tab on it unfolds it.
     assert!(!k.doc_text().contains("+line TWO"));
@@ -647,22 +656,24 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
             format!("{{\"path\":\"{a}\",\"line\":29}}")
         )
     );
-    k.on("git.visit", "▾ modified     a.txt");
+    k.on("git.visit", " M a.txt");
     assert_eq!(
         k.commands.last().unwrap(),
         &("file.open".to_string(), format!("{{\"path\":\"{a}\"}}"))
     );
 
-    // `s` on the second hunk stages it alone; the cursor stays in the file.
+    // `s` on the second hunk stages it alone: the file has both, each
+    // shown under it.
     k.on("git.stage", "+line 29!");
     assert_eq!(k.last_note(), "Staged a hunk of a.txt");
     assert!(k.index("a.txt").contains("line 29!\n"));
     assert!(!k.index("a.txt").contains("line TWO"));
     let text = k.doc_text();
     assert!(
-        text.contains("▾ Staged changes (1)\n▸ modified     a.txt   +1 −1\n"),
+        text.contains("\n MM a.txt   +2 −2\n  unstaged:\n@@"),
         "{text}"
     );
+    assert!(text.contains("\n  staged:\n@@"), "{text}");
     // A line selected alone: `s` stages that line.
     let text = k.doc_text();
     let plus = text.find("+line TWO").unwrap();
@@ -678,36 +689,56 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
         k.index("a.txt")
     );
 
-    // `u` on the staged file unstages it; `S` stages every change.
-    k.on("git.unstage", "▸ modified     a.txt");
+    // `u` on the file unstages what is staged; `a` stages everything,
+    // the untracked file too, and `a` again unstages everything.
+    k.on("git.unstage", " MM a.txt");
     assert_eq!(k.index("a.txt"), long);
-    k.on("git.stageAll", "Head:");
-    assert!(k.doc_text().contains("▾ Staged changes (1)"));
-    assert!(!k.doc_text().contains("Unstaged changes"));
+    k.on("git.stageEverything", "─ Files");
+    assert_eq!(k.last_note(), "Staged everything");
+    assert!(k.doc_text().contains("\n M  a.txt"), "{}", k.doc_text());
+    assert!(k.doc_text().contains("\n A  new.txt"), "{}", k.doc_text());
+    k.on("git.stageEverything", "─ Files");
+    assert_eq!(k.last_note(), "Unstaged everything");
+    assert!(k.doc_text().contains("\n ?? new.txt"), "{}", k.doc_text());
 
-    // `x` on the untracked file deletes it, once confirmed.
-    k.answers.push_back(Answer::Confirmed(true));
-    k.on("git.discard", "▸ new.txt");
-    assert!(
-        k.asked.last().unwrap().starts_with("Delete new.txt?"),
-        "{:?}",
-        k.asked
+    // `d` on the untracked file: lazygit's choice, Cancel last.
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.discard", "?? new.txt");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "new.txt: Discard all changes: delete the file | Cancel"
     );
     assert!(!k.dir.join("new.txt").exists());
+    // On a file staged and not: all of it, or its unstaged changes only.
+    k.git_ok(&["add", "a.txt"]);
+    k.write("a.txt", &long.replace("line 5\n", "line FIVE\n"));
+    k.on("git.refresh", "─ Files");
+    k.answers.push_back(Answer::Picked(vec![1]));
+    k.on("git.discard", "MM a.txt");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "a.txt: Discard all changes | Discard unstaged changes | Cancel"
+    );
+    assert!(!k.read("a.txt").contains("FIVE"));
+    assert!(k.index("a.txt").contains("line TWO"));
+    // Cancel does nothing.
+    k.answers.push_back(Answer::Picked(vec![1]));
+    k.on("git.discard", "M  a.txt");
+    assert!(k.index("a.txt").contains("line TWO"));
 
     // `c c` commits; the status follows.
     k.answers.push_back(Answer::Text(Some("Second".into())));
-    k.on("git.commit", "Head:");
+    k.on("git.commit", "repo → main");
     assert_eq!(k.last_note(), "Committed");
     assert!(
-        k.doc_text().contains("Head:      main   Second"),
+        k.doc_text().contains(" repo → main  Second"),
         "{}",
         k.doc_text()
     );
-    assert!(!k.doc_text().contains("Staged changes"));
+    assert!(k.doc_text().contains("Nothing changed"), "{}", k.doc_text());
 
     // `q` closes it.
-    k.on("git.close", "Head:");
+    k.on("git.close", "repo → main");
     assert!(k.docs.is_empty());
 }
 
@@ -719,27 +750,23 @@ fn branches_stashes_and_amends_from_the_status() {
     k.git_ok(&["branch", "feature"]);
     k.command("git.status", Some("a.txt"));
     assert!(
-        k.doc_text().contains("▾ Branches (2)\n"),
+        k.doc_text().contains("─ Local branches ─"),
         "{}",
         k.doc_text()
     );
 
     // Enter on a branch switches to it.
-    k.on("git.visit", "    feature");
+    k.on("git.visit", "   feature");
     assert_eq!(k.last_note(), "Switched to feature");
-    assert!(
-        k.doc_text().contains("Head:      feature"),
-        "{}",
-        k.doc_text()
-    );
-    assert!(k.doc_text().contains("  * feature"), "{}", k.doc_text());
+    assert!(k.doc_text().contains(" repo → feature"), "{}", k.doc_text());
+    assert!(k.doc_text().contains("\n * feature"), "{}", k.doc_text());
 
     // `b c` makes one; `b b` offers the others.
     k.answers.push_back(Answer::Text(Some("topic".into())));
-    k.on("git.newBranch", "Head:");
+    k.on("git.newBranch", "repo → ");
     assert_eq!(k.last_note(), "Made the branch topic, and switched to it");
     k.answers.push_back(Answer::Picked(vec![1]));
-    k.on("git.switchBranch", "Head:");
+    k.on("git.switchBranch", "repo → ");
     assert!(
         k.asked
             .last()
@@ -748,13 +775,13 @@ fn branches_stashes_and_amends_from_the_status() {
         "{:?}",
         k.asked
     );
-    assert!(k.doc_text().contains("Head:      "), "{}", k.doc_text());
+    assert!(k.doc_text().contains(" repo → "), "{}", k.doc_text());
 
     // `Z z` stashes; Enter on the stash pops it.
     k.write("a.txt", "two\n");
-    k.on("git.stash", "Head:");
+    k.on("git.stash", "repo → ");
     assert_eq!(k.last_note(), "Stashed the changes");
-    assert!(k.doc_text().contains("▾ Stashes (1)\n"), "{}", k.doc_text());
+    assert!(k.doc_text().contains("\n stash@{0}: "), "{}", k.doc_text());
     k.answers.push_back(Answer::Picked(vec![1]));
     k.on("git.visit", "stash@{0}");
     assert_eq!(k.last_note(), "Applied and dropped stash@{0}");
@@ -768,7 +795,7 @@ fn branches_stashes_and_amends_from_the_status() {
     k.git_ok(&["add", "a.txt"]);
     k.answers
         .push_back(Answer::Text(Some("First, amended".into())));
-    k.on("git.amend", "Head:");
+    k.on("git.amend", "repo → ");
     assert_eq!(k.offered.last().unwrap().as_deref(), Some("First"));
     assert_eq!(k.last_note(), "Amended the last commit");
     assert_eq!(

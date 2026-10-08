@@ -20,6 +20,8 @@ pub enum Section {
     Unstaged,
     /// Changes staged.
     Staged,
+    /// The Files panel: every changed path, staged or not.
+    Files,
     /// The local branches.
     Branches,
     /// The stashes.
@@ -36,11 +38,12 @@ pub enum Section {
 
 impl Section {
     /// Every section, in order.
-    pub const ALL: [Section; 10] = [
+    pub const ALL: [Section; 11] = [
         Section::Unmerged,
         Section::Untracked,
         Section::Unstaged,
         Section::Staged,
+        Section::Files,
         Section::Branches,
         Section::Stashes,
         Section::Unpushed,
@@ -56,6 +59,7 @@ impl Section {
             Section::Untracked => "untracked",
             Section::Unstaged => "unstaged",
             Section::Staged => "staged",
+            Section::Files => "files",
             Section::Branches => "branches",
             Section::Stashes => "stashes",
             Section::Unpushed => "unpushed",
@@ -160,6 +164,37 @@ impl Repo {
         Ok(())
     }
 
+    /// Every changed path, once, in git's order: what the Files panel
+    /// lists.
+    pub fn changed(&self) -> Vec<&Entry> {
+        self.status
+            .entries
+            .iter()
+            .filter(|e| e.kind != Kind::Ignored)
+            .collect()
+    }
+
+    /// The sections a changed path is in: its conflict, or its untracked
+    /// file, or its unstaged and staged changes.
+    pub fn sections_of(&self, path: &str) -> Vec<Section> {
+        let Some(e) = self.status.entries.iter().find(|e| e.path == path) else {
+            return Vec::new();
+        };
+        match e.kind {
+            Kind::Unmerged(_) => vec![Section::Unmerged],
+            Kind::Untracked => vec![Section::Untracked],
+            Kind::Ignored => Vec::new(),
+            Kind::Tracked => [
+                (e.unstaged(), Section::Unstaged),
+                (e.staged(), Section::Staged),
+            ]
+            .into_iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, s)| s)
+            .collect(),
+        }
+    }
+
     /// The local branches, the latest commit first.
     pub fn local_branches(&self) -> Vec<&Branch> {
         self.branches.iter().filter(|b| !b.remote).collect()
@@ -188,7 +223,8 @@ pub struct Folds {
 /// and runs of the process log do; sections, hunks and the files of a
 /// commit shown do not.
 pub fn default_folded(key: &str) -> bool {
-    (key.starts_with("file:") && !key.starts_with("file:shown:"))
+    key.starts_with("path:")
+        || (key.starts_with("file:") && !key.starts_with("file:shown:"))
         || key.starts_with("commit:")
         || key.starts_with("run:")
 }
@@ -227,7 +263,7 @@ impl Folds {
     pub fn unfolded_files(&self) -> impl Iterator<Item = &str> {
         self.set
             .iter()
-            .filter(|(k, f)| k.starts_with("file:") && !**f)
+            .filter(|(k, f)| (k.starts_with("file:") || k.starts_with("path:")) && !**f)
             .map(|(k, _)| k.as_str())
     }
 }

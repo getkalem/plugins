@@ -35,7 +35,7 @@ use kalem_plugin_git::model::{Folds, Repo, Section};
 use kalem_plugin_git::native::{self, NativeRunner};
 use kalem_plugin_git::patch::{self, Mode, Pick};
 use kalem_plugin_git::refresh::{self, Options, Runner};
-use kalem_plugin_git::target::{Target, file_key};
+use kalem_plugin_git::target::{Target, path_key};
 use kalem_plugin_git::url;
 use kalem_plugin_git::views::{self, Glyphs, ViewOptions};
 
@@ -138,15 +138,8 @@ fn run(cli: &mut Cli) -> Res<()> {
             let mut folds = Folds::default();
             if cli.flag("--open") {
                 let repo = cli.repo(&folds)?;
-                for s in [
-                    Section::Unmerged,
-                    Section::Untracked,
-                    Section::Unstaged,
-                    Section::Staged,
-                ] {
-                    for e in repo.entries(s) {
-                        folds.set(&file_key(s, &e.path), false);
-                    }
+                for e in repo.changed() {
+                    folds.set(&path_key(&e.path), false);
                 }
             }
             let repo = cli.repo(&folds)?;
@@ -323,8 +316,8 @@ fn parse_target(s: &str) -> Res<Target> {
 fn folds_for(targets: &[Target]) -> Folds {
     let mut folds = Folds::default();
     for t in targets {
-        if let Some((s, p)) = t.file() {
-            folds.set(&file_key(s, p), false);
+        if let Some((_, p)) = t.file() {
+            folds.set(&path_key(p), false);
         }
     }
     folds

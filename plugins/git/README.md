@@ -2,7 +2,7 @@
 
 The repository's status as a document in Kalem: the changed files with their diffs under them, moved through with the arrows, staged, unstaged and reverted by file, hunk or selected lines with Doom Emacs's `SPC g` keys, committed without leaving the editor, and read with the editor's own highlighting, search, selection and motions, the same in the window and in the terminal. Lazygit's simplicity, magit's place inside the editor. Kalem's task T2.7i.11 and roadmap item R5.15; the design is [`DESIGN.md`](DESIGN.md).
 
-**Status: phase 1.** `SPC g g` (Word-like keys: the palette's "Git: Status") opens the status as a document of its own, in lazygit's order and magit's form: a line of keys at the top, the branch with its last commit and upstream, the untracked, unstaged and staged files, the local branches, the unpushed, unpulled or recent commits, and the stashes. Tab on a file shows its diff under it, hunk by hunk, highlighted as a diff; the changed lines of every file opened are marked beside the lines, in both editors. A status bar item (`⎇ main ↑1 ↓2 •3`) and the Git panel stay. It needs Kalem's plugin API 0.2.5 (`process`, `documents`, `decorations`) and a repository inside one of Kalem's projects.
+**Status: phase 1.** `SPC g g` (Word-like keys: the palette's "Git: Status") opens the status as a document of its own, lazygit's panels one under the other: a line of keys at the top, then **Status** (the repository, its branch and how far from its upstream), **Files** (every changed path in a tree of folders, with git's two letters: `M ` staged, ` M` not, `MM` both, `??` untracked, `UU` in conflict), **Local branches**, **Commits** (hash, author's initials, tags, subject; `↑` not pushed) and **Stash**, each under a title line with its count. Tab on a file shows its diff under it as magit does, hunk by hunk (the unstaged ones, then the staged), highlighted as a diff; the changed lines of every file opened are marked beside the lines, in both editors. A status bar item (`⎇ main ↑1 ↓2 •3`) and the Git panel stay. It needs Kalem's plugin API 0.2.5 (`process`, `documents`, `decorations`) and a repository inside one of Kalem's projects.
 
 A **Git menu** stands in the menu bar (and in the F10 list of both editors) while the current file is in a git repository, and in the status: Status (the same as `SPC g g`), commit, amend, push, pull, fetch, branches, stash, and the file's stage, unstage, revert, delete and blame. It needs Kalem 0.4.1.
 
@@ -13,15 +13,16 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 | In the status | Does |
 |---|---|
 | Up, Down; Alt+Up, Alt+Down | Move; the previous and next section, file, hunk or commit |
-| Tab; Shift+Tab | Fold or unfold the section, file or hunk; everything, step by step |
+| Tab; Shift+Tab | Show or hide a file's diff, fold a folder, a hunk or a panel; everything, step by step |
 | Right, Left | Unfold (on an unfolded one: into it); fold (on a folded one: to what holds it) |
 | Enter | The obvious thing: open the file (at the diff's line), switch to the branch, the stash's Apply, Pop or Drop, the `Head:` and `Upstream:` lines' menus |
 | Alt+Enter, `?` | What can be done here, then every command |
-| `s`, `u` | Stage, unstage the file, the hunk, or the lines selected (a section's heading: all of it) |
-| `S`, `U` | Stage every change; unstage everything |
-| `x` | Discard the file, the hunk or the lines (asks first) |
+| `s`, `u` | Stage, unstage the file, the hunk, or the lines selected (a folder: what is in it) |
+| `a` | Stage everything, untracked files too; everything staged, unstage everything (lazygit's `a`) |
+| `S`, `U` | Stage every change of a tracked file; unstage everything (magit's) |
+| `d`, `x` | Discard, as lazygit asks: the file's name, then Discard all changes (Discard unstaged changes when it has both), Cancel |
 | `c c`, `c a`, `c e`, `c w` | Commit; amend (the last message's first line offered, its body kept); extend; reword |
-| `P p`, `F p`, `f p` | Push, pull, fetch (`P u`, `F u`, `f u`, `f a` too) |
+| `P p`, `p` or `F p`, `f p` | Push, pull, fetch (`P u`, `F u`, `f u`, `f a` too) |
 | `b b`, `b c` | Switch branch; a new branch |
 | `Z z` | Stash the changes |
 | Escape, `q` | Close the status |

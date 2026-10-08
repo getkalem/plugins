@@ -15,7 +15,7 @@ use kalem_plugin_git::model::{Folds, Repo, Section};
 use kalem_plugin_git::native::{self, NativeRunner};
 use kalem_plugin_git::patch::{self, Mode, Pick};
 use kalem_plugin_git::refresh::{self, Options, Runner};
-use kalem_plugin_git::target::{self, Target, file_key};
+use kalem_plugin_git::target::{self, Target, path_key};
 use kalem_plugin_git::views::{self, ViewOptions};
 
 struct T {
@@ -96,8 +96,8 @@ impl T {
     fn repo_with(&mut self, files: &[(Section, &str)]) -> (Repo, Folds) {
         let mut repo = self.repo();
         let mut folds = Folds::default();
-        for (s, p) in files {
-            folds.set(&file_key(*s, p), false);
+        for (_, p) in files {
+            folds.set(&path_key(p), false);
         }
         refresh::load_diffs(&mut self.git, &mut repo, &folds, 3).unwrap();
         (repo, folds)
@@ -131,16 +131,9 @@ fn the_status_of_a_working_repository() {
     assert_eq!(repo.head.as_ref().unwrap().subject, "First commit");
     assert!(repo.shows_recent());
     let c = views::status::render(&repo, &folds, &ViewOptions::default());
-    let expected = "\
-Tab fold · Enter open · s stage · u unstage · x discard · c c commit · P p push · F p pull · b b branch · ? all · q close
-
-Head:      main   First commit
-
-▾ Untracked files (1)
-▸ untracked/
-
-▾ Unstaged changes (1)
-▾ modified     a.txt   +1 −1
+    let files = "\
+─ Files ──────────────────────────────────────────────── 4 ─
+  M a.txt   +1 −1
 @@ -1,5 +1,5 @@
  line 1
  line 2
@@ -148,18 +141,16 @@ Head:      main   First commit
 +LINE 3
  line 4
  line 5
+ A  new:file.md   +1 −0
+ R  old.txt → renamed.txt   +0 −0
+ ?? untracked/
 
-▾ Staged changes (2)
-▸ new file     new:file.md   +1 −0
-▸ renamed      old.txt → renamed.txt   +0 −0
-
-▾ Branches (1)
-  * main
-
-▾ Recent commits (1)
+─ Local branches ─────────────────────────────────────── 1 ─
+ * main
 ";
-    assert!(c.text.starts_with(expected), "{}", c.text);
-    assert!(c.text.contains("  First commit\n"), "{}", c.text);
+    assert!(c.text.contains(files), "{}", c.text);
+    assert!(c.text.contains(" → main  First commit\n"), "{}", c.text);
+    assert!(c.text.contains(" AT First commit\n"), "{}", c.text);
     // The cursor on the removed line names its hunk, and the line in it.
     let at = c.text.find("-line 3").unwrap();
     assert_eq!(
@@ -204,21 +195,19 @@ fn stashes_and_ahead_of_the_upstream() {
     let c = views::status::render(&repo, &Folds::default(), &ViewOptions::default());
     assert!(
         c.text
-            .contains("Upstream:  origin/main   ↑1\nTags:      v1 (1 commit ago)\n"),
+            .contains(" origin/main  (Enter: push, pull, fetch)\n v1 (1 commit ago)\n"),
         "{}",
         c.text
     );
+    assert!(c.text.contains("\n ↑1 "), "{}", c.text);
     assert!(
-        c.text
-            .contains("▾ Stashes (1)\n  stash@{0}  On main: three\n"),
+        c.text.contains("── 1 ─\n stash@{0}: On main: three\n"),
         "{}",
         c.text
     );
-    assert!(
-        c.text.contains("▾ Unpushed to origin/main (1)\n"),
-        "{}",
-        c.text
-    );
+    // The commit not pushed is marked in the Commits panel.
+    assert!(c.text.contains("\n ↑"), "{}", c.text);
+    assert!(c.text.contains(" Two\n"), "{}", c.text);
     let _ = std::fs::remove_dir_all(&remote);
 }
 
@@ -356,11 +345,7 @@ fn a_repository_without_a_commit() {
     assert!(repo.unborn());
     assert!(repo.head.is_none());
     let c = views::status::render(&repo, &Folds::default(), &ViewOptions::default());
-    assert!(
-        c.text.contains("\n\nHead:      main   (no commit yet)\n"),
-        "{}",
-        c.text
-    );
+    assert!(c.text.contains(" → main  (no commit yet)\n"), "{}", c.text);
     t.act(Act::Unstage, &[Target::Section(Section::Staged)], &repo)
         .unwrap();
     let repo = t.repo();
@@ -465,8 +450,8 @@ fn a_merge_in_conflict() {
     assert_eq!(repo.operation, Some(Operation::Merge));
     assert_eq!(repo.entries(Section::Unmerged).len(), 1);
     let c = views::status::render(&repo, &Folds::default(), &ViewOptions::default());
-    assert!(c.text.contains("\nMerging (1 unmerged)\n"), "{}", c.text);
-    assert!(c.text.contains("▸ both modified  f\n"), "{}", c.text);
+    assert!(c.text.contains("\n Merging (1 unmerged)\n"), "{}", c.text);
+    assert!(c.text.contains("\n UU f "), "{}", c.text);
     // A commit is refused while files are in conflict.
     assert!(actions::commit("Merge\n", &CommitKind::New, false, &repo).is_err());
 }

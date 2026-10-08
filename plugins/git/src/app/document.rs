@@ -126,7 +126,7 @@ pub(super) fn place(old: Option<&Content>, new: &Content, keep: &Keep) -> usize 
 fn is_item(key: &str) -> bool {
     matches!(key, "head" | "upstream" | "tag" | "operation")
         || [
-            "section:", "file:", "hunk:", "commit:", "branch:", "stash:", "big:",
+            "section:", "file:", "path:", "dir:", "hunk:", "commit:", "branch:", "stash:", "big:",
         ]
         .iter()
         .any(|p| key.starts_with(p))
@@ -328,13 +328,45 @@ impl App {
             "git.visit" => self.visit(out, root, &content, head, doc),
             "git.dispatch" => self.menu(out, root, &content, head, doc),
             "git.next" | "git.previous" => self.step(out, root, &content, head, id == "git.next"),
-            "git.stage" | "git.unstage" | "git.discard" => {
-                let act = match id {
-                    "git.stage" => Act::Stage,
-                    "git.unstage" => Act::Unstage,
-                    _ => Act::Discard,
+            "git.stage" | "git.unstage" => {
+                let act = if id == "git.stage" {
+                    Act::Stage
+                } else {
+                    Act::Unstage
                 };
                 self.act_here(out, root, &content, anchor, head, act, false);
+            }
+            "git.discard" => self.discard_menu(out, root, &content, anchor, head),
+            "git.stageEverything" => {
+                let Some(repo) = self.repos.get(root).and_then(|s| s.repo.clone()) else {
+                    return true;
+                };
+                // As lazygit's `a`: everything staged when something is
+                // not, else everything unstaged.
+                let unstaged = repo
+                    .changed()
+                    .iter()
+                    .any(|e| e.unstaged() || matches!(e.kind, Kind::Untracked | Kind::Unmerged(_)));
+                let plan = if unstaged {
+                    actions::Plan {
+                        confirm: None,
+                        commands: vec![cmd::add_all()],
+                        done: "Staged everything".into(),
+                    }
+                } else if repo.changed().iter().any(|e| e.staged()) {
+                    actions::Plan {
+                        confirm: None,
+                        commands: vec![cmd::unstage_all(repo.unborn())],
+                        done: "Unstaged everything".into(),
+                    }
+                } else {
+                    out.push(Effect::Notify("Nothing changed".into(), Level::Info));
+                    return true;
+                };
+                if let Some(s) = self.repos.get_mut(root) {
+                    s.keep = Some(keep_at(&content, head, false));
+                }
+                self.start_plan(out, root, plan);
             }
             "git.stageFile" | "git.unstageFile" | "git.revertFile" | "git.deleteFile" => {
                 let act = match id {
@@ -461,17 +493,8 @@ impl App {
         match state.cycle {
             1 => {
                 state.folds.reset();
-                for section in [
-                    Section::Unmerged,
-                    Section::Untracked,
-                    Section::Unstaged,
-                    Section::Staged,
-                ] {
-                    for e in repo.entries(section) {
-                        state
-                            .folds
-                            .set(&crate::target::file_key(section, &e.path), false);
-                    }
+                for e in repo.changed() {
+                    state.folds.set(&crate::target::path_key(&e.path), false);
                 }
             }
             2 => {
@@ -544,6 +567,16 @@ impl App {
         } else {
             target::at(content, head).into_iter().collect()
         };
+        targets = resolve(targets, act, &repo);
+        if targets.is_empty() {
+            let why = match act {
+                Act::Stage => "Nothing here to stage",
+                Act::Unstage => "Nothing here is staged",
+                _ => "Nothing here to act on",
+            };
+            out.push(Effect::Notify(why.into(), Level::Info));
+            return;
+        }
         if whole {
             let mut files: Vec<Target> = Vec::new();
             for t in &targets {
@@ -570,6 +603,120 @@ impl App {
             }
             Err(e) => out.push(Effect::Notify(e, Level::Warning)),
         }
+    }
+
+    /// `d` (and magit's `x`): what discarding here would do, offered as
+    /// lazygit offers it, the item's name as the title, each choice with
+    /// what it loses, and Cancel.
+    fn discard_menu(
+        &mut self,
+        out: &mut Vec<Effect>,
+        root: &str,
+        content: &Content,
+        anchor: usize,
+        head: usize,
+    ) {
+        let Some(repo) = self.repos.get(root).and_then(|s| s.repo.clone()) else {
+            return;
+        };
+        let targets: Vec<Target> = if anchor != head {
+            target::in_selection(content, anchor, head)
+        } else {
+            target::at(content, head).into_iter().collect()
+        };
+        let file = |section: Section, path: &str| Target::File {
+            section,
+            path: path.to_string(),
+        };
+        let (title, choices): (String, Vec<(String, Vec<Target>)>) = match targets.as_slice() {
+            [] => {
+                out.push(Effect::Notify(
+                    "Nothing here to discard".into(),
+                    Level::Info,
+                ));
+                return;
+            }
+            [Target::Path(p)] => {
+                let sections = repo.sections_of(p);
+                let mut v = vec![(
+                    "Discard all changes".to_string(),
+                    sections.iter().map(|s| file(*s, p)).collect(),
+                )];
+                if sections.contains(&Section::Unstaged) && sections.contains(&Section::Staged) {
+                    v.push((
+                        "Discard unstaged changes".to_string(),
+                        vec![file(Section::Unstaged, p)],
+                    ));
+                }
+                (p.clone(), v)
+            }
+            [Target::Hunk { path, .. }] => (
+                path.clone(),
+                vec![("Discard this hunk".to_string(), targets.clone())],
+            ),
+            _ if anchor != head => (
+                "The lines selected".to_string(),
+                vec![(
+                    "Discard them".to_string(),
+                    resolve(targets.clone(), Act::Discard, &repo),
+                )],
+            ),
+            _ => (
+                "Here".to_string(),
+                vec![(
+                    "Discard all changes".to_string(),
+                    resolve(targets.clone(), Act::Discard, &repo),
+                )],
+            ),
+        };
+        let settings = self.action_settings();
+        let mut items: Vec<(String, Option<String>)> = Vec::new();
+        let mut plans = Vec::new();
+        let mut why = None;
+        for (label, ts) in choices {
+            match actions::plan(Act::Discard, &ts, &repo, settings) {
+                Ok(mut plan) => {
+                    // The choice is the confirmation, as in lazygit; an
+                    // untracked file's says that it goes.
+                    let untracked = ts.iter().any(|t| {
+                        matches!(
+                            t,
+                            Target::File {
+                                section: Section::Untracked,
+                                ..
+                            }
+                        )
+                    });
+                    plan.confirm = None;
+                    let label = if untracked {
+                        format!("{label}: delete the file")
+                    } else {
+                        label
+                    };
+                    items.push((label, None));
+                    plans.push(plan);
+                }
+                Err(e) => why = Some(e),
+            }
+        }
+        if plans.is_empty() {
+            let why = why.unwrap_or_else(|| "Nothing here to discard".into());
+            out.push(Effect::Notify(why, Level::Warning));
+            return;
+        }
+        items.push(("Cancel".to_string(), None));
+        if let Some(s) = self.repos.get_mut(root) {
+            s.keep = Some(keep_at(content, head, true));
+        }
+        let token = self.ask(Question::Discard {
+            root: root.to_string(),
+            plans,
+        });
+        out.push(Effect::Pick {
+            token,
+            title,
+            items,
+        });
     }
 
     /// Enter: the one obvious thing with what is under the cursor.
@@ -667,6 +814,22 @@ impl App {
                 self.open_file(out, root, &path, line);
             }
             Some(Target::Lines { path, .. }) => self.open_file(out, root, &path, None),
+            Some(Target::Path(path)) => {
+                let gone = repo.changed().iter().any(|e| {
+                    e.path == path
+                        && (e.worktree == State::Deleted
+                            || (e.index == State::Deleted && e.worktree == State::Unmodified))
+                });
+                if gone {
+                    out.push(Effect::Notify(
+                        format!("{path} is deleted: Tab shows what was in it"),
+                        Level::Info,
+                    ));
+                    return;
+                }
+                self.open_file(out, root, &path, None);
+            }
+            Some(Target::Dir(_)) => self.fold(out, root, content, head, FoldOp::Toggle),
             Some(Target::Stash(index)) => {
                 let token = self.ask(Question::Stash {
                     root: root.to_string(),
@@ -784,11 +947,32 @@ impl App {
                 }
                 add("git.toggle", "Fold or unfold the section".into());
             }
+            Some(Target::Path(path)) => {
+                add("git.visit", format!("Open {path}"));
+                let sections = repo
+                    .as_ref()
+                    .map(|r| r.sections_of(path))
+                    .unwrap_or_default();
+                if sections.iter().any(|s| *s != Section::Staged) {
+                    add("git.stage", format!("Stage {path}"));
+                }
+                if sections.contains(&Section::Staged) {
+                    add("git.unstage", format!("Unstage {path}"));
+                }
+                add("git.discard", format!("Discard the changes of {path}…"));
+                add("git.toggle", "Show or hide its diff".into());
+            }
+            Some(Target::Dir(d)) => {
+                add("git.stage", format!("Stage everything in {d}"));
+                add("git.unstage", format!("Unstage everything in {d}"));
+                add("git.toggle", "Fold or unfold the folder".into());
+            }
             Some(Target::Branch(b)) => add("git.visit", format!("Switch to {b}")),
             Some(Target::Stash(n)) => add("git.visit", format!("Apply, pop or drop stash@{{{n}}}")),
             _ => {}
         }
         let general: &[&'static str] = &[
+            "git.stageEverything",
             "git.commit",
             "git.amend",
             "git.extend",
@@ -832,6 +1016,51 @@ impl App {
             items,
         });
     }
+}
+
+/// What `s`, `u` and the leader's keys act on in files: a changed path
+/// of the Files panel is its untracked file, its conflict or its unstaged
+/// changes to stage, its staged changes to unstage; a folder is its
+/// paths; the Files panel's title all of them.
+fn resolve(targets: Vec<Target>, act: Act, repo: &Repo) -> Vec<Target> {
+    let file = |path: &str| -> Option<Target> {
+        let sections = repo.sections_of(path);
+        let section = match act {
+            Act::Unstage => sections.into_iter().find(|s| *s == Section::Staged)?,
+            Act::Discard => *sections.first()?,
+            _ => sections.into_iter().find(|s| *s != Section::Staged)?,
+        };
+        Some(Target::File {
+            section,
+            path: path.to_string(),
+        })
+    };
+    let mut out: Vec<Target> = Vec::new();
+    for t in targets {
+        let more: Vec<Target> = match t {
+            Target::Path(p) => file(&p).into_iter().collect(),
+            Target::Dir(d) => {
+                let prefix = format!("{}/", d.trim_end_matches('/'));
+                repo.changed()
+                    .iter()
+                    .filter(|e| e.path.starts_with(&prefix))
+                    .filter_map(|e| file(&e.path))
+                    .collect()
+            }
+            Target::Section(Section::Files) => repo
+                .changed()
+                .iter()
+                .filter_map(|e| file(&e.path))
+                .collect(),
+            other => vec![other],
+        };
+        for m in more {
+            if !out.contains(&m) {
+                out.push(m);
+            }
+        }
+    }
+    out
 }
 
 /// `s` as a JSON string.

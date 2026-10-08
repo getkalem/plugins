@@ -51,6 +51,10 @@ pub enum Target {
     Commit(String),
     /// A local branch, by its name.
     Branch(String),
+    /// A changed path in the Files panel, staged or not.
+    Path(String),
+    /// A folder of the Files panel's tree.
+    Dir(String),
     /// The line of keys at the top.
     Help,
 }
@@ -79,6 +83,8 @@ impl Target {
             Target::Stash(n) => format!("stash:{n}"),
             Target::Commit(h) => format!("commit:{h}"),
             Target::Branch(b) => format!("branch:{b}"),
+            Target::Path(p) => path_key(p),
+            Target::Dir(d) => format!("dir:{d}"),
             Target::Help => "help".into(),
         }
     }
@@ -112,6 +118,8 @@ impl Target {
             "stash" => Target::Stash(rest.parse().ok()?),
             "commit" => Target::Commit(rest.to_string()),
             "branch" => Target::Branch(rest.to_string()),
+            "path" => Target::Path(rest.to_string()),
+            "dir" => Target::Dir(rest.to_string()),
             "help" => Target::Help,
             _ => return None,
         })
@@ -131,6 +139,11 @@ impl Target {
 /// The key of a file's region.
 pub fn file_key(section: Section, path: &str) -> String {
     format!("file:{}:{path}", section.key())
+}
+
+/// The key of a changed path's region in the Files panel.
+pub fn path_key(path: &str) -> String {
+    format!("path:{path}")
 }
 
 /// The key of a hunk's region; the index before the path, which may hold
@@ -237,6 +250,8 @@ mod tests {
             Target::Stash(2),
             Target::Commit("abc".into()),
             Target::Branch("feature/a:b".into()),
+            Target::Path("a:b/c d".into()),
+            Target::Dir("crates/x".into()),
             Target::Help,
         ] {
             assert_eq!(Target::from_key(&t.key()), Some(t));

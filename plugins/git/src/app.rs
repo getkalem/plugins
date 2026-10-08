@@ -140,7 +140,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo::new("git.fetch", "Git: Fetch")
         .keys(&["space g shift+f"])
         .doc(&["f p", "f u", "f a"]),
-    CommandInfo::new("git.pull", "Git: Pull").doc(&["shift+f p", "shift+f u"]),
+    CommandInfo::new("git.pull", "Git: Pull").doc(&["p", "shift+f p", "shift+f u"]),
     CommandInfo::new("git.push", "Git: Push").doc(&["shift+p p", "shift+p u"]),
     CommandInfo::new("git.switchBranch", "Git: Switch Branch").doc(&["b b"]),
     CommandInfo::new("git.newBranch", "Git: New Branch").doc(&["b c"]),
@@ -180,7 +180,10 @@ pub const COMMANDS: &[CommandInfo] = &[
         .doc(&["u"])
         .status_only(),
     CommandInfo::new("git.discard", "Git: Discard")
-        .doc(&["x"])
+        .doc(&["d", "x"])
+        .status_only(),
+    CommandInfo::new("git.stageEverything", "Git: Stage or Unstage Everything")
+        .doc(&["a"])
         .status_only(),
     CommandInfo::new("git.stageAll", "Git: Stage All Changes")
         .doc(&["shift+s"])
@@ -562,6 +565,11 @@ enum Question {
     NewBranch { root: String },
     /// What to do with a stash.
     Stash { root: String, index: u32 },
+    /// Which discard to run, as `d` offers them; past the plans, Cancel.
+    Discard {
+        root: String,
+        plans: Vec<actions::Plan>,
+    },
     /// One of these commands.
     Commands {
         ids: Vec<&'static str>,
@@ -1746,7 +1754,20 @@ impl App {
                 };
                 self.start_plan(out, &root, plan);
             }
-            (Question::Plan { root, .. }, _) => {
+            (Question::Discard { root, mut plans }, Answer::Picked(p)) => {
+                match p.first().map(|i| *i as usize) {
+                    Some(i) if i < plans.len() => {
+                        let plan = plans.swap_remove(i);
+                        self.run_plan(out, &root, plan.commands, plan.done);
+                    }
+                    _ => {
+                        if let Some(s) = self.repos.get_mut(&root) {
+                            s.keep = None;
+                        }
+                    }
+                }
+            }
+            (Question::Plan { root, .. } | Question::Discard { root, .. }, _) => {
                 // Not done: the cursor stays where it is.
                 if let Some(s) = self.repos.get_mut(&root) {
                     s.keep = None;

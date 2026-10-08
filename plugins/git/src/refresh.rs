@@ -94,7 +94,7 @@ impl Default for Options {
     fn default() -> Options {
         Options {
             untracked: Untracked::Normal,
-            recent: 10,
+            recent: 20,
             around: 20,
         }
     }
@@ -274,22 +274,19 @@ pub fn load(
 }
 
 /// The diffs the folds call for and the repository has not loaded: the
-/// unfolded files of the sections of files.
+/// changes of each path unfolded in the Files panel, unstaged and staged.
 pub fn missing_diffs(
     repo: &Repo,
     folds: &crate::model::Folds,
     context: u32,
 ) -> Vec<((Section, String), GitCommand)> {
     let mut v = Vec::new();
-    for section in [
-        Section::Unmerged,
-        Section::Untracked,
-        Section::Unstaged,
-        Section::Staged,
-    ] {
-        for e in repo.entries(section) {
-            let key = crate::target::file_key(section, &e.path);
-            if folds.folded(&key) || repo.diff(section, &e.path).is_some() {
+    for e in repo.changed() {
+        if folds.folded(&crate::target::path_key(&e.path)) {
+            continue;
+        }
+        for section in repo.sections_of(&e.path) {
+            if repo.diff(section, &e.path).is_some() {
                 continue;
             }
             if let Some(c) = repo.diff_command(section, &e.path, context) {

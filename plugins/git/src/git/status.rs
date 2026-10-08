@@ -65,6 +65,20 @@ impl State {
         })
     }
 
+    /// Its letter in `git status --short` (a space when unchanged).
+    pub fn letter(self) -> char {
+        match self {
+            State::Unmodified => ' ',
+            State::Modified => 'M',
+            State::TypeChanged => 'T',
+            State::Added => 'A',
+            State::Deleted => 'D',
+            State::Renamed => 'R',
+            State::Copied => 'C',
+            State::Unmerged => 'U',
+        }
+    }
+
     /// The word the status shows.
     pub fn word(self) -> &'static str {
         match self {
@@ -116,6 +130,19 @@ impl Conflict {
                 ));
             }
         })
+    }
+
+    /// Its two letters, as `git status --short` writes them.
+    pub fn code(self) -> &'static str {
+        match self {
+            Conflict::BothDeleted => "DD",
+            Conflict::AddedByUs => "AU",
+            Conflict::DeletedByThem => "UD",
+            Conflict::AddedByThem => "UA",
+            Conflict::DeletedByUs => "DU",
+            Conflict::BothAdded => "AA",
+            Conflict::BothModified => "UU",
+        }
     }
 
     /// The words the status shows, as `git status` says them.
@@ -171,6 +198,17 @@ impl Entry {
     /// It has unstaged changes.
     pub fn unstaged(&self) -> bool {
         self.kind == Kind::Tracked && self.worktree != State::Unmodified
+    }
+
+    /// Its two letters as `git status --short` (and lazygit) write them:
+    /// the index's, then the working tree's; `??` untracked.
+    pub fn code(&self) -> String {
+        match self.kind {
+            Kind::Untracked => "??".into(),
+            Kind::Ignored => "!!".into(),
+            Kind::Unmerged(c) => c.code().into(),
+            Kind::Tracked => format!("{}{}", self.index.letter(), self.worktree.letter()),
+        }
     }
 }
 
