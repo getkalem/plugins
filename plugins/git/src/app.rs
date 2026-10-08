@@ -191,6 +191,24 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo::new("git.unstageAll", "Git: Unstage Everything")
         .doc(&["shift+u"])
         .status_only(),
+    CommandInfo::new("git.tabFiles", "Git: Files Tab")
+        .doc(&["1"])
+        .status_only(),
+    CommandInfo::new("git.tabBranches", "Git: Local Branches Tab")
+        .doc(&["2"])
+        .status_only(),
+    CommandInfo::new("git.tabCommits", "Git: Commits Tab")
+        .doc(&["3"])
+        .status_only(),
+    CommandInfo::new("git.tabStash", "Git: Stash Tab")
+        .doc(&["4"])
+        .status_only(),
+    CommandInfo::new("git.nextTab", "Git: Next Tab")
+        .doc(&["]"])
+        .status_only(),
+    CommandInfo::new("git.previousTab", "Git: Previous Tab")
+        .doc(&["["])
+        .status_only(),
     CommandInfo::new("git.close", "Git: Close the Status")
         .doc(&["escape", "q"])
         .status_only(),
@@ -426,6 +444,8 @@ pub enum Effect {
         cursor: Option<usize>,
         /// Opened, or shown, rather than written where it is open.
         show: bool,
+        /// The styles of its text (lazygit's colors).
+        styles: Vec<crate::content::Styled>,
     },
     /// Closes the status document of repository `root`.
     CloseDocument {
@@ -609,6 +629,8 @@ struct RepoState {
     keep: Option<Keep>,
     /// Shift+Tab's step.
     cycle: u8,
+    /// The status document's tab shown.
+    tab: crate::views::status::Tab,
     /// The diffs being read for it.
     loading: BTreeSet<(Section, String)>,
 }

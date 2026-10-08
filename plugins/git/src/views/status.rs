@@ -1,6 +1,6 @@
 //! The status document (DESIGN.md, 2.1 and appendix D): lazygit's panels
-//! in one document, one under the other (Status, Files, Local branches,
-//! Commits, Stash), each under a title line with its count, and magit's
+//! as tabs of one document (Files, Local branches, Commits, Stash) under a
+//! header of the repository's status, in lazygit's colors; and magit's
 //! diffs: Tab on a file shows its hunks under it.
 //!
 //! A hunk's lines start at the first column as `git diff` prints them, so
@@ -9,140 +9,211 @@
 
 use std::collections::BTreeMap;
 
-use crate::content::{Content, Style};
+use crate::content::{Color, Content, Style};
 use crate::git::diff::{FileDiff, LineKind};
 use crate::git::log::Commit;
 use crate::git::refs::Branch;
-use crate::git::status::{Entry, Kind};
+use crate::git::status::{Entry, Kind, State};
 use crate::model::{Folds, Repo, Section};
 use crate::target::{hunk_key, path_key};
 use crate::views::{Glyphs, ViewOptions, lossy_line};
 
-/// The first line's keys, so that nothing has to be known beforehand.
-pub const HELP: &[(&str, &str)] = &[
-    ("Tab", "diff"),
-    ("Enter", "open"),
-    ("s", "stage"),
-    ("u", "unstage"),
-    ("a", "all"),
-    ("d", "discard"),
-    ("c c", "commit"),
-    ("P p", "push"),
-    ("p", "pull"),
-    ("b b", "branch"),
-    ("?", "menu"),
-    ("q", "close"),
-];
+/// A tab of the status, as lazygit's panels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tab {
+    /// The changed files.
+    #[default]
+    Files,
+    /// The local branches.
+    Branches,
+    /// The last commits.
+    Commits,
+    /// The stashes.
+    Stash,
+}
 
-/// The first line: [`HELP`]'s keys.
-pub fn help_line(glyphs: Glyphs) -> String {
+impl Tab {
+    /// Every tab, in order: `1` to `4` show them.
+    pub const ALL: [Tab; 4] = [Tab::Files, Tab::Branches, Tab::Commits, Tab::Stash];
+
+    /// Its name in region keys and commands.
+    pub fn key(self) -> &'static str {
+        match self {
+            Tab::Files => "files",
+            Tab::Branches => "branches",
+            Tab::Commits => "commits",
+            Tab::Stash => "stash",
+        }
+    }
+
+    /// The tab named `key`.
+    pub fn from_key(key: &str) -> Option<Tab> {
+        Tab::ALL.into_iter().find(|t| t.key() == key)
+    }
+
+    /// Its title.
+    pub fn title(self) -> &'static str {
+        match self {
+            Tab::Files => "Files",
+            Tab::Branches => "Local branches",
+            Tab::Commits => "Commits",
+            Tab::Stash => "Stash",
+        }
+    }
+
+    /// The next tab, or the previous one, round.
+    pub fn step(self, next: bool) -> Tab {
+        let i = Tab::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        let n = Tab::ALL.len();
+        Tab::ALL[if next { (i + 1) % n } else { (i + n - 1) % n }]
+    }
+
+    /// The keys the first line names in it.
+    fn keys(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Tab::Files => &[
+                ("Tab", "diff"),
+                ("Enter", "open"),
+                ("s", "stage"),
+                ("u", "unstage"),
+                ("a", "all"),
+                ("d", "discard"),
+                ("c c", "commit"),
+                ("P p", "push"),
+                ("p", "pull"),
+            ],
+            Tab::Branches => &[
+                ("Enter", "switch"),
+                ("b c", "new branch"),
+                ("P p", "push"),
+                ("p", "pull"),
+            ],
+            Tab::Commits => &[
+                ("Enter", "details"),
+                ("c a", "amend"),
+                ("c w", "reword"),
+                ("P p", "push"),
+            ],
+            Tab::Stash => &[("Enter", "apply, pop, drop"), ("Z z", "stash")],
+        }
+    }
+}
+
+/// The keys every tab names after its own.
+pub const COMMON_KEYS: &[(&str, &str)] = &[("1-4 [ ]", "tabs"), ("?", "menu"), ("q", "close")];
+
+/// The first line: tab `tab`'s keys, then the common ones.
+pub fn help_line(glyphs: Glyphs, tab: Tab) -> String {
     let sep = match glyphs {
         Glyphs::Unicode => " · ",
         Glyphs::Ascii => " | ",
     };
-    HELP.iter()
+    tab.keys()
+        .iter()
+        .chain(COMMON_KEYS)
         .map(|(k, w)| format!("{k} {w}"))
         .collect::<Vec<_>>()
         .join(sep)
 }
 
 /// The local branches listed at most; `b b` offers them all.
-pub const BRANCHES_SHOWN: usize = 10;
+pub const BRANCHES_SHOWN: usize = 50;
 
-/// The width of a panel's title line.
+/// The width of the rule under the tabs.
 pub const WIDTH: usize = 60;
 
-/// The status of `repo` as the folds have it.
-pub fn render(repo: &Repo, folds: &Folds, opts: &ViewOptions) -> Content {
+const RED: Style = Style::Color(Color::Red, false);
+const GREEN: Style = Style::Color(Color::Green, false);
+const YELLOW: Style = Style::Color(Color::Yellow, false);
+const MAGENTA: Style = Style::Color(Color::Magenta, false);
+const CYAN: Style = Style::Color(Color::Cyan, false);
+
+/// The status of `repo` with tab `tab` shown, as the folds have it.
+pub fn render(repo: &Repo, folds: &Folds, opts: &ViewOptions, tab: Tab) -> Content {
     let mut c = Content::new();
     c.open("help", false, false);
-    c.line(&help_line(opts.glyphs), Style::Muted);
+    c.line(&help_line(opts.glyphs, tab), Style::Muted);
     c.close();
     c.newline();
-    status_panel(&mut c, repo, opts);
-    files_panel(&mut c, repo, folds, opts);
-    branches_panel(&mut c, repo, folds, opts);
-    commits_panel(&mut c, repo, folds, opts);
-    stash_panel(&mut c, repo, folds, opts);
-    // The last blank line goes: the document ends with its last panel.
-    if c.text.ends_with("\n\n") {
-        c.text.pop();
+    status_lines(&mut c, repo, opts);
+    c.newline();
+    tabs(&mut c, repo, opts, tab);
+    c.open("content", false, false);
+    match tab {
+        Tab::Files => files(&mut c, repo, folds, opts),
+        Tab::Branches => branches(&mut c, repo, opts),
+        Tab::Commits => commits(&mut c, repo, opts),
+        Tab::Stash => stashes(&mut c, repo),
     }
+    c.close();
     c
 }
 
-/// A panel's title line: `─ Files ───────── 3 ─`, `…` after the title
-/// when the panel is folded; no count for none.
-fn title(c: &mut Content, opts: &ViewOptions, name: &str, count: Option<usize>, folded: bool) {
-    let (bar, more) = match opts.glyphs {
-        Glyphs::Unicode => ("─", " …"),
-        Glyphs::Ascii => ("-", " ..."),
-    };
-    let name = if folded {
-        format!("{name}{more}")
-    } else {
-        name.to_string()
-    };
-    c.push(&format!("{bar} "), Style::Muted);
-    c.push(&name, Style::Heading);
-    let count = count.map(|n| format!(" {n} {bar}")).unwrap_or_default();
-    // `─ NAME ` and ` COUNT ─` around the rule.
-    let used = 2 + name.chars().count() + 1 + count.chars().count();
-    let fill = WIDTH.saturating_sub(used).max(3);
-    c.push(&format!(" {}", bar.repeat(fill)), Style::Muted);
-    c.line(&count, Style::Muted);
+/// How many things tab `tab` lists.
+fn count(repo: &Repo, tab: Tab) -> usize {
+    match tab {
+        Tab::Files => repo.changed().len(),
+        Tab::Branches => repo.local_branches().len(),
+        Tab::Commits => repo.recent.len(),
+        Tab::Stash => repo.stashes.len(),
+    }
 }
 
-/// Opens panel `section` with its title; whether its lines follow.
-fn panel(
-    c: &mut Content,
-    folds: &Folds,
-    opts: &ViewOptions,
-    section: Section,
-    name: &str,
-    count: usize,
-) -> bool {
-    let key = format!("section:{}", section.key());
-    let folded = folds.folded(&key);
-    c.open(&key, true, folded);
-    title(c, opts, name, Some(count), folded);
-    !folded
-}
-
-fn end_panel(c: &mut Content) {
-    c.close();
-    c.newline();
-}
-
-/// The repository's name and its branch, how far from its upstream, the
-/// nearest tag and the operation under way.
-fn status_panel(c: &mut Content, repo: &Repo, opts: &ViewOptions) {
-    let s = &repo.status;
-    c.open("section:status", false, false);
-    title(c, opts, "Status", None, false);
-    c.open("head", false, false);
-    let sync = match (&s.upstream, s.ahead, s.behind) {
-        (Some(_), 0, 0) => match opts.glyphs {
-            Glyphs::Unicode => "✓".to_string(),
-            Glyphs::Ascii => "=".to_string(),
-        },
-        (Some(_), a, b) => opts.glyphs.ahead_behind(a, b),
-        (None, _, _) => String::new(),
+/// The tabs' line, the one shown green, and a rule under it.
+fn tabs(c: &mut Content, repo: &Repo, opts: &ViewOptions, shown: Tab) {
+    let (sep, bar) = match opts.glyphs {
+        Glyphs::Unicode => (" │ ", "─"),
+        Glyphs::Ascii => (" | ", "-"),
     };
     c.push(" ", Style::Normal);
-    if !sync.is_empty() {
-        c.push(&sync, Style::Strong);
-        c.push(" ", Style::Normal);
+    for (i, t) in Tab::ALL.into_iter().enumerate() {
+        if i > 0 {
+            c.push(sep, Style::Muted);
+        }
+        c.open(format!("tab:{}", t.key()), false, false);
+        c.push(&format!("{} ", i + 1), Style::Muted);
+        if t == shown {
+            c.push(t.title(), Style::Color(Color::Green, true));
+        } else {
+            c.push(t.title(), Style::Normal);
+        }
+        c.push(&format!(" {}", count(repo, t)), Style::Muted);
+        c.close();
+    }
+    c.newline();
+    c.line(&bar.repeat(WIDTH), Style::Muted);
+}
+
+/// The repository and its branch, how far from its upstream, the
+/// nearest tag and the operation under way.
+fn status_lines(c: &mut Content, repo: &Repo, opts: &ViewOptions) {
+    let s = &repo.status;
+    c.open("head", false, false);
+    c.push(" ", Style::Normal);
+    match (&s.upstream, s.ahead, s.behind) {
+        (Some(_), 0, 0) => {
+            let ok = match opts.glyphs {
+                Glyphs::Unicode => "✓",
+                Glyphs::Ascii => "=",
+            };
+            c.push(ok, GREEN);
+            c.push(" ", Style::Normal);
+        }
+        (Some(_), a, b) => {
+            c.push(&opts.glyphs.ahead_behind(a, b), YELLOW);
+            c.push(" ", Style::Normal);
+        }
+        (None, _, _) => {}
     }
     c.push(&repo_name(&repo.root), Style::Normal);
     c.push(&format!(" {} ", opts.glyphs.arrow()), Style::Muted);
     match (&s.branch, &repo.head) {
         (Some(b), _) => c.push(b, Style::Strong),
         (None, Some(h)) => {
-            c.push("(detached) ", Style::Error);
+            c.push("(detached) ", RED);
             c.push(&h.short, Style::Code);
         }
-        (None, None) => c.push("(detached)", Style::Error),
+        (None, None) => c.push("(detached)", RED),
     }
     match &repo.head {
         Some(h) => {
@@ -163,7 +234,7 @@ fn status_panel(c: &mut Content, repo: &Repo, opts: &ViewOptions) {
     if let Some((tag, n)) = &repo.tag {
         c.open("tag", false, false);
         c.push(" ", Style::Normal);
-        c.push(tag, Style::Strong);
+        c.push(tag, Style::Color(Color::Magenta, true));
         let since = match n {
             0 => " (at HEAD)".to_string(),
             1 => " (1 commit ago)".to_string(),
@@ -176,7 +247,7 @@ fn status_panel(c: &mut Content, repo: &Repo, opts: &ViewOptions) {
         c.open("operation", false, false);
         let unmerged = repo.entries(Section::Unmerged).len();
         c.push(" ", Style::Normal);
-        c.push(op.word(), Style::Error);
+        c.push(op.word(), RED);
         if unmerged > 0 {
             c.line(&format!(" ({unmerged} unmerged)"), Style::Muted);
         } else {
@@ -184,8 +255,6 @@ fn status_panel(c: &mut Content, repo: &Repo, opts: &ViewOptions) {
         }
         c.close();
     }
-    c.close();
-    c.newline();
 }
 
 /// The last part of a repository's root: its name.
@@ -198,7 +267,7 @@ pub fn repo_name(root: &str) -> String {
         .to_string()
 }
 
-/// A folder of the Files panel's tree: its folders and its files.
+/// A folder of the Files tab's tree: its folders and its files.
 #[derive(Default)]
 struct Folder<'a> {
     folders: BTreeMap<String, Folder<'a>>,
@@ -216,19 +285,26 @@ impl<'a> Folder<'a> {
                 .add(rest, e),
         }
     }
+
+    /// Whether something in it is not staged: lazygit shows it red.
+    fn unstaged(&self) -> bool {
+        self.files.iter().any(|e| not_staged(e)) || self.folders.values().any(Folder::unstaged)
+    }
+}
+
+/// A path with changes not staged, untracked or in conflict.
+fn not_staged(e: &Entry) -> bool {
+    e.unstaged() || matches!(e.kind, Kind::Untracked | Kind::Unmerged(_))
 }
 
 /// The changed paths as a tree of folders, as lazygit shows them: a
 /// folder holding one folder and no file is written with it
 /// (`crates/kalem-core/src`).
-fn files_panel(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions) {
+fn files(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions) {
     let changed = repo.changed();
-    if !panel(c, folds, opts, Section::Files, "Files", changed.len()) {
-        return end_panel(c);
-    }
     if changed.is_empty() {
         c.line(" Nothing changed: the working tree is clean", Style::Muted);
-        return end_panel(c);
+        return;
     }
     let mut root = Folder::default();
     for e in &changed {
@@ -236,7 +312,6 @@ fn files_panel(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions) 
         root.add(&parts, e);
     }
     folder(c, repo, folds, opts, &root, "", 0);
-    end_panel(c);
 }
 
 fn folder(
@@ -269,7 +344,7 @@ fn folder(
             (Glyphs::Ascii, true) => "> ",
         };
         c.push(mark, Style::Muted);
-        c.line(&name, Style::Strong);
+        c.line(&name, if sub.unstaged() { RED } else { GREEN });
         if !folded {
             folder(c, repo, folds, opts, sub, &format!("{path}/"), depth + 1);
         }
@@ -285,13 +360,36 @@ fn file(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions, e: &Ent
     let folded = folds.folded(&key);
     c.open(&key, true, folded);
     c.push(&" ".repeat(1 + depth * 2), Style::Normal);
-    let style = match e.kind {
-        Kind::Unmerged(_) => Style::Error,
-        _ if e.staged() && !e.unstaged() => Style::Strong,
-        _ => Style::Normal,
-    };
-    c.push(&e.code(), style);
+    // lazygit's colors: what is staged green, what is not red.
+    let code = e.code();
+    match e.kind {
+        Kind::Tracked => {
+            let mut letters = code.chars();
+            let (x, y) = (
+                letters.next().unwrap_or(' ').to_string(),
+                letters.next().unwrap_or(' ').to_string(),
+            );
+            c.push(
+                &x,
+                if e.index == State::Unmodified {
+                    Style::Normal
+                } else {
+                    GREEN
+                },
+            );
+            c.push(
+                &y,
+                if e.worktree == State::Unmodified {
+                    Style::Normal
+                } else {
+                    RED
+                },
+            );
+        }
+        _ => c.push(&code, RED),
+    }
     c.push(" ", Style::Normal);
+    let name_style = if not_staged(e) { RED } else { GREEN };
     let name = e
         .path
         .trim_end_matches('/')
@@ -305,11 +403,11 @@ fn file(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions, e: &Ent
     };
     match &e.from {
         Some(from) => {
-            c.push(from, Style::Normal);
+            c.push(from, name_style);
             c.push(&format!(" {} ", opts.glyphs.arrow()), Style::Muted);
-            c.push(&name, style);
+            c.push(&name, name_style);
         }
-        None => c.push(&name, style),
+        None => c.push(&name, name_style),
     }
     let (mut added, mut removed, mut any) = (0, 0, false);
     for s in [Section::Unstaged, Section::Staged] {
@@ -400,20 +498,14 @@ fn diff_lines(
 
 /// The local branches, the current one first and marked, how far each is
 /// from its upstream.
-fn branches_panel(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions) {
+fn branches(c: &mut Content, repo: &Repo, opts: &ViewOptions) {
     let mut local = repo.local_branches();
+    if local.is_empty() {
+        c.line(" No branch yet", Style::Muted);
+        return;
+    }
     // The current one first, as lazygit lists them.
     local.sort_by_key(|b| !b.current);
-    if !panel(
-        c,
-        folds,
-        opts,
-        Section::Branches,
-        "Local branches",
-        local.len(),
-    ) {
-        return end_panel(c);
-    }
     for b in local.iter().take(BRANCHES_SHOWN) {
         branch_line(c, b, opts);
     }
@@ -426,45 +518,34 @@ fn branches_panel(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOption
             Style::Muted,
         );
     }
-    end_panel(c);
 }
 
 fn branch_line(c: &mut Content, b: &Branch, opts: &ViewOptions) {
     c.open(format!("branch:{}", b.name), false, false);
     if b.current {
-        c.push(" * ", Style::Strong);
-        c.push(&b.name, Style::Strong);
+        c.push(" * ", GREEN);
+        c.push(&b.name, Style::Color(Color::Green, true));
     } else {
         c.push("   ", Style::Normal);
         c.push(&b.name, Style::Normal);
     }
     if b.upstream.is_some() {
         if b.gone {
-            c.push(" (upstream gone)", Style::Error);
+            c.push(" (upstream gone)", RED);
         } else if b.ahead > 0 || b.behind > 0 {
             c.push(" ", Style::Normal);
-            c.push(&opts.glyphs.ahead_behind(b.ahead, b.behind), Style::Muted);
+            c.push(&opts.glyphs.ahead_behind(b.ahead, b.behind), YELLOW);
         } else if opts.glyphs == Glyphs::Unicode {
-            c.push(" ✓", Style::Muted);
+            c.push(" ✓", GREEN);
         }
     }
     c.newline();
     c.close();
 }
 
-/// The last commits, HEAD's first: hash, author's initials, tags,
-/// subject; the ones not pushed marked `↑`.
-fn commits_panel(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions) {
-    if !panel(
-        c,
-        folds,
-        opts,
-        Section::Recent,
-        "Commits",
-        repo.recent.len(),
-    ) {
-        return end_panel(c);
-    }
+/// The last commits, HEAD's first: hash (red when not pushed), author's
+/// initials, tags, subject.
+fn commits(c: &mut Content, repo: &Repo, opts: &ViewOptions) {
     if repo.recent.is_empty() {
         c.line(" No commit yet", Style::Muted);
     }
@@ -475,14 +556,13 @@ fn commits_panel(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions
     if !repo.unpulled.is_empty() {
         c.line(
             &format!(
-                " {} to pull from {}: F p",
+                " {} to pull from {}: p",
                 repo.unpulled.len(),
                 repo.status.upstream.as_deref().unwrap_or("the upstream")
             ),
             Style::Muted,
         );
     }
-    end_panel(c);
 }
 
 /// A commit's line: its short hash, its author's initials, its tags and
@@ -494,10 +574,10 @@ pub fn commit_line(c: &mut Content, commit: &Commit, unpushed: bool, opts: &View
         (true, Glyphs::Unicode) => "↑",
         (true, Glyphs::Ascii) => "^",
     };
-    c.push(&format!(" {mark}"), Style::Strong);
-    c.push(&commit.short, Style::Code);
+    c.push(&format!(" {mark}"), RED);
+    c.push(&commit.short, if unpushed { RED } else { GREEN });
     c.push(" ", Style::Normal);
-    c.push(&initials(&commit.author), Style::Muted);
+    c.push(&initials(&commit.author), MAGENTA);
     let tags: Vec<&str> = commit
         .refs
         .iter()
@@ -505,7 +585,7 @@ pub fn commit_line(c: &mut Content, commit: &Commit, unpushed: bool, opts: &View
         .collect();
     if !tags.is_empty() {
         c.push(" ", Style::Normal);
-        c.push(&tags.join(" "), Style::Strong);
+        c.push(&tags.join(" "), Style::Color(Color::Magenta, true));
     }
     c.push(" ", Style::Normal);
     c.line(&commit.subject, Style::Normal);
@@ -528,26 +608,18 @@ pub fn initials(name: &str) -> String {
 }
 
 /// The stashes.
-fn stash_panel(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions) {
-    if !panel(
-        c,
-        folds,
-        opts,
-        Section::Stashes,
-        "Stash",
-        repo.stashes.len(),
-    ) {
-        return end_panel(c);
+fn stashes(c: &mut Content, repo: &Repo) {
+    if repo.stashes.is_empty() {
+        c.line(" No stash: Z z stashes the changes", Style::Muted);
     }
     for s in &repo.stashes {
         c.open(format!("stash:{}", s.index), false, false);
         c.push(" ", Style::Normal);
-        c.push(&s.name(), Style::Code);
+        c.push(&s.name(), CYAN);
         c.push(": ", Style::Muted);
         c.line(&s.message, Style::Normal);
         c.close();
     }
-    end_panel(c);
 }
 
 /// `12345` as `12,345`.
@@ -637,18 +709,18 @@ mod tests {
     }
 
     #[test]
-    fn lazygits_panels_and_magits_diff() {
+    fn lazygits_tabs_and_magits_diff() {
         let mut folds = Folds::default();
         folds.set(&path_key("README.md"), false);
-        let c = render(&repo(), &folds, &ViewOptions::default());
+        let c = render(&repo(), &folds, &ViewOptions::default(), Tab::Files);
         let expected = "\
-Tab diff · Enter open · s stage · u unstage · a all · d discard · c c commit · P p push · p pull · b b branch · ? menu · q close
+Tab diff · Enter open · s stage · u unstage · a all · d discard · c c commit · P p push · p pull · 1-4 [ ] tabs · ? menu · q close
 
-─ Status ───────────────────────────────────────────────────
  ↑1 org → main  Fix it
  origin/main  (Enter: push, pull, fetch)
 
-─ Files ──────────────────────────────────────────────── 4 ─
+ 1 Files 4 │ 2 Local branches 2 │ 3 Commits 2 │ 4 Stash 0
+────────────────────────────────────────────────────────────
  ▼ crates/core/src
     M lib.rs   +1 −1
  MM README.md
@@ -664,16 +736,6 @@ Tab diff · Enter open · s stage · u unstage · a all · d discard · c c comm
 +X
  A  new.md
  ?? notes.txt
-
-─ Local branches ─────────────────────────────────────── 2 ─
- * main ↑1
-   feature
-
-─ Commits ────────────────────────────────────────────── 2 ─
- ↑abc1234 AT v0.1 Fix it
-  def5678 AT First
-
-─ Stash ──────────────────────────────────────────────── 0 ─
 ";
         assert_eq!(c.text, expected);
         // The cursor on a line names what it stands for.
@@ -692,30 +754,71 @@ Tab diff · Enter open · s stage · u unstage · a all · d discard · c c comm
                 hunk: 0
             })
         );
-        assert_eq!(at("* main"), Some(Target::Branch("main".into())));
-        assert_eq!(at("def5678"), Some(Target::Commit("def".into())));
-        assert_eq!(at("─ Files"), Some(Target::Section(Section::Files)));
+        assert_eq!(at("Commits 2"), Some(Target::Tab("commits".into())));
+        // lazygit's colors: not staged red, staged green, the tab shown
+        // green and bold.
+        let style = |s: &str| c.style_at(c.text.find(s).unwrap());
+        assert_eq!(style("lib.rs"), RED);
+        assert_eq!(style("new.md"), GREEN);
+        assert_eq!(style("Files 4"), Style::Color(Color::Green, true));
+        assert_eq!(style("Commits 2"), Style::Normal);
     }
 
     #[test]
-    fn folded_panels_folders_and_ascii() {
+    fn the_other_tabs() {
+        let folds = Folds::default();
+        let opts = ViewOptions::default();
+        let tab = |t| render(&repo(), &folds, &opts, t).text;
+        let branches = tab(Tab::Branches);
+        assert!(
+            branches.ends_with("\n * main ↑1\n   feature\n"),
+            "{branches}"
+        );
+        assert!(
+            branches.starts_with("Enter switch · b c new branch"),
+            "{branches}"
+        );
+        let commits = tab(Tab::Commits);
+        assert!(
+            commits.ends_with("\n ↑abc1234 AT v0.1 Fix it\n  def5678 AT First\n"),
+            "{commits}"
+        );
+        let c = render(&repo(), &folds, &opts, Tab::Commits);
+        let style = |s: &str| c.style_at(c.text.find(s).unwrap());
+        assert_eq!(style("abc1234"), RED, "not pushed");
+        assert_eq!(style("def5678"), GREEN);
+        assert_eq!(style("v0.1"), Style::Color(Color::Magenta, true));
+        let stash = tab(Tab::Stash);
+        assert!(
+            stash.ends_with(" No stash: Z z stashes the changes\n"),
+            "{stash}"
+        );
+        // Round the tabs.
+        assert_eq!(Tab::Stash.step(true), Tab::Files);
+        assert_eq!(Tab::Files.step(false), Tab::Stash);
+    }
+
+    #[test]
+    fn folded_folders_and_ascii() {
         let mut folds = Folds::default();
-        folds.set("section:branches", true);
         folds.set("dir:crates/core/src", true);
         let opts = ViewOptions {
             glyphs: Glyphs::Ascii,
             ..ViewOptions::default()
         };
-        let c = render(&repo(), &folds, &opts);
+        let c = render(&repo(), &folds, &opts, Tab::Files);
         assert!(
             c.text.contains("\n > crates/core/src\n MM README.md\n"),
             "{}",
             c.text
         );
-        assert!(c.text.contains("- Local branches ... ---"), "{}", c.text);
-        assert!(!c.text.contains("feature"), "{}", c.text);
         assert!(
             c.text.contains("\n +1 ahead org -> main  Fix it\n"),
+            "{}",
+            c.text
+        );
+        assert!(
+            c.text.contains(" 1 Files 4 | 2 Local branches 2 |"),
             "{}",
             c.text
         );

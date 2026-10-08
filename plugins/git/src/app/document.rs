@@ -12,6 +12,7 @@ use crate::git::diff::LineKind;
 use crate::git::status::State;
 use crate::refresh::missing_diffs;
 use crate::target::{self, Target};
+use crate::views::status::Tab;
 use crate::views::{self, ViewOptions};
 
 /// The lines of context of the status's diffs.
@@ -207,12 +208,13 @@ impl App {
         let Some(repo) = state.repo.as_ref() else {
             return;
         };
-        let content = views::status::render(repo, &state.folds, &opts);
+        let content = views::status::render(repo, &state.folds, &opts, state.tab);
         let cursor = state
             .keep
             .take()
             .map(|k| place(state.content.as_ref(), &content, &k));
         let text = content.text.clone();
+        let styles = content.styles.clone();
         state.content = Some(content);
         state.shown = true;
         out.push(Effect::Document {
@@ -221,6 +223,7 @@ impl App {
             text,
             cursor,
             show,
+            styles,
         });
     }
 
@@ -321,6 +324,19 @@ impl App {
                 }
                 self.refresh(out, root, After::Nothing);
             }
+            "git.tabFiles" | "git.tabBranches" | "git.tabCommits" | "git.tabStash"
+            | "git.nextTab" | "git.previousTab" => {
+                let now = self.repos.get(root).map(|s| s.tab).unwrap_or_default();
+                let tab = match id {
+                    "git.tabFiles" => Tab::Files,
+                    "git.tabBranches" => Tab::Branches,
+                    "git.tabCommits" => Tab::Commits,
+                    "git.tabStash" => Tab::Stash,
+                    "git.nextTab" => now.step(true),
+                    _ => now.step(false),
+                };
+                self.show_tab(out, root, tab);
+            }
             "git.toggle" => self.fold(out, root, &content, head, FoldOp::Toggle),
             "git.unfold" => self.fold(out, root, &content, head, FoldOp::Unfold),
             "git.fold" => self.fold(out, root, &content, head, FoldOp::Fold),
@@ -419,6 +435,22 @@ impl App {
         true
     }
 
+    /// Shows tab `tab`, the cursor on its first line.
+    fn show_tab(&mut self, out: &mut Vec<Effect>, root: &str, tab: Tab) {
+        let Some(state) = self.repos.get_mut(root) else {
+            return;
+        };
+        state.tab = tab;
+        state.keep = Some(Keep::Item {
+            keys: vec!["content".into()],
+            delta: 0,
+            line: 0,
+            following: false,
+        });
+        self.load_diffs(out, root);
+        self.render_status(out, root, false);
+    }
+
     fn action_settings(&self) -> actions::Settings {
         actions::Settings {
             confirm_discard: self.settings.confirm_discard,
@@ -489,24 +521,13 @@ impl App {
         let Some(repo) = state.repo.as_ref() else {
             return;
         };
-        state.cycle = (state.cycle + 1) % 3;
-        match state.cycle {
-            1 => {
-                state.folds.reset();
-                for e in repo.changed() {
-                    state.folds.set(&crate::target::path_key(&e.path), false);
-                }
+        // Every diff shown, then each as it starts.
+        state.cycle = (state.cycle + 1) % 2;
+        state.folds.reset();
+        if state.cycle == 1 {
+            for e in repo.changed() {
+                state.folds.set(&crate::target::path_key(&e.path), false);
             }
-            2 => {
-                for r in content
-                    .regions
-                    .iter()
-                    .filter(|r| r.key.starts_with("section:"))
-                {
-                    state.folds.set(&r.key, true);
-                }
-            }
-            _ => state.folds.reset(),
         }
         state.keep = Some(keep_at(content, head, false));
         self.load_diffs(out, root);
@@ -541,6 +562,7 @@ impl App {
                 text: content.text.clone(),
                 cursor: Some(to),
                 show: false,
+                styles: content.styles.clone(),
             });
         }
     }
@@ -830,6 +852,11 @@ impl App {
                 self.open_file(out, root, &path, None);
             }
             Some(Target::Dir(_)) => self.fold(out, root, content, head, FoldOp::Toggle),
+            Some(Target::Tab(t)) => {
+                if let Some(tab) = Tab::from_key(&t) {
+                    self.show_tab(out, root, tab);
+                }
+            }
             Some(Target::Stash(index)) => {
                 let token = self.ask(Question::Stash {
                     root: root.to_string(),
@@ -972,6 +999,10 @@ impl App {
             _ => {}
         }
         let general: &[&'static str] = &[
+            "git.tabFiles",
+            "git.tabBranches",
+            "git.tabCommits",
+            "git.tabStash",
             "git.stageEverything",
             "git.commit",
             "git.amend",
@@ -1047,6 +1078,11 @@ fn resolve(targets: Vec<Target>, act: Act, repo: &Repo) -> Vec<Target> {
                     .filter_map(|e| file(&e.path))
                     .collect()
             }
+            Target::Tab(t) if t == "files" => repo
+                .changed()
+                .iter()
+                .filter_map(|e| file(&e.path))
+                .collect(),
             Target::Section(Section::Files) => repo
                 .changed()
                 .iter()

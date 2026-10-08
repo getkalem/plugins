@@ -892,8 +892,8 @@ dependencies = [
 
 [[package]]
 name = "kalem-plugin"
-version = "0.4.1"
-source = "git+https://github.com/getkalem/kalem?branch=main#b81b8d07185d0c7b2b11bc7f378293ed1027ec29"
+version = "0.4.2"
+source = "git+https://github.com/getkalem/kalem?branch=main#f800e6854162d4b2564677fabb5c1980dfc0d7fe"
 dependencies = [
  "kalem-viewer",
  "wit-bindgen",
@@ -969,8 +969,8 @@ dependencies = [
 
 [[package]]
 name = "kalem-viewer"
-version = "0.4.1"
-source = "git+https://github.com/getkalem/kalem?branch=main#b81b8d07185d0c7b2b11bc7f378293ed1027ec29"
+version = "0.4.2"
+source = "git+https://github.com/getkalem/kalem?branch=main#f800e6854162d4b2564677fabb5c1980dfc0d7fe"
 
 [[package]]
 name = "kamadak-exif"

@@ -201,20 +201,22 @@ fn apply(effect: Effect) {
             text,
             cursor,
             show,
+            styles,
         } => {
             let cursor = cursor.map(|c| c as u64);
+            let styles = styled(&styles);
             let open = DOCS.with(|d| d.borrow().get(&root).copied());
             if show {
                 let spec = documents::Spec::new(app::STATUS_DOC, &root, &title, app::STATUS_KIND)
                     .language("diff");
-                match documents::open(&spec, &text, cursor) {
+                match documents::open_styled(&spec, &text, cursor, &styles) {
                     Ok(n) => DOCS.with(|d| {
                         d.borrow_mut().insert(root, n);
                     }),
                     Err(e) => ui::notify(&e, ui::Level::Error),
                 }
             } else if let Some(n) = open
-                && documents::set(n, &text, cursor).is_err()
+                && documents::set_styled(n, &text, cursor, &styles).is_err()
             {
                 // The user closed it.
                 DOCS.with(|d| d.borrow_mut().remove(&root));
@@ -243,6 +245,44 @@ fn apply(effect: Effect) {
         }
         Effect::ClearGutters => decorations::clear_gutter(None),
     }
+}
+
+/// The content's styles as Kalem's: the theme's colors by name.
+fn styled(styles: &[crate::content::Styled]) -> Vec<documents::StyledSpan> {
+    use crate::content::{Color as C, Style};
+    use documents::{Color, TextStyle};
+    let color = |c: C| match c {
+        C::Red => Color::Red,
+        C::Green => Color::Green,
+        C::Yellow => Color::Yellow,
+        C::Blue => Color::Blue,
+        C::Magenta => Color::Magenta,
+        C::Cyan => Color::Cyan,
+    };
+    styles
+        .iter()
+        .filter_map(|s| {
+            let style = match s.style {
+                Style::Normal => return None,
+                Style::Strong => TextStyle::color(Color::Default).bold(),
+                Style::Emphasis => TextStyle {
+                    italic: true,
+                    ..TextStyle::color(Color::Default)
+                },
+                Style::Muted => TextStyle::color(Color::Muted),
+                Style::Code => TextStyle::color(Color::Yellow),
+                Style::Error => TextStyle::color(Color::Red),
+                Style::Heading => TextStyle::color(Color::Green).bold(),
+                Style::Color(c, true) => TextStyle::color(color(c)).bold(),
+                Style::Color(c, false) => TextStyle::color(color(c)),
+            };
+            Some(documents::StyledSpan {
+                start: s.start as u64,
+                end: s.end as u64,
+                style,
+            })
+        })
+        .collect()
 }
 
 /// Adds `node` and the nodes under it to `tree` under `parent`.

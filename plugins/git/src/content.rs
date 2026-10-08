@@ -22,6 +22,26 @@ pub enum Style {
     Error,
     /// As a heading.
     Heading,
+    /// In a color of the theme, bold or not (lazygit's): Kalem's
+    /// `styled-documents` names them.
+    Color(Color, bool),
+}
+
+/// A color of the theme, as Kalem's `styled-documents` names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Color {
+    /// Red: not staged, in conflict, not pushed.
+    Red,
+    /// Green: staged, the tab shown.
+    Green,
+    /// Yellow: ahead and behind.
+    Yellow,
+    /// Blue.
+    Blue,
+    /// Magenta: authors and tags.
+    Magenta,
+    /// Cyan: stashes.
+    Cyan,
 }
 
 /// A styled stretch, in bytes of the text.

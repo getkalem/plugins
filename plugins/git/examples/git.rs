@@ -143,7 +143,12 @@ fn run(cli: &mut Cli) -> Res<()> {
                 }
             }
             let repo = cli.repo(&folds)?;
-            print!("{}", views::status::render(&repo, &folds, &cli.opts()).text);
+            for tab in views::status::Tab::ALL {
+                println!(
+                    "{}",
+                    views::status::render(&repo, &folds, &cli.opts(), tab).text
+                );
+            }
         }
         "log" => {
             let count = cli.value("-n").and_then(|n| n.parse().ok()).unwrap_or(30);

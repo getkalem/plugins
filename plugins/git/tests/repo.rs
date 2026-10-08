@@ -16,6 +16,7 @@ use kalem_plugin_git::native::{self, NativeRunner};
 use kalem_plugin_git::patch::{self, Mode, Pick};
 use kalem_plugin_git::refresh::{self, Options, Runner};
 use kalem_plugin_git::target::{self, Target, path_key};
+use kalem_plugin_git::views::status::Tab;
 use kalem_plugin_git::views::{self, ViewOptions};
 
 struct T {
@@ -130,9 +131,9 @@ fn the_status_of_a_working_repository() {
     assert_eq!(repo.status.branch.as_deref(), Some("main"));
     assert_eq!(repo.head.as_ref().unwrap().subject, "First commit");
     assert!(repo.shows_recent());
-    let c = views::status::render(&repo, &folds, &ViewOptions::default());
+    let c = views::status::render(&repo, &folds, &ViewOptions::default(), Tab::Files);
     let files = "\
-─ Files ──────────────────────────────────────────────── 4 ─
+────────────────────────────────────────────────────────────
   M a.txt   +1 −1
 @@ -1,5 +1,5 @@
  line 1
@@ -144,13 +145,20 @@ fn the_status_of_a_working_repository() {
  A  new:file.md   +1 −0
  R  old.txt → renamed.txt   +0 −0
  ?? untracked/
-
-─ Local branches ─────────────────────────────────────── 1 ─
- * main
 ";
-    assert!(c.text.contains(files), "{}", c.text);
+    assert!(c.text.ends_with(files), "{}", c.text);
     assert!(c.text.contains(" → main  First commit\n"), "{}", c.text);
-    assert!(c.text.contains(" AT First commit\n"), "{}", c.text);
+    let tab = |t| views::status::render(&repo, &folds, &ViewOptions::default(), t).text;
+    assert!(
+        tab(Tab::Branches).ends_with("\n * main\n"),
+        "{}",
+        tab(Tab::Branches)
+    );
+    assert!(
+        tab(Tab::Commits).contains(" AT First commit\n"),
+        "{}",
+        tab(Tab::Commits)
+    );
     // The cursor on the removed line names its hunk, and the line in it.
     let at = c.text.find("-line 3").unwrap();
     assert_eq!(
@@ -192,7 +200,12 @@ fn stashes_and_ahead_of_the_upstream() {
     assert_eq!(repo.unpushed.len(), 1);
     assert_eq!(repo.stashes.len(), 1);
     assert_eq!(repo.tag, Some(("v1".into(), 1)));
-    let c = views::status::render(&repo, &Folds::default(), &ViewOptions::default());
+    let c = views::status::render(
+        &repo,
+        &Folds::default(),
+        &ViewOptions::default(),
+        Tab::Files,
+    );
     assert!(
         c.text
             .contains(" origin/main  (Enter: push, pull, fetch)\n v1 (1 commit ago)\n"),
@@ -200,14 +213,20 @@ fn stashes_and_ahead_of_the_upstream() {
         c.text
     );
     assert!(c.text.contains("\n ↑1 "), "{}", c.text);
+    let tab = |t| views::status::render(&repo, &Folds::default(), &ViewOptions::default(), t).text;
     assert!(
-        c.text.contains("── 1 ─\n stash@{0}: On main: three\n"),
+        tab(Tab::Stash).ends_with("\n stash@{0}: On main: three\n"),
         "{}",
-        c.text
+        tab(Tab::Stash)
     );
-    // The commit not pushed is marked in the Commits panel.
-    assert!(c.text.contains("\n ↑"), "{}", c.text);
-    assert!(c.text.contains(" Two\n"), "{}", c.text);
+    assert!(c.text.contains("4 Stash 1"), "{}", c.text);
+    // The commit not pushed is marked in the Commits tab.
+    assert!(tab(Tab::Commits).contains("\n ↑"), "{}", tab(Tab::Commits));
+    assert!(
+        tab(Tab::Commits).contains(" Two\n"),
+        "{}",
+        tab(Tab::Commits)
+    );
     let _ = std::fs::remove_dir_all(&remote);
 }
 
@@ -344,7 +363,12 @@ fn a_repository_without_a_commit() {
     let repo = t.repo();
     assert!(repo.unborn());
     assert!(repo.head.is_none());
-    let c = views::status::render(&repo, &Folds::default(), &ViewOptions::default());
+    let c = views::status::render(
+        &repo,
+        &Folds::default(),
+        &ViewOptions::default(),
+        Tab::Files,
+    );
     assert!(c.text.contains(" → main  (no commit yet)\n"), "{}", c.text);
     t.act(Act::Unstage, &[Target::Section(Section::Staged)], &repo)
         .unwrap();
@@ -449,7 +473,12 @@ fn a_merge_in_conflict() {
     let repo = t.repo();
     assert_eq!(repo.operation, Some(Operation::Merge));
     assert_eq!(repo.entries(Section::Unmerged).len(), 1);
-    let c = views::status::render(&repo, &Folds::default(), &ViewOptions::default());
+    let c = views::status::render(
+        &repo,
+        &Folds::default(),
+        &ViewOptions::default(),
+        Tab::Files,
+    );
     assert!(c.text.contains("\n Merging (1 unmerged)\n"), "{}", c.text);
     assert!(c.text.contains("\n UU f "), "{}", c.text);
     // A commit is refused while files are in conflict.

@@ -606,18 +606,34 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
     k.command("git.status", Some("a.txt"));
     let text = k.doc_text();
     for part in [
-        "\n─ Status ─",
         "\n repo → main  First\n",
-        "\n─ Files ─",
+        "\n 1 Files 2 │ 2 Local branches 1 │ 3 Commits 1 │ 4 Stash 0\n",
         "\n  M a.txt   +2 −2\n ?? new.txt\n",
-        "\n─ Local branches ─",
-        "\n * main\n",
-        "\n─ Commits ─",
-        " First\n",
-        "\n─ Stash ─",
     ] {
         assert!(text.contains(part), "{part:?} in\n{text}");
     }
+    // The other tabs: `2`, `3`, `]` and `[`, Enter on a tab's name.
+    k.on("git.tabBranches", "repo → main");
+    assert!(k.doc_text().ends_with("\n * main\n"), "{}", k.doc_text());
+    assert_eq!(
+        k.cursor_line(),
+        " * main",
+        "the cursor on the tab's first line"
+    );
+    k.here("git.nextTab");
+    assert!(k.doc_text().ends_with(" First\n"), "{}", k.doc_text());
+    k.here("git.previousTab");
+    k.here("git.previousTab");
+    assert!(k.doc_text().contains("?? new.txt"), "{}", k.doc_text());
+    let text = k.doc_text();
+    let at = text.find("4 Stash").unwrap();
+    k.in_doc("git.visit", at, at);
+    assert!(
+        k.doc_text().ends_with("Z z stashes the changes\n"),
+        "{}",
+        k.doc_text()
+    );
+    k.on("git.tabFiles", "repo → main");
 
     // Tab unfolds the file: its two hunks, read then.
     k.on("git.toggle", " M a.txt");
@@ -693,11 +709,11 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
     // the untracked file too, and `a` again unstages everything.
     k.on("git.unstage", " MM a.txt");
     assert_eq!(k.index("a.txt"), long);
-    k.on("git.stageEverything", "─ Files");
+    k.on("git.stageEverything", "1 Files");
     assert_eq!(k.last_note(), "Staged everything");
     assert!(k.doc_text().contains("\n M  a.txt"), "{}", k.doc_text());
     assert!(k.doc_text().contains("\n A  new.txt"), "{}", k.doc_text());
-    k.on("git.stageEverything", "─ Files");
+    k.on("git.stageEverything", "1 Files");
     assert_eq!(k.last_note(), "Unstaged everything");
     assert!(k.doc_text().contains("\n ?? new.txt"), "{}", k.doc_text());
 
@@ -712,7 +728,7 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
     // On a file staged and not: all of it, or its unstaged changes only.
     k.git_ok(&["add", "a.txt"]);
     k.write("a.txt", &long.replace("line 5\n", "line FIVE\n"));
-    k.on("git.refresh", "─ Files");
+    k.on("git.refresh", "1 Files");
     k.answers.push_back(Answer::Picked(vec![1]));
     k.on("git.discard", "MM a.txt");
     assert_eq!(
@@ -750,12 +766,13 @@ fn branches_stashes_and_amends_from_the_status() {
     k.git_ok(&["branch", "feature"]);
     k.command("git.status", Some("a.txt"));
     assert!(
-        k.doc_text().contains("─ Local branches ─"),
+        k.doc_text().contains("2 Local branches 2"),
         "{}",
         k.doc_text()
     );
 
-    // Enter on a branch switches to it.
+    // Enter on a branch, in its tab, switches to it.
+    k.on("git.tabBranches", "repo → ");
     k.on("git.visit", "   feature");
     assert_eq!(k.last_note(), "Switched to feature");
     assert!(k.doc_text().contains(" repo → feature"), "{}", k.doc_text());
@@ -781,6 +798,7 @@ fn branches_stashes_and_amends_from_the_status() {
     k.write("a.txt", "two\n");
     k.on("git.stash", "repo → ");
     assert_eq!(k.last_note(), "Stashed the changes");
+    k.on("git.tabStash", "repo → ");
     assert!(k.doc_text().contains("\n stash@{0}: "), "{}", k.doc_text());
     k.answers.push_back(Answer::Picked(vec![1]));
     k.on("git.visit", "stash@{0}");

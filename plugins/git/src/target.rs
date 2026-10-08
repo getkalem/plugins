@@ -55,6 +55,8 @@ pub enum Target {
     Path(String),
     /// A folder of the Files panel's tree.
     Dir(String),
+    /// A tab's name in the tabs' line, by its key (`files`).
+    Tab(String),
     /// The line of keys at the top.
     Help,
 }
@@ -85,6 +87,7 @@ impl Target {
             Target::Branch(b) => format!("branch:{b}"),
             Target::Path(p) => path_key(p),
             Target::Dir(d) => format!("dir:{d}"),
+            Target::Tab(t) => format!("tab:{t}"),
             Target::Help => "help".into(),
         }
     }
@@ -120,6 +123,7 @@ impl Target {
             "branch" => Target::Branch(rest.to_string()),
             "path" => Target::Path(rest.to_string()),
             "dir" => Target::Dir(rest.to_string()),
+            "tab" => Target::Tab(rest.to_string()),
             "help" => Target::Help,
             _ => return None,
         })
