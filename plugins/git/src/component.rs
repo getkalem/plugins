@@ -5,10 +5,10 @@
 //! inputs, later, through the closures the calls keep.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use kalem_plugin::kalem::{self, Event, EventKind, Plugin, Reply, Scope};
-use kalem_plugin::{editor, process, settings, ui};
+use kalem_plugin::{decorations, documents, editor, process, settings, ui};
 
 use crate::app::{self, Answer, App, Doc, Effect, Input, Level, PanelEvent, Settings};
 use crate::panel::{Node, TextStyle};
@@ -19,10 +19,14 @@ thread_local! {
     static QUEUE: RefCell<VecDeque<Input>> = const { RefCell::new(VecDeque::new()) };
     static PUMPING: Cell<bool> = const { Cell::new(false) };
     static STATUS: RefCell<Option<kalem::Disposable>> = const { RefCell::new(None) };
+    /// The status documents open, by repository: their numbers.
+    static DOCS: RefCell<BTreeMap<String, u64>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// The settings `Settings::read` reads, watched.
 const SETTINGS: &[&str] = &[
+    "gutter",
+    "gutter_base",
     "confirm_discard",
     "pull",
     "fetch_prune",
@@ -139,10 +143,14 @@ fn apply(effect: Effect) {
                 answer: Answer::Confirmed(yes),
             })
         }),
-        Effect::Prompt { token, title } => ui::prompt(
+        Effect::Prompt {
+            token,
+            title,
+            value,
+        } => ui::prompt(
             &title,
             &ui::PromptOptions {
-                value: None,
+                value,
                 placeholder: Some("Enter commits, Escape cancels".into()),
                 password: false,
             },
@@ -187,6 +195,53 @@ fn apply(effect: Effect) {
                 ui::notify(&e, ui::Level::Warning);
             }
         }
+        Effect::Document {
+            root,
+            title,
+            text,
+            cursor,
+            show,
+        } => {
+            let cursor = cursor.map(|c| c as u64);
+            let open = DOCS.with(|d| d.borrow().get(&root).copied());
+            if show {
+                let spec = documents::Spec::new(app::STATUS_DOC, &root, &title, app::STATUS_KIND)
+                    .language("diff");
+                match documents::open(&spec, &text, cursor) {
+                    Ok(n) => DOCS.with(|d| {
+                        d.borrow_mut().insert(root, n);
+                    }),
+                    Err(e) => ui::notify(&e, ui::Level::Error),
+                }
+            } else if let Some(n) = open
+                && documents::set(n, &text, cursor).is_err()
+            {
+                // The user closed it.
+                DOCS.with(|d| d.borrow_mut().remove(&root));
+                later(Input::DocumentClosed(root));
+            }
+        }
+        Effect::CloseDocument { root } => {
+            if let Some(n) = DOCS.with(|d| d.borrow_mut().remove(&root)) {
+                documents::close(n);
+            }
+        }
+        Effect::Gutter { path, marks } => {
+            use crate::gutter::Mark;
+            let marks: Vec<(u32, decorations::Mark)> = marks
+                .into_iter()
+                .map(|(line, m)| {
+                    let kind = match m {
+                        Mark::Added => decorations::Mark::Added,
+                        Mark::Changed => decorations::Mark::Changed,
+                        Mark::Removed => decorations::Mark::Removed,
+                    };
+                    (line, kind)
+                })
+                .collect();
+            let _ = decorations::set_gutter(&path, &marks);
+        }
+        Effect::ClearGutters => decorations::clear_gutter(None),
     }
 }
 
@@ -254,20 +309,32 @@ fn add(tree: &mut ui::Tree, parent: u32, node: Node) {
 }
 
 /// The document the running command is in: its file, the cursor's line,
-/// and for `git.blameLine` its text.
+/// the selection, for `git.blameLine` its text, and the repository when it
+/// is a status document.
 fn document(command: &str) -> Option<Doc> {
     let info = editor::document()?;
-    let head = editor::selected().head;
+    let selected = editor::selected();
     let before = editor::text(Some(editor::Range {
         start: 0,
-        end: head,
+        end: selected.head,
     }));
     let line = before.bytes().filter(|b| *b == b'\n').count() as u32 + 1;
     let text = (command == "git.blameLine").then(|| editor::text(None));
+    let status = documents::current().and_then(|n| {
+        DOCS.with(|d| {
+            d.borrow()
+                .iter()
+                .find(|(_, number)| **number == n)
+                .map(|(root, _)| root.clone())
+        })
+    });
     Some(Doc {
         path: info.path,
         line,
         text,
+        status,
+        anchor: selected.anchor as usize,
+        head: selected.head as usize,
     })
 }
 
@@ -283,7 +350,12 @@ impl Plugin for Git {
         APP.with(|a| *a.borrow_mut() = Some(App::new(read_settings())));
         for c in app::COMMANDS {
             let (leader, other) = app::split_leader_keys(c.keys);
-            let mut spec = kalem::spec(c.id, c.title, Scope::all());
+            let scope = if c.in_status_only {
+                Scope::only(&[app::STATUS_KIND])
+            } else {
+                Scope::all()
+            };
+            let mut spec = kalem::spec(c.id, c.title, scope);
             spec.category = "Git".into();
             spec.keys = other.iter().map(|k| k.to_string()).collect();
             let id = c.id;
@@ -298,6 +370,15 @@ impl Plugin for Git {
             // keys: in insert mode Space types a space.
             for k in leader {
                 kalem::keymap(k, c.id, Some(app::LEADER_WHEN))?;
+            }
+            // In the status document: magit's keys and the arrows.
+            for k in c.doc_keys {
+                let when = if *k == "escape" {
+                    app::DOC_ESCAPE_WHEN
+                } else {
+                    app::DOC_WHEN
+                };
+                kalem::keymap(k, c.id, Some(when))?;
             }
         }
         ui::panel(

@@ -392,10 +392,18 @@ pub fn commit(
     if *kind == CommitKind::New && !staged {
         return Err("Nothing is staged: stage changes first (SPC g S)".into());
     }
-    if matches!(kind, CommitKind::Amend | CommitKind::Extend) && repo.unborn() {
+    if matches!(
+        kind,
+        CommitKind::Amend | CommitKind::Extend | CommitKind::Reword
+    ) && repo.unborn()
+    {
         return Err("There is no commit to amend yet".into());
     }
-    if matches!(kind, CommitKind::New | CommitKind::Amend) && message_is_empty(message) {
+    if matches!(
+        kind,
+        CommitKind::New | CommitKind::Amend | CommitKind::Reword
+    ) && message_is_empty(message)
+    {
         return Err("The message is empty: the commit is cancelled".into());
     }
     if repo
@@ -415,6 +423,7 @@ pub fn commit(
         done: match kind {
             CommitKind::New => "Committed".into(),
             CommitKind::Amend | CommitKind::Extend => "Amended the last commit".into(),
+            CommitKind::Reword => "Reworded the last commit".into(),
             CommitKind::Fixup(h) => format!("Made a fixup commit for {}", h.get(..7).unwrap_or(h)),
         },
     })

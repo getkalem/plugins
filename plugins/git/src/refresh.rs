@@ -65,6 +65,8 @@ pub enum Part {
     Describe,
     /// The stashes.
     Stashes,
+    /// The branches.
+    Branches,
     /// The last commits, HEAD's first.
     Recent,
     /// Commits not pushed.
@@ -121,6 +123,7 @@ impl Refresh {
             (Part::Operations, cmd::operations()),
             (Part::Describe, cmd::describe()),
             (Part::Stashes, cmd::stash_list()),
+            (Part::Branches, cmd::branches()),
             (Part::CountsUnstaged, cmd::numstat(false)),
             (Part::CountsStaged, cmd::numstat(true)),
         ];
@@ -172,6 +175,7 @@ impl Refresh {
             Part::Operations if ok => self.repo.operation = refs::parse_operations(&out.stdout),
             Part::Describe if ok => self.repo.tag = refs::parse_describe(&out.stdout),
             Part::Stashes if ok => self.repo.stashes = refs::parse_stashes(&out.stdout),
+            Part::Branches if ok => self.repo.branches = refs::parse_branches(&out.stdout),
             Part::Recent if ok => {
                 self.repo.recent = log::commits(&out.stdout).unwrap_or_default();
                 self.repo.head = self.repo.recent.first().cloned();
@@ -338,7 +342,7 @@ mod tests {
     #[test]
     fn the_status_calls_for_the_logs_it_needs() {
         let (mut r, first) = Refresh::start("/r", 1, Options::default());
-        assert_eq!(first.len(), 6);
+        assert_eq!(first.len(), 7);
         let status = b"# branch.oid abc\0# branch.head main\0# branch.upstream origin/main\0# branch.ab +2 -0\0";
         let next = r.feed(Part::Status, ok(status));
         let parts: Vec<Part> = next.iter().map(|(p, _)| *p).collect();

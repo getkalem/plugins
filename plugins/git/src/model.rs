@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use crate::git::cmd::{self, GitCommand};
 use crate::git::diff::{self, FileDiff};
 use crate::git::log::Commit;
-use crate::git::refs::{Operation, Stash};
+use crate::git::refs::{Branch, Operation, Stash};
 use crate::git::status::{Entry, Kind, Status};
 
 /// A section of the status, in the order they are shown.
@@ -20,6 +20,8 @@ pub enum Section {
     Unstaged,
     /// Changes staged.
     Staged,
+    /// The local branches.
+    Branches,
     /// The stashes.
     Stashes,
     /// Commits not pushed to the upstream.
@@ -34,11 +36,12 @@ pub enum Section {
 
 impl Section {
     /// Every section, in order.
-    pub const ALL: [Section; 9] = [
+    pub const ALL: [Section; 10] = [
         Section::Unmerged,
         Section::Untracked,
         Section::Unstaged,
         Section::Staged,
+        Section::Branches,
         Section::Stashes,
         Section::Unpushed,
         Section::Unpulled,
@@ -53,6 +56,7 @@ impl Section {
             Section::Untracked => "untracked",
             Section::Unstaged => "unstaged",
             Section::Staged => "staged",
+            Section::Branches => "branches",
             Section::Stashes => "stashes",
             Section::Unpushed => "unpushed",
             Section::Unpulled => "unpulled",
@@ -90,6 +94,8 @@ pub struct Repo {
     pub operation: Option<Operation>,
     /// The stashes.
     pub stashes: Vec<Stash>,
+    /// The branches, local and remote, the latest commit first.
+    pub branches: Vec<Branch>,
     /// Commits not pushed to the upstream.
     pub unpushed: Vec<Commit>,
     /// Commits on the upstream not pulled.
@@ -152,6 +158,11 @@ impl Repo {
         });
         self.diffs.insert((section, path.to_string()), file);
         Ok(())
+    }
+
+    /// The local branches, the latest commit first.
+    pub fn local_branches(&self) -> Vec<&Branch> {
+        self.branches.iter().filter(|b| !b.remote).collect()
     }
 
     /// No commit yet.

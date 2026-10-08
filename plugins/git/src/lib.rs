@@ -34,6 +34,7 @@ pub mod app;
 mod component;
 pub mod content;
 pub mod git;
+pub mod gutter;
 pub mod model;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;

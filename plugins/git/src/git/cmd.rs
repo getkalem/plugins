@@ -201,6 +201,37 @@ pub fn stash_list() -> GitCommand {
     GitCommand::read(["stash", "list", "--format=%gd%x00%s"])
 }
 
+/// Stashes the changes of the tracked files, staged and not (magit's `z
+/// z`).
+pub fn stash_push() -> GitCommand {
+    GitCommand::new(["stash", "push"])
+}
+
+/// What to do with a stash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StashOp {
+    /// Its changes applied, the stash kept.
+    Apply,
+    /// Applied and dropped.
+    Pop,
+    /// Dropped.
+    Drop,
+}
+
+/// Applies, pops or drops stash `n`.
+pub fn stash(op: StashOp, n: u32) -> GitCommand {
+    let word = match op {
+        StashOp::Apply => "apply",
+        StashOp::Pop => "pop",
+        StashOp::Drop => "drop",
+    };
+    GitCommand::new([
+        "stash".to_string(),
+        word.to_string(),
+        format!("stash@{{{n}}}"),
+    ])
+}
+
 /// What a log shows.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LogSpec {
@@ -458,6 +489,8 @@ pub enum CommitKind {
     Amend,
     /// The last commit replaced, its message kept.
     Extend,
+    /// The last commit's message replaced, nothing staged added.
+    Reword,
     /// A `fixup!` commit for the commit named.
     Fixup(String),
 }
@@ -481,13 +514,17 @@ pub fn commit(message: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
             args.push("--no-edit".into());
         }
         CommitKind::Fixup(hash) => args.push(format!("--fixup={hash}")),
+        CommitKind::Reword => {
+            args.push("--amend".into());
+            args.push("--only".into());
+        }
     }
     if signoff {
         args.push("--signoff".into());
     }
     match kind {
         CommitKind::Extend | CommitKind::Fixup(_) => GitCommand::new(args),
-        CommitKind::New | CommitKind::Amend => {
+        CommitKind::New | CommitKind::Amend | CommitKind::Reword => {
             args.push("--cleanup=strip".into());
             args.push("-F".into());
             args.push("-".into());
@@ -590,10 +627,12 @@ pub fn push(how: &Push) -> GitCommand {
     }
 }
 
-/// The local and remote branches, in [`crate::git::refs::BRANCH_FORMAT`].
+/// The local and remote branches, in [`crate::git::refs::BRANCH_FORMAT`],
+/// the latest commit first.
 pub fn branches() -> GitCommand {
     GitCommand::read([
         "for-each-ref",
+        "--sort=-committerdate",
         crate::git::refs::BRANCH_FORMAT,
         "refs/heads",
         "refs/remotes",

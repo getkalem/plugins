@@ -132,6 +132,8 @@ fn the_status_of_a_working_repository() {
     assert!(repo.shows_recent());
     let c = views::status::render(&repo, &folds, &ViewOptions::default());
     let expected = "\
+Tab fold · Enter open · s stage · u unstage · x discard · c c commit · P p push · F p pull · b b branch · ? all · q close
+
 Head:      main   First commit
 
 ▾ Untracked files (1)
@@ -150,6 +152,9 @@ Head:      main   First commit
 ▾ Staged changes (2)
 ▸ new file     new:file.md   +1 −0
 ▸ renamed      old.txt → renamed.txt   +0 −0
+
+▾ Branches (1)
+  * main
 
 ▾ Recent commits (1)
 ";
@@ -352,7 +357,7 @@ fn a_repository_without_a_commit() {
     assert!(repo.head.is_none());
     let c = views::status::render(&repo, &Folds::default(), &ViewOptions::default());
     assert!(
-        c.text.starts_with("Head:      main   (no commit yet)\n"),
+        c.text.contains("\n\nHead:      main   (no commit yet)\n"),
         "{}",
         c.text
     );

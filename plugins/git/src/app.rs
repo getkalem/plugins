@@ -1,6 +1,9 @@
-//! The plugin as Kalem runs it, phase 0 (DESIGN.md, section 8): the status
-//! bar item, the Git panel, the leader's keys on the file being edited,
-//! commit, fetch, pull and push, a line's blame.
+//! The plugin as Kalem runs it (DESIGN.md, section 8): the status bar
+//! item, the Git panel, the leader's keys on the file being edited,
+//! commit, fetch, pull and push, a line's blame (phase 0); the status as a
+//! document of Kalem's, its sections, files and hunks folded with Tab and
+//! the arrows, opened with Enter, acted on with magit's keys (phase 1,
+//! `document.rs`).
 //!
 //! [`App`] is a state machine: it takes an [`Input`] (a command with the
 //! document it runs in, how a git run ended, the user's answer, a click in
@@ -12,15 +15,20 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+mod document;
+
 use crate::actions::{self, Act};
+use crate::content::Content;
 use crate::git::blame;
 use crate::git::cmd::{self, CommitKind, GitCommand, PullMode, Push, Untracked};
 use crate::git::status::Kind;
-use crate::model::{Repo, Section};
+use crate::model::{Folds, Repo, Section};
 use crate::panel::{Node, TextStyle};
 use crate::refresh::{self, Output, Part, Refresh};
 use crate::target::Target;
 use crate::views::Glyphs;
+
+pub use document::Keep;
 
 /// The panel's ID.
 pub const PANEL: &str = "git.panel";
@@ -28,15 +36,71 @@ pub const PANEL: &str = "git.panel";
 /// The status bar item's ID.
 pub const STATUS: &str = "git.status";
 
-/// A command of the plugin: its ID, title, default keys.
+/// The status document's ID (`documents`), one a repository.
+pub const STATUS_DOC: &str = "git.status";
+
+/// The status document's kind: the text type its keys and its own
+/// commands are scoped to.
+pub const STATUS_KIND: &str = "git-status";
+
+/// The when-clause of the status document's keys: in it, in Vim's command
+/// mode or without Vim, so that its letters do not type (it is read-only)
+/// and come before Vim's.
+pub const DOC_WHEN: &str = "textType == git-status && (vimCommand || !vimActive)";
+
+/// Escape's: with a selection Escape clears it first (Vim leaves visual
+/// mode).
+pub const DOC_ESCAPE_WHEN: &str =
+    "textType == git-status && !hasSelection && (vimCommand || !vimActive)";
+
+/// A command of the plugin: its ID, title, keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandInfo {
     /// `git.NAME`.
     pub id: &'static str,
     /// For the palette and the menus.
     pub title: &'static str,
-    /// Its default keys, as `keymap.json` writes them.
+    /// Its keys everywhere, as `keymap.json` writes them: Doom's under the
+    /// leader (`space g g`, bound in Vim's command mode) and others.
     pub keys: &'static [&'static str],
+    /// Its keys in the status document (magit's and lazygit's), bound with
+    /// [`DOC_WHEN`].
+    pub doc_keys: &'static [&'static str],
+    /// It acts in the status document only, and the palette offers it
+    /// there only.
+    pub in_status_only: bool,
+}
+
+impl CommandInfo {
+    const fn new(id: &'static str, title: &'static str) -> CommandInfo {
+        CommandInfo {
+            id,
+            title,
+            keys: &[],
+            doc_keys: &[],
+            in_status_only: false,
+        }
+    }
+
+    const fn keys(mut self, keys: &'static [&'static str]) -> CommandInfo {
+        self.keys = keys;
+        self
+    }
+
+    const fn doc(mut self, keys: &'static [&'static str]) -> CommandInfo {
+        self.doc_keys = keys;
+        self
+    }
+
+    const fn status_only(mut self) -> CommandInfo {
+        self.in_status_only = true;
+        self
+    }
+}
+
+/// The command `id`.
+pub fn command_info(id: &str) -> Option<&'static CommandInfo> {
+    COMMANDS.iter().find(|c| c.id == id)
 }
 
 /// The when-clause of a leader key: Vim's command mode, as Kalem's own
@@ -53,73 +117,80 @@ pub fn split_leader_keys<'a>(keys: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
     })
 }
 
-/// The commands of phase 0, with Doom Emacs's keys (DESIGN.md, 5.2).
+/// The commands, with Doom Emacs's keys (DESIGN.md, 5.2) and, in the
+/// status document, magit's and the arrows (5.1).
 pub const COMMANDS: &[CommandInfo] = &[
-    CommandInfo {
-        id: "git.status",
-        title: "Git: Status",
-        keys: &["space g g", "ctrl+shift+g"],
-    },
-    CommandInfo {
-        id: "git.stageFile",
-        title: "Git: Stage File",
-        keys: &["space g shift+s"],
-    },
-    CommandInfo {
-        id: "git.unstageFile",
-        title: "Git: Unstage File",
-        keys: &["space g shift+u"],
-    },
-    CommandInfo {
-        id: "git.revertFile",
-        title: "Git: Revert File",
-        keys: &["space g shift+r"],
-    },
-    CommandInfo {
-        id: "git.deleteFile",
-        title: "Git: Delete File",
-        keys: &["space g shift+d"],
-    },
-    CommandInfo {
-        id: "git.commit",
-        title: "Git: Commit",
-        keys: &["space g c c"],
-    },
-    CommandInfo {
-        id: "git.fetch",
-        title: "Git: Fetch",
-        keys: &["space g shift+f"],
-    },
-    CommandInfo {
-        id: "git.pull",
-        title: "Git: Pull",
-        keys: &[],
-    },
-    CommandInfo {
-        id: "git.push",
-        title: "Git: Push",
-        keys: &[],
-    },
-    CommandInfo {
-        id: "git.blameLine",
-        title: "Git: Blame This Line",
-        keys: &["space g shift+b"],
-    },
-    CommandInfo {
-        id: "git.refresh",
-        title: "Git: Refresh",
-        keys: &[],
-    },
-    CommandInfo {
-        id: "git.fileMenu",
-        title: "Git: This File",
-        keys: &["space g ."],
-    },
-    CommandInfo {
-        id: "git.dispatch",
-        title: "Git: Commands",
-        keys: &["space g /"],
-    },
+    CommandInfo::new("git.status", "Git: Status").keys(&["space g g", "ctrl+shift+g"]),
+    CommandInfo::new("git.stageFile", "Git: Stage File").keys(&["space g shift+s"]),
+    CommandInfo::new("git.unstageFile", "Git: Unstage File").keys(&["space g shift+u"]),
+    CommandInfo::new("git.revertFile", "Git: Revert File").keys(&["space g shift+r"]),
+    CommandInfo::new("git.deleteFile", "Git: Delete File").keys(&["space g shift+d"]),
+    CommandInfo::new("git.commit", "Git: Commit")
+        .keys(&["space g c c"])
+        .doc(&["c c"]),
+    CommandInfo::new("git.amend", "Git: Amend Last Commit")
+        .keys(&["space g c a"])
+        .doc(&["c a"]),
+    CommandInfo::new("git.extend", "Git: Extend Last Commit")
+        .keys(&["space g c e"])
+        .doc(&["c e"]),
+    CommandInfo::new("git.reword", "Git: Reword Last Commit")
+        .keys(&["space g c w"])
+        .doc(&["c w"]),
+    CommandInfo::new("git.fetch", "Git: Fetch")
+        .keys(&["space g shift+f"])
+        .doc(&["f p", "f u", "f a"]),
+    CommandInfo::new("git.pull", "Git: Pull").doc(&["shift+f p", "shift+f u"]),
+    CommandInfo::new("git.push", "Git: Push").doc(&["shift+p p", "shift+p u"]),
+    CommandInfo::new("git.switchBranch", "Git: Switch Branch").doc(&["b b"]),
+    CommandInfo::new("git.newBranch", "Git: New Branch").doc(&["b c"]),
+    CommandInfo::new("git.stash", "Git: Stash Changes").doc(&["shift+z z"]),
+    CommandInfo::new("git.blameLine", "Git: Blame This Line").keys(&["space g shift+b"]),
+    CommandInfo::new("git.refresh", "Git: Refresh"),
+    CommandInfo::new("git.fileMenu", "Git: This File").keys(&["space g ."]),
+    CommandInfo::new("git.dispatch", "Git: Commands")
+        .keys(&["space g /"])
+        .doc(&["alt+enter", "?"]),
+    // The status document's own.
+    CommandInfo::new("git.visit", "Git: Open")
+        .doc(&["enter"])
+        .status_only(),
+    CommandInfo::new("git.toggle", "Git: Fold or Unfold")
+        .doc(&["tab"])
+        .status_only(),
+    CommandInfo::new("git.cycle", "Git: Fold Everything, Step by Step")
+        .doc(&["shift+tab"])
+        .status_only(),
+    CommandInfo::new("git.unfold", "Git: Unfold")
+        .doc(&["right"])
+        .status_only(),
+    CommandInfo::new("git.fold", "Git: Fold, or Go to the Parent")
+        .doc(&["left"])
+        .status_only(),
+    CommandInfo::new("git.next", "Git: Next Item")
+        .doc(&["alt+down"])
+        .status_only(),
+    CommandInfo::new("git.previous", "Git: Previous Item")
+        .doc(&["alt+up"])
+        .status_only(),
+    CommandInfo::new("git.stage", "Git: Stage")
+        .doc(&["s"])
+        .status_only(),
+    CommandInfo::new("git.unstage", "Git: Unstage")
+        .doc(&["u"])
+        .status_only(),
+    CommandInfo::new("git.discard", "Git: Discard")
+        .doc(&["x"])
+        .status_only(),
+    CommandInfo::new("git.stageAll", "Git: Stage All Changes")
+        .doc(&["shift+s"])
+        .status_only(),
+    CommandInfo::new("git.unstageAll", "Git: Unstage Everything")
+        .doc(&["shift+u"])
+        .status_only(),
+    CommandInfo::new("git.close", "Git: Close the Status")
+        .doc(&["escape", "q"])
+        .status_only(),
 ];
 
 /// What the plugin's settings say (DESIGN.md, section 6), as phase 0 uses
@@ -138,6 +209,10 @@ pub struct Settings {
     pub signoff: bool,
     /// The marks.
     pub glyphs: Glyphs,
+    /// Marks beside the changed lines of files.
+    pub gutter: bool,
+    /// The marks compare with HEAD rather than the index.
+    pub gutter_head: bool,
 }
 
 impl Default for Settings {
@@ -149,6 +224,8 @@ impl Default for Settings {
             untracked: Untracked::Normal,
             signoff: false,
             glyphs: Glyphs::Unicode,
+            gutter: true,
+            gutter_head: false,
         }
     }
 }
@@ -173,6 +250,8 @@ impl Settings {
             glyphs: text("glyphs")
                 .and_then(|v| Glyphs::parse(&v))
                 .unwrap_or(d.glyphs),
+            gutter: boolean("gutter", d.gutter),
+            gutter_head: text("gutter_base").is_some_and(|v| v == "head"),
         }
     }
 }
@@ -219,6 +298,13 @@ pub struct Doc {
     pub line: u32,
     /// Its text, for a command that reads it (a line's blame).
     pub text: Option<String>,
+    /// The repository whose status document it is, by its root.
+    pub status: Option<String>,
+    /// The selection's other end, in bytes; the cursor's when nothing is
+    /// selected.
+    pub anchor: usize,
+    /// The cursor, in bytes.
+    pub head: usize,
 }
 
 /// What the plugin hears.
@@ -260,6 +346,9 @@ pub enum Input {
     Changed(String),
     /// The plugin's settings changed.
     Settings(Settings),
+    /// The user closed the status document of this repository (its write
+    /// was refused).
+    DocumentClosed(String),
 }
 
 /// What the plugin does.
@@ -296,6 +385,8 @@ pub enum Effect {
         token: u64,
         /// What is asked.
         title: String,
+        /// The text offered, to edit.
+        value: Option<String>,
     },
     /// Offers a list to choose from.
     Pick {
@@ -320,6 +411,33 @@ pub enum Effect {
         /// The value.
         value: String,
     },
+    /// Writes the status document of repository `root`.
+    Document {
+        /// The repository.
+        root: String,
+        /// The document's title.
+        title: String,
+        /// Its text.
+        text: String,
+        /// Where the cursor goes, in bytes; else it stays on its line.
+        cursor: Option<usize>,
+        /// Opened, or shown, rather than written where it is open.
+        show: bool,
+    },
+    /// Closes the status document of repository `root`.
+    CloseDocument {
+        /// The repository.
+        root: String,
+    },
+    /// Sets the marks beside the lines of a file; none takes them away.
+    Gutter {
+        /// The file, absolute.
+        path: String,
+        /// Its lines (from 1) and what changed there.
+        marks: Vec<(u32, crate::gutter::Mark)>,
+    },
+    /// Takes the marks away from every file.
+    ClearGutters,
 }
 
 /// What to do once the repository is found and its status read.
@@ -329,8 +447,19 @@ enum After {
     Nothing,
     /// An action on a file, by its path in the repository.
     Act(Act, String),
-    /// Ask for a message and commit.
-    Commit,
+    /// Show the status document.
+    Show,
+    /// Ask for a message and commit, or amend.
+    Commit(CommitKind),
+    /// Offer the branches to switch to.
+    SwitchBranch,
+    /// Ask for a new branch's name.
+    NewBranch,
+    /// Stash the changes.
+    Stash,
+    /// Mark the changed lines of a file, by its path in the repository,
+    /// from now on.
+    Marks(String),
     /// Fetch.
     Fetch,
     /// Pull.
@@ -377,6 +506,17 @@ enum Pending {
     Remotes { root: String, branch: String },
     /// A line's blame.
     Blame { line: u32 },
+    /// A file's diff, for the status document.
+    Diff {
+        root: String,
+        generation: u64,
+        section: Section,
+        path: String,
+    },
+    /// The last commit's message, to amend or reword it.
+    LastMessage { root: String, kind: CommitKind },
+    /// A file's changes, for the marks beside its lines.
+    Marks { root: String, path: String },
 }
 
 /// A network operation.
@@ -389,6 +529,13 @@ enum RemoteOp {
     Push(Push),
 }
 
+impl After {
+    /// Nothing the user asked for: a failure says nothing.
+    fn quiet(&self) -> bool {
+        matches!(self, After::Nothing | After::Marks(_))
+    }
+}
+
 /// What an answer is for.
 #[derive(Debug, Clone, PartialEq)]
 enum Question {
@@ -398,8 +545,23 @@ enum Question {
         commands: Vec<GitCommand>,
         done: String,
     },
-    /// The commit message.
-    Message { root: String },
+    /// The commit message's first line; `rest` is what follows it, kept
+    /// (an amended commit's body).
+    Message {
+        root: String,
+        kind: CommitKind,
+        rest: String,
+    },
+    /// The branch to switch to: local ones by name, remote ones as
+    /// `origin/name`.
+    Branch {
+        root: String,
+        branches: Vec<(String, bool)>,
+    },
+    /// A new branch's name.
+    NewBranch { root: String },
+    /// What to do with a stash.
+    Stash { root: String, index: u32 },
     /// One of these commands.
     Commands {
         ids: Vec<&'static str>,
@@ -429,6 +591,18 @@ struct RepoState {
     running: Vec<After>,
     /// What waits for the next one.
     waiting: Vec<After>,
+    /// What the status document folds.
+    folds: Folds,
+    /// The status document as last written.
+    content: Option<Content>,
+    /// The status document is open.
+    shown: bool,
+    /// Where its cursor goes at its next writing.
+    keep: Option<Keep>,
+    /// Shift+Tab's step.
+    cycle: u8,
+    /// The diffs being read for it.
+    loading: BTreeSet<(Section, String)>,
 }
 
 /// The plugin's state.
@@ -450,6 +624,9 @@ pub struct App {
     busy: Option<String>,
     /// The last failure, shown in the panel until the next success.
     error: Option<String>,
+    /// The files opened, whose changed lines are marked: by repository,
+    /// their paths in it.
+    marked: BTreeMap<String, BTreeSet<String>>,
 }
 
 fn parent(path: &str) -> (String, String) {
@@ -524,8 +701,13 @@ impl App {
             }
             Input::Panel { key, event } => self.panel_event(&mut out, &key, &event),
             Input::Opened(path) | Input::Saved(path) => {
-                let (folder, _) = parent(&path);
-                self.locate(&mut out, Some(folder), None, After::Nothing, true);
+                let (folder, name) = parent(&path);
+                let after = if self.settings.gutter {
+                    After::Marks(String::new())
+                } else {
+                    After::Nothing
+                };
+                self.locate(&mut out, Some(folder), Some(name), after, true);
             }
             Input::Changed(path) => {
                 if let Some(root) = self.current.clone()
@@ -536,14 +718,54 @@ impl App {
                 }
             }
             Input::Settings(s) => {
+                let marks = (self.settings.gutter, self.settings.gutter_head);
                 self.settings = s;
+                if !self.settings.gutter && marks.0 {
+                    out.push(Effect::ClearGutters);
+                } else if self.settings.gutter && marks != (s.gutter, s.gutter_head) {
+                    let roots: Vec<String> = self.marked.keys().cloned().collect();
+                    for root in roots {
+                        self.mark_files(&mut out, &root);
+                    }
+                }
                 self.show(&mut out);
+                let shown: Vec<String> = self
+                    .repos
+                    .iter()
+                    .filter(|(_, s)| s.shown)
+                    .map(|(r, _)| r.clone())
+                    .collect();
+                for root in shown {
+                    self.write_status(&mut out, &root, false);
+                }
+            }
+            Input::DocumentClosed(root) => {
+                if let Some(s) = self.repos.get_mut(&root) {
+                    s.shown = false;
+                    s.content = None;
+                    s.keep = None;
+                }
             }
         }
         out
     }
 
     fn command(&mut self, out: &mut Vec<Effect>, id: &str, doc: Option<Doc>) {
+        // In the status document: what is under the cursor.
+        if let Some(d) = &doc
+            && let Some(root) = d.status.clone()
+            && self.status_command(out, &root, id, d)
+        {
+            return;
+        }
+        if command_info(id).is_some_and(|c| c.in_status_only) {
+            out.push(Effect::Notify(
+                "This acts in the status document: open it with SPC g g".into(),
+                Level::Warning,
+            ));
+            return;
+        }
+        let status_root = doc.as_ref().and_then(|d| d.status.clone());
         let path = doc.as_ref().and_then(|d| d.path.clone());
         let (folder, file) = match &path {
             Some(p) => {
@@ -559,10 +781,7 @@ impl App {
             ));
         };
         let after = match id {
-            "git.status" => {
-                out.push(Effect::ShowPanel);
-                After::Nothing
-            }
+            "git.status" => After::Show,
             "git.refresh" => After::Nothing,
             "git.stageFile" | "git.unstageFile" | "git.revertFile" | "git.deleteFile" => {
                 if file.is_none() {
@@ -576,7 +795,13 @@ impl App {
                 };
                 After::Act(act, String::new())
             }
-            "git.commit" => After::Commit,
+            "git.commit" => After::Commit(CommitKind::New),
+            "git.amend" => After::Commit(CommitKind::Amend),
+            "git.extend" => After::Commit(CommitKind::Extend),
+            "git.reword" => After::Commit(CommitKind::Reword),
+            "git.switchBranch" => After::SwitchBranch,
+            "git.newBranch" => After::NewBranch,
+            "git.stash" => After::Stash,
             "git.fetch" => After::Fetch,
             "git.pull" => After::Pull,
             "git.push" => After::Push,
@@ -600,8 +825,8 @@ impl App {
             "git.dispatch" => {
                 let ids: Vec<&'static str> = COMMANDS
                     .iter()
+                    .filter(|c| !c.in_status_only && c.id != "git.dispatch")
                     .map(|c| c.id)
-                    .filter(|i| *i != "git.dispatch")
                     .collect();
                 let items = ids
                     .iter()
@@ -626,7 +851,7 @@ impl App {
                 return;
             }
         };
-        let folder = folder.or_else(|| self.current.clone());
+        let folder = folder.or(status_root).or_else(|| self.current.clone());
         self.locate(out, folder, file, after, true);
     }
 
@@ -711,7 +936,7 @@ impl App {
                 let Some((root, prefix)) = located else {
                     // A document outside every repository says nothing;
                     // a command says why it cannot act.
-                    if after != After::Nothing {
+                    if !after.quiet() {
                         let why = match &result {
                             Err(e)
                                 if e.contains("outside the projects")
@@ -837,6 +1062,49 @@ impl App {
                     items,
                 });
             }
+            Pending::Diff {
+                root,
+                generation,
+                section,
+                path,
+            } => self.diff_done(out, &root, generation, section, &path, result),
+            Pending::LastMessage { root, kind } => match result {
+                Ok(o) if o.success() => {
+                    let text = String::from_utf8_lossy(&o.stdout).into_owned();
+                    let (first, rest) = text
+                        .trim_end()
+                        .split_once('\n')
+                        .unwrap_or((text.trim_end(), ""));
+                    let token = self.ask(Question::Message {
+                        root,
+                        kind: kind.clone(),
+                        rest: rest.trim_start_matches('\n').to_string(),
+                    });
+                    out.push(Effect::Prompt {
+                        token,
+                        title: match kind {
+                            CommitKind::Reword => "Reword the last commit: its first line".into(),
+                            _ => "Amend the last commit with what is staged: its first line".into(),
+                        },
+                        value: Some(first.to_string()),
+                    });
+                }
+                other => self.fail(out, message(&other)),
+            },
+            Pending::Marks { root, path } => {
+                let marks = match &result {
+                    Ok(o) if o.success() => crate::git::diff::parse(&o.stdout)
+                        .ok()
+                        .and_then(|d| d.files.into_iter().next())
+                        .map(|f| crate::gutter::marks(&f))
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                out.push(Effect::Gutter {
+                    path: format!("{}/{}", root.trim_end_matches('/'), path),
+                    marks,
+                });
+            }
             Pending::Blame { line } => match result {
                 Ok(o) if o.success() => match blame::parse(&o.stdout) {
                     Ok(b) => {
@@ -885,13 +1153,14 @@ impl App {
             Ok(repo) => {
                 if let Some(s) = self.repos.get_mut(root) {
                     s.repo = Some(repo);
+                    s.loading.clear();
                 }
             }
             Err(e) => {
                 if let Some(s) = self.repos.get_mut(root) {
                     s.repo = None;
                 }
-                if afters.iter().chain(&waiting).any(|a| *a != After::Nothing) {
+                if afters.iter().chain(&waiting).any(|a| !a.quiet()) {
                     self.fail(out, e);
                 } else {
                     self.show(out);
@@ -904,6 +1173,26 @@ impl App {
             self.refresh(out, root, w);
         }
         self.show(out);
+        // The files opened in it: their changed lines marked anew.
+        for a in &afters {
+            if let After::Marks(path) = a
+                && !path.is_empty()
+            {
+                self.marked
+                    .entry(root.to_string())
+                    .or_default()
+                    .insert(path.clone());
+            }
+        }
+        if self.settings.gutter {
+            self.mark_files(out, root);
+        }
+        // The status document, open, is written again (once: Show writes
+        // it too).
+        let shown = self.repos.get(root).is_some_and(|s| s.shown);
+        if shown && !afters.contains(&After::Show) {
+            self.write_status(out, root, false);
+        }
         for a in afters {
             self.after(out, root, a);
         }
@@ -917,26 +1206,79 @@ impl App {
         match after {
             After::Nothing => {}
             After::Act(act, path) => self.act(out, root, &repo, act, &path),
-            After::Commit => {
-                if repo.entries(Section::Staged).is_empty() {
+            After::Show => self.write_status(out, root, true),
+            // Done by `refreshed`.
+            After::Marks(_) => {}
+            After::Commit(kind) => self.commit(out, root, &repo, kind),
+            After::SwitchBranch => {
+                let mut branches: Vec<(String, bool)> = repo
+                    .local_branches()
+                    .into_iter()
+                    .filter(|b| !b.current)
+                    .map(|b| (b.name.clone(), false))
+                    .collect();
+                // A remote's branch with no local branch of its name: a new
+                // local branch tracking it.
+                for b in repo.branches.iter().filter(|b| b.remote) {
+                    let short = b.name.split_once('/').map_or(b.name.as_str(), |(_, n)| n);
+                    if !repo.branches.iter().any(|l| !l.remote && l.name == short) {
+                        branches.push((b.name.clone(), true));
+                    }
+                }
+                if branches.is_empty() {
                     out.push(Effect::Notify(
-                        "Nothing is staged: stage changes first (SPC g S)".into(),
-                        Level::Warning,
+                        "No other branch: make one with b c (Git: New Branch)".into(),
+                        Level::Info,
                     ));
                     return;
                 }
-                let n = repo.entries(Section::Staged).len();
-                let token = self.ask(Question::Message {
+                let items = branches
+                    .iter()
+                    .map(|(name, remote)| {
+                        let detail = remote.then(|| "A new local branch tracking it".to_string());
+                        (name.clone(), detail)
+                    })
+                    .collect();
+                let token = self.ask(Question::Branch {
+                    root: root.to_string(),
+                    branches,
+                });
+                out.push(Effect::Pick {
+                    token,
+                    title: "Switch to the branch".into(),
+                    items,
+                });
+            }
+            After::NewBranch => {
+                let token = self.ask(Question::NewBranch {
                     root: root.to_string(),
                 });
+                let from = repo.status.branch.as_deref().unwrap_or("HEAD");
                 out.push(Effect::Prompt {
                     token,
-                    title: format!(
-                        "Commit {} staged file{}: the message",
-                        n,
-                        if n == 1 { "" } else { "s" }
-                    ),
+                    title: format!("A new branch from {from}, switched to: its name"),
+                    value: None,
                 });
+            }
+            After::Stash => {
+                let changed = repo
+                    .status
+                    .entries
+                    .iter()
+                    .any(|e| e.staged() || e.unstaged());
+                if !changed {
+                    out.push(Effect::Notify(
+                        "No change of a tracked file to stash".into(),
+                        Level::Info,
+                    ));
+                    return;
+                }
+                self.run_plan(
+                    out,
+                    root,
+                    vec![cmd::stash_push()],
+                    "Stashed the changes".into(),
+                );
             }
             After::Fetch => self.remote(out, root, RemoteOp::Fetch),
             After::Pull => self.remote(out, root, RemoteOp::Pull(self.settings.pull)),
@@ -974,6 +1316,81 @@ impl App {
                     items,
                 });
             }
+        }
+    }
+
+    /// Reads the changes of the files of `root` opened, for the marks
+    /// beside their lines.
+    fn mark_files(&mut self, out: &mut Vec<Effect>, root: &str) {
+        let paths: Vec<String> = self
+            .marked
+            .get(root)
+            .map(|p| p.iter().cloned().collect())
+            .unwrap_or_default();
+        for path in paths {
+            let command = crate::gutter::command(&path, self.settings.gutter_head);
+            self.run(
+                out,
+                Some(root.to_string()),
+                command,
+                Pending::Marks {
+                    root: root.to_string(),
+                    path,
+                },
+            );
+        }
+    }
+
+    /// A commit of kind `kind`: its message asked for (an amended
+    /// commit's first line offered), or none for an extension.
+    fn commit(&mut self, out: &mut Vec<Effect>, root: &str, repo: &Repo, kind: CommitKind) {
+        let staged = repo.entries(Section::Staged).len();
+        match kind {
+            CommitKind::New => {
+                if staged == 0 {
+                    out.push(Effect::Notify(
+                        "Nothing is staged: stage changes first (s in the status, SPC g S in a file)"
+                            .into(),
+                        Level::Warning,
+                    ));
+                    return;
+                }
+                let token = self.ask(Question::Message {
+                    root: root.to_string(),
+                    kind,
+                    rest: String::new(),
+                });
+                out.push(Effect::Prompt {
+                    token,
+                    title: format!(
+                        "Commit {} staged file{}: the message",
+                        staged,
+                        if staged == 1 { "" } else { "s" }
+                    ),
+                    value: None,
+                });
+            }
+            CommitKind::Extend if staged == 0 => out.push(Effect::Notify(
+                "Nothing is staged to add to the last commit".into(),
+                Level::Warning,
+            )),
+            CommitKind::Amend | CommitKind::Reword if repo.unborn() => out.push(Effect::Notify(
+                "There is no commit to amend yet".into(),
+                Level::Warning,
+            )),
+            CommitKind::Amend | CommitKind::Reword => self.run(
+                out,
+                Some(root.to_string()),
+                cmd::last_message(),
+                Pending::LastMessage {
+                    root: root.to_string(),
+                    kind,
+                },
+            ),
+            kind => match actions::commit("", &kind, self.settings.signoff, repo) {
+                Ok(plan) => self.start_plan(out, root, plan),
+                Err(e) => out.push(Effect::Notify(e, Level::Warning)),
+            },
         }
     }
 
@@ -1204,16 +1621,16 @@ impl App {
             ) => {
                 self.run_plan(out, &root, commands, done);
             }
-            (Question::Message { root }, Answer::Text(Some(text))) => {
+            (Question::Message { root, kind, rest }, Answer::Text(Some(text))) => {
                 let Some(repo) = self.repos.get(&root).and_then(|s| s.repo.clone()) else {
                     return;
                 };
-                match actions::commit(
-                    &format!("{text}\n"),
-                    &CommitKind::New,
-                    self.settings.signoff,
-                    &repo,
-                ) {
+                let message = if rest.trim().is_empty() {
+                    format!("{text}\n")
+                } else {
+                    format!("{text}\n\n{}\n", rest.trim_end())
+                };
+                match actions::commit(&message, &kind, self.settings.signoff, &repo) {
                     Ok(plan) => self.start_plan(out, &root, plan),
                     Err(e) => out.push(Effect::Notify(e, Level::Warning)),
                 }
@@ -1278,6 +1695,63 @@ impl App {
             (Question::Force { root }, Answer::Confirmed(true)) => {
                 self.remote(out, &root, RemoteOp::Push(Push::ForceWithLease));
             }
+            (Question::Branch { root, branches }, Answer::Picked(p)) => {
+                let Some((name, remote)) = p.first().and_then(|i| branches.get(*i as usize)) else {
+                    return;
+                };
+                let (command, done) = if *remote {
+                    let local = name.split_once('/').map_or(name.as_str(), |(_, n)| n);
+                    (
+                        cmd::switch_create(local, Some(name)),
+                        format!("Switched to {local}, a new branch tracking {name}"),
+                    )
+                } else {
+                    (cmd::switch(name), format!("Switched to {name}"))
+                };
+                self.run_plan(out, &root, vec![command], done);
+            }
+            (Question::NewBranch { root }, Answer::Text(Some(name))) => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return;
+                }
+                self.run_plan(
+                    out,
+                    &root,
+                    vec![cmd::switch_create(name, None)],
+                    format!("Made the branch {name}, and switched to it"),
+                );
+            }
+            (Question::Stash { root, index }, Answer::Picked(p)) => {
+                let name = format!("stash@{{{index}}}");
+                let plan = match p.first() {
+                    Some(0) => actions::Plan {
+                        confirm: None,
+                        commands: vec![cmd::stash(cmd::StashOp::Apply, index)],
+                        done: format!("Applied {name}"),
+                    },
+                    Some(1) => actions::Plan {
+                        confirm: None,
+                        commands: vec![cmd::stash(cmd::StashOp::Pop, index)],
+                        done: format!("Applied and dropped {name}"),
+                    },
+                    Some(2) => actions::Plan {
+                        confirm: Some(format!(
+                            "Drop {name}? Its changes are in no commit, and are lost."
+                        )),
+                        commands: vec![cmd::stash(cmd::StashOp::Drop, index)],
+                        done: format!("Dropped {name}"),
+                    },
+                    _ => return,
+                };
+                self.start_plan(out, &root, plan);
+            }
+            (Question::Plan { root, .. }, _) => {
+                // Not done: the cursor stays where it is.
+                if let Some(s) = self.repos.get_mut(&root) {
+                    s.keep = None;
+                }
+            }
             // Cancelled.
             _ => {}
         }
@@ -1289,7 +1763,9 @@ impl App {
         };
         match (key, event) {
             ("refresh", PanelEvent::Clicked) => self.refresh(out, &root, After::Nothing),
-            ("commit", PanelEvent::Clicked) => self.refresh(out, &root, After::Commit),
+            ("commit", PanelEvent::Clicked) => {
+                self.refresh(out, &root, After::Commit(CommitKind::New))
+            }
             ("pull", PanelEvent::Clicked) => self.refresh(out, &root, After::Pull),
             ("push", PanelEvent::Clicked) => self.refresh(out, &root, After::Push),
             (_, PanelEvent::Expanded(open)) if key.starts_with("section:") => {
@@ -1482,6 +1958,7 @@ fn with_path(after: After, prefix: &str, file: Option<&str>) -> After {
     match after {
         After::Act(act, _) => After::Act(act, path),
         After::Blame { line, text, .. } => After::Blame { path, line, text },
+        After::Marks(_) => After::Marks(path),
         other => other,
     }
 }
@@ -1647,7 +2124,7 @@ mod tests {
             doc: Some(Doc {
                 path: Some("/r/src/lib.rs".into()),
                 line: 1,
-                text: None,
+                ..Doc::default()
             }),
         });
         let [Effect::Run { cwd, command, .. }] = &out[..] else {

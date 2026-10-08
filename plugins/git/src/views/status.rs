@@ -1,6 +1,7 @@
-//! The status document (DESIGN.md, 2.1 and appendix D): the head lines,
-//! then the sections of files with their diffs under them, the stashes and
-//! the commits, written as text with regions.
+//! The status document (DESIGN.md, 2.1 and appendix D): the keys, the
+//! head lines, then the sections of files with their diffs under them, the
+//! branches, the commits and the stashes, written as text with regions:
+//! magit's status in lazygit's order of panels.
 //!
 //! A hunk's lines start at the first column as `git diff` prints them, so
 //! that Kalem's `diff` highlighter colors them; every other line is
@@ -9,14 +10,49 @@
 use crate::content::{Content, Style};
 use crate::git::diff::{FileDiff, LineKind};
 use crate::git::log::Commit;
+use crate::git::refs::Branch;
 use crate::git::status::{Entry, Kind, State};
 use crate::model::{Folds, Repo, Section};
 use crate::target::{file_key, hunk_key};
 use crate::views::{ViewOptions, lossy_line};
 
+/// The first line's keys, so that nothing has to be known beforehand.
+pub const HELP: &[(&str, &str)] = &[
+    ("Tab", "fold"),
+    ("Enter", "open"),
+    ("s", "stage"),
+    ("u", "unstage"),
+    ("x", "discard"),
+    ("c c", "commit"),
+    ("P p", "push"),
+    ("F p", "pull"),
+    ("b b", "branch"),
+    ("?", "all"),
+    ("q", "close"),
+];
+
+/// The first line: [`HELP`]'s keys.
+pub fn help_line(glyphs: crate::views::Glyphs) -> String {
+    let sep = match glyphs {
+        crate::views::Glyphs::Unicode => " · ",
+        crate::views::Glyphs::Ascii => " | ",
+    };
+    HELP.iter()
+        .map(|(k, w)| format!("{k} {w}"))
+        .collect::<Vec<_>>()
+        .join(sep)
+}
+
+/// The local branches listed at most; `b b` offers them all.
+pub const BRANCHES_SHOWN: usize = 10;
+
 /// The status of `repo` as the folds have it.
 pub fn render(repo: &Repo, folds: &Folds, opts: &ViewOptions) -> Content {
     let mut c = Content::new();
+    c.open("help", false, false);
+    c.line(&help_line(opts.glyphs), Style::Muted);
+    c.close();
+    c.newline();
     head_lines(&mut c, repo, opts);
     c.newline();
     for section in [
@@ -41,24 +77,7 @@ pub fn render(repo: &Repo, folds: &Folds, opts: &ViewOptions) -> Content {
         c.close();
         c.newline();
     }
-    if !repo.stashes.is_empty() {
-        let key = "section:stashes";
-        let folded = folds.folded(key);
-        c.open(key, true, folded);
-        heading(&mut c, opts, folded, "Stashes", repo.stashes.len());
-        if !folded {
-            for s in &repo.stashes {
-                c.open(format!("stash:{}", s.index), false, false);
-                c.push("  ", Style::Normal);
-                c.push(&s.name(), Style::Code);
-                c.push("  ", Style::Normal);
-                c.line(&s.message, Style::Normal);
-                c.close();
-            }
-        }
-        c.close();
-        c.newline();
-    }
+    branches(&mut c, repo, folds, opts);
     let upstream = repo.status.upstream.as_deref().unwrap_or("the upstream");
     let commit_sections = [
         (
@@ -99,11 +118,88 @@ pub fn render(repo: &Repo, folds: &Folds, opts: &ViewOptions) -> Content {
             n,
         );
     }
+    if !repo.stashes.is_empty() {
+        let key = "section:stashes";
+        let folded = folds.folded(key);
+        c.open(key, true, folded);
+        heading(&mut c, opts, folded, "Stashes", repo.stashes.len());
+        if !folded {
+            for s in &repo.stashes {
+                c.open(format!("stash:{}", s.index), false, false);
+                c.push("  ", Style::Normal);
+                c.push(&s.name(), Style::Code);
+                c.push("  ", Style::Normal);
+                c.line(&s.message, Style::Normal);
+                c.close();
+            }
+        }
+        c.close();
+        c.newline();
+    }
     // The last blank line goes: the document ends with its last section.
     if c.text.ends_with("\n\n") {
         c.text.pop();
     }
     c
+}
+
+/// The local branches, the current one marked, the latest commit first.
+fn branches(c: &mut Content, repo: &Repo, folds: &Folds, opts: &ViewOptions) {
+    let mut local = repo.local_branches();
+    if local.is_empty() {
+        return;
+    }
+    // The current one first, as lazygit lists them.
+    local.sort_by_key(|b| !b.current);
+    let key = "section:branches";
+    let folded = folds.folded(key);
+    c.open(key, true, folded);
+    heading(c, opts, folded, "Branches", local.len());
+    if !folded {
+        let width = local
+            .iter()
+            .take(BRANCHES_SHOWN)
+            .map(|b| b.name.chars().count())
+            .max()
+            .unwrap_or(0);
+        for b in local.iter().take(BRANCHES_SHOWN) {
+            branch_line(c, b, width, opts);
+        }
+        if local.len() > BRANCHES_SHOWN {
+            c.line(
+                &format!(
+                    "  … and {} more: b b offers them all",
+                    local.len() - BRANCHES_SHOWN
+                ),
+                Style::Muted,
+            );
+        }
+    }
+    c.close();
+    c.newline();
+}
+
+fn branch_line(c: &mut Content, b: &Branch, width: usize, opts: &ViewOptions) {
+    c.open(format!("branch:{}", b.name), false, false);
+    if b.current {
+        c.push("  * ", Style::Strong);
+        c.push(&format!("{:<width$}", b.name), Style::Strong);
+    } else {
+        c.push("    ", Style::Normal);
+        c.push(&format!("{:<width$}", b.name), Style::Normal);
+    }
+    if let Some(u) = &b.upstream {
+        c.push("  ", Style::Normal);
+        c.push(u, Style::Muted);
+        if b.gone {
+            c.push(" (gone)", Style::Error);
+        } else if b.ahead > 0 || b.behind > 0 {
+            c.push(" ", Style::Normal);
+            c.push(&opts.glyphs.ahead_behind(b.ahead, b.behind), Style::Muted);
+        }
+    }
+    c.newline();
+    c.close();
 }
 
 /// A section of files' title.
@@ -379,6 +475,9 @@ mod tests {
             ..Repo::default()
         };
         r.unpushed = vec![r.head.clone().unwrap()];
+        r.branches = crate::git::refs::parse_branches(
+            b"refs/heads/main\0main\0origin/main\0[ahead 1]\0*\nrefs/heads/feature/long\0feature/long\0\0\0 \nrefs/remotes/origin/main\0origin/main\0\0\0 \n",
+        );
         r.counts
             .insert((Section::Unstaged, "src/lib.rs".into()), (1, 1));
         r.diffs.insert(
@@ -397,6 +496,8 @@ mod tests {
         folds.set(&file_key(Section::Unstaged, "src/lib.rs"), false);
         let c = render(&repo(), &folds, &ViewOptions::default());
         let expected = "\
+Tab fold · Enter open · s stage · u unstage · x discard · c c commit · P p push · F p pull · b b branch · ? all · q close
+
 Head:      main   Fix it
 Upstream:  origin/main   ↑1
 
@@ -412,6 +513,10 @@ Upstream:  origin/main   ↑1
 
 ▾ Staged changes (1)
 ▸ new file     new.md
+
+▾ Branches (2)
+  * main          origin/main ↑1
+    feature/long
 
 ▾ Unpushed to origin/main (1)
   abc  Fix it
@@ -431,6 +536,11 @@ Upstream:  origin/main   ↑1
             Some(Target::Commit("abc".into()))
         );
         assert_eq!(c.style_at(c.text.find("main").unwrap()), Style::Strong);
+        assert_eq!(
+            target::at(&c, c.text.find("feature/long").unwrap()),
+            Some(Target::Branch("feature/long".into()))
+        );
+        assert_eq!(target::at(&c, 0), Some(Target::Help));
     }
 
     #[test]

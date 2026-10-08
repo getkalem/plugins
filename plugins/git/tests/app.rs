@@ -3,12 +3,13 @@
 //! its questions are answered from a script, and what it shows is
 //! recorded. Git is isolated from the user's configuration.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use kalem_plugin_git::app::{Answer, App, Doc, Effect, Input, Level, PanelEvent, Settings};
 use kalem_plugin_git::git::cmd::GitCommand;
+use kalem_plugin_git::gutter::Mark;
 use kalem_plugin_git::native::NativeRunner;
 use kalem_plugin_git::panel::Node;
 use kalem_plugin_git::refresh::Runner;
@@ -42,6 +43,14 @@ struct Kalem {
     shown: bool,
     commands: Vec<(String, String)>,
     set: Vec<(String, String)>,
+    /// The status documents: their text and cursor, by repository.
+    docs: BTreeMap<String, (String, usize)>,
+    /// The repositories whose status was shown, in order.
+    showed: Vec<String>,
+    /// The texts the prompts offered.
+    offered: Vec<Option<String>>,
+    /// The marks beside the lines, by file.
+    gutters: BTreeMap<String, Vec<(u32, Mark)>>,
 }
 
 impl Drop for Kalem {
@@ -75,6 +84,10 @@ impl Kalem {
             shown: false,
             commands: Vec::new(),
             set: Vec::new(),
+            docs: BTreeMap::new(),
+            showed: Vec::new(),
+            offered: Vec::new(),
+            gutters: BTreeMap::new(),
         };
         k.git_ok(&["init", "-q", "-b", "main"]);
         k
@@ -125,8 +138,13 @@ impl Kalem {
                         let answer = self.answers.pop_front().expect("an answer to a confirm");
                         queue.push_back(Input::Answer { token, answer });
                     }
-                    Effect::Prompt { token, title } => {
+                    Effect::Prompt {
+                        token,
+                        title,
+                        value,
+                    } => {
                         self.asked.push(title);
+                        self.offered.push(value);
                         let answer = self.answers.pop_front().expect("an answer to a prompt");
                         queue.push_back(Input::Answer { token, answer });
                     }
@@ -152,6 +170,41 @@ impl Kalem {
                     Effect::ShowPanel => self.shown = true,
                     Effect::RunCommand { id, args } => self.commands.push((id, args)),
                     Effect::SetSetting { key, value } => self.set.push((key, value)),
+                    Effect::Document {
+                        root,
+                        text,
+                        cursor,
+                        show,
+                        ..
+                    } => {
+                        if show {
+                            self.showed.push(root.clone());
+                        } else if !self.docs.contains_key(&root) {
+                            continue;
+                        }
+                        // Without a cursor, the editor keeps its line.
+                        let at = match (cursor, self.docs.get(&root)) {
+                            (Some(c), _) => c,
+                            (None, Some((old, c))) => {
+                                let line = old[..*c].matches('\n').count();
+                                text.split_inclusive('\n').take(line).map(str::len).sum()
+                            }
+                            (None, None) => 0,
+                        };
+                        let at = at.min(text.len());
+                        self.docs.insert(root, (text, at));
+                    }
+                    Effect::CloseDocument { root } => {
+                        self.docs.remove(&root);
+                    }
+                    Effect::Gutter { path, marks } => {
+                        if marks.is_empty() {
+                            self.gutters.remove(&path);
+                        } else {
+                            self.gutters.insert(path, marks);
+                        }
+                    }
+                    Effect::ClearGutters => self.gutters.clear(),
                 }
             }
         }
@@ -162,9 +215,62 @@ impl Kalem {
         let doc = file.map(|f| Doc {
             path: Some(self.path(f)),
             line: 1,
-            text: None,
+            ..Doc::default()
         });
         self.feed(Input::Command { id: id.into(), doc });
+    }
+
+    fn root(&self) -> String {
+        self.dir.display().to_string()
+    }
+
+    /// The status document's text.
+    fn doc_text(&self) -> String {
+        self.docs
+            .get(&self.root())
+            .map(|d| d.0.clone())
+            .unwrap_or_default()
+    }
+
+    /// The line of the status document the cursor is on.
+    fn cursor_line(&self) -> String {
+        let (text, at) = &self.docs[&self.root()];
+        let start = text[..*at].rfind('\n').map_or(0, |i| i + 1);
+        text[start..].lines().next().unwrap_or_default().to_string()
+    }
+
+    /// Command `id` run in the status document, from `anchor` to `head`.
+    fn in_doc(&mut self, id: &str, anchor: usize, head: usize) {
+        let doc = Doc {
+            status: Some(self.root()),
+            anchor,
+            head,
+            ..Doc::default()
+        };
+        if let Some(d) = self.docs.get_mut(&self.root()) {
+            d.1 = head;
+        }
+        self.feed(Input::Command {
+            id: id.into(),
+            doc: Some(doc),
+        });
+    }
+
+    /// Command `id` run with the cursor at the start of the first line of
+    /// the status document holding `line`.
+    fn on(&mut self, id: &str, line: &str) {
+        let text = self.doc_text();
+        let at = text
+            .find(line)
+            .unwrap_or_else(|| panic!("{line:?} is not in\n{text}"));
+        let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+        self.in_doc(id, start, start);
+    }
+
+    /// Command `id` run where the cursor is.
+    fn here(&mut self, id: &str) {
+        let at = self.docs[&self.root()].1;
+        self.in_doc(id, at, at);
     }
 
     fn texts(&self) -> Vec<String> {
@@ -205,9 +311,18 @@ fn a_document_opened_shows_its_repository() {
         assert!(texts.iter().any(|x| x == t), "{t} in {texts:?}");
     }
     assert!(k.notes.is_empty(), "{:?}", k.notes);
-    // SPC g g shows the panel.
+    // SPC g g shows the status document.
     k.command("git.status", Some("a.txt"));
-    assert!(k.shown);
+    assert_eq!(k.showed, [k.root()]);
+    let text = k.doc_text();
+    assert!(
+        text.starts_with("Tab fold · Enter open · s stage"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n▾ Unstaged changes (1)\n▸ modified     a.txt   +1 −1\n"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -400,6 +515,7 @@ fn a_lines_blame_reads_the_unsaved_text() {
         path: Some(k.path("a.txt")),
         line,
         text: Some("one\nTWO, not saved\n".into()),
+        ..Doc::default()
     };
     let (one, two) = (doc(1), doc(2));
     k.feed(Input::Command {
@@ -460,11 +576,231 @@ fn outside_a_repository() {
         doc: Some(Doc {
             path: Some(x),
             line: 1,
-            text: None,
+            ..Doc::default()
         }),
     });
     assert_eq!(
         k.notes.last().unwrap(),
         &("Not in a git repository".to_string(), Level::Error)
     );
+}
+
+#[test]
+fn the_status_document_folds_opens_and_acts_with_its_keys() {
+    let mut k = Kalem::new("doc");
+    let long: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+    k.write("a.txt", &long);
+    k.write("b.txt", "bee\n");
+    k.commit_all("First");
+    k.write(
+        "a.txt",
+        &long
+            .replace("line 2\n", "line TWO\n")
+            .replace("line 29\n", "line 29!\n"),
+    );
+    k.write("new.txt", "new\n");
+    k.command("git.status", Some("a.txt"));
+    let text = k.doc_text();
+    for part in [
+        "\n▾ Untracked files (1)\n▸ new.txt\n",
+        "\n▾ Unstaged changes (1)\n▸ modified     a.txt   +2 −2\n",
+        "\n▾ Branches (1)\n  * main\n",
+        "\n▾ Recent commits (1)\n",
+    ] {
+        assert!(text.contains(part), "{part:?} in\n{text}");
+    }
+
+    // Tab unfolds the file: its two hunks, read then.
+    k.on("git.toggle", "modified     a.txt");
+    let text = k.doc_text();
+    assert!(
+        text.contains("▾ modified     a.txt   +2 −2\n@@ -1,5 +1,5 @@"),
+        "{text}"
+    );
+    assert!(text.contains("\n-line 2\n+line TWO\n"), "{text}");
+    assert!(text.contains("\n+line 29!\n"), "{text}");
+    assert_eq!(k.cursor_line(), "▾ modified     a.txt   +2 −2");
+    // Right, on it unfolded: into it. Left folds the hunk, Left again goes
+    // to the file, Left again folds it.
+    k.here("git.unfold");
+    assert!(k.cursor_line().starts_with("@@ -1,5 +1,5 @@"));
+    k.here("git.fold");
+    assert!(k.cursor_line().starts_with("@@ -1,5 +1,5 @@"));
+    assert!(!k.doc_text().contains("+line TWO"));
+    k.here("git.fold");
+    assert_eq!(k.cursor_line(), "▾ modified     a.txt   +2 −2");
+    k.here("git.toggle");
+    assert!(k.doc_text().contains("▸ modified     a.txt"));
+    k.here("git.toggle");
+    // The hunk folded stays so; Tab on it unfolds it.
+    assert!(!k.doc_text().contains("+line TWO"));
+    k.on("git.toggle", "@@ -1,5 +1,5 @@");
+    assert!(k.doc_text().contains("+line TWO"));
+
+    // Enter on a diff line opens the file there; on the file, the file.
+    k.on("git.visit", "+line 29!");
+    let a = k.path("a.txt");
+    assert_eq!(
+        k.commands.last().unwrap(),
+        &(
+            "file.open".to_string(),
+            format!("{{\"path\":\"{a}\",\"line\":29}}")
+        )
+    );
+    k.on("git.visit", "▾ modified     a.txt");
+    assert_eq!(
+        k.commands.last().unwrap(),
+        &("file.open".to_string(), format!("{{\"path\":\"{a}\"}}"))
+    );
+
+    // `s` on the second hunk stages it alone; the cursor stays in the file.
+    k.on("git.stage", "+line 29!");
+    assert_eq!(k.last_note(), "Staged a hunk of a.txt");
+    assert!(k.index("a.txt").contains("line 29!\n"));
+    assert!(!k.index("a.txt").contains("line TWO"));
+    let text = k.doc_text();
+    assert!(
+        text.contains("▾ Staged changes (1)\n▸ modified     a.txt   +1 −1\n"),
+        "{text}"
+    );
+    // A line selected alone: `s` stages that line.
+    let text = k.doc_text();
+    let plus = text.find("+line TWO").unwrap();
+    k.in_doc("git.stage", plus, plus + "+line TWO".len());
+    assert!(
+        k.index("a.txt").contains("line TWO\n"),
+        "{}",
+        k.index("a.txt")
+    );
+    assert!(
+        k.index("a.txt").contains("line 2\n"),
+        "{}",
+        k.index("a.txt")
+    );
+
+    // `u` on the staged file unstages it; `S` stages every change.
+    k.on("git.unstage", "▸ modified     a.txt");
+    assert_eq!(k.index("a.txt"), long);
+    k.on("git.stageAll", "Head:");
+    assert!(k.doc_text().contains("▾ Staged changes (1)"));
+    assert!(!k.doc_text().contains("Unstaged changes"));
+
+    // `x` on the untracked file deletes it, once confirmed.
+    k.answers.push_back(Answer::Confirmed(true));
+    k.on("git.discard", "▸ new.txt");
+    assert!(
+        k.asked.last().unwrap().starts_with("Delete new.txt?"),
+        "{:?}",
+        k.asked
+    );
+    assert!(!k.dir.join("new.txt").exists());
+
+    // `c c` commits; the status follows.
+    k.answers.push_back(Answer::Text(Some("Second".into())));
+    k.on("git.commit", "Head:");
+    assert_eq!(k.last_note(), "Committed");
+    assert!(
+        k.doc_text().contains("Head:      main   Second"),
+        "{}",
+        k.doc_text()
+    );
+    assert!(!k.doc_text().contains("Staged changes"));
+
+    // `q` closes it.
+    k.on("git.close", "Head:");
+    assert!(k.docs.is_empty());
+}
+
+#[test]
+fn branches_stashes_and_amends_from_the_status() {
+    let mut k = Kalem::new("branches");
+    k.write("a.txt", "one\n");
+    k.commit_all("First\n\nThe body stays.");
+    k.git_ok(&["branch", "feature"]);
+    k.command("git.status", Some("a.txt"));
+    assert!(
+        k.doc_text().contains("▾ Branches (2)\n"),
+        "{}",
+        k.doc_text()
+    );
+
+    // Enter on a branch switches to it.
+    k.on("git.visit", "    feature");
+    assert_eq!(k.last_note(), "Switched to feature");
+    assert!(
+        k.doc_text().contains("Head:      feature"),
+        "{}",
+        k.doc_text()
+    );
+    assert!(k.doc_text().contains("  * feature"), "{}", k.doc_text());
+
+    // `b c` makes one; `b b` offers the others.
+    k.answers.push_back(Answer::Text(Some("topic".into())));
+    k.on("git.newBranch", "Head:");
+    assert_eq!(k.last_note(), "Made the branch topic, and switched to it");
+    k.answers.push_back(Answer::Picked(vec![1]));
+    k.on("git.switchBranch", "Head:");
+    assert!(
+        k.asked
+            .last()
+            .unwrap()
+            .starts_with("Switch to the branch: "),
+        "{:?}",
+        k.asked
+    );
+    assert!(k.doc_text().contains("Head:      "), "{}", k.doc_text());
+
+    // `Z z` stashes; Enter on the stash pops it.
+    k.write("a.txt", "two\n");
+    k.on("git.stash", "Head:");
+    assert_eq!(k.last_note(), "Stashed the changes");
+    assert!(k.doc_text().contains("▾ Stashes (1)\n"), "{}", k.doc_text());
+    k.answers.push_back(Answer::Picked(vec![1]));
+    k.on("git.visit", "stash@{0}");
+    assert_eq!(k.last_note(), "Applied and dropped stash@{0}");
+    assert_eq!(
+        std::fs::read_to_string(k.dir.join("a.txt")).unwrap(),
+        "two\n"
+    );
+
+    // `c a` amends with what is staged, the first line offered, the body
+    // kept.
+    k.git_ok(&["add", "a.txt"]);
+    k.answers
+        .push_back(Answer::Text(Some("First, amended".into())));
+    k.on("git.amend", "Head:");
+    assert_eq!(k.offered.last().unwrap().as_deref(), Some("First"));
+    assert_eq!(k.last_note(), "Amended the last commit");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%B"]),
+        "First, amended\n\nThe body stays.\n\n"
+    );
+    assert_eq!(k.git_ok(&["show", "HEAD:a.txt"]), "two\n");
+}
+
+#[test]
+fn the_changed_lines_of_an_open_file_are_marked() {
+    let mut k = Kalem::new("gutter");
+    k.write("a.txt", "one\ntwo\nthree\nfour\n");
+    k.commit_all("First");
+    k.write("a.txt", "zero\none\nTWO\nfour\n");
+    let a = k.path("a.txt");
+    k.feed(Input::Opened(a.clone()));
+    assert_eq!(
+        k.gutters[&a],
+        [(1, Mark::Added), (3, Mark::Changed), (3, Mark::Removed),]
+    );
+    // Staged, nothing differs from the index any more.
+    k.command("git.stageFile", Some("a.txt"));
+    assert!(!k.gutters.contains_key(&a), "{:?}", k.gutters);
+    // Edited and saved again: marked again.
+    k.write("a.txt", "zero\none\nTWO\nfour\nfive\n");
+    k.feed(Input::Saved(a.clone()));
+    assert_eq!(k.gutters[&a], [(5, Mark::Added)]);
+    // The setting off: every mark goes.
+    k.feed(Input::Settings(Settings {
+        gutter: false,
+        ..Settings::default()
+    }));
+    assert!(k.gutters.is_empty());
 }

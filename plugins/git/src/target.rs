@@ -49,6 +49,10 @@ pub enum Target {
     Stash(u32),
     /// A commit.
     Commit(String),
+    /// A local branch, by its name.
+    Branch(String),
+    /// The line of keys at the top.
+    Help,
 }
 
 impl Target {
@@ -74,6 +78,8 @@ impl Target {
             } => hunk_key(*section, *hunk, path),
             Target::Stash(n) => format!("stash:{n}"),
             Target::Commit(h) => format!("commit:{h}"),
+            Target::Branch(b) => format!("branch:{b}"),
+            Target::Help => "help".into(),
         }
     }
 
@@ -105,6 +111,8 @@ impl Target {
             }
             "stash" => Target::Stash(rest.parse().ok()?),
             "commit" => Target::Commit(rest.to_string()),
+            "branch" => Target::Branch(rest.to_string()),
+            "help" => Target::Help,
             _ => return None,
         })
     }
@@ -228,6 +236,8 @@ mod tests {
             },
             Target::Stash(2),
             Target::Commit("abc".into()),
+            Target::Branch("feature/a:b".into()),
+            Target::Help,
         ] {
             assert_eq!(Target::from_key(&t.key()), Some(t));
         }

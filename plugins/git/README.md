@@ -2,30 +2,42 @@
 
 The repository's status as a document in Kalem: the changed files with their diffs under them, moved through with the arrows, staged, unstaged and reverted by file, hunk or selected lines with Doom Emacs's `SPC g` keys, committed without leaving the editor, and read with the editor's own highlighting, search, selection and motions, the same in the window and in the terminal. Lazygit's simplicity, magit's place inside the editor. Kalem's task T2.7i.11 and roadmap item R5.15; the design is [`DESIGN.md`](DESIGN.md).
 
-**Status: phase 0.** Inside Kalem the plugin shows a Git panel (the branch, the last commit, Refresh, Commit, Pull and Push, the staged, unstaged and untracked files with a box to tick to stage) and a status bar item (`⎇ main ↑1 ↓2 •3`), and its `SPC g` keys stage, unstage, revert and delete the file being edited, commit with a one-line message, fetch, pull and push (asking where to push a new branch, and how to pull when the branches diverged), and show the commit of the line under the cursor. It needs Kalem's plugin API 0.2.4 (the `process` interface) and a repository inside one of Kalem's projects. The status as a document, with its diffs, comes with phase 1 and Kalem's `documents` interface (DESIGN.md, 9.2).
+**Status: phase 1.** `SPC g g` (Word-like keys: the palette's "Git: Status") opens the status as a document of its own, in lazygit's order and magit's form: a line of keys at the top, the branch with its last commit and upstream, the untracked, unstaged and staged files, the local branches, the unpushed, unpulled or recent commits, and the stashes. Tab on a file shows its diff under it, hunk by hunk, highlighted as a diff; the changed lines of every file opened are marked beside the lines, in both editors. A status bar item (`⎇ main ↑1 ↓2 •3`) and the Git panel stay. It needs Kalem's plugin API 0.2.5 (`process`, `documents`, `decorations`) and a repository inside one of Kalem's projects.
 
 ## Keys
 
-Phase 0 binds `SPC g g` (the panel; Ctrl+Shift+G with Word-like keys), `SPC g S`, `SPC g U`, `SPC g R`, `SPC g D`, `SPC g c c`, `SPC g F`, `SPC g B`, `SPC g /` and `SPC g .`; Pull and Push are the panel's buttons and entries of `SPC g /`. The rest of the table comes with the git documents of phase 1.
+Nothing has to be known first: the status's first line names the keys, Alt+Enter (or `?`) lists what can be done with the line under the cursor and then every command, each with its key, and Escape closes the status.
 
-In a git document the editor's keys move: Up and Down, Alt+Up and Alt+Down to the next file or section, Right and Left unfold and fold, Tab and Shift+Tab fold, Enter does the obvious thing with the line (opens the file at that line, shows the commit), Alt+Enter offers everything that can be done with it, Escape goes back. Every action is a Doom key, the same in a git document as in a file:
+| In the status | Does |
+|---|---|
+| Up, Down; Alt+Up, Alt+Down | Move; the previous and next section, file, hunk or commit |
+| Tab; Shift+Tab | Fold or unfold the section, file or hunk; everything, step by step |
+| Right, Left | Unfold (on an unfolded one: into it); fold (on a folded one: to what holds it) |
+| Enter | The obvious thing: open the file (at the diff's line), switch to the branch, the stash's Apply, Pop or Drop, the `Head:` and `Upstream:` lines' menus |
+| Alt+Enter, `?` | What can be done here, then every command |
+| `s`, `u` | Stage, unstage the file, the hunk, or the lines selected (a section's heading: all of it) |
+| `S`, `U` | Stage every change; unstage everything |
+| `x` | Discard the file, the hunk or the lines (asks first) |
+| `c c`, `c a`, `c e`, `c w` | Commit; amend (the last message's first line offered, its body kept); extend; reword |
+| `P p`, `F p`, `f p` | Push, pull, fetch (`P u`, `F u`, `f u`, `f a` too) |
+| `b b`, `b c` | Switch branch; a new branch |
+| `Z z` | Stash the changes |
+| Escape, `q` | Close the status |
+
+The letters are magit's (as Doom's evil-collection has them: `x` discards) and apply in the status only, in Vim's command mode and with the Word-like keys. Doom's `SPC g` keys work in it and in a file:
 
 | Key | Does |
 |---|---|
-| `SPC g g` | The status |
-| `SPC g S`, `SPC g U` | Stage, unstage the file |
-| `SPC g s`, `SPC g u` | Stage, unstage the hunk, or the selected lines |
-| `SPC g R`, `SPC g r` | Revert the file; discard the hunk or the lines (asks first) |
-| `SPC g D` | Delete the file (asks first) |
-| `SPC g c c` | Commit: the message as a document, saved to commit |
-| `SPC g c a`, `SPC g c e`, `SPC g c w`, `SPC g c f` | Amend, amend without editing, reword, fixup |
+| `SPC g g` | The status (in it: refresh) |
+| `SPC g S`, `SPC g U` | Stage, unstage the file (in the status: the file under the cursor) |
+| `SPC g R`, `SPC g D` | Revert the file; delete it (asks first) |
+| `SPC g c c`, `SPC g c a`, `SPC g c e`, `SPC g c w` | Commit, amend, extend, reword |
 | `SPC g F` | Fetch |
-| `SPC g b`, `SPC g B` | Blame the file; this line's commit |
-| `SPC g L`, `SPC g t` | The log; the time machine |
-| `SPC g o o`, `SPC g y` | Open on the remote; copy the link |
+| `SPC g ]`, `SPC g [` | The next and previous change of the file (Alt+F5, Shift+Alt+F5) |
+| `SPC g B` | This line's commit |
 | `SPC g /`, `SPC g .` | Every git command; this file's |
 
-Push, pull, branches and stashes have no Doom key: they are Enter on the status's `Upstream:`, `Head:` and stash lines, and entries of `SPC g /`.
+The marks beside the lines compare with the index (what `s` would stage; the setting `gutter_base = "head"` compares with the last commit) and come again on each save; the setting `gutter = false` takes them away. The log, blame, the time machine and the remote's links come later (DESIGN.md, section 8).
 
 ## Try it
 
@@ -51,4 +63,4 @@ The plugin runs the `git` program (2.23 or later) and reads its porcelain output
 
 ## Tests
 
-`cargo test -p kalem-plugin-git`: the readers of git's output, the patches, the documents and the actions on fixed inputs; then the library against a real git in repositories the tests make (`tests/repo.rs`, git isolated from the user's configuration); the plugin's state machine driven as Kalem drives the component, its questions answered from a script (`tests/app.rs`); the manifest's conformance. The component itself builds for `wasm32-unknown-unknown` against a Kalem with plugin API 0.2.4.
+`cargo test -p kalem-plugin-git`: the readers of git's output, the patches, the documents and the actions on fixed inputs; then the library against a real git in repositories the tests make (`tests/repo.rs`, git isolated from the user's configuration); the plugin's state machine driven as Kalem drives the component, its questions answered from a script (`tests/app.rs`); the manifest's conformance. The component itself builds for `wasm32-unknown-unknown` against a Kalem with plugin API 0.2.5.
