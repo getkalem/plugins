@@ -180,7 +180,7 @@ fn menu_key(id: &str) -> Option<String> {
 }
 
 impl App {
-    fn view_options(&self) -> ViewOptions {
+    pub(super) fn view_options(&self) -> ViewOptions {
         ViewOptions {
             glyphs: self.settings.glyphs,
             ..ViewOptions::default()
@@ -219,6 +219,7 @@ impl App {
         state.shown = true;
         out.push(Effect::Document {
             root: root.to_string(),
+            commit: None,
             title: title(root),
             text,
             cursor,
@@ -428,6 +429,7 @@ impl App {
                 }
                 out.push(Effect::CloseDocument {
                     root: root.to_string(),
+                    commit: None,
                 });
             }
             _ => return false,
@@ -558,6 +560,7 @@ impl App {
         if let Some(to) = to {
             out.push(Effect::Document {
                 root: root.to_string(),
+                commit: None,
                 title: title(root),
                 text: content.text.clone(),
                 cursor: Some(to),
@@ -872,24 +875,7 @@ impl App {
                     ],
                 });
             }
-            Some(Target::Commit(hash)) => {
-                let all = repo
-                    .recent
-                    .iter()
-                    .chain(&repo.unpushed)
-                    .chain(&repo.unpulled);
-                let text = match all.into_iter().find(|c| c.hash == hash) {
-                    Some(c) => format!(
-                        "{} · {} · {} · {}",
-                        c.short,
-                        c.author,
-                        c.date.get(..10).unwrap_or(&c.date),
-                        c.subject
-                    ),
-                    None => hash,
-                };
-                out.push(Effect::Notify(text, Level::Info));
-            }
+            Some(Target::Commit(hash)) => self.show_commit(out, root, &hash),
             Some(Target::Branch(name)) => {
                 let current = repo.status.branch.as_deref() == Some(name.as_str());
                 if current {
@@ -909,7 +895,13 @@ impl App {
         }
     }
 
-    fn open_file(&mut self, out: &mut Vec<Effect>, root: &str, path: &str, line: Option<u32>) {
+    pub(super) fn open_file(
+        &mut self,
+        out: &mut Vec<Effect>,
+        root: &str,
+        path: &str,
+        line: Option<u32>,
+    ) {
         let full = format!("{}/{}", root.trim_end_matches('/'), path);
         let args = match line {
             Some(l) => format!("{{\"path\":{},\"line\":{l}}}", serde_string(&full)),

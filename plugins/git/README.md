@@ -16,7 +16,7 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 | Up, Down; Alt+Up, Alt+Down | Move; the previous and next file, hunk or commit |
 | Tab; Shift+Tab | Show or hide a file's diff, fold a folder, a hunk or a panel; everything, step by step |
 | Right, Left | Unfold (on an unfolded one: into it); fold (on a folded one: to what holds it) |
-| Enter | The obvious thing: open the file (at the diff's line), switch to the branch, the stash's Apply, Pop or Drop, the `Head:` and `Upstream:` lines' menus |
+| Enter | The obvious thing: open the file (at the diff's line), switch to the branch, show the commit, the stash's Apply, Pop or Drop, the `Head:` and `Upstream:` lines' menus |
 | Alt+Enter, `?` | What can be done here, then every command |
 | `s`, `u` | Stage, unstage the file, the hunk, or the lines selected (a folder: what is in it) |
 | `a` | Stage everything, untracked files too; everything staged, unstage everything (lazygit's `a`) |
@@ -27,6 +27,8 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 | `b b`, `b c` | Switch branch; a new branch |
 | `Z z` | Stash the changes |
 | Escape, `q` | Close the status |
+
+Enter on a commit shows it as magit does: `git show`'s header (hash, author, committer, dates, the message), the stat, then its diff, highlighted as a diff with its hunks. In that view Tab, Right and Left fold the files and hunks, Alt+Up and Alt+Down step between them, Enter on a line of the diff opens the file at that line, Escape closes it; nothing is staged from it.
 
 The letters are magit's (as Doom's evil-collection has them: `x` discards) and apply in the status only, in Vim's command mode and with the Word-like keys. Doom's `SPC g` keys work in it and in a file:
 

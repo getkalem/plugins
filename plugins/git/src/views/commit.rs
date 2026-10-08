@@ -2,7 +2,7 @@
 //! then its diff as git prints it, every file and hunk a region, so that
 //! Enter on a line opens the file there.
 
-use crate::content::{Content, Style};
+use crate::content::{Color, Content, Style};
 use crate::git::diff::Diff;
 use crate::model::{Folds, Section};
 use crate::target::{file_key, hunk_key};
@@ -13,8 +13,9 @@ use crate::views::{ViewOptions, lossy_line};
 pub fn render(diff: &Diff, folds: &Folds, opts: &ViewOptions) -> Content {
     let _ = opts;
     let mut c = Content::new();
+    let mut first_message_line = true;
     for l in &diff.preamble {
-        c.line(&lossy_line(l), Style::Normal);
+        header_line(&mut c, &lossy_line(l), &mut first_message_line);
     }
     for f in &diff.files {
         let key = file_key(Section::Shown, f.path());
@@ -46,6 +47,39 @@ pub fn render(diff: &Diff, folds: &Folds, opts: &ViewOptions) -> Content {
     c
 }
 
+/// A line of `git show`'s header and stat, styled as magit shows them:
+/// the `commit` line in yellow, the labels of the author, the committer
+/// and the dates muted, the message's first line strong, a file's counts
+/// in the stat green and red, the stat's summary muted.
+fn header_line(c: &mut Content, line: &str, first_message_line: &mut bool) {
+    const LABELS: [&str; 5] = ["Author:", "AuthorDate:", "Commit:", "CommitDate:", "Merge:"];
+    if line.starts_with("commit ") {
+        c.line(line, Style::Color(Color::Yellow, true));
+    } else if let Some(label) = LABELS.iter().find(|l| line.starts_with(*l)) {
+        c.push(label, Style::Muted);
+        c.line(&line[label.len()..], Style::Normal);
+    } else if line.starts_with("    ") && !line.trim().is_empty() && *first_message_line {
+        *first_message_line = false;
+        c.line(line, Style::Strong);
+    } else if let Some((path, counts)) = line.split_once(" | ") {
+        // ` src/lib.rs | 12 ++++---`: the pluses and minuses in color.
+        c.push(path, Style::Normal);
+        c.push(" | ", Style::Normal);
+        let marks = counts.trim_end();
+        let digits = marks.trim_end_matches(['+', '-']);
+        c.push(digits, Style::Normal);
+        let rest = &marks[digits.len()..];
+        let pluses = rest.trim_end_matches('-');
+        c.push(pluses, Style::Color(Color::Green, false));
+        c.push(&rest[pluses.len()..], Style::Color(Color::Red, false));
+        c.line(&counts[marks.len()..], Style::Normal);
+    } else if line.contains(" changed") && (line.contains("file") || line.contains("files")) {
+        c.line(line, Style::Muted);
+    } else {
+        c.line(line, Style::Normal);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,6 +92,14 @@ mod tests {
         let d = diff::parse(out.as_bytes()).unwrap();
         let c = render(&d, &Folds::default(), &ViewOptions::default());
         assert_eq!(c.text, out);
+        // The header's styles: the commit line, the author's label, the
+        // subject, the stat's plus.
+        let style_of = |s: &str| c.style_at(c.text.find(s).unwrap());
+        assert_eq!(style_of("commit abc"), Style::Color(Color::Yellow, true));
+        assert_eq!(style_of("Author:"), Style::Muted);
+        assert_eq!(style_of("A <a@x>"), Style::Normal);
+        assert_eq!(style_of("Subject"), Style::Strong);
+        assert_eq!(style_of("+\n\ndiff"), Style::Color(Color::Green, false));
         let b = c.text.find("+b").unwrap();
         assert_eq!(
             target::at(&c, b),

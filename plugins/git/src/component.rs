@@ -19,8 +19,9 @@ thread_local! {
     static QUEUE: RefCell<VecDeque<Input>> = const { RefCell::new(VecDeque::new()) };
     static PUMPING: Cell<bool> = const { Cell::new(false) };
     static STATUS: RefCell<Option<kalem::Disposable>> = const { RefCell::new(None) };
-    /// The status documents open, by repository: their numbers.
-    static DOCS: RefCell<BTreeMap<String, u64>> = const { RefCell::new(BTreeMap::new()) };
+    /// The documents open, by repository and, for a commit view, the
+    /// commit's hash: their numbers.
+    static DOCS: RefCell<BTreeMap<(String, Option<String>), u64>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// The settings `Settings::read` reads, watched.
@@ -197,6 +198,7 @@ fn apply(effect: Effect) {
         }
         Effect::Document {
             root,
+            commit,
             title,
             text,
             cursor,
@@ -205,13 +207,22 @@ fn apply(effect: Effect) {
         } => {
             let cursor = cursor.map(|c| c as u64);
             let styles = styled(&styles);
-            let open = DOCS.with(|d| d.borrow().get(&root).copied());
+            let key = (root.clone(), commit.clone());
+            let open = DOCS.with(|d| d.borrow().get(&key).copied());
             if show {
-                let spec = documents::Spec::new(app::STATUS_DOC, &root, &title, app::STATUS_KIND)
-                    .language("diff");
+                let spec = match &commit {
+                    Some(hash) => documents::Spec::new(
+                        app::COMMIT_DOC,
+                        &format!("{root}#{hash}"),
+                        &title,
+                        app::COMMIT_KIND,
+                    ),
+                    None => documents::Spec::new(app::STATUS_DOC, &root, &title, app::STATUS_KIND),
+                }
+                .language("diff");
                 match documents::open_styled(&spec, &text, cursor, &styles) {
                     Ok(n) => DOCS.with(|d| {
-                        d.borrow_mut().insert(root, n);
+                        d.borrow_mut().insert(key, n);
                     }),
                     Err(e) => ui::notify(&e, ui::Level::Error),
                 }
@@ -219,12 +230,12 @@ fn apply(effect: Effect) {
                 && documents::set_styled(n, &text, cursor, &styles).is_err()
             {
                 // The user closed it.
-                DOCS.with(|d| d.borrow_mut().remove(&root));
-                later(Input::DocumentClosed(root));
+                DOCS.with(|d| d.borrow_mut().remove(&key));
+                later(Input::DocumentClosed { root, commit });
             }
         }
-        Effect::CloseDocument { root } => {
-            if let Some(n) = DOCS.with(|d| d.borrow_mut().remove(&root)) {
+        Effect::CloseDocument { root, commit } => {
+            if let Some(n) = DOCS.with(|d| d.borrow_mut().remove(&(root, commit))) {
                 documents::close(n);
             }
         }
@@ -350,7 +361,7 @@ fn add(tree: &mut ui::Tree, parent: u32, node: Node) {
 
 /// The document the running command is in: its file, the cursor's line,
 /// the selection, for `git.blameLine` its text, and the repository when it
-/// is a status document.
+/// is a status document or the view of a commit.
 fn document(command: &str) -> Option<Doc> {
     let info = editor::document()?;
     let selected = editor::selected();
@@ -360,19 +371,25 @@ fn document(command: &str) -> Option<Doc> {
     }));
     let line = before.bytes().filter(|b| *b == b'\n').count() as u32 + 1;
     let text = (command == "git.blameLine").then(|| editor::text(None));
-    let status = documents::current().and_then(|n| {
+    let open = documents::current().and_then(|n| {
         DOCS.with(|d| {
             d.borrow()
                 .iter()
                 .find(|(_, number)| **number == n)
-                .map(|(root, _)| root.clone())
+                .map(|(key, _)| key.clone())
         })
     });
+    let (status, commit) = match open {
+        Some((root, None)) => (Some(root), None),
+        Some((root, Some(hash))) => (None, Some((root, hash))),
+        None => (None, None),
+    };
     Some(Doc {
         path: info.path,
         line,
         text,
         status,
+        commit,
         anchor: selected.anchor as usize,
         head: selected.head as usize,
     })

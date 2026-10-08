@@ -15,6 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+mod commit_view;
 mod document;
 
 use crate::actions::{self, Act};
@@ -43,15 +44,22 @@ pub const STATUS_DOC: &str = "git.status";
 /// commands are scoped to.
 pub const STATUS_KIND: &str = "git-status";
 
-/// The when-clause of the status document's keys: in it, in Vim's command
-/// mode or without Vim, so that its letters do not type (it is read-only)
-/// and come before Vim's.
-pub const DOC_WHEN: &str = "textType == git-status && (vimCommand || !vimActive)";
+/// A commit view's ID (`documents`): one a commit shown, told apart by
+/// the repository and the hash.
+pub const COMMIT_DOC: &str = "git.commit";
+
+/// A commit view's kind: the text type its keys are scoped to.
+pub const COMMIT_KIND: &str = "git-commit-view";
+
+/// The when-clause of the keys of the status document and of a commit
+/// view: in one of them, in Vim's command mode or without Vim, so that
+/// their letters do not type (they are read-only) and come before Vim's.
+pub const DOC_WHEN: &str =
+    "(textType == git-status || textType == git-commit-view) && (vimCommand || !vimActive)";
 
 /// Escape's: with a selection Escape clears it first (Vim leaves visual
 /// mode).
-pub const DOC_ESCAPE_WHEN: &str =
-    "textType == git-status && !hasSelection && (vimCommand || !vimActive)";
+pub const DOC_ESCAPE_WHEN: &str = "(textType == git-status || textType == git-commit-view) && !hasSelection && (vimCommand || !vimActive)";
 
 /// A command of the plugin: its ID, title, keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,6 +329,9 @@ pub struct Doc {
     pub text: Option<String>,
     /// The repository whose status document it is, by its root.
     pub status: Option<String>,
+    /// The commit view it is: the repository's root and the commit's
+    /// hash.
+    pub commit: Option<(String, String)>,
     /// The selection's other end, in bytes; the cursor's when nothing is
     /// selected.
     pub anchor: usize,
@@ -367,9 +378,14 @@ pub enum Input {
     Changed(String),
     /// The plugin's settings changed.
     Settings(Settings),
-    /// The user closed the status document of this repository (its write
-    /// was refused).
-    DocumentClosed(String),
+    /// The user closed the status document of this repository, or the
+    /// view of one of its commits (its write was refused).
+    DocumentClosed {
+        /// The repository.
+        root: String,
+        /// The commit shown, for a commit view.
+        commit: Option<String>,
+    },
 }
 
 /// What the plugin does.
@@ -432,10 +448,13 @@ pub enum Effect {
         /// The value.
         value: String,
     },
-    /// Writes the status document of repository `root`.
+    /// Writes the status document of repository `root`, or the view of
+    /// one of its commits.
     Document {
         /// The repository.
         root: String,
+        /// The commit shown, by its hash: a commit view, not the status.
+        commit: Option<String>,
         /// The document's title.
         title: String,
         /// Its text.
@@ -447,10 +466,13 @@ pub enum Effect {
         /// The styles of its text (lazygit's colors).
         styles: Vec<crate::content::Styled>,
     },
-    /// Closes the status document of repository `root`.
+    /// Closes the status document of repository `root`, or the view of
+    /// one of its commits.
     CloseDocument {
         /// The repository.
         root: String,
+        /// The commit shown, for a commit view.
+        commit: Option<String>,
     },
     /// Sets the marks beside the lines of a file; none takes them away.
     Gutter {
@@ -540,6 +562,8 @@ enum Pending {
     LastMessage { root: String, kind: CommitKind },
     /// A file's changes, for the marks beside its lines.
     Marks { root: String, path: String },
+    /// A commit, for its view.
+    Show { root: String, hash: String },
 }
 
 /// A network operation.
@@ -633,6 +657,19 @@ struct RepoState {
     tab: crate::views::status::Tab,
     /// The diffs being read for it.
     loading: BTreeSet<(Section, String)>,
+    /// The commits shown as documents, by hash.
+    commits: BTreeMap<String, ShownCommit>,
+}
+
+/// A commit shown as a document (`commit_view.rs`).
+#[derive(Debug)]
+struct ShownCommit {
+    /// What `git show` said.
+    diff: crate::git::diff::Diff,
+    /// What its document folds.
+    folds: Folds,
+    /// The document as last written.
+    content: Content,
 }
 
 /// The plugin's state.
@@ -769,11 +806,18 @@ impl App {
                     self.write_status(&mut out, &root, false);
                 }
             }
-            Input::DocumentClosed(root) => {
+            Input::DocumentClosed { root, commit } => {
                 if let Some(s) = self.repos.get_mut(&root) {
-                    s.shown = false;
-                    s.content = None;
-                    s.keep = None;
+                    match commit {
+                        Some(hash) => {
+                            s.commits.remove(&hash);
+                        }
+                        None => {
+                            s.shown = false;
+                            s.content = None;
+                            s.keep = None;
+                        }
+                    }
                 }
             }
         }
@@ -781,6 +825,13 @@ impl App {
     }
 
     fn command(&mut self, out: &mut Vec<Effect>, id: &str, doc: Option<Doc>) {
+        // In a commit view: what is under the cursor.
+        if let Some(d) = &doc
+            && let Some((root, hash)) = d.commit.clone()
+            && self.commit_command(out, &root, &hash, id, d)
+        {
+            return;
+        }
         // In the status document: what is under the cursor.
         if let Some(d) = &doc
             && let Some(root) = d.status.clone()
@@ -1098,6 +1149,7 @@ impl App {
                 section,
                 path,
             } => self.diff_done(out, &root, generation, section, &path, result),
+            Pending::Show { root, hash } => self.show_done(out, &root, &hash, result),
             Pending::LastMessage { root, kind } => match result {
                 Ok(o) if o.success() => {
                     let text = String::from_utf8_lossy(&o.stdout).into_owned();

@@ -43,7 +43,8 @@ struct Kalem {
     shown: bool,
     commands: Vec<(String, String)>,
     set: Vec<(String, String)>,
-    /// The status documents: their text and cursor, by repository.
+    /// The documents: their text and cursor, by repository (the status)
+    /// or by `repository#hash` (a commit's view).
     docs: BTreeMap<String, (String, usize)>,
     /// The repositories whose status was shown, in order.
     showed: Vec<String>,
@@ -172,11 +173,16 @@ impl Kalem {
                     Effect::SetSetting { key, value } => self.set.push((key, value)),
                     Effect::Document {
                         root,
+                        commit,
                         text,
                         cursor,
                         show,
                         ..
                     } => {
+                        let root = match commit {
+                            Some(hash) => format!("{root}#{hash}"),
+                            None => root,
+                        };
                         if show {
                             self.showed.push(root.clone());
                         } else if !self.docs.contains_key(&root) {
@@ -194,8 +200,12 @@ impl Kalem {
                         let at = at.min(text.len());
                         self.docs.insert(root, (text, at));
                     }
-                    Effect::CloseDocument { root } => {
-                        self.docs.remove(&root);
+                    Effect::CloseDocument { root, commit } => {
+                        let key = match commit {
+                            Some(hash) => format!("{root}#{hash}"),
+                            None => root,
+                        };
+                        self.docs.remove(&key);
                     }
                     Effect::Gutter { path, marks } => {
                         if marks.is_empty() {
@@ -271,6 +281,44 @@ impl Kalem {
     fn here(&mut self, id: &str) {
         let at = self.docs[&self.root()].1;
         self.in_doc(id, at, at);
+    }
+
+    /// The key of the commit view open, if one is.
+    fn commit_key(&self) -> Option<String> {
+        self.docs.keys().find(|k| k.contains('#')).cloned()
+    }
+
+    /// The commit view's text.
+    fn commit_text(&self) -> String {
+        self.commit_key()
+            .and_then(|k| self.docs.get(&k))
+            .map(|d| d.0.clone())
+            .unwrap_or_default()
+    }
+
+    /// Command `id` run in the commit view, with the cursor at the start
+    /// of the first line holding `line`.
+    fn on_commit(&mut self, id: &str, line: &str) {
+        let key = self.commit_key().expect("a commit view open");
+        let (root, hash) = key.split_once('#').unwrap();
+        let text = self.docs[&key].0.clone();
+        let at = text
+            .find(line)
+            .unwrap_or_else(|| panic!("{line:?} is not in\n{text}"));
+        let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+        let doc = Doc {
+            commit: Some((root.to_string(), hash.to_string())),
+            anchor: start,
+            head: start,
+            ..Doc::default()
+        };
+        if let Some(d) = self.docs.get_mut(&key) {
+            d.1 = start;
+        }
+        self.feed(Input::Command {
+            id: id.into(),
+            doc: Some(doc),
+        });
     }
 
     fn texts(&self) -> Vec<String> {
@@ -848,4 +896,70 @@ fn the_changed_lines_of_an_open_file_are_marked() {
         ..Settings::default()
     }));
     assert!(k.gutters.is_empty());
+}
+
+#[test]
+fn enter_on_a_commit_shows_it_as_magit_does() {
+    let mut k = Kalem::new("commit-view");
+    k.write("a.txt", "one\ntwo\n");
+    k.commit_all("First");
+    k.write("a.txt", "one\nTWO\n");
+    k.commit_all("Second line changed");
+    k.command("git.status", Some("a.txt"));
+    k.on("git.tabCommits", "repo → main");
+    assert!(
+        k.doc_text().contains("Second line changed"),
+        "{}",
+        k.doc_text()
+    );
+    // Enter on the commit's line (the head line names the subject too):
+    // its header, stat and diff.
+    let short = k
+        .git_ok(&["rev-parse", "--short", "HEAD"])
+        .trim()
+        .to_string();
+    k.on("git.visit", &short);
+    let text = k.commit_text();
+    assert!(text.starts_with("commit "), "{text}");
+    assert!(
+        text.contains("Author:     Ayşe Test <ayse@example.com>"),
+        "{text}"
+    );
+    assert!(text.contains("\n    Second line changed\n"), "{text}");
+    assert!(text.contains(" a.txt | 2 +-\n"), "{text}");
+    assert!(
+        text.contains("\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n"),
+        "{text}"
+    );
+    let key = k.commit_key().unwrap();
+    assert_eq!(k.showed.last(), Some(&key));
+    // Enter on the added line opens the file at it.
+    k.on_commit("git.visit", "+TWO");
+    let (id, args) = k.commands.last().cloned().unwrap();
+    assert_eq!(id, "file.open");
+    assert!(
+        args.contains("a.txt") && args.ends_with("\"line\":2}"),
+        "{args}"
+    );
+    // Left folds the file, Right unfolds it, the cursor kept on it.
+    k.on_commit("git.fold", "diff --git");
+    assert!(!k.commit_text().contains("+TWO"), "{}", k.commit_text());
+    assert!(
+        k.commit_text().contains("diff --git"),
+        "{}",
+        k.commit_text()
+    );
+    k.on_commit("git.unfold", "diff --git");
+    assert!(k.commit_text().contains("+TWO"), "{}", k.commit_text());
+    // Nothing is staged from it.
+    k.on_commit("git.stage", "+TWO");
+    assert!(
+        k.last_note().starts_with("Nothing is staged from a commit"),
+        "{}",
+        k.last_note()
+    );
+    // Escape closes it; the status stays.
+    k.on_commit("git.close", "commit ");
+    assert!(k.commit_key().is_none());
+    assert!(k.doc_text().contains("Second line changed"));
 }
