@@ -50,8 +50,8 @@
         "subprocess:git"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/git",
-      "download": null,
-      "sha256": null
+      "download": "https://github.com/getkalem/plugins/releases/download/git-v0.0.2/git.wasm",
+      "sha256": "64a5ce8a8a811fa709263e4264f714a176be2bccd6ae330a6ec3efe9c8794afe"
     },
     {
       "id": "org.kalem.image-viewer",
