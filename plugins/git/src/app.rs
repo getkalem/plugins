@@ -1355,7 +1355,7 @@ impl App {
         let mut nodes = Vec::new();
         let Some(repo) = self.current() else {
             nodes.push(Node::label(
-                "Open a file of a git repository: its status shows here.",
+                "Open a file of a git repository",
                 TextStyle::Muted,
             ));
             return Node::Column(nodes);
@@ -1380,9 +1380,13 @@ impl App {
             key: key.into(),
             label: label.into(),
         };
+        // Two rows of two: one row of four ran past a terminal's side
+        // panel (some 36 columns), Push cut off.
         nodes.push(Node::Row(vec![
             button("refresh", "Refresh"),
             button("commit", "Commit"),
+        ]));
+        nodes.push(Node::Row(vec![
             button("pull", "Pull"),
             button("push", "Push"),
         ]));
@@ -1449,10 +1453,7 @@ impl App {
             });
         }
         if !any {
-            nodes.push(Node::label(
-                "Nothing to commit: the working tree is clean",
-                TextStyle::Muted,
-            ));
+            nodes.push(Node::label("Clean: nothing to commit", TextStyle::Muted));
         }
         Node::Column(nodes)
     }
@@ -1554,6 +1555,54 @@ mod tests {
             assert!(c.id.starts_with("git."), "{}", c.id);
             assert!(c.title.starts_with("Git: "), "{}", c.title);
         }
+    }
+
+    /// The columns a node takes in the terminal: a button as `[ Label ]`,
+    /// a row's widgets two columns apart.
+    fn columns(n: &Node) -> usize {
+        match n {
+            Node::Label { text, .. } => text.chars().count(),
+            Node::Button { label, .. } => label.chars().count() + 4,
+            Node::Row(c) => c.iter().map(columns).sum::<usize>() + 2 * c.len().saturating_sub(1),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn the_panel_fits_a_terminals_side_panel() {
+        // A terminal's side panel leaves some 34 columns for its widgets.
+        const WIDE: usize = 32;
+        let mut app = App::new(Settings::default());
+        let Node::Column(empty) = app.panel() else {
+            panic!("a column")
+        };
+        assert!(empty.iter().all(|n| columns(n) <= WIDE), "{empty:?}");
+        let status = crate::git::status::parse(b"# branch.oid abc\0# branch.head main\0").unwrap();
+        app.repos.insert(
+            "/r".into(),
+            RepoState {
+                repo: Some(Repo {
+                    root: "/r".into(),
+                    status,
+                    ..Repo::default()
+                }),
+                ..RepoState::default()
+            },
+        );
+        app.current = Some("/r".into());
+        let Node::Column(nodes) = app.panel() else {
+            panic!("a column")
+        };
+        let keys: Vec<String> = nodes.iter().flat_map(Node::keys).collect();
+        assert_eq!(keys, ["refresh", "commit", "pull", "push"]);
+        for n in &nodes {
+            assert!(columns(n) <= WIDE, "{n:?} takes {} columns", columns(n));
+        }
+        assert!(
+            app.panel()
+                .texts()
+                .contains(&"Clean: nothing to commit".to_string())
+        );
     }
 
     #[test]
