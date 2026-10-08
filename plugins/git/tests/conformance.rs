@@ -152,7 +152,11 @@ fn the_menus_hold_the_plugins_commands_outside_the_status() {
     let menus = m["menus"].as_array().expect("menus");
     for menu in menus {
         assert!(menu["title"].as_str().is_some_and(|t| !t.trim().is_empty()));
-        assert!(menu["when"].as_str().is_some_and(|w| w.contains("vcs == git")));
+        assert!(
+            menu["when"]
+                .as_str()
+                .is_some_and(|w| w.contains("vcs == git"))
+        );
         for item in menu["items"].as_array().expect("items") {
             let item = item.as_str().expect("a command or -");
             if item == "-" {
