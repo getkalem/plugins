@@ -144,3 +144,22 @@ fn the_library_reads_every_choice_of_its_settings() {
     assert!(choices("pull").iter().all(|c| PullMode::parse(c).is_some()));
     assert!(choices("glyphs").iter().all(|c| Glyphs::parse(c).is_some()));
 }
+
+#[test]
+fn the_menus_hold_the_plugins_commands_outside_the_status() {
+    use kalem_plugin_git::app::command_info;
+    let m = manifest();
+    let menus = m["menus"].as_array().expect("menus");
+    for menu in menus {
+        assert!(menu["title"].as_str().is_some_and(|t| !t.trim().is_empty()));
+        assert!(menu["when"].as_str().is_some_and(|w| w.contains("vcs == git")));
+        for item in menu["items"].as_array().expect("items") {
+            let item = item.as_str().expect("a command or -");
+            if item == "-" {
+                continue;
+            }
+            let c = command_info(item).unwrap_or_else(|| panic!("`{item}` is no command"));
+            assert!(!c.in_status_only, "`{item}` acts in the status only");
+        }
+    }
+}

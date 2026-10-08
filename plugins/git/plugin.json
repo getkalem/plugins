@@ -7,6 +7,25 @@
   "api": "^0.2.5",
   "activation": ["onStartup"],
   "permissions": ["subprocess:git"],
+  "menus": [
+    {
+      "title": "Git",
+      "when": "vcs == git || textType == git-status",
+      "items": [
+        "git.status",
+        "-",
+        "git.commit", "git.amend", "git.extend", "git.reword",
+        "-",
+        "git.push", "git.pull", "git.fetch",
+        "-",
+        "git.switchBranch", "git.newBranch", "git.stash",
+        "-",
+        "git.stageFile", "git.unstageFile", "git.revertFile", "git.deleteFile", "git.blameLine",
+        "-",
+        "git.dispatch"
+      ]
+    }
+  ],
   "settings": {
     "programs.git": {
       "type": "string",

@@ -4,6 +4,8 @@ The repository's status as a document in Kalem: the changed files with their dif
 
 **Status: phase 1.** `SPC g g` (Word-like keys: the palette's "Git: Status") opens the status as a document of its own, in lazygit's order and magit's form: a line of keys at the top, the branch with its last commit and upstream, the untracked, unstaged and staged files, the local branches, the unpushed, unpulled or recent commits, and the stashes. Tab on a file shows its diff under it, hunk by hunk, highlighted as a diff; the changed lines of every file opened are marked beside the lines, in both editors. A status bar item (`⎇ main ↑1 ↓2 •3`) and the Git panel stay. It needs Kalem's plugin API 0.2.5 (`process`, `documents`, `decorations`) and a repository inside one of Kalem's projects.
 
+A **Git menu** stands in the menu bar (and in the F10 list of both editors) while the current file is in a git repository, and in the status: Status (the same as `SPC g g`), commit, amend, push, pull, fetch, branches, stash, and the file's stage, unstage, revert, delete and blame. It needs Kalem 0.4.1.
+
 ## Keys
 
 Nothing has to be known first: the status's first line names the keys, Alt+Enter (or `?`) lists what can be done with the line under the cursor and then every command, each with its key, and Escape closes the status.
