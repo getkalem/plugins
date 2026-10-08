@@ -1,7 +1,7 @@
 {
   "id": "org.kalem.git",
   "name": "Git",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "The repository's status as a document: changed files with their diffs, staged by file, hunk or line, committed, pushed and pulled from the editor; blame, log, a file at any revision; on Doom's SPC g keys, with the arrows, Enter and Escape",
   "main": "dist/git.wasm",
   "api": "^0.2.4",
