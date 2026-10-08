@@ -39,6 +39,20 @@ pub struct CommandInfo {
     pub keys: &'static [&'static str],
 }
 
+/// The when-clause of a leader key: Vim's command mode, as Kalem's own
+/// leader keys (`keymaps/vim.json`). Without it a key starting with Space
+/// was active in insert mode too, and Space typed no space.
+pub const LEADER_WHEN: &str = "vimCommand";
+
+/// A command's keys split into its leader keys (`space g g`), bound with
+/// [`LEADER_WHEN`], and the others (`ctrl+shift+g`), its default keys.
+pub fn split_leader_keys<'a>(keys: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
+    keys.iter().partition(|k| {
+        let first = k.split(' ').next().unwrap_or_default();
+        first == "space" || first.eq_ignore_ascii_case("leader")
+    })
+}
+
 /// The commands of phase 0, with Doom Emacs's keys (DESIGN.md, 5.2).
 pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
@@ -1547,6 +1561,26 @@ mod tests {
         assert_eq!(s.pull, PullMode::Rebase);
         assert_eq!(s.glyphs, Glyphs::Ascii);
         assert_eq!(s.untracked, Untracked::Normal);
+    }
+
+    #[test]
+    fn leader_keys_are_bound_apart() {
+        let (leader, other) = split_leader_keys(&["space g g", "ctrl+shift+g", "leader g s"]);
+        assert_eq!(leader, ["space g g", "leader g s"]);
+        assert_eq!(other, ["ctrl+shift+g"]);
+        // Every command's Space keys are leader keys; none other starts
+        // with a plain key that types text.
+        for c in COMMANDS {
+            let (_, other) = split_leader_keys(c.keys);
+            for k in other {
+                let first = k.split(' ').next().unwrap_or_default();
+                assert!(
+                    first.contains('+'),
+                    "{} binds `{k}`, a key that types",
+                    c.id
+                );
+            }
+        }
     }
 
     #[test]

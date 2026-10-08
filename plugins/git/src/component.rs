@@ -282,9 +282,10 @@ impl Plugin for Git {
     fn activate() -> Result<(), String> {
         APP.with(|a| *a.borrow_mut() = Some(App::new(read_settings())));
         for c in app::COMMANDS {
+            let (leader, other) = app::split_leader_keys(c.keys);
             let mut spec = kalem::spec(c.id, c.title, Scope::all());
             spec.category = "Git".into();
-            spec.keys = c.keys.iter().map(|k| k.to_string()).collect();
+            spec.keys = other.iter().map(|k| k.to_string()).collect();
             let id = c.id;
             kalem::command(spec, move |_args| {
                 feed(Input::Command {
@@ -293,6 +294,11 @@ impl Plugin for Git {
                 });
                 Ok("null".into())
             })?;
+            // Doom's keys in Vim's command mode only, as Kalem's own leader
+            // keys: in insert mode Space types a space.
+            for k in leader {
+                kalem::keymap(k, c.id, Some(app::LEADER_WHEN))?;
+            }
         }
         ui::panel(
             ui::PanelSpec {

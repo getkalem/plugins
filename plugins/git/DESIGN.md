@@ -350,7 +350,7 @@ Appendix B lists every command line with its flags. The rules: `--no-pager` and 
 
 ### 5.2 The `SPC g` map
 
-The keys of `tests/keys/doom-leader.toml` as the owner listed them, bound by the plugin's command specs (`keys: ["space g g"]`) so that the which-key popup shows them under `+git` and the table's reason changes from "needs the git plugin" to the command's title; then Doom's own keys the table does not list; then the plugin's four.
+The keys of `tests/keys/doom-leader.toml` as the owner listed them, bound with `kalem.keymap` under Vim's command mode (`vimCommand`), as Kalem's own leader keys are, so that Space still types in insert mode, and the which-key popup shows them under `+git` and the table's reason changes from "needs the git plugin" to the command's title; then Doom's own keys the table does not list; then the plugin's four.
 
 | Key | Command | Title | In a file | In a git document, on the item under the cursor | Source |
 |---|---|---|---|---|---|
