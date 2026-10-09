@@ -891,12 +891,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalem-ooxml"
+version = "0.0.1"
+dependencies = [
+ "aes",
+ "cfb",
+ "crc32fast",
+ "miniz_oxide 0.9.1",
+ "sha1",
+ "sha2",
+]
+
+[[package]]
 name = "kalem-plugin"
 version = "0.4.2"
 source = "git+https://github.com/getkalem/kalem?branch=main#f800e6854162d4b2564677fabb5c1980dfc0d7fe"
 dependencies = [
  "kalem-viewer",
  "wit-bindgen",
+]
+
+[[package]]
+name = "kalem-plugin-docx"
+version = "0.0.1"
+dependencies = [
+ "kalem-ooxml",
+ "kalem-plugin",
+ "kalem-viewer",
+ "serde_json",
+ "web-time",
 ]
 
 [[package]]
@@ -952,17 +975,16 @@ dependencies = [
 name = "kalem-plugin-xlsx"
 version = "0.0.1"
 dependencies = [
- "aes",
  "calamine",
  "cfb",
  "crc32fast",
  "iana-time-zone",
  "ironcalc_base",
+ "kalem-ooxml",
  "kalem-plugin",
  "kalem-viewer",
  "miniz_oxide 0.9.1",
  "serde_json",
- "sha1",
  "sha2",
  "web-time",
 ]

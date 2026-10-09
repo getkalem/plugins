@@ -1,0 +1,55 @@
+# Word documents (`docx`)
+
+Opens, edits and saves Word documents (WordprocessingML, ECMA-376 part 1: `.docx`, `.docm`, `.dotx`, `.dotm`) **as themselves**. Nothing is converted: the file is a ZIP package of XML parts, and the plugin reads and writes those parts through the Office layer it shares with the workbook plugin (`crates/ooxml`). Kalem's task T3.7.5; decisions D54 and D55 of its design document. The work list is [`docx_todo.md`](docx_todo.md).
+
+**Status: early, not released.** The library reads, shows and edits; Kalem shows a document's text, outline and information through the `document-viewer` contract, and lays its paragraphs out once the interface of WP5 exists in Kalem (proposed in the list, written to serve every plugin of flowing documents, not this one alone).
+
+## What it does
+
+- **Reads** the package through its relationships (never by part name): the body, headers and footers, footnotes and endnotes, comments, styles, numbering, settings and the theme, the strict namespace as the transitional one. Every element is read with its byte span, so that an edit rewrites the element it touches; an element the plugin does not know is kept with its span and shown by name.
+- **Styles** are put together as 17.7.2 says: the document defaults, the table style and its conditional formats (first row and column, last row and column, banded rows and columns, corner cells, as `w:tblLook` turns them on), the numbering level, the paragraph style and its `basedOn` chain, the character style, then direct formatting; the toggle properties (bold, italic, caps…) combined across style kinds as 17.7.3 says, so Emphasis inside an italic Quote is upright, as in Word. Theme fonts and theme colors are resolved, a theme color's tint and shade computed as Word computes the value it writes beside it.
+- **Lists** are counted as Word counts them: instances of one abstract definition counting together, a `w:startOverride` starting an instance of its own, `w:lvlRestart`, legal numbering, levels linked to styles and `w:numStyleLink`; labels in every common number format (decimal, Roman, letters as Word repeats them, ordinals and cardinal text in English, circled numbers, Chicago's signs) and bullets in Symbol and Wingdings shown as the Unicode characters they draw.
+- **Shows** Word's web layout: each paragraph with its style, label, alignment, indents and spacing, each run with its resolved look (bold, italic, underline, strike, caps, hidden, color, highlight, shading, size, typeface, raised or lowered), fields showing their results (complex and simple, nested, `HYPERLINK` fields as links), links to URLs and bookmarks, footnotes and endnotes numbered in order of reference (`w:footnotePr`, `w:endnotePr`, endnotes in Roman by default as Word has them), comments with their ranges, tracked changes (insertions, deletions, formatting changes, paragraph marks inserted or deleted) with their authors and dates, tables with merged cells, nested tables and fills, pictures (their part, size and alternative text), text boxes (their paragraphs after the paragraph they are anchored in), and charts, shapes, SmartArt, equations and embedded objects by name. The first section's header and footer are shown once, at the top and the bottom.
+- **Edits** text the way typing in Word does, in any story (the body, a table cell, a header, a note, a comment): typed text goes into the run before it, so it takes that run's look; over a selection it takes the look of the selection's first character; a deletion shortens, empties or removes the runs it covers; tabs and line, page and column breaks are written as `w:tab` and `w:br`; Enter splits the paragraph and the elements open where it splits (a link, an insertion), and after a heading the new paragraph takes the style's next style (`Normal`, written as no style, as Word writes it); Backspace joins paragraphs; a deletion across paragraphs is one step. Only the paragraphs touched are rewritten: after typing a word, one `w:r` of `word/document.xml` differs, and every other entry of the package is copied byte for byte, local header included. Every edit undoes and redoes; undoing everything saves the input byte for byte.
+- **Tracked changes**: in a document that tracks changes (`w:trackRevisions`, turned on and off by the plugin too), typed text is written in `w:ins`, deleted text kept in `w:del` as `w:delText`, Enter marks the paragraph mark inserted and Backspace marks it deleted, each with its author, date and an ID of its own, as Word writes them; deleting text of an insertion takes it away, and a deletion over text deleted already leaves it so.
+- **Refuses** what it does not write yet, saying why: deleted text, a field's result, a note's mark, a check box, content read through `mc:AlternateContent`, joining across a section break, a document whose protection is enforced.
+- **A password to open** ([MS-OFFCRYPTO], the shared layer's): a document encrypted by Word 2007 or later opens with its password, which Kalem asks for, and is saved encrypted again with the same password.
+
+## Try it
+
+Kalem does not lay Word documents out yet; the library comes with a command line:
+
+```sh
+cargo run -p kalem-plugin-docx --example docx -- info    report.docx
+cargo run -p kalem-plugin-docx --example docx -- show    report.docx
+cargo run -p kalem-plugin-docx --example docx -- text    report.docx
+cargo run -p kalem-plugin-docx --example docx -- paras   report.docx
+cargo run -p kalem-plugin-docx --example docx -- type    report.docx 3 0 'Typed ' [-o out.docx]
+cargo run -p kalem-plugin-docx --example docx -- set     report.docx 3 'New text' [-o out.docx]
+cargo run -p kalem-plugin-docx --example docx -- split   report.docx 3 5 [-o out.docx]
+cargo run -p kalem-plugin-docx --example docx -- join    report.docx 3 [-o out.docx]
+cargo run -p kalem-plugin-docx --example docx -- track   report.docx on [-o out.docx]
+```
+
+`show` marks the look (`**bold**`, `_italic_`, `^raised^`, `<link|text>`, `{+inserted+}`, `[-deleted-]`) and draws tables and text boxes; `paras` numbers the body's paragraphs as the edit commands take them, with their edit text. `KALEM_AUTHOR` names the author of tracked changes.
+
+As a component, through Kalem's own command line (a Kalem configuration folder of its own keeps the user's untouched):
+
+```sh
+KALEM_CONFIG_DIR=/tmp/kalem-docx kalem plugin build plugins/docx
+KALEM_CONFIG_DIR=/tmp/kalem-docx kalem plugin install -y plugins/docx
+KALEM_CONFIG_DIR=/tmp/kalem-docx kalem view report.docx
+```
+
+## Tests
+
+`cargo test -p kalem-plugin-docx`. The corpus in `tests/corpus/` is generated by `tests/corpus/make.py` (python-docx over its default template; a package written part by part with every construct the plugin reads; each saved again by LibreOffice Writer) and licensed as this repository. The tests check byte-identical round trips of every file, the parts and the runs an edit changes, styles, lists, toggles, fields, links, notes, comments, tracked changes, tables and drawings as shown in both producers' files, typing, deleting, Enter and Backspace untracked and tracked, edits in notes, headers and comments, refusals, a password to open, and every cut of a file failing without a panic.
+
+LibreOffice was used by hand as the oracle for edited files (`soffice --convert-to txt` and `--convert-to docx`): it opens them, shows the edits, and keeps the tracked insertions and deletions with their authors (a paragraph mark inserted, written as Word writes it, it drops on its own save). Measured on 2026-10-09 (an Apple M1 Max, release build): a document of 20,000 paragraphs (4.4 MB of `document.xml`) opens and is shown in 0.18 s in 82 MB; an edit there and the save take 0.17 s; the component is 710 kB.
+
+## Not yet
+
+- Kalem laying the paragraphs out (WP5), and with it pictures drawn, the comments' margin, and the terminal's styled text.
+- Formatting edits (bold, styles, lists), comments added and answered, tracked changes accepted and rejected, pictures, links, tables and notes inserted (WP9 to WP11); text boxes edited.
+- Word itself opening edited files without a repair prompt, checked by hand (the exit criterion of T3.7.5): driving Word from a script stops at its file access prompt.
+- Pages (WP13).

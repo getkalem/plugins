@@ -1,0 +1,11 @@
+{
+  "id": "org.kalem.docx",
+  "name": "Word documents",
+  "version": "0.0.1",
+  "description": "Opens Word documents (.docx, .docm, .dotx, .dotm) as themselves: styles, lists, tables, notes, comments and tracked changes read; text edited in its runs, every other part kept byte for byte",
+  "main": "dist/docx.wasm",
+  "api": "^0.2.1",
+  "activation": ["onDocument"],
+  "permissions": [],
+  "opens": [".docx", ".docm", ".dotx", ".dotm"]
+}
