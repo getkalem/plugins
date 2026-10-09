@@ -1,12 +1,11 @@
-//! The plugin as Kalem's `document-viewer` (D54): a document is one unit
-//! whose text, outline and information Kalem shows, searched and copied;
-//! a document with a password to open opens with it; the file saves as
-//! itself, encrypted again when it was.
-//!
-//! Kalem lays a document's paragraphs out itself through the interface of
-//! the docx list's WP5, which does not exist yet: until then the unit has
-//! no picture, and its render says so; the terminal and search read its
-//! text.
+//! The plugin as Kalem's `flow-viewer` (D54, plugin API 0.2.7): a
+//! document is one unit of flowing text whose paragraphs Kalem lays out
+//! itself (the `flow` interface: [`crate::contract`]) and edits as text,
+//! each edit made here in the document's runs; its comments and tracked
+//! changes are the `annotations` interface's, accepted and rejected here.
+//! A document with a password to open opens with it; the file saves as
+//! itself, encrypted again when it was. The unit has no picture: its
+//! render says so, and a Kalem older than 0.2.7 shows its text.
 
 use kalem_viewer::{
     Detection, FileHandle, InfoField, OutlineEntry, RenderRequest, Rendered, Result, SaveOutput,
@@ -121,6 +120,8 @@ impl Viewer for DocxViewer {
             view,
             password,
             name: file.name().to_owned(),
+            version: 0,
+            flow: None,
         }))
     }
 }
@@ -131,6 +132,53 @@ struct DocxDoc {
     view: DocView,
     password: Option<String>,
     name: String,
+    /// The flow's version: one more at each change.
+    version: u64,
+    /// The flow as last given to Kalem, until the next change.
+    flow: Option<crate::contract::FlowCache>,
+}
+
+/// A tracked change's `w:id` from its annotation's ID (`r` and the ID).
+fn revision(id: &str) -> Result<&str> {
+    id.strip_prefix('r')
+        .ok_or_else(|| ViewerError(format!("{id} is not a tracked change")))
+}
+
+impl DocxDoc {
+    /// The flow Kalem is given, made once a version.
+    fn cache(&mut self) -> &crate::contract::FlowCache {
+        if self.flow.is_none() {
+            self.flow = Some(crate::contract::build(&self.doc.view_with(true)));
+        }
+        self.flow.get_or_insert_with(Default::default)
+    }
+
+    /// The paragraph of a flow index.
+    fn para(&mut self, index: u32) -> Result<crate::flow::ParaAt> {
+        self.cache()
+            .paras
+            .get(index as usize)
+            .cloned()
+            .ok_or_else(|| ViewerError(format!("There is no paragraph {index}")))
+    }
+
+    /// After a change: a new version, the view read again.
+    fn refreshed(&mut self) {
+        self.version += 1;
+        self.flow = None;
+        self.view = self.doc.view();
+    }
+
+    /// An edit's result; the view read again when it was made.
+    fn changed(&mut self, r: std::result::Result<(), crate::document::Error>) -> Result<()> {
+        match r {
+            Ok(()) => {
+                self.refreshed();
+                Ok(())
+            }
+            Err(e) => Err(err(e)),
+        }
+    }
 }
 
 /// Counts of what a document holds, for the information panel.
@@ -207,8 +255,8 @@ impl ViewerDocument for DocxDoc {
 
     fn render(&mut self, _unit: usize, _request: RenderRequest) -> Result<Rendered> {
         Err(ViewerError(
-            "Kalem does not lay Word documents out yet: their text is shown in the terminal, \
-             searched and copied (the docx plugin's flow interface, WP5)"
+            "A Word document is laid out by Kalem from its paragraphs (the flow interface, \
+             plugin API 0.2.7), not rendered by the plugin"
                 .into(),
         ))
     }
@@ -282,6 +330,170 @@ impl ViewerDocument for DocxDoc {
 
     fn modified(&self) -> bool {
         self.doc.is_dirty()
+    }
+
+    // Kalem's flow (plugin API 0.2.7): the paragraphs Kalem lays out and
+    // edits, every story's in one sequence.
+
+    fn flow(&mut self, unit: usize) -> Option<kalem_viewer::FlowLayout> {
+        if unit != 0 {
+            return None;
+        }
+        let items = self.cache().items.len() as u32;
+        Some(kalem_viewer::FlowLayout {
+            items,
+            version: self.version,
+            editable: self.doc.protection().is_none(),
+        })
+    }
+
+    fn flow_items(&mut self, _unit: usize, from: u32, count: u32) -> Vec<kalem_viewer::FlowItem> {
+        let items = &self.cache().items;
+        let from = (from as usize).min(items.len());
+        let to = from.saturating_add(count as usize).min(items.len());
+        items[from..to].to_vec()
+    }
+
+    fn flow_replace(
+        &mut self,
+        _unit: usize,
+        paragraph: u32,
+        range: std::ops::Range<u32>,
+        text: &str,
+    ) -> Result<()> {
+        let at = self.para(paragraph)?;
+        let r = self
+            .doc
+            .replace(&at, range.start as usize..range.end as usize, text);
+        self.changed(r)
+    }
+
+    fn flow_split(&mut self, _unit: usize, at: kalem_viewer::FlowPlace) -> Result<()> {
+        let p = self.para(at.paragraph)?;
+        let r = self.doc.split(&p, at.offset as usize);
+        self.changed(r)
+    }
+
+    fn flow_join(&mut self, _unit: usize, paragraph: u32) -> Result<()> {
+        let at = self.para(paragraph)?;
+        let next = self.para(paragraph + 1)?;
+        if next.story != at.story || next.index != at.index + 1 {
+            return Err(ViewerError(
+                "Only a paragraph and the next one of the same part are joined".into(),
+            ));
+        }
+        let r = self.doc.join(&at);
+        self.changed(r)
+    }
+
+    fn flow_delete(
+        &mut self,
+        _unit: usize,
+        from: kalem_viewer::FlowPlace,
+        to: kalem_viewer::FlowPlace,
+    ) -> Result<()> {
+        let a = self.para(from.paragraph)?;
+        let b = self.para(to.paragraph)?;
+        if a.story != b.story {
+            return Err(ViewerError(
+                "A deletion across a header, a note and the body is not made".into(),
+            ));
+        }
+        let r = self
+            .doc
+            .delete_between((&a, from.offset as usize), (&b, to.offset as usize));
+        self.changed(r)
+    }
+
+    fn flow_styles(&mut self) -> Vec<kalem_viewer::FlowStyle> {
+        use crate::styles::StyleKind;
+        self.doc
+            .styles()
+            .styles
+            .iter()
+            .filter_map(|s| {
+                let kind = match s.kind {
+                    StyleKind::Paragraph => kalem_viewer::FlowStyleKind::Paragraph,
+                    StyleKind::Character => kalem_viewer::FlowStyleKind::Character,
+                    _ => return None,
+                };
+                Some(kalem_viewer::FlowStyle {
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    kind,
+                    shown: !s.hidden,
+                })
+            })
+            .collect()
+    }
+
+    fn has_history(&self) -> bool {
+        true
+    }
+
+    fn undo(&mut self) -> Result<bool> {
+        let done = self.doc.undo();
+        if done {
+            self.refreshed();
+        }
+        Ok(done)
+    }
+
+    fn redo(&mut self) -> Result<bool> {
+        let done = self.doc.redo();
+        if done {
+            self.refreshed();
+        }
+        Ok(done)
+    }
+
+    fn begin_batch(&mut self) {
+        self.doc.begin_batch();
+    }
+
+    fn end_batch(&mut self) {
+        if self.doc.end_batch() {
+            self.refreshed();
+        }
+    }
+
+    // Comments and tracked changes (the `annotations` interface).
+
+    fn annotations(&mut self, _unit: Option<usize>) -> Vec<kalem_viewer::Annotation> {
+        self.cache().annotations.clone()
+    }
+
+    fn set_author(&mut self, name: &str) {
+        self.doc.set_revision_author(name, None);
+    }
+
+    fn accept(&mut self, id: &str) -> Result<()> {
+        let r = self.doc.decide(revision(id)?, true);
+        self.changed(r)
+    }
+
+    fn reject(&mut self, id: &str) -> Result<()> {
+        let r = self.doc.decide(revision(id)?, false);
+        self.changed(r)
+    }
+
+    fn accept_all(&mut self, _unit: Option<usize>) -> Result<()> {
+        let r = self.doc.decide_all(true);
+        self.changed(r)
+    }
+
+    fn reject_all(&mut self, _unit: Option<usize>) -> Result<()> {
+        let r = self.doc.decide_all(false);
+        self.changed(r)
+    }
+
+    fn tracking(&mut self) -> Option<bool> {
+        Some(self.doc.tracks_changes())
+    }
+
+    fn set_tracking(&mut self, on: bool) -> Result<()> {
+        let r = self.doc.set_track_changes(on);
+        self.changed(r)
     }
 
     fn save(&mut self) -> Result<SaveOutput> {

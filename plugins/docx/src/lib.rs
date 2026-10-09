@@ -13,19 +13,21 @@
 //! is written back byte for byte, and a save without edits returns the
 //! input unchanged.
 //!
-//! Kalem lays documents out itself and a plugin never draws (D54); the
-//! interface through which the plugin will hand Kalem its paragraphs is
-//! the docx list's WP5. Until it exists, the plugin is a viewer of the
-//! `document-viewer` contract that gives Kalem the document's text,
-//! outline and information ([`viewer`]), and this crate is the format
-//! library that interface will carry.
+//! Kalem lays documents out itself and a plugin never draws (D54): the
+//! plugin hands Kalem its paragraphs through the `flow` interface of
+//! plugin API 0.2.7 and its comments and tracked changes through the
+//! `annotations` interface ([`contract`]), takes Kalem's edits in
+//! paragraphs' edit coordinates, and accepts and rejects changes
+//! ([`review`]); [`viewer`] is the plugin as Kalem's contract.
 
 pub mod chars;
+pub mod contract;
 pub mod document;
 pub mod edit;
 pub mod flow;
 pub mod numbering;
 pub mod props;
+pub mod review;
 pub mod story;
 pub mod styles;
 pub mod viewer;

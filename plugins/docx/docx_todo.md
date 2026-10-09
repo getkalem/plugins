@@ -218,73 +218,73 @@ order they are done, the spike first.
   section's header and footer. `text(unit)` gives Kalem the text
   (paragraphs a line, labels first, table rows a line with tabs
   between cells, notes after the body), the outline comes from the
-  headings, and `render` says that Kalem does not lay the document out
-  yet. The plugin builds as a `document-viewer` component, runs in Kalem
-  0.5.1 (`kalem plugin check`, `kalem view`), and is 710 kB.
+  headings, and `render` says that Kalem lays the document out (WP5b).
+  The plugin builds as a `flow-viewer` component (plugin API 0.2.7)
+  and is 900 kB.
 
-- [ ] WP5b Kalem's half, a **flow interface for every plugin of flowing
+- [x] WP5b Kalem's half, a **flow interface for every plugin of flowing
   documents**, not for Word alone (the owner's direction, 2026-10-09:
   an addition to the plugin API is made as general as it can be, so
   that later plugins use it as they are). Its users from the start:
   Word (`docx`), OpenDocument text (`odt`, T3.7.7), RTF, e-books
   (`epub`, one unit a chapter), web pages and e-mail bodies (`html`,
-  `eml`), and the text bodies of slides (`pptx`, T3.7.6) as frames; the
-  plugin's `flow.rs` is written to it, and nothing in it is Word's. A
-  proposal for the owner, in the pattern of the git plugin's section
-  9 and of `grid.wit`, which did the same for every viewer of cells:
-  - **The unit.** A unit kind `flow` beside `page`, `sheet` and
-    `table`: a document's body, a chapter, a slide's text; the host
-    draws it with its own rich text engines (`gpui-rich-text`'s pieces
-    and blocks, `tui-rich-text`'s styled lines), as it draws an Org
-    document with its markers hidden. A world `flow-viewer` beside
-    `spreadsheet-viewer`, and an interface `flow.wit` beside
-    `grid.wit`, released in a patch version and frozen with the first
-    plugin released against it.
-  - **Blocks**, fetched a range at a time (`blocks(unit, from, count)`)
-    with a version, so that a book is never sent whole and an edit
-    sends back only the blocks it changed, by their IDs: a paragraph
-    (a role any format has: body, heading with its level, list item
-    with its level and label, quote, code, caption; the format's style
-    name for the user; alignment, indents, spacing, shading, borders),
-    a table (rows of cells with their column and row spans, widths,
-    fills, borders, and blocks), a picture (an object ID, its size, its
-    alternative text; `picture(unit, id, max-size)` returns a bitmap of
-    the viewer contract, so the plugin decodes in its sandbox), a frame
-    (a text box, a sidebar, a slide's shape: blocks apart from the
-    flow), a rule (a page, section or column break, a horizontal line),
-    and a placeholder naming what is not shown.
-  - **Runs**: text, marks by generic names (bold, italic, underline
-    with its kind, strike, superscript, subscript, small caps, caps,
-    hidden), a color, a highlight, a typeface and a size; a link (a
-    URL or a place in the document); the annotations the run is in, by
-    ID; the range of the block's edit text it stands for, and whether
-    it is edited as text, with the reason when not.
-  - **Annotations**, one list for every format with review markup
-    (Word's and ODT's comments and tracked changes, a PDF's notes, a
-    web page's): a comment (author, date, text, replies, resolved) or a
-    revision (inserted, deleted, formatted, moved; author, date), each
-    with the ranges it covers. The host draws comments in a margin and
-    revisions as insertions and deletions, the same for each plugin.
-  - **Notes**: footnotes and endnotes as blocks of their own with their
-    marks, which a run refers to; the host shows them where the view
-    puts them (a page's foot later, the end now).
-  - **Edits** in edit coordinates (a block ID and a byte of its edit
-    text, one character per tab, break or object), each answering the
-    blocks it changed: replace a range with text, split a block, join a
-    block with the next, delete from one place to another; set marks
-    on a range, set a block's role or style, a list's kind and level;
-    insert an object; review: turn tracking on and off, accept or
-    reject an annotation, add, answer and resolve a comment. The
-    document's own history undoes them, as the grid's does
-    (`begin-batch`, `end-batch`, `undo`, `redo`), so a format writes
-    them in its own vocabulary and nothing else.
-  - **Styles** for pickers: each style's ID, name, kind and whether it
-    is shown; the host lists them, the plugin applies them.
-  The name is `flow` (the owner, 2026-10-09: it pairs with `grid`,
-  and is what typesetting calls content that flows). Until the owner
-  decides: whether annotations belong to it or to an interface of their
-  own that the PDF viewer would share, and one unit for a document's
-  body or one per section.
+  `eml`), and the text bodies of slides (`pptx`, T3.7.6) as frames.
+  (Done 2026-10-09, plugin API 0.2.7, Kalem's `flow.wit`,
+  `annotations.wit`, `kalem-viewer`'s `flow.rs`, `kalem-core`'s
+  `flow.rs`; this plugin's half in `contract.rs`:)
+  - **The unit.** `viewer.wit`'s unit kinds are frozen, so a unit is of
+    flowing text when its viewer answers `flow.layout(unit)`, as a
+    grid's does; the world `flow-viewer` exports `flow` beside
+    `viewer`, `password`, `formats` and `annotations`, and
+    `kalem-plugin`'s feature `flow` adapts the Rust contract to it.
+    One unit is a document's body, its first section's header and
+    footer and its notes as asides; a section break is a rule.
+  - **Items**, fetched a range at a time (`items(unit, from, count)`)
+    with a version: WIT has no recursive types, so a table, a row, a
+    cell and an aside (a header, a footer, a footnote, an endnote, a
+    frame, a sidebar) are a start and an end around their paragraphs.
+    A paragraph has a role any format has (body, title, subtitle,
+    heading, list item, quote, code, caption) with its level, the
+    format's style name, its label with the label's marks, alignment,
+    indents, spacing, background, its edit text, its runs and the
+    annotations on its mark; a paragraph without an index is shown and
+    not edited. A run has its text, a piece (text, tab, a line, page
+    or column break, a note's mark, a picture, a placeholder), marks by
+    generic names (bold, italic, underline with its kind, strike,
+    double strike, caps, small caps, hidden, raised or lowered, color,
+    highlight, size, typeface), its link, the IDs of the annotations it
+    is in, its range of the edit text, and the reason it is locked when
+    it is.
+  - **Edits** in edit coordinates (a paragraph's index and a byte of
+    its edit text): `replace`, `split`, `join`, `delete` from one place
+    to another, `set-marks`, `set-style`; the document's own history
+    (`begin-batch`, `end-batch`, `undo`, `redo`), as the grid's.
+    `styles` lists the styles for pickers; `render-picture` gives a
+    picture as a bitmap.
+  - **Annotations** are an interface of their own (the owner's
+    decision, 2026-10-09), exported by every viewer world, so that the
+    PDF viewer's notes and a workbook's comments use it too: a comment
+    (author, date, text, the comment it answers, resolved) or a tracked
+    change (insertion, deletion, formatting, moved from, moved to),
+    anchored to flowing text, a page's text, a cell, an area or a
+    whole unit; adding, answering, resolving and removing comments,
+    accepting and rejecting one change or all, tracking turned on and
+    off, and the author's name from Kalem's setting `user.name`.
+  - **Kalem shows** a flow unit in both editors as a document of the
+    editor: its text is the paragraphs' edit texts a line each (a row
+    of one-paragraph cells a line, its cells between tabs), drawn with
+    the runs' marks, sizes in proportion to the body text's, list
+    labels, the asides' and rows' marks before their lines; typing,
+    Enter, Backspace and deleting across paragraphs become `replace`,
+    `split`, `join` and `delete` in one batch, refused edits undone and
+    said in a notice; undo and redo are the plugin's. Comments are
+    highlighted, insertions underlined and deletions struck through in
+    their colors, the status bar says the comment or change at the
+    cursor, and the commands of the Review category act on them.
+  Not yet in Kalem: pictures drawn (`render-picture` is in the
+  interface, the plugin does not answer it), the comments' margin,
+  formatting and style edits from the editor (`set-marks`,
+  `set-style`: WP9), and a page's text anchors for the PDF viewer.
 
 ## WP6. Tables
 
@@ -372,7 +372,7 @@ order they are done, the spike first.
   (Read 2026-10-09: inline and floating drawings, their size,
   name and alternative text, the picture's part through its
   relationship (embedded or linked), VML pictures. Open: decoding the
-  picture for Kalem (WP5b's `picture`), cropping, links on pictures.)
+  picture for Kalem (WP5b's `render-picture`), cropping, links on pictures.)
 - [~] WP7g Placeholders, kept in the file and shown by name: text boxes
   (`wps:txbx`, their content shown inline inside a frame marker),
   shapes (`wps:wsp` with their text), groups, SmartArt (`dgm:`),
@@ -476,8 +476,11 @@ order they are done, the spike first.
   `0x80000000`, in `commentsExtended.xml`), Reply (`w15:paraIdParent`),
   Resolve (`w15:done`), Delete (the three markers and the comment
   gone; the parts removed when empty, as Word leaves them); the author
-  and initials from the plugin's settings, else Kalem's user name.
-- [~] WP10b Tracked changes: Accept and Reject on the change under the
+  and initials from Kalem's user name (`set-author`). Kalem's half is
+  done (the `annotations` interface's `comment`, `reply`, `resolve`,
+  `remove` and the Review commands, 2026-10-09); the plugin refuses
+  them until this is.
+- [x] WP10b Tracked changes: Accept and Reject on the change under the
   cursor, Accept All and Reject All, as Word rewrites them (an
   accepted `w:ins` unwrapped, a rejected one removed; an accepted
   `w:del` removed, a rejected one unwrapped with `w:delText` back to
@@ -488,13 +491,18 @@ order they are done, the spike first.
   plugin's own typing and formatting written as `w:ins`, `w:del` and
   `w:rPrChange` with the author and the date, so a reviewer's edits in
   Kalem look in Word as Word's own do.
-  (Done 2026-10-09 but for accepting and rejecting: Track
-  Changes turned on and off in the settings, and while it is on typing,
-  deleting, Enter and Backspace written as `w:ins`, `w:del` with
-  `w:delText` and the paragraph mark's `w:ins` and `w:del`, each with
-  the author (`Document::set_revision_author`, "Kalem" until the open
-  question is settled), the date and a fresh ID. LibreOffice keeps them
-  on its own save, but for a paragraph mark inserted.)
+  (Done 2026-10-09: Track Changes turned on and off in the settings,
+  and while it is on typing, deleting, Enter and Backspace written as
+  `w:ins`, `w:del` with `w:delText` and the paragraph mark's `w:ins`
+  and `w:del`, each with the author (Kalem's setting `user.name`, given
+  through `set-author`; "Kalem" without it), the date and a fresh ID.
+  LibreOffice keeps them on its own save, but for a paragraph mark
+  inserted. Accepting and rejecting (`review.rs`, `Document::decide`
+  and `decide_all`): runs inserted or deleted, moves, paragraph marks
+  (accepting a deleted mark joins the paragraphs, in the body), run and
+  paragraph formatting changes, one by its ID or all in every story;
+  from Kalem's Review commands through the `annotations` interface.
+  Formatting changes are made by the plugin only once WP9 is.)
 
 ## WP11. Pictures, links, tables and structure edited; Find
 
@@ -638,22 +646,16 @@ order they are done, the spike first.
   is read, shown, edited and written, export, known differences, not
   implemented, limits, code and tests), changed with the code in the
   same pull request (D53); R5.16's docx half ticked.
-  (Done 2026-10-09 but for the release: `plugin.json` on
-  plugin API 0.2.1's `document-viewer`, the README, the line in the
-  repository's README and in `index.json` (not published, no download).
-  The tag waits for WP5b.)
+  (Done 2026-10-09 but for the release: `plugin.json` on plugin API
+  0.2.7's `flow-viewer` (`"api": "^0.2.7"`), the README, the line in
+  the repository's README and in `index.json` (not published, no
+  download). The tag waits for a Kalem release with API 0.2.7.)
 
 ## Open for the owner
 
-- The flow interface (WP5b), proposed for every plugin of flowing
-  documents (its name settled as `flow`, 2026-10-09): whether
-  annotations belong to it or to an interface the PDF viewer would
-  share, and one unit for a document's body or one per section.
 - The shared crate's home: `crates/ooxml`, as proposed and done; or
   `plugins/ooxml` (no change to the workspace globs, but a library
   among the plugins).
 - Whether a save updates `dcterms:modified` and `cp:revision` as Word
   does (WP8).
-- The author written into comments and revisions: a plugin setting, or
-  Kalem's user name (WP10).
 - Web layout only, or the page view of WP13 on the roadmap now.

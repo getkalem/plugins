@@ -2,7 +2,7 @@
 
 Opens, edits and saves Word documents (WordprocessingML, ECMA-376 part 1: `.docx`, `.docm`, `.dotx`, `.dotm`) **as themselves**. Nothing is converted: the file is a ZIP package of XML parts, and the plugin reads and writes those parts through the Office layer it shares with the workbook plugin (`crates/ooxml`). Kalem's task T3.7.5; decisions D54 and D55 of its design document. The work list is [`docx_todo.md`](docx_todo.md).
 
-**Status: early, not released.** The library reads, shows and edits; Kalem shows a document's text, outline and information through the `document-viewer` contract, and lays its paragraphs out once the interface of WP5 exists in Kalem (proposed in the list, written to serve every plugin of flowing documents, not this one alone).
+**Status: early, not released.** The plugin is a `flow-viewer` component of plugin API 0.2.7: Kalem lays a document's paragraphs out itself through the `flow` interface and edits them as text, and reviews its comments and tracked changes through the `annotations` interface. Both interfaces are Kalem's, written for every plugin of flowing documents and of review markup, not for this one alone.
 
 ## What it does
 
@@ -11,13 +11,21 @@ Opens, edits and saves Word documents (WordprocessingML, ECMA-376 part 1: `.docx
 - **Lists** are counted as Word counts them: instances of one abstract definition counting together, a `w:startOverride` starting an instance of its own, `w:lvlRestart`, legal numbering, levels linked to styles and `w:numStyleLink`; labels in every common number format (decimal, Roman, letters as Word repeats them, ordinals and cardinal text in English, circled numbers, Chicago's signs) and bullets in Symbol and Wingdings shown as the Unicode characters they draw.
 - **Shows** Word's web layout: each paragraph with its style, label, alignment, indents and spacing, each run with its resolved look (bold, italic, underline, strike, caps, hidden, color, highlight, shading, size, typeface, raised or lowered), fields showing their results (complex and simple, nested, `HYPERLINK` fields as links), links to URLs and bookmarks, footnotes and endnotes numbered in order of reference (`w:footnotePr`, `w:endnotePr`, endnotes in Roman by default as Word has them), comments with their ranges, tracked changes (insertions, deletions, formatting changes, paragraph marks inserted or deleted) with their authors and dates, tables with merged cells, nested tables and fills, pictures (their part, size and alternative text), text boxes (their paragraphs after the paragraph they are anchored in), and charts, shapes, SmartArt, equations and embedded objects by name. The first section's header and footer are shown once, at the top and the bottom.
 - **Edits** text the way typing in Word does, in any story (the body, a table cell, a header, a note, a comment): typed text goes into the run before it, so it takes that run's look; over a selection it takes the look of the selection's first character; a deletion shortens, empties or removes the runs it covers; tabs and line, page and column breaks are written as `w:tab` and `w:br`; Enter splits the paragraph and the elements open where it splits (a link, an insertion), and after a heading the new paragraph takes the style's next style (`Normal`, written as no style, as Word writes it); Backspace joins paragraphs; a deletion across paragraphs is one step. Only the paragraphs touched are rewritten: after typing a word, one `w:r` of `word/document.xml` differs, and every other entry of the package is copied byte for byte, local header included. Every edit undoes and redoes; undoing everything saves the input byte for byte.
-- **Tracked changes**: in a document that tracks changes (`w:trackRevisions`, turned on and off by the plugin too), typed text is written in `w:ins`, deleted text kept in `w:del` as `w:delText`, Enter marks the paragraph mark inserted and Backspace marks it deleted, each with its author, date and an ID of its own, as Word writes them; deleting text of an insertion takes it away, and a deletion over text deleted already leaves it so.
+- **Tracked changes**: in a document that tracks changes (`w:trackRevisions`, turned on and off by the plugin too), typed text is written in `w:ins`, deleted text kept in `w:del` as `w:delText`, Enter marks the paragraph mark inserted and Backspace marks it deleted, each with its author, date and an ID of its own, as Word writes them; deleting text of an insertion takes it away, and a deletion over text deleted already leaves it so. A change is **accepted or rejected** as Word does it, one by its ID or all of them in every story: an insertion kept or removed, a deletion removed or its text restored, a paragraph mark kept or the paragraphs joined, a formatting change kept or its old properties restored. The author is Kalem's setting `user.name`.
 - **Refuses** what it does not write yet, saying why: deleted text, a field's result, a note's mark, a check box, content read through `mc:AlternateContent`, joining across a section break, a document whose protection is enforced.
 - **A password to open** ([MS-OFFCRYPTO], the shared layer's): a document encrypted by Word 2007 or later opens with its password, which Kalem asks for, and is saved encrypted again with the same password.
 
 ## Try it
 
-Kalem does not lay Word documents out yet; the library comes with a command line:
+In a Kalem of plugin API 0.2.7 or later, a document opens in either editor as a document of the editor: its paragraphs a line each, drawn with their styles, list labels, tables, notes, header and footer; typing, Enter and Backspace are written into the document's runs, as tracked changes when it tracks them, and undo and redo are the document's. Comments are highlighted and tracked changes underlined or struck through; the commands of the Review category go from one to the next, accept and reject changes and turn Track Changes on and off. The component is built and installed through Kalem's own command line, which also prints a document's text and information (a Kalem configuration folder of its own keeps the user's untouched):
+
+```sh
+KALEM_CONFIG_DIR=/tmp/kalem-docx kalem plugin build plugins/docx
+KALEM_CONFIG_DIR=/tmp/kalem-docx kalem plugin install -y plugins/docx
+KALEM_CONFIG_DIR=/tmp/kalem-docx kalem view report.docx
+```
+
+The library also comes with a command line:
 
 ```sh
 cargo run -p kalem-plugin-docx --example docx -- info    report.docx
@@ -33,23 +41,15 @@ cargo run -p kalem-plugin-docx --example docx -- track   report.docx on [-o out.
 
 `show` marks the look (`**bold**`, `_italic_`, `^raised^`, `<link|text>`, `{+inserted+}`, `[-deleted-]`) and draws tables and text boxes; `paras` numbers the body's paragraphs as the edit commands take them, with their edit text. `KALEM_AUTHOR` names the author of tracked changes.
 
-As a component, through Kalem's own command line (a Kalem configuration folder of its own keeps the user's untouched):
-
-```sh
-KALEM_CONFIG_DIR=/tmp/kalem-docx kalem plugin build plugins/docx
-KALEM_CONFIG_DIR=/tmp/kalem-docx kalem plugin install -y plugins/docx
-KALEM_CONFIG_DIR=/tmp/kalem-docx kalem view report.docx
-```
-
 ## Tests
 
 `cargo test -p kalem-plugin-docx`. The corpus in `tests/corpus/` is generated by `tests/corpus/make.py` (python-docx over its default template; a package written part by part with every construct the plugin reads; each saved again by LibreOffice Writer) and licensed as this repository. The tests check byte-identical round trips of every file, the parts and the runs an edit changes, styles, lists, toggles, fields, links, notes, comments, tracked changes, tables and drawings as shown in both producers' files, typing, deleting, Enter and Backspace untracked and tracked, edits in notes, headers and comments, refusals, a password to open, and every cut of a file failing without a panic.
 
-LibreOffice was used by hand as the oracle for edited files (`soffice --convert-to txt` and `--convert-to docx`): it opens them, shows the edits, and keeps the tracked insertions and deletions with their authors (a paragraph mark inserted, written as Word writes it, it drops on its own save). Measured on 2026-10-09 (an Apple M1 Max, release build): a document of 20,000 paragraphs (4.4 MB of `document.xml`) opens and is shown in 0.18 s in 82 MB; an edit there and the save take 0.17 s; the component is 710 kB.
+LibreOffice was used by hand as the oracle for edited files (`soffice --convert-to txt` and `--convert-to docx`): it opens them, shows the edits, and keeps the tracked insertions and deletions with their authors (a paragraph mark inserted, written as Word writes it, it drops on its own save). Measured on 2026-10-09 (an Apple M1 Max, release build): a document of 20,000 paragraphs (4.4 MB of `document.xml`) opens and is shown in 0.18 s in 82 MB; an edit there and the save take 0.17 s; the component is 900 kB.
 
 ## Not yet
 
-- Kalem laying the paragraphs out (WP5), and with it pictures drawn, the comments' margin, and the terminal's styled text.
-- Formatting edits (bold, styles, lists), comments added and answered, tracked changes accepted and rejected, pictures, links, tables and notes inserted (WP9 to WP11); text boxes edited.
+- Pictures drawn and the comments' margin in Kalem (WP5b).
+- Formatting edits (bold, styles, lists), comments added, answered and resolved, pictures, links, tables and notes inserted (WP9 to WP11); text boxes edited.
 - Word itself opening edited files without a repair prompt, checked by hand (the exit criterion of T3.7.5): driving Word from a script stops at its file access prompt.
 - Pages (WP13).

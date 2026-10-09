@@ -24,10 +24,11 @@ kalem-viewer = { git = "https://github.com/getkalem/kalem", branch = "main" }
 kalem-ooxml = { path = "../../crates/ooxml" }
 
 # The component's exports (`kalem plugin build`): the Rust contract
-# adapted to the WIT world `document-viewer`, on wasm32 only; the clock
+# adapted to the WIT world `flow-viewer` (with the feature `flow`: Kalem
+# lays the paragraphs out, plugin API 0.2.7), on wasm32 only; the clock
 # of the compound file reader (an encrypted document) from Kalem's.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main" }
+kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main", features = ["flow"] }
 web-time = "1"
 
 [dev-dependencies]

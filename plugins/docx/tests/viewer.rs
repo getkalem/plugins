@@ -55,9 +55,10 @@ fn opened_with_its_text_outline_and_information() {
     assert_eq!(get("Footnotes").as_deref(), Some("1"));
     assert_eq!(get("Tables").as_deref(), Some("2"));
     assert_eq!(get("Sections").as_deref(), Some("2"));
-    // No picture yet: the render says why.
+    // Kalem lays the paragraphs out: the plugin renders no picture.
     let e = doc.render(0, Default::default()).unwrap_err();
-    assert!(e.to_string().contains("lay Word documents out"));
+    assert!(e.to_string().contains("laid out by Kalem"));
+    assert!(doc.flow(0).is_some());
     assert!(!doc.modified());
     let saved = doc.save().unwrap();
     assert_eq!(

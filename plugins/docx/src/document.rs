@@ -664,9 +664,16 @@ impl Document {
 
     /// The whole document as shown.
     pub fn view(&self) -> DocView {
+        self.view_with(false)
+    }
+
+    /// The whole document as shown; with `layouts`, each paragraph of the
+    /// body with its edit coordinates too (as the other stories always
+    /// have them), for Kalem's flow.
+    pub fn view_with(&self, layouts: bool) -> DocView {
         let main = self.main.clone();
         let mut w = Walker::new(self.env(&main), StoryId::Body);
-        w.layouts = false;
+        w.layouts = layouts;
         w.note_formats(self.footnote_format.clone(), self.endnote_format.clone());
         let body = w.body(self.texts.get(&main).map_or("", String::as_str));
         let sections = self.sections();
@@ -1067,6 +1074,164 @@ impl Document {
                 Err(e)
             }
         }
+    }
+
+    /// The parts holding stories: the main part, its headers and footers,
+    /// its notes and comments.
+    pub fn story_parts(&self) -> Vec<String> {
+        let mut out = vec![self.main.clone()];
+        if let Some(rels) = self.rels.get(&self.main) {
+            for r in rels {
+                if !r.external
+                    && matches!(
+                        r.kind.as_str(),
+                        "header" | "footer" | "footnotes" | "endnotes" | "comments"
+                    )
+                {
+                    let p = rels::resolve(&self.main, &r.target);
+                    if self.texts.contains_key(&p) && !out.contains(&p) {
+                        out.push(p);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Accepts (`accept`) or rejects the tracked change of `w:id` `id`, as
+    /// Word does: an insertion accepted is the document's, rejected it is
+    /// gone; a deletion accepted is gone, rejected its text is back; a
+    /// formatting change rejected brings the old formatting back; a
+    /// paragraph mark inserted and rejected, or deleted and accepted,
+    /// joins its paragraph with the next. One step.
+    pub fn decide(&mut self, id: &str, accept: bool) -> Result<()> {
+        self.begin_batch();
+        let r = self.decide_one(id, accept);
+        self.finish_batch(r)
+    }
+
+    /// [`Document::decide`] for every tracked change; formatting changes
+    /// of paragraphs, which are not rejected yet, are left when rejecting.
+    pub fn decide_all(&mut self, accept: bool) -> Result<()> {
+        self.begin_batch();
+        let r = (|| {
+            for part in self.story_parts() {
+                // Read again after each: the spans move.
+                for id in crate::review::ids(&self.texts[&part], accept) {
+                    self.decide_one(&id, accept)?;
+                }
+            }
+            Ok(())
+        })();
+        self.finish_batch(r)
+    }
+
+    fn decide_one(&mut self, id: &str, accept: bool) -> Result<()> {
+        use crate::review::Found;
+        for part in self.story_parts() {
+            let Some(found) = crate::review::find(&self.texts[&part], id) else {
+                continue;
+            };
+            let src = &self.texts[&part];
+            let splice = |range: std::ops::Range<usize>, text: String| Splice {
+                part: part.clone(),
+                range,
+                text,
+            };
+            match found {
+                Found::Runs {
+                    deleted,
+                    span,
+                    inner,
+                } => {
+                    let text = match (deleted, accept) {
+                        (false, true) => src[inner].to_string(),
+                        (false, false) | (true, true) => String::new(),
+                        (true, false) => crate::review::undeleted(&src[inner]),
+                    };
+                    let s = splice(span, text);
+                    return self.apply(s);
+                }
+                Found::Format { change, rpr, old } => {
+                    let text = if accept {
+                        format!(
+                            "{}{}",
+                            &src[rpr.start..change.start],
+                            &src[change.end..rpr.end]
+                        )
+                    } else {
+                        let open_end = src[rpr.start..]
+                            .find('>')
+                            .map_or(rpr.start, |e| rpr.start + e + 1);
+                        let open = &src[rpr.start..open_end];
+                        let close_start = src[..rpr.end].rfind("</").unwrap_or(rpr.end);
+                        format!("{open}{}{}", &src[old], &src[close_start..rpr.end])
+                    };
+                    let s = splice(rpr, text);
+                    return self.apply(s);
+                }
+                Found::ParaFormat { change } => {
+                    if !accept {
+                        return Err(Error::Refused(
+                            "A paragraph's formatting change is not rejected yet".into(),
+                        ));
+                    }
+                    let s = splice(change, String::new());
+                    return self.apply(s);
+                }
+                Found::Mark {
+                    deleted,
+                    span,
+                    paragraph,
+                } => {
+                    let joins = deleted == accept;
+                    let s = splice(span, String::new());
+                    self.apply(s)?;
+                    if joins {
+                        if part != self.main {
+                            return Err(Error::Refused(
+                                "A paragraph mark outside the body is not joined yet".into(),
+                            ));
+                        }
+                        let story = StoryId::Body;
+                        let blocks = self.story_view(&story);
+                        let mut paras = Vec::new();
+                        fn walk<'a>(b: &'a [VBlock], out: &mut Vec<&'a VPara>) {
+                            for x in b {
+                                match x {
+                                    VBlock::Para(p) => out.push(p),
+                                    VBlock::Table(t) => {
+                                        for row in &t.rows {
+                                            for c in &row.cells {
+                                                walk(&c.blocks, out);
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        walk(&blocks, &mut paras);
+                        let at = paras
+                            .iter()
+                            .find(|p| p.layout.span.start == paragraph)
+                            .and_then(|p| p.at.clone())
+                            .ok_or_else(|| Error::Refused("The paragraph is gone".into()))?;
+                        let first = self.layout(&at)?;
+                        let second = self.layout(&ParaAt {
+                            story: at.story.clone(),
+                            index: at.index + 1,
+                        })?;
+                        // The mark that stays is the second's.
+                        let s = edit::join(&first, &second, &self.texts[&first.part], true)
+                            .map_err(Error::Refused)?;
+                        self.apply(s)?;
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        Err(Error::Refused(format!("There is no tracked change {id}")))
     }
 
     /// Undoes the last step; whether there was one.

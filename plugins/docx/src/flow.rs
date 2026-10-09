@@ -194,6 +194,8 @@ pub struct VPara {
     pub style: String,
     /// Its list label (`1.`, `•`) and what follows it.
     pub label: Option<(String, Suffix, Look)>,
+    /// Its list level, from 0, when it has a label.
+    pub list_level: Option<u8>,
     /// Its outline level, from 0, when it is a heading.
     pub outline: Option<u8>,
     /// Its alignment.
@@ -1094,6 +1096,7 @@ impl<'a> Walker<'a> {
         own.style = None;
         ppr.merge(&own);
         let table_rpr = cell.map(|c| &c.format.rpr);
+        let list_level = label.as_ref().map(|l| l.level);
         let label = label.map(|l| {
             let mut rp = styles.resolve_run(Some(&style_id), table_rpr, &p.mark);
             rp.merge(&l.rpr);
@@ -1112,6 +1115,7 @@ impl<'a> Walker<'a> {
             style: style.map(|s| s.name.clone()).unwrap_or_default(),
             style_id: style_id.clone(),
             label,
+            list_level,
             outline: ppr.outline.filter(|o| *o < 9),
             align: match ppr.jc.as_deref() {
                 Some("center") => Align::Center,
