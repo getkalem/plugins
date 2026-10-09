@@ -483,3 +483,84 @@ fn deleting_takes_the_entries_word_keeps_beside() {
     assert!(d.undo());
     assert_eq!(d.save().unwrap(), input);
 }
+
+/// The text of comment `id` as the view reads it.
+fn comment_text(d: &Document, id: &str) -> String {
+    let view = d.view();
+    let c = view.comments.iter().find(|c| c.id == id).unwrap();
+    let mut t = String::new();
+    flow::text(&c.blocks, &mut t);
+    t.trim_end_matches('\n').to_owned()
+}
+
+/// The `w:comment` of `id` in a saved file.
+fn comment_xml(bytes: &[u8], id: &str) -> String {
+    let c = part(bytes, "word/comments.xml");
+    let start = c.find(&format!("<w:comment w:id=\"{id}\"")).unwrap();
+    let end = start + c[start..].find("</w:comment>").unwrap() + "</w:comment>".len();
+    c[start..end].to_owned()
+}
+
+#[test]
+fn a_comment_text_edited_as_word_does() {
+    let input = corpus("handmade-features.docx");
+    let mut d = opened(input.clone());
+    let id = d.view().comments[0].id.clone();
+    let before = comment_xml(&input, &id);
+    // The same text: nothing to do.
+    d.set_comment_text(&id, "Check this.").unwrap();
+    assert!(!d.is_dirty());
+    d.set_comment_text(&id, "Checked.\nTwice, with a\ttab.")
+        .unwrap();
+    assert_eq!(comment_text(&d, &id), "Checked.\nTwice, with a\ttab.");
+    let out = d.save().unwrap();
+    assert_eq!(d.changed_parts(), ["word/comments.xml"]);
+    let after = comment_xml(&out, &id);
+    // Its author, date and start tag as they were; its mark once, at the
+    // start; each paragraph in the comment's style.
+    let head = |x: &str| x[..x.find('>').unwrap()].to_owned();
+    assert_eq!(head(&after), head(&before));
+    assert_eq!(after.matches("<w:annotationRef/>").count(), 1);
+    assert!(after.find("<w:annotationRef/>").unwrap() < after.find("Checked.").unwrap());
+    assert_eq!(
+        after.matches(r#"<w:pStyle w:val="CommentText"/>"#).count(),
+        2
+    );
+    assert!(after.contains("<w:tab/>"));
+    assert_eq!(
+        comment_text(&opened(out), &id),
+        "Checked.\nTwice, with a\ttab."
+    );
+    assert!(d.undo());
+    assert_eq!(d.save().unwrap(), input);
+}
+
+#[test]
+fn answers_and_the_done_mark_stay_with_an_edited_comment() {
+    let mut d = opened(corpus("handmade-features.docx"));
+    let first = d.view().comments[0].id.clone();
+    let answer = d.reply_comment(&first, "Yes.").unwrap();
+    d.resolve_comment(&first, true).unwrap();
+    for text in ["One\nTwo\nThree", "Only one", "Again\ntwo"] {
+        d.set_comment_text(&first, text).unwrap();
+        assert_eq!(comment_text(&d, &first), text);
+        let threads = d.comment_threads();
+        assert_eq!(threads[&first], (None, true), "{text}");
+        assert_eq!(threads[&answer], (Some(first.clone()), false), "{text}");
+    }
+    // An answer's text too.
+    d.set_comment_text(&answer, "Yes, done.").unwrap();
+    assert_eq!(comment_text(&d, &answer), "Yes, done.");
+    assert_eq!(
+        d.comment_threads()[&answer].0.as_deref(),
+        Some(first.as_str())
+    );
+    // Every paragraph ID is the document's only one.
+    let out = d.save().unwrap();
+    let c = part(&out, "word/comments.xml");
+    let ids: Vec<u32> = comments::para_ids(&c).collect();
+    let unique: std::collections::HashSet<u32> = ids.iter().copied().collect();
+    assert_eq!(ids.len(), unique.len());
+    let e = d.set_comment_text(&first, " ").unwrap_err();
+    assert!(e.to_string().contains("needs text"), "{e}");
+}

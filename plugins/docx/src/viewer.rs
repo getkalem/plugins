@@ -491,6 +491,14 @@ impl ViewerDocument for DocxDoc {
         Ok(format!("c{id}"))
     }
 
+    fn set_comment_text(&mut self, id: &str, text: &str) -> Result<()> {
+        let id = id
+            .strip_prefix('c')
+            .ok_or_else(|| ViewerError(format!("{id} is not a comment")))?;
+        let r = self.doc.set_comment_text(id, text);
+        self.changed(r)
+    }
+
     fn resolve(&mut self, id: &str, done: bool) -> Result<()> {
         let id = id
             .strip_prefix('c')

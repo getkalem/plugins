@@ -476,6 +476,174 @@ pub fn threads(comments: &str, extended: &str) -> HashMap<String, (Option<String
     out
 }
 
+/// A paragraph of a comment, as an edit of its text sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommentPara {
+    /// The whole `w:p`.
+    span: Span,
+    /// Its start tag.
+    start_tag: Span,
+    /// Written as `<w:p/>`.
+    empty: bool,
+    /// Its `w:pPr`.
+    ppr: Option<Span>,
+    /// The run holding the comment's mark (`w:annotationRef`).
+    mark_run: Option<Span>,
+}
+
+/// The paragraphs of a `w:comment` (its text from its start tag on).
+fn comment_paras(item: &str) -> Result<Vec<CommentPara>, String> {
+    let mut r = Reader::new(item);
+    match r.next_token() {
+        Some(Token::Start(t)) if t.name == "comment" && !t.empty => {}
+        Some(Token::Start(t)) if t.name == "comment" => return Ok(Vec::new()),
+        _ => return Err("This is not a comment".into()),
+    }
+    let mut out = Vec::new();
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) if tag.name == "p" => {
+                let start_tag = tag.span.clone();
+                if tag.empty {
+                    out.push(CommentPara {
+                        span: start_tag.clone(),
+                        start_tag,
+                        empty: true,
+                        ppr: None,
+                        mark_run: None,
+                    });
+                    continue;
+                }
+                let (mut ppr, mut mark_run) = (None, None);
+                loop {
+                    match r.next_token() {
+                        Some(Token::Start(c)) => {
+                            let from = c.span.start;
+                            let to = if c.empty {
+                                c.span.end
+                            } else {
+                                r.skip_element()
+                            };
+                            match c.name {
+                                "pPr" => ppr = Some(from..to),
+                                "r" if mark_run.is_none()
+                                    && item[from..to].contains("annotationRef") =>
+                                {
+                                    mark_run = Some(from..to);
+                                }
+                                _ => {}
+                            }
+                        }
+                        Some(Token::End { span, .. }) => {
+                            out.push(CommentPara {
+                                span: start_tag.start..span.end,
+                                start_tag,
+                                empty: false,
+                                ppr,
+                                mark_run,
+                            });
+                            break;
+                        }
+                        Some(Token::Text { .. }) => {}
+                        None => return Err("The comment is cut short".into()),
+                    }
+                }
+            }
+            Token::Start(tag) if matches!(tag.name, "tbl" | "sdt" | "customXml" | "altChunk") => {
+                return Err(
+                    "A comment holding a table or a content control is not edited yet".into(),
+                );
+            }
+            Token::Start(tag) => {
+                if !tag.empty {
+                    r.skip_element();
+                }
+            }
+            Token::End { .. } => break,
+            Token::Text { .. } => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Whether a comment's paragraphs carry `w14:paraId`s.
+pub fn has_para_ids(item: &str) -> bool {
+    comment_paras(item)
+        .map(|ps| {
+            ps.iter()
+                .any(|p| item[p.start_tag.clone()].contains(":paraId="))
+        })
+        .unwrap_or(false)
+}
+
+/// A comment's paragraphs written anew with `text`, a paragraph a line,
+/// as Word rewrites them: each new paragraph takes an old one's start tag
+/// and properties in order, the last line the last paragraph's (so its
+/// `w14:paraId`, which answers and the done mark name, stays); a line
+/// more than there were paragraphs gets a new one, with a fresh ID from
+/// `fresh` (prefix `w14`) when the others have IDs; the comment's mark
+/// stays at the start. The bytes of the `w:comment` (`item`) replaced,
+/// and what replaces them.
+pub fn retext(
+    item: &str,
+    p: &str,
+    w14: Option<&str>,
+    text: &str,
+    fresh: &mut dyn FnMut() -> Option<String>,
+) -> Result<(Span, String), String> {
+    let paras = comment_paras(item)?;
+    let (Some(first), Some(last)) = (paras.first(), paras.last()) else {
+        return Err("The comment has no paragraph".into());
+    };
+    let mark = paras
+        .iter()
+        .find_map(|c| c.mark_run.as_ref())
+        .map_or(String::new(), |s| item[s.clone()].to_owned());
+    let open = |c: &CommentPara| {
+        let tag = &item[c.start_tag.clone()];
+        if c.empty {
+            tag.trim_end_matches("/>").trim_end().to_owned() + ">"
+        } else {
+            tag.to_owned()
+        }
+    };
+    let ppr_of = |c: &CommentPara| {
+        c.ppr
+            .as_ref()
+            .map_or(String::new(), |s| item[s.clone()].to_owned())
+    };
+    let lines = lines(text);
+    let n = lines.len();
+    let mut out = String::new();
+    for (i, line) in lines.into_iter().enumerate() {
+        let (tag, ppr) = if i + 1 == n {
+            (open(last), ppr_of(last))
+        } else if i + 1 < paras.len() {
+            (open(&paras[i]), ppr_of(&paras[i]))
+        } else {
+            let id = match w14 {
+                Some(w) => match fresh() {
+                    Some(id) => format!(" {w}paraId=\"{id}\" {w}textId=\"77777777\""),
+                    None => return Err("No paragraph ID is left for the comment".into()),
+                },
+                None => String::new(),
+            };
+            (format!("<{p}p{id}>"), ppr_of(first))
+        };
+        out.push_str(&tag);
+        out.push_str(&ppr);
+        if i == 0 {
+            out.push_str(&mark);
+        }
+        if !line.is_empty() {
+            let content = crate::edit::run_content(p, line)?;
+            out.push_str(&format!("<{p}r>{content}</{p}r>"));
+        }
+        out.push_str(&format!("</{p}p>"));
+    }
+    Ok((first.span.start..last.span.end, out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

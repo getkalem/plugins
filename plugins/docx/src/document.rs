@@ -1681,6 +1681,75 @@ impl Document {
         Ok(part)
     }
 
+    /// Changes comment `id`'s text, a paragraph a line, as Word does:
+    /// its author, date, mark and paragraph properties kept, its last
+    /// paragraph's ID kept so that its answers and its done mark stay its
+    /// own ([`comments::retext`]). One step; none when the text is the
+    /// same.
+    pub fn set_comment_text(&mut self, id: &str, text: &str) -> Result<()> {
+        self.check_commentable()?;
+        if text.trim().is_empty() {
+            return Err(Error::Refused("A comment needs text".into()));
+        }
+        let part = self.comment_part(id)?;
+        let view = self.view();
+        if let Some(c) = view.comments.iter().find(|c| c.id == id) {
+            let mut old = String::new();
+            flow::text(&c.blocks, &mut old);
+            if old.trim_end_matches('\n') == text {
+                return Ok(());
+            }
+        }
+        self.begin_batch();
+        let r = self.set_text_steps(&part, id, text);
+        self.finish_batch(r)
+    }
+
+    fn set_text_steps(&mut self, part: &str, id: &str, text: &str) -> Result<()> {
+        let part = part.to_owned();
+        let item = self
+            .tree(&part)
+            .items
+            .iter()
+            .find(|i| i.id == id)
+            .map(|i| i.span.clone())
+            .ok_or_else(|| Error::Refused(format!("There is no comment {id}")))?;
+        let src = &self.texts[&part];
+        let p = edit::prefix_of(src, item.start);
+        let w14 = if comments::has_para_ids(&src[item.clone()]) {
+            Some(self.declare_w14(&part)?)
+        } else {
+            None
+        };
+        // The root may have changed: the comment read again.
+        let item = self
+            .tree(&part)
+            .items
+            .iter()
+            .find(|i| i.id == id)
+            .map(|i| i.span.clone())
+            .ok_or_else(|| Error::Refused(format!("There is no comment {id}")))?;
+        let mut used = self.used_para_ids();
+        let mut fresh = || {
+            let id = comments::fresh_para_ids(&used, 1).pop()?;
+            used.insert(u32::from_str_radix(&id, 16).ok()?);
+            Some(id)
+        };
+        let (range, new) = comments::retext(
+            &self.texts[&part][item.clone()],
+            &p,
+            w14.as_deref(),
+            text,
+            &mut fresh,
+        )
+        .map_err(Error::Refused)?;
+        self.apply(Splice {
+            part,
+            range: item.start + range.start..item.start + range.end,
+            text: new,
+        })
+    }
+
     /// Marks comment `id` done (`done`) or open again, as Word does: on
     /// its thread's first comment, by `w15:done` in the extended comments
     /// part (made when there is none, and its last paragraph given an ID

@@ -458,3 +458,23 @@ fn comments_resolved_and_deleted_through_the_interface() {
     let e = d.remove_comment("c999").unwrap_err();
     assert!(e.0.contains("no comment 999"), "{}", e.0);
 }
+
+#[test]
+fn a_comment_text_edited_through_the_interface() {
+    let mut d = open("handmade-features.docx");
+    let id = d
+        .annotations(None)
+        .into_iter()
+        .find(|a| a.kind == AnnotationKind::Comment)
+        .unwrap()
+        .id;
+    d.set_comment_text(&id, "Checked\ntwice").unwrap();
+    let all = d.annotations(None);
+    assert_eq!(
+        all.iter().find(|a| a.id == id).unwrap().text,
+        "Checked\ntwice"
+    );
+    assert!(d.undo().unwrap());
+    let all = d.annotations(None);
+    assert_eq!(all.iter().find(|a| a.id == id).unwrap().text, "Check this.");
+}

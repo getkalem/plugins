@@ -481,8 +481,14 @@ order they are done, the spike first.
   done (the `annotations` interface's `comment`, `reply`, `resolve`,
   `remove` and the Review commands, 2026-10-09).
   (Done 2026-10-09: `comments.rs`, `Document::add_comment`,
-  `reply_comment`, `resolve_comment` and `remove_comment`; a comment's
-  text is not edited yet, `set-comment-text` refused.
+  `reply_comment`, `resolve_comment`, `remove_comment` and
+  `set_comment_text`. Editing a comment (Kalem's Edit Comment, the
+  `annotations` interface's `set-text`) writes its paragraphs anew, a
+  line each, each taking an old paragraph's start tag and properties in
+  order and the last line the last paragraph's, so that its
+  `w14:paraId`, which answers and the done mark name, stays; the mark
+  run kept at the start, the author and date as they were; a comment
+  holding a table refused.
   New Comment on a range in the body or a note (headers and footers
   refused, as Word keeps none there), a run split where the range
   starts or ends inside it, the reference run after the end and, when
