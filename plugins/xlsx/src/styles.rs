@@ -214,36 +214,7 @@ const INDEXED: [Rgb; 64] = [
 /// accent1–6, hlink, folHlink); the style sheet's theme index swaps the
 /// first two pairs (0 is lt1, 1 dk1, 2 lt2, 3 dk2), as Excel reads it.
 pub fn parse_theme(xml: &str) -> Vec<Rgb> {
-    let mut out = Vec::new();
-    let mut r = Reader::new(xml);
-    let mut in_scheme = false;
-    while let Some(t) = r.next_token() {
-        match t {
-            Token::Start(tag) if tag.name == "clrScheme" => in_scheme = true,
-            Token::End {
-                name: "clrScheme", ..
-            } => break,
-            Token::Start(tag) if in_scheme && tag.name == "srgbClr" => {
-                out.push(
-                    tag.attr("val")
-                        .and_then(|v| u32::from_str_radix(&v, 16).ok())
-                        .unwrap_or(0),
-                );
-            }
-            Token::Start(tag) if in_scheme && tag.name == "sysClr" => {
-                out.push(
-                    tag.attr("lastClr")
-                        .and_then(|v| u32::from_str_radix(&v, 16).ok())
-                        .unwrap_or(if tag.attr("val").as_deref() == Some("window") {
-                            0xFFFFFF
-                        } else {
-                            0
-                        }),
-                );
-            }
-            _ => {}
-        }
-    }
+    let mut out = kalem_ooxml::theme::colors(xml);
     if out.len() >= 4 {
         out.swap(0, 1);
         out.swap(2, 3);

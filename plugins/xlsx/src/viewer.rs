@@ -194,7 +194,7 @@ impl Viewer for XlsxViewer {
                 Err(crate::crypto::CryptoError::WrongPassword) => {
                     return Err(ViewerError::needs_password());
                 }
-                Err(e) => return Err(err(e)),
+                Err(e) => return Err(err(e.describe("workbook"))),
             }
         } else {
             (bytes, None)

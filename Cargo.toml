@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
-# Every plugin is a crate under plugins/NAME. The template is a member so
-# that CI keeps it building.
-members = ["template", "plugins/*"]
+# Every plugin is a crate under plugins/NAME; the libraries plugins
+# share (the Office formats' layer) are crates under crates/NAME. The
+# template is a member so that CI keeps it building.
+members = ["template", "plugins/*", "crates/*"]
 
 [workspace.package]
 version = "0.0.1"

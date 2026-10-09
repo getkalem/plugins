@@ -1,0 +1,24 @@
+[package]
+name = "kalem-ooxml"
+description = "The Office Open XML layer of Kalem's Office plugins: packages part by part, a span-keeping XML reader, relationships, encryption and themes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# A library of the plugins, not a plugin: no component, no manifest.
+[dependencies]
+# Office files with a password to open (MS-OFFCRYPTO): the compound
+# file, AES, SHA-512, and SHA-1 for the Standard encryption of 2007.
+cfb = "0.15.0"
+aes = "0.8"
+sha1 = "0.10"
+sha2 = "0.10"
+crc32fast = "1.5.2"
+miniz_oxide = "0.9.1"
+
+[lints]
+workspace = true
