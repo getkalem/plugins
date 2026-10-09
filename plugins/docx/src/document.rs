@@ -13,6 +13,7 @@ use kalem_ooxml::xml::{self, Reader, Token};
 use crate::comments;
 use crate::edit::{self, Splice};
 use crate::flow::{self, Env, Layout, ParaAt, StoryId, VBlock, VComment, VNote, VPara, Walker};
+use crate::format;
 use crate::numbering::Numbering;
 use crate::props::{Span, children};
 use crate::story::PartTree;
@@ -145,6 +146,31 @@ pub struct DocView {
     pub endnotes: Vec<VNote>,
     /// The comments.
     pub comments: Vec<VComment>,
+}
+
+/// The runs of a paragraph with text of `range`, each once, in order.
+fn runs_in(l: &Layout, range: &std::ops::Range<usize>) -> Vec<usize> {
+    let mut out: Vec<usize> = l
+        .segs
+        .iter()
+        .filter(|s| s.range.start < range.end && s.range.end > range.start)
+        .map(|s| s.run)
+        .collect();
+    out.dedup();
+    out
+}
+
+/// Whether a look still has what a change turns off.
+fn still_on(look: &flow::Look, change: &kalem_viewer::MarkChange) -> bool {
+    use kalem_viewer::{MarkChange, Script};
+    match change {
+        MarkChange::Bold(false) => look.bold,
+        MarkChange::Italic(false) => look.italic,
+        MarkChange::Strike(false) => look.strike || look.double_strike,
+        MarkChange::Underline(None) => look.underline.is_some(),
+        MarkChange::Script(Script::Baseline) => look.vert != flow::Vert::Baseline,
+        _ => false,
+    }
 }
 
 fn find_para<'a>(blocks: &'a [VBlock], at: &ParaAt) -> Option<&'a VPara> {
@@ -1747,6 +1773,198 @@ impl Document {
             part,
             range: item.start + range.start..item.start + range.end,
             text: new,
+        })
+    }
+
+    /// The tracked change a formatting edit writes when the document
+    /// tracks changes.
+    fn format_tracking(&self) -> Option<format::Tracking> {
+        self.track_revisions.then(|| {
+            let t = self.track();
+            format::Tracking {
+                author: t.author,
+                date: t.date,
+                next_id: t.next_id,
+            }
+        })
+    }
+
+    /// Changes the look of the text of `spans` (each a paragraph and a
+    /// range of its edit text) as Word does: a run cut where a range
+    /// starts or ends inside it, each run of the range given the
+    /// properties (`w:rPr`, in the schema's order); a toggle turned off is
+    /// taken away, and written off where a style still turns it on; while
+    /// the document tracks changes, each run's old properties kept in a
+    /// `w:rPrChange`. One step.
+    pub fn set_marks(
+        &mut self,
+        spans: &[(ParaAt, std::ops::Range<usize>)],
+        changes: &[kalem_viewer::MarkChange],
+    ) -> Result<()> {
+        self.check_editable()?;
+        self.begin_batch();
+        let r = self.set_marks_steps(spans, changes);
+        self.finish_batch(r)
+    }
+
+    fn set_marks_steps(
+        &mut self,
+        spans: &[(ParaAt, std::ops::Range<usize>)],
+        changes: &[kalem_viewer::MarkChange],
+    ) -> Result<()> {
+        for (at, range) in spans {
+            if range.start < range.end {
+                self.format_range(at, range.clone(), changes)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn format_range(
+        &mut self,
+        at: &ParaAt,
+        range: std::ops::Range<usize>,
+        changes: &[kalem_viewer::MarkChange],
+    ) -> Result<()> {
+        // The runs cut where the range ends and starts.
+        for (pos, opening) in [(range.end, false), (range.start, true)] {
+            let l = self.layout(at)?;
+            let cut = edit::cut(&l, &self.texts[&l.part], pos, opening).map_err(Error::Refused)?;
+            if !cut.range.is_empty() {
+                self.apply(cut.splice(&l.part, ""))?;
+            }
+        }
+        let l = self.layout(at)?;
+        let p = edit::prefix_of(&self.texts[&l.part], l.start_tag.start);
+        let ops: Vec<format::Op> = changes.iter().flat_map(|c| format::ops(&p, c)).collect();
+        let runs: Vec<(usize, Vec<format::Op>)> = runs_in(&l, &range)
+            .into_iter()
+            .map(|i| (i, ops.clone()))
+            .collect();
+        self.format_runs(&l, &p, runs)?;
+        // A toggle off that a style still turns on: written off.
+        let offs: Vec<(&kalem_viewer::MarkChange, Vec<format::Op>)> = changes
+            .iter()
+            .map(|c| (c, format::explicit_off(&p, c)))
+            .filter(|(_, o)| !o.is_empty())
+            .collect();
+        if offs.is_empty() {
+            return Ok(());
+        }
+        let l = self.layout(at)?;
+        let blocks = self.story_view(&at.story);
+        let Some(vp) = find_para(&blocks, at) else {
+            return Ok(());
+        };
+        let mut need: Vec<(usize, Vec<format::Op>)> = Vec::new();
+        for vr in &vp.runs {
+            if vr.source.start >= range.end || vr.source.end <= range.start {
+                continue;
+            }
+            let Some(run) = l
+                .segs
+                .iter()
+                .find(|s| s.range.start == vr.source.start)
+                .map(|s| s.run)
+            else {
+                continue;
+            };
+            for (c, o) in &offs {
+                if still_on(&vr.look, c) {
+                    match need.iter_mut().find(|(r, _)| *r == run) {
+                        Some((_, ops)) => ops.extend(o.iter().cloned()),
+                        None => need.push((run, o.clone())),
+                    }
+                }
+            }
+        }
+        self.format_runs(&l, &p, need)
+    }
+
+    /// Runs of a paragraph given operations on their properties, the last
+    /// first so that the spans stay true.
+    fn format_runs(
+        &mut self,
+        l: &Layout,
+        p: &str,
+        mut runs: Vec<(usize, Vec<format::Op>)>,
+    ) -> Result<()> {
+        runs.sort_by_key(|(i, _)| std::cmp::Reverse(l.runs[*i].span.start));
+        let mut track = self.format_tracking();
+        for (i, ops) in runs {
+            let run = &l.runs[i];
+            if run.start_tag.is_empty() {
+                continue;
+            }
+            let src = &self.texts[&l.part];
+            let old = run.rpr.as_ref().map(|s| &src[s.clone()]);
+            let Some(new) = format::edit_rpr(old, p, &ops, track.as_mut()) else {
+                continue;
+            };
+            let range = match &run.rpr {
+                Some(s) => s.clone(),
+                None => run.start_tag.end..run.start_tag.end,
+            };
+            self.apply(Splice {
+                part: l.part.clone(),
+                range,
+                text: new,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Gives paragraphs `paras` paragraph style `style` (its `w:styleId`)
+    /// as Word does: `w:pStyle` first in their properties, none for the
+    /// default paragraph style; while the document tracks changes, their
+    /// old properties kept in a `w:pPrChange`. One step.
+    pub fn set_paragraph_style(&mut self, paras: &[ParaAt], style: &str) -> Result<()> {
+        self.check_editable()?;
+        use crate::styles::StyleKind;
+        if self.styles.get_kind(style, StyleKind::Paragraph).is_none() {
+            return Err(Error::Refused(format!(
+                "There is no paragraph style {style}"
+            )));
+        }
+        let default = self
+            .styles
+            .default_of(StyleKind::Paragraph)
+            .map(|s| s.id.clone());
+        let id = (default.as_deref() != Some(style)).then(|| style.to_owned());
+        self.begin_batch();
+        let mut r = Ok(());
+        for at in paras {
+            r = self.style_paragraph(at, id.as_deref());
+            if r.is_err() {
+                break;
+            }
+        }
+        self.finish_batch(r)
+    }
+
+    fn style_paragraph(&mut self, at: &ParaAt, style: Option<&str>) -> Result<()> {
+        let l = self.layout(at)?;
+        let src = &self.texts[&l.part];
+        let p = edit::prefix_of(src, l.start_tag.start);
+        let old = l.ppr.as_ref().map(|s| &src[s.clone()]);
+        let mut track = self.format_tracking();
+        let Some(new) = format::edit_ppr(old, &p, style, track.as_mut()) else {
+            return Ok(());
+        };
+        let (range, text) = match &l.ppr {
+            Some(s) => (s.clone(), new),
+            None if new.is_empty() => return Ok(()),
+            None if l.empty => {
+                let tag = &src[l.start_tag.clone()];
+                let open = tag.trim_end_matches("/>").trim_end().to_owned() + ">";
+                (l.span.clone(), format!("{open}{new}</{p}p>"))
+            }
+            None => (l.start_tag.end..l.start_tag.end, new),
+        };
+        self.apply(Splice {
+            part: l.part.clone(),
+            range,
+            text,
         })
     }
 

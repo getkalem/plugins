@@ -1329,12 +1329,28 @@ pub fn cut(l: &Layout, src: &str, at: usize, opening: bool) -> Result<Cut, Strin
         let r = &l.runs[run];
         let head = &src[r.start_tag.clone()];
         let rpr = r.rpr.as_ref().map_or("", |s| &src[s.clone()]);
+        // A formatting change the run records: the second half's its own,
+        // with an ID of its own.
+        let rpr_right = match rpr.find("rPrChange ") {
+            Some(at) => {
+                let start = rpr[..at].rfind('<').unwrap_or(at);
+                let end = rpr[start..].find('>').map_or(rpr.len(), |e| start + e + 1);
+                let p = prefix_at(rpr, start);
+                let tag = xml::set_attr(
+                    &rpr[start..end],
+                    &format!("{p}id"),
+                    &(max_id(src) + 1).to_string(),
+                );
+                format!("{}{tag}{}", &rpr[..start], &rpr[end..])
+            }
+            None => rpr.to_owned(),
+        };
         let from = r.rpr.as_ref().map_or(r.start_tag.end, |s| s.end);
         let end = &src[r.end_tag.clone()];
         (
             format!("{head}{rpr}{}{mid_left}{end}", &src[from..cut_at]),
             format!(
-                "{head}{rpr}{mid_right}{}{end}",
+                "{head}{rpr_right}{mid_right}{}{end}",
                 &src[resume..r.end_tag.start]
             ),
         )

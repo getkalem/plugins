@@ -413,6 +413,47 @@ impl ViewerDocument for DocxDoc {
         self.changed(r)
     }
 
+    fn flow_set_marks(
+        &mut self,
+        _unit: usize,
+        from: kalem_viewer::FlowPlace,
+        to: kalem_viewer::FlowPlace,
+        changes: &[kalem_viewer::MarkChange],
+    ) -> Result<()> {
+        let (from, to) = if (from.paragraph, from.offset) <= (to.paragraph, to.offset) {
+            (from, to)
+        } else {
+            (to, from)
+        };
+        let mut spans = Vec::new();
+        for i in from.paragraph..=to.paragraph {
+            let at = self.para(i)?;
+            let len = self.cache().lens.get(i as usize).copied().unwrap_or(0);
+            let start = if i == from.paragraph {
+                from.offset as usize
+            } else {
+                0
+            };
+            let end = if i == to.paragraph {
+                to.offset as usize
+            } else {
+                len
+            };
+            spans.push((at, start.min(len)..end.min(len)));
+        }
+        let r = self.doc.set_marks(&spans, changes);
+        self.changed(r)
+    }
+
+    fn flow_set_style(&mut self, _unit: usize, from: u32, to: u32, style: &str) -> Result<()> {
+        let mut paras = Vec::new();
+        for i in from.min(to)..=from.max(to) {
+            paras.push(self.para(i)?);
+        }
+        let r = self.doc.set_paragraph_style(&paras, style);
+        self.changed(r)
+    }
+
     fn flow_styles(&mut self) -> Vec<kalem_viewer::FlowStyle> {
         use crate::styles::StyleKind;
         self.doc

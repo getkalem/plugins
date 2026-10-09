@@ -441,7 +441,7 @@ pub struct Env<'a> {
     pub part: &'a str,
 }
 
-const HIGHLIGHTS: &[(&str, Rgb)] = &[
+pub(crate) const HIGHLIGHTS: &[(&str, Rgb)] = &[
     ("yellow", 0xFFFF00),
     ("green", 0x00FF00),
     ("cyan", 0x00FFFF),

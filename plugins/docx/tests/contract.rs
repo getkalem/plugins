@@ -478,3 +478,57 @@ fn a_comment_text_edited_through_the_interface() {
     let all = d.annotations(None);
     assert_eq!(all.iter().find(|a| a.id == id).unwrap().text, "Check this.");
 }
+
+#[test]
+fn formatting_and_styles_through_the_interface() {
+    let mut d = open("handmade-features.docx");
+    let is = items(&mut d);
+    let ps = paras(&is);
+    let p = find(&ps, "Plain, bold").index.unwrap();
+    let from = FlowPlace {
+        paragraph: p,
+        offset: 0,
+    };
+    let to = FlowPlace {
+        paragraph: p + 1,
+        offset: 3,
+    };
+    d.flow_set_marks(
+        0,
+        from,
+        to,
+        &[
+            kalem_viewer::MarkChange::Bold(true),
+            kalem_viewer::MarkChange::Color(Some([0xC0, 0, 0])),
+        ],
+    )
+    .unwrap();
+    let is = items(&mut d);
+    let ps = paras(&is);
+    let first = find(&ps, "Plain, bold");
+    assert!(
+        first
+            .runs
+            .iter()
+            .filter(|r| r.piece == Piece::Text)
+            .all(|r| r.marks.bold)
+    );
+    assert_eq!(first.runs[0].marks.color, Some([0xC0, 0, 0]));
+    let next = ps.iter().find(|q| q.index == Some(p + 1)).unwrap();
+    assert!(next.runs[0].marks.bold && next.runs[0].text.chars().count() <= 3);
+    assert!(!next.runs.last().unwrap().marks.bold);
+    // A paragraph style, from the styles the document offers.
+    let styles = d.flow_styles();
+    let heading = styles.iter().find(|s| s.name == "Heading 1").unwrap();
+    d.flow_set_style(0, p, p, &heading.id).unwrap();
+    let is = items(&mut d);
+    let ps = paras(&is);
+    let styled = ps.iter().find(|q| q.index == Some(p)).unwrap();
+    assert_eq!(styled.role, FlowRole::Heading);
+    assert_eq!(styled.style, "Heading 1");
+    // Each one step.
+    assert!(d.undo().unwrap() && d.undo().unwrap());
+    let is = items(&mut d);
+    let ps = paras(&is);
+    assert!(!find(&ps, "Plain, bold").runs[0].marks.bold);
+}

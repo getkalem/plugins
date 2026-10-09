@@ -27,6 +27,7 @@ pub mod contract;
 pub mod document;
 pub mod edit;
 pub mod flow;
+pub mod format;
 pub mod numbering;
 pub mod props;
 pub mod review;

@@ -25,6 +25,8 @@ pub struct FlowCache {
     pub items: Vec<kv::FlowItem>,
     /// Each index's paragraph.
     pub paras: Vec<ParaAt>,
+    /// Each index's edit text's length.
+    pub lens: Vec<usize>,
     /// Its comments and tracked changes.
     pub annotations: Vec<kv::Annotation>,
 }
@@ -159,6 +161,7 @@ impl Builder {
     fn para(&mut self, p: &VPara) -> kv::FlowParagraph {
         let index = p.at.as_ref().map(|at| {
             self.cache.paras.push(at.clone());
+            self.cache.lens.push(p.layout.text.len());
             (self.cache.paras.len() - 1) as u32
         });
         let style = p.style.as_str();

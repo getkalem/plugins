@@ -433,7 +433,7 @@ order they are done, the spike first.
 
 ## WP9. Formatting edited
 
-- [ ] WP9 Bold, italic, underline, strikethrough (Ctrl+B, Ctrl+I,
+- [~] WP9 Bold, italic, underline, strikethrough (Ctrl+B, Ctrl+I,
   Ctrl+U, as in Word), font color, highlight, size (Ctrl+Shift+> and
   <), face, superscript and subscript, caps, Clear Formatting
   (Ctrl+Space) over the selection: the runs split at the selection's
@@ -466,6 +466,28 @@ order they are done, the spike first.
   levels by Tab and Shift+Tab (`w:ilvl`), a list ended; table cell
   text and formatting through the same commands. Every command in the
   palette, Word's keys where the editor has them free.
+  (Done 2026-10-10 for the look of characters and the paragraph style,
+  `format.rs`, `Document::set_marks` and `set_paragraph_style`, through
+  the `flow` interface's `set-marks` and `set-style`: bold, italic,
+  underline (a kind), strikethrough, superscript and subscript, color,
+  highlight (`w:highlight` for Word's sixteen colors, else `w:shd`),
+  size (`w:sz` and `w:szCs`), typeface (`w:ascii` and `w:hAnsi`, the
+  theme's fonts that would win taken away; other scripts' left as they
+  are) and Clear (the direct look taken away, `w:rStyle` and `w:lang`
+  kept) over a range of one or more paragraphs: the runs cut at the
+  range's ends (a cut run's `w:rPrChange` given its own ID), each
+  property where the schema's sequence puts it, a toggle turned off
+  taken away and written `w:val="0"` where a style still turns it on;
+  `w:pStyle` first in `w:pPr`, none for the default style; while the
+  document tracks changes, `w:rPrChange` and `w:pPrChange` with the old
+  properties, which Accept and Reject keep or undo. Kalem's Format menu
+  and toolbar (Bold, Italic, Underline, Strike Through, Superscript,
+  Subscript, Font, Font Size, Text Color, Highlight Color, Paragraph
+  Style, Clear Formatting) send them. LibreOffice 7.3 reads the result.
+  Open: caps and small caps, sizes up and down, alignment, indents,
+  spacing, borders and shading of paragraphs (the `flow` interface has
+  no function for them: a `flow-2` in a later API), a built-in style
+  the document lacks added, lists, and Word's keys for headings.)
 
 ## WP10. Comments and tracked changes edited
 
