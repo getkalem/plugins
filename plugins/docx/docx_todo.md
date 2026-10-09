@@ -696,7 +696,8 @@ order they are done, the spike first.
   `docx-v0.0.1`: the component signed and attached to the GitHub
   release, its hash in `releases/` and its download in `index.json`.
   It runs with Kalem 0.6.0 (released 2026-10-09, plugin API 0.2.7) and
-  later; an older Kalem refuses it.)
+  later; an older Kalem refuses it. `docx-v0.0.2` the same day: comments
+  added and answered, WP10a.)
 
 ## Open for the owner
 
