@@ -25,6 +25,7 @@
       "command": ["rust-analyzer"],
       "candidates": ["rust-analyzer", "~/.cargo/bin/rust-analyzer"],
       "rootMarkers": ["Cargo.lock"],
+      "version": ["--version"],
       "settings": { "rust-analyzer": {} },
       "install": "rustup component add rust-analyzer; or brew install rust-analyzer; or a release from https://github.com/rust-lang/rust-analyzer/releases, renamed rust-analyzer and put on the PATH"
     }

@@ -192,7 +192,7 @@ spike first.
 
 ## RS3. The server: found, in the right root, told its settings
 
-- [ ] RS3a Finding rust-analyzer, in the order T3.8.6d gives: the
+- [~] RS3a Finding rust-analyzer, in the order T3.8.6d gives: the
   rustup component (the `rust-analyzer` proxy in `~/.cargo/bin`,
   which resolves to the component of the toolchain the root selects),
   then the `PATH` (Homebrew's, a release binary renamed), through
@@ -211,6 +211,46 @@ spike first.
   recipe run with consent is T3.8.4's open item and waits there. Done
   when a machine without the component says so in `kalem lsp status`
   and in the status bar.
+  (Done 2026-10-10 in this plugin and on Kalem's branch
+  `rust-server-start` (the worktree `org-rust` beside Kalem's
+  checkout), not merged: Kalem's checkout had another session's work
+  in progress on `main`. Reproduced first on Kalem 0.6.0, with rustup
+  1.29.1, without touching rustup's settings: a project whose
+  `rust-toolchain.toml` pins 1.88 (installed without the component;
+  the proxy says "error: Unknown binary 'rust-analyzer' in official
+  toolchain '1.88-aarch64-apple-darwin'." and nothing on how to
+  install it), and one whose toolchain is a folder by `path` with
+  `rustc` and `cargo` only. `kalem lsp status` said the server was
+  found; `ask` and `check` started it six times in 36 s and gave up
+  with "stopped (Some(1)) … see `kalem lsp log`", a command that does
+  not exist, and rustup's reason was nowhere, not even in `check
+  --log`. Kalem's part as made, for every language rather than "the
+  first second": a server whose process ends before it answers
+  `initialize` (or refuses it, or is ended for no answer in 120 s) is
+  not restarted, since it would end the same way; the reason is the
+  server's own (the error it refused `initialize` with, else the last
+  three lines of its standard error, which the client now reads to
+  its end before the exit is an event) with the plugin's `install`
+  text, said as a notice, by the `SPC c` keys and in the status bar;
+  `code.restartServer` tries again; exit codes in words. And a
+  server's `version` in the manifest (T3.8.4): `kalem lsp status`
+  runs it in the root with the server's environment and prints the
+  version, or "does not run:" with the reason and the install text,
+  exiting 1. Tested in Kalem: the fake server's new `absent` behavior
+  (its reason on standard error, exit 1 at once) in the client's
+  tests and in the editor's service test (one notice, nothing started
+  past the backoff, the status bar's text, a restart once mended);
+  `server_version` on `sh`. The Book's "Language plugins", T3.8.1,
+  T3.8.4 and T3.8.6d, and the changelog with it. Here: `"version":
+  ["--version"]` in the manifest, checked by the conformance test, and
+  the trap in the README. Checked with the branch's terminal build:
+  `status` prints "version: rust-analyzer 1.99.0 (b940084d
+  2026-09-28)" for the corpus and "does not run: error: Unknown
+  binary …" with the install text for the 1.88 project; `ask hover`
+  there says "rust-analyzer did not start: error: Unknown binary …
+  (rustup component add rust-analyzer; …)" in 3.4 s rather than 36.
+  Open: the branch reviewed and merged, and a Kalem released with it;
+  the status bar seen in the two editors by hand.)
 - [ ] RS3b The root. Decided in RS1: the nearest `Cargo.lock`, the
   root Cargo chose; a workspace's members are one root and one
   server; `rust-toolchain.toml` is honored by the proxy because the

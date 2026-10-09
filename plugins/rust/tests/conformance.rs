@@ -103,6 +103,9 @@ fn manifest_is_complete() {
             s["settings"]["rust-analyzer"].is_object(),
             "{key}: settings under `rust-analyzer`"
         );
+        // `kalem lsp status` runs it: rustup's proxy is found whether or
+        // not the component is installed, and only running it tells.
+        assert_eq!(list(&s["version"]), ["--version"], "{key}: its version");
     }
     for l in m["languages"].as_array().expect("languages") {
         let id = l["id"].as_str().expect("id");
