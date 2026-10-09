@@ -1326,10 +1326,16 @@ impl Workbook {
             None if matches!(input, Input::Clear) && style == 0 => return Ok(()),
             None => {
                 let ins = insert_cell(text, model, at, new_c)?;
-                // Into a row that holds cells, its tag unchanged: patched.
+                // Into a row that holds cells, its tag unchanged, or as a
+                // new row: patched.
                 match (patches.as_mut(), ins.as_slice()) {
                     (Some(p), [(span, c)]) if span.is_empty() => {
-                        p.push((span.clone(), c.len(), sheet::Patch::Insert(at)));
+                        let kind = if model.rows.contains_key(&at.row) {
+                            sheet::Patch::Insert(at)
+                        } else {
+                            sheet::Patch::InsertRow(at)
+                        };
+                        p.push((span.clone(), c.len(), kind));
                     }
                     _ => patches = None,
                 }

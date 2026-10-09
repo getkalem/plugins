@@ -749,6 +749,8 @@ pub(crate) enum Patch {
     Replace(CellRef),
     /// A new cell's `<c>` put into a row that holds cells.
     Insert(CellRef),
+    /// A new `<row>` holding a new cell put into the sheet data.
+    InsertRow(CellRef),
     /// A cell's `<c>` taken out.
     Remove(CellRef),
     /// The `<dimension>` written again.
@@ -830,9 +832,13 @@ impl Sheet {
             shift(sp);
         }
         let p = self.prefix.clone();
+        // What the replacements before this one grew the text by: an
+        // insertion ends where it starts, so `moved` would count its own.
+        let mut grown = 0isize;
         for e in &edits {
             // Where the replacement now lies.
-            let start = moved(e.0.start);
+            let start = (e.0.start as isize + grown) as usize;
+            grown += e.1 as isize - e.0.len() as isize;
             let new = start..start + e.1;
             match e.2 {
                 // A data table's first cell or an array's: the sheet read again.
@@ -872,6 +878,39 @@ impl Sheet {
                     }
                     cell.span = new;
                     cell.in_array_of = self.cells.get(&at).and_then(|c| c.in_array_of);
+                    self.cells.insert(at, cell);
+                }
+                Patch::InsertRow(at) => {
+                    let el = &text[new.clone()];
+                    let head = format!("<{p}worksheet><{p}sheetData>");
+                    let one = parse(
+                        &format!("{head}{el}</{p}sheetData></{p}worksheet>"),
+                        strings,
+                        date1904,
+                    );
+                    let (Some(mut row), Some(mut cell)) =
+                        (one.rows.get(&at.row).cloned(), one.cells.get(&at).cloned())
+                    else {
+                        return false;
+                    };
+                    if one.rows.len() != 1
+                        || one.cells.len() != 1
+                        || self.rows.contains_key(&at.row)
+                        || cell
+                            .formula
+                            .as_ref()
+                            .is_some_and(|f| f.kind != FormulaKind::Normal)
+                    {
+                        return false;
+                    }
+                    // Its spans, read in the wrapper, as they lie in the text.
+                    let at_text = |sp: &Span<usize>| {
+                        sp.start - head.len() + start..sp.end - head.len() + start
+                    };
+                    row.start = at_text(&row.start);
+                    row.end = row.end.as_ref().map(at_text);
+                    cell.span = at_text(&cell.span);
+                    self.rows.insert(at.row, row);
                     self.cells.insert(at, cell);
                 }
                 Patch::Dimension => {
@@ -957,6 +996,59 @@ mod tests {
         assert_eq!(s.merged.len(), 1);
         assert_eq!(s.used_range().unwrap().to_string(), "A1:C3");
         assert!(s.rows[&2].end.is_some());
+    }
+
+    #[test]
+    fn insertions_patched() {
+        // A cell put into a row that holds cells and a new row, text that
+        // is not ASCII after each: the model patched is the text's.
+        let text = r#"<worksheet><sheetData><row r="1"><c r="A1"><v>1</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>çğü</t></is></c></row></sheetData><headerFooter><oddHeader>Bütçe</oddHeader></headerFooter></worksheet>"#;
+        let mut s = parse(text, &[], false);
+        let b1 = r#"<c r="B1" t="inlineStr"><is><t>ş</t></is></c>"#;
+        let row2 = r#"<row r="2"><c r="C2"><v>5</v></c></row>"#;
+        let at_b1 = text.find("</row>").unwrap();
+        let at_row2 = text.find(r#"<row r="3">"#).unwrap();
+        let new = format!(
+            "{}{b1}{}{row2}{}",
+            &text[..at_b1],
+            &text[at_b1..at_row2],
+            &text[at_row2..]
+        );
+        assert!(s.patch(
+            &new,
+            &[
+                (at_b1..at_b1, b1.len(), Patch::Insert(CellRef::new(0, 1))),
+                (
+                    at_row2..at_row2,
+                    row2.len(),
+                    Patch::InsertRow(CellRef::new(1, 2))
+                ),
+            ],
+            &[],
+            false
+        ));
+        let read = parse(&new, &[], false);
+        assert_eq!(
+            format!("{:?}", (&s.cells, &s.rows, &s.sheet_data)),
+            format!("{:?}", (&read.cells, &read.rows, &read.sheet_data))
+        );
+        // A new row into an empty sheetData, at the text's end.
+        let text = "<worksheet><sheetData></sheetData></worksheet>";
+        let mut s = parse(text, &[], false);
+        let row1 = r#"<row r="1"><c r="A1" t="inlineStr"><is><t>hello</t></is></c></row>"#;
+        let at = text.find("</sheetData>").unwrap();
+        let new = format!("{}{row1}{}", &text[..at], &text[at..]);
+        assert!(s.patch(
+            &new,
+            &[(at..at, row1.len(), Patch::InsertRow(CellRef::new(0, 0)))],
+            &[],
+            false
+        ));
+        let read = parse(&new, &[], false);
+        assert_eq!(
+            format!("{:?}", (&s.cells, &s.rows, &s.sheet_data)),
+            format!("{:?}", (&read.cells, &read.rows, &read.sheet_data))
+        );
     }
 
     #[test]

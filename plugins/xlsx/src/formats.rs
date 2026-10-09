@@ -1004,6 +1004,48 @@ mod tests {
     }
 
     #[test]
+    fn a_blank_workbook_typed_into() {
+        // New Workbook, then cells typed: into new rows (the first one
+        // into an empty sheetData, whose end is near) and into rows that
+        // hold cells, before and after them, text that is not ASCII
+        // among them. Each edit's model is checked against the sheet
+        // read again (`set_sheet_text_patched`).
+        use crate::{CellRef, Value};
+        let book = new_workbook(
+            "xlsx",
+            &[NewSheet {
+                name: "Sheet1".into(),
+                rows: Vec::new(),
+            }],
+        )
+        .unwrap();
+        let mut wb = crate::Workbook::open(book).unwrap();
+        let at = |r: &str| CellRef::parse(r).unwrap();
+        for (cell, input) in [
+            ("A1", "hello"),
+            ("A2", "5"),
+            ("A3", "çğüşöı"),
+            ("C1", "=A2*2"),
+            ("B1", "Bütçe"),
+            ("A5", "2026-10-09"),
+            ("A4", "50%"),
+            ("B1", "again"),
+        ] {
+            wb.set_cell(0, at(cell), input).unwrap();
+        }
+        assert_eq!(wb.value(0, at("A1")).unwrap(), Value::Text("hello".into()));
+        assert_eq!(wb.value(0, at("C1")).unwrap(), Value::Number(10.0));
+        assert_eq!(wb.value(0, at("A3")).unwrap(), Value::Text("çğüşöı".into()));
+        assert_eq!(wb.display(0, at("A4")).unwrap(), "50%");
+        let mut again = crate::Workbook::open(wb.save().unwrap()).unwrap();
+        assert_eq!(
+            again.value(0, at("B1")).unwrap(),
+            Value::Text("again".into())
+        );
+        assert_eq!(again.value(0, at("A5")).unwrap(), Value::Number(46304.0));
+    }
+
+    #[test]
     fn a_workbook_saved_as_another_kind_says_so() {
         // A macro-enabled workbook: its content type, its VBA project.
         let book = new_workbook(
