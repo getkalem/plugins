@@ -659,9 +659,9 @@ order they are done, the spike first.
   `flow_component` test opens, edits, undoes, saves and opens again
   each file of the corpus through it. Released 2026-10-09 as
   `docx-v0.0.1`: the component signed and attached to the GitHub
-  release, its hash in `releases/` and its download in `index.json`; a
-  Kalem older than API 0.2.7 refuses it, and Kalem 0.6.0, the first
-  with that API, was not tagged yet that day.)
+  release, its hash in `releases/` and its download in `index.json`.
+  It runs with Kalem 0.6.0 (released 2026-10-09, plugin API 0.2.7) and
+  later; an older Kalem refuses it.)
 
 ## Open for the owner
 
