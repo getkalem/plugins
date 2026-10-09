@@ -26,7 +26,8 @@ to the core's comment commands; `Cargo.toml`, `Cargo.lock`,
 TOML, the core's (T2.7a.7). So the plugin's work is rust-analyzer:
 finding it, starting it in the right root with the right
 configuration, and making what it answers reachable. It ships a syntax
-only if the built-in one is behind the current edition (RS2).
+only if the built-in one is behind the current edition: RS2 found that
+it is, and ships Sublime Text's current one.
 
 What rust-analyzer needs from the client, the Elixir servers did not:
 its configuration arrives as the answer to `workspace/configuration`
@@ -122,35 +123,72 @@ spike first.
 
 ## RS2. The highlighter: the current edition
 
-- [ ] RS2 The built-in Rust (the sublimehq/Packages snapshot inside
+- [x] RS2 The built-in Rust (the sublimehq/Packages snapshot inside
   syntect 5.3) against the current `Rust/Rust.sublime-syntax` of
   sublimehq/Packages on `corpus/edition.rs`, a file of the constructs
   the 2021 and 2024 editions added or Rust gained since the snapshot:
   `let`–`else`, let chains, `async` closures and blocks, `const {}`
   blocks, c-string literals (`c"…"`), raw identifiers, `use<'a>`
   precise capturing, `unsafe extern`, `#[diagnostic::…]`, labeled
-  blocks, `dyn*`, `impl Trait` in argument and return position,
+  blocks, `impl Trait` in argument and return position,
   `macro_rules!` with every fragment specifier, attributes with nested
   meta, doc comments with fenced code. Where the built-in one
   mis-scopes a line, the newer file is shipped as
-  `syntaxes/Rust.sublime-syntax` with its license beside it
-  (`syntaxes/LICENSE-sublimehq-packages.txt`, the pinned commit named
-  in the README, unchanged as the elixir plugin's HTML bases are),
-  named in `syntaxes`, and takes `.rs` from the built-in one (a
-  plugin's syntax comes first for its extensions); its embeds
-  (Markdown in doc comments, if the newer file has it) resolved
-  against what Kalem's set has, through `kalem_highlight::register` in
-  the conformance test as elixir's `templates_through_kalem` does.
-  Where it does not, no file is shipped and the README says why.
-  Seen in RS1, with the built-in syntax and Kalem's kinds: the names
-  of structs and traits get no color (`struct Circle`, `trait Area`:
-  the syntax's scopes or Kalem's mapping of them to kinds, to be told
-  apart), `f64` is a keyword, `$side` inside a doc comment's backticks
-  is colored as a variable, and `macro_rules!` is a function where
-  `square!` is a macro.
-  Either way the conformance test highlights `corpus/edition.rs` to
-  its end with the scopes balanced and asserts the scopes of `fn`, a
-  lifetime, a macro call, a string and a doc comment.
+  `syntaxes/Rust.sublime-syntax` with its license beside it, the
+  pinned commit named in the README, unchanged as the elixir plugin's
+  HTML bases are, named in `syntaxes`, and takes `.rs` from the
+  built-in one (a plugin's syntax comes first for its extensions); its
+  embeds resolved against what Kalem's set has, through
+  `kalem_highlight::register` in the conformance test as elixir's
+  `templates_through_kalem` does. Where it does not, no file is
+  shipped and the README says why.
+  (Done 2026-10-10. The built-in one is behind: it leaves `async` and
+  `.await` plain (it predates Rust 1.39), splits `1e-3` into a number
+  and an operator, `r#gen` and `r#type` into three pieces, a `#!` line
+  into operators, misses `union`, a format string's named width
+  (`{name:>width$}`), the fragment specifiers `pat_param`,
+  `lifetime`, `literal` and `vis`, and in `kalem-core`'s `paste.rs`
+  took a `'` inside a string for a character and colored thirteen
+  lines of code after it as a string. Shipped: sublimehq/Packages'
+  file at 7f74b54 (2026-02-11), byte for byte, with the Rust
+  package's own MIT license as
+  `syntaxes/LICENSE-sublimehq-rust.txt` (the Packages license names
+  no exception for it; the package carries its own). It uses `pop:
+  1` and embeds `scope:source.toml` for a single-file package's
+  frontmatter, both of which syntect 5.3 and Kalem's TOML resolve;
+  `register` reports no error, and a plugin's syntax named "Rust"
+  wins over the built-in one for `rs`, `rust` and the name, since
+  syntect looks up newest first. Checked on 558 files and 380,000
+  lines (Kalem's crates, this repository's): no parse error through
+  syntect; 40 s to highlight all of them whole in a release build
+  against the built-in one's 28 s, Kalem's `viewer.rs` (17,897 lines)
+  1.9 s; of the lines the built-in one colored and this one leaves
+  plain, all but `paste.rs`'s are ALL_CAPS names inside macro calls,
+  which the built-in one guessed were constants. Kalem 0.6.0 lists
+  `syntaxes: Rust` for the plugin. The corpus gained `edition.rs`
+  (compiled by the test with `rustc --edition 2024`, no warning; no
+  `dyn*`, which is unstable) and `script.rs` (a `#!` line and a
+  frontmatter, nightly's, so not compiled). The conformance test has
+  eight tests: the syntax registered as Kalem does, once per test
+  binary; found for `rs`, `rust` and "Rust", coloring `async`; every
+  corpus file parsed to its end through syntect (with a TOML stand-in,
+  syntect's set having none) and Rust again after it; the workspace's
+  colors; and each mis-coloring above, fixed. Without the syntax in
+  the manifest four of them fail. Known differences, in the README:
+  the names a declaration gives get no color, because Kalem maps none
+  of `entity.name.struct`, `.enum`, `.trait`, `.impl`, `.constant`,
+  `.label`, `.macro` or `.module` to a kind (the built-in one colored
+  a constant's name); a type where it is used is `storage.type`, which
+  Kalem colors as a keyword; every variable is colored, not only
+  declared ones; `$name` in a comment is colored as a metavariable,
+  by the syntax's prototype, as the built-in one does; `safe` and
+  `raw` are plain. Kalem's part, for every syntax that follows
+  Sublime's current scope names (C, C++, Go, Java, TypeScript, Python
+  and the rest of sublimehq/Packages): `entity.name.struct`, `.enum`,
+  `.union`, `.trait`, `.interface`, `.impl` and `.namespace` as types,
+  `entity.name.constant` as a constant, `entity.name.macro` as a
+  macro, `entity.name.label` as a constant; `storage.type` as a type
+  only once the built-in set stops using it for `struct` and `fn`.)
 
 ## RS3. The server: found, in the right root, told its settings
 
@@ -412,10 +450,11 @@ spike first.
   manifest, so the server's check and a terminal `cargo build` never
   wait on each other, at the cost of a second `target/` of Kalem's
   size.
-- Whether a Rust syntax is shipped at all when the built-in one
-  mis-scopes only constructs no corpus file uses (RS2), or the
-  highlighter's built-in set is updated in Kalem instead, for every
-  language at once.
+- Whether Kalem's built-in set moves to sublimehq/Packages' current
+  syntaxes for every language (RS2 found its Rust older than Rust 1.39,
+  and its others are of the same snapshot), after which this plugin's
+  copy could go; and the scope names of RS2's note mapped to kinds in
+  Kalem's highlighter.
 - The corpus test against a real rust-analyzer in CI (RS10b, the
   component installed in `ci.yml`), or by hand as the elixir plugin
   was checked.

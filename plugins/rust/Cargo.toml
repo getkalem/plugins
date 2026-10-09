@@ -1,6 +1,6 @@
 [package]
 name = "kalem-plugin-rust"
-description = "Rust for Kalem: rust-analyzer as the language server, on Kalem's own Rust highlighting"
+description = "Rust for Kalem: highlighting for the current editions, and rust-analyzer as the language server"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,9 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
-# A language plugin is declarative (D57): a manifest and settings, read by
-# Kalem's core, which runs rust-analyzer through its one client. The crate
+# A language plugin is declarative (D57): a manifest, a syntax file and
+# settings, read by Kalem's core, which runs rust-analyzer through its one
+# client. The crate
 # holds the manifest and the conformance tests; it has no component to
 # build. `corpus/ws` is a Cargo workspace of its own (its own `[workspace]`
 # table), not a member of this one.
@@ -19,8 +20,11 @@ publish = false
 
 [dev-dependencies]
 serde_json = "1"
-# Kalem's highlighter, to check that the syntax the manifest names is the
-# one Kalem has built in, and that it colors the corpus.
+# The highlighter Kalem uses, to check that the syntax parses every corpus
+# file to its end: Kalem's own leaves a line it cannot parse uncolored.
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy", "yaml-load"] }
+# Kalem's highlighter, to check the syntax as Kalem loads it: registered
+# over the built-in Rust, and the colors it gives the corpus.
 kalem-highlight = { git = "https://github.com/getkalem/kalem", rev = "dfd6c1d11a61eb76e1e11d2dbe196cbb8c32e1dd" }
 
 [lints]

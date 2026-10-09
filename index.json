@@ -90,7 +90,7 @@
       "id": "org.kalem.rust",
       "name": "Rust",
       "version": "0.1.0",
-      "description": "Rust: rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting; the highlighting is Kalem's own",
+      "description": "Rust: highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting",
       "api": "^0.1",
       "permissions": [
         "subprocess"

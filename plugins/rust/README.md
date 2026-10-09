@@ -1,10 +1,23 @@
 # Rust
 
-Rust for [Kalem](https://github.com/getkalem/kalem): rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting.
+Rust for [Kalem](https://github.com/getkalem/kalem): highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting.
 
-**Status: the spike** (RS1 of [`rust_todo.md`](rust_todo.md)). A Cargo project is served, checked from the command line; the settings, clippy, run and test, and rust-analyzer's own requests are the list's later tasks.
+**Status: early** (RS1 and RS2 of [`rust_todo.md`](rust_todo.md)). A Cargo project is served, checked from the command line, and highlighted with Sublime Text's current Rust syntax; the settings, clippy, run and test, and rust-analyzer's own requests are the list's later tasks.
 
-A language plugin is declarative (Kalem's D57): this folder holds a manifest, `plugin.json`, a corpus project and its tests, and nothing that runs inside Kalem. It ships no syntax: Rust's highlighting is Kalem's own, the Sublime syntax built into its highlighter. Kalem's core reads the manifest and starts rust-analyzer through its one language server client.
+A language plugin is declarative (Kalem's D57): this folder holds a manifest, `plugin.json`, the Sublime syntax under `syntaxes/`, a corpus and its tests, and nothing that runs inside Kalem. Kalem's core reads the manifest, adds the syntax to its highlighter and starts rust-analyzer through its one language server client.
+
+## Highlighting
+
+Kalem has a Rust syntax built in, from before `async` and `.await` (Rust 1.39, 2019): it leaves `async` and `.await` plain, splits `1e-3` into a number and an operator, `r#type` into three pieces, and a `#!` line into operators, and misses `union`, a format string's named width (`{name:>width$}`) and four of the macro fragment specifiers. The plugin ships Sublime Text's current one, which reads all of these, the `#!` line and the TOML frontmatter of a single-file package (Cargo's `-Zscript`) too. While the plugin is installed it takes `.rs` files and `rust` source blocks in Org and Markdown from the built-in one.
+
+Known differences, each from Kalem's highlighter or the syntax, not from Rust:
+
+- The names a declaration gives (a struct's, an enum's, a trait's, a constant's or static's, a module's, a loop label) are not colored: the syntax names them (`entity.name.struct`, `entity.name.constant`, …), and Kalem's highlighter gives those scopes no color yet. The built-in syntax colored a constant's name.
+- A type where it is used (`Option`, `Vec`, `String`, an enum's variant) has the keywords' color: the syntax scopes it `storage.type`, which Kalem colors as a keyword.
+- Every variable and field is colored as a variable, not only where it is declared.
+- `$name` is colored as a macro's variable wherever it is, in a comment too, as the syntax does for `macro_rules!`.
+- `safe` in an `unsafe extern` block and `raw` in `&raw const` are plain.
+- It is about 40% slower than the built-in one: Kalem's 558 Rust files of 380,000 lines take 40 s to highlight whole rather than 28 s, its largest, 17,897 lines, 1.9 s. Kalem colors the lines on the screen first, so this shows only when a long file is colored to its end.
 
 ## The server
 
@@ -34,12 +47,19 @@ kalem lsp check plugins/rust/corpus/ws/app/tests/borrow.rs         # the borrow 
 kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already formatted
 ```
 
-`cargo test -p kalem-plugin-rust` runs the conformance tests: the manifest, the root against the one `cargo metadata` gives, the corpus built with its one deliberate error, and Kalem's Rust syntax on the corpus.
+`cargo test -p kalem-plugin-rust` runs the conformance tests: the manifest; the root against the one `cargo metadata` gives; the corpus built with its one deliberate error and `edition.rs` compiled without a warning; the syntax registered as Kalem registers it, found for `.rs` and `rust`, parsing every corpus file to its end, and coloring what the built-in one does not.
 
 ## The corpus
+
+`corpus/edition.rs` holds the constructs Rust gained after Kalem's built-in syntax was written (`let`–`else`, let chains, `async` closures, `const` blocks, C strings, raw identifiers, `use<'a>`, `unsafe extern` with `safe` items, `&raw const`, exclusive range patterns, every macro fragment specifier); it compiles as a library. `corpus/script.rs` is a single-file package with a `#!` line and a frontmatter, which needs nightly Cargo.
 
 `corpus/ws` is a Cargo workspace of its own (its own `[workspace]` table), not a member of this repository's: `shapes` has a trait, two structs and a `macro_rules!` macro, and `app` calls into it with one unit test. `app/tests/borrow.rs` does not compile, on purpose: it is the borrow error the diagnostics are checked on. `cargo build`, `cargo run` and `cargo test -p app --bin app` do not build it; `cargo check --all-targets`, rust-analyzer's check, does.
 
 ## Not done
 
 See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; rust-analyzer's settings described for Kalem's settings panel; clippy on save; rustfmt when no server runs; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests. A file of a dependency or of the standard library, reached by going to a definition, gets a root of its own (its crate's or the library's `Cargo.lock`), so Kalem would start a second server there.
+
+## Sources and licenses
+
+- `syntaxes/Rust.sublime-syntax`: from [sublimehq/Packages](https://github.com/sublimehq/Packages) at `7f74b54` (2026-02-11), the package's MIT license beside it (`syntaxes/LICENSE-sublimehq-rust.txt`), unchanged.
+- `corpus/`: for the tests, under this repository's license.
