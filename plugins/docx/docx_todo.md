@@ -736,7 +736,8 @@ order they are done, the spike first.
   It runs with Kalem 0.6.0 (released 2026-10-09, plugin API 0.2.7) and
   later; an older Kalem refuses it. `docx-v0.0.2` the same day: comments
   added and answered, WP10a, and new documents, WP12a; `docx-v0.0.3`:
-  comments resolved and deleted.)
+  comments resolved and deleted; `docx-v0.0.4` the next day: a
+  comment's text edited, and formatting, WP9.)
 
 ## Open for the owner
 
