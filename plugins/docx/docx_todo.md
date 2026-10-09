@@ -636,7 +636,7 @@ order they are done, the spike first.
 
 ## WP15. Release and the Book
 
-- [~] WP15 `plugin.json` (`org.kalem.docx`, "Word documents", `opens`
+- [x] WP15 `plugin.json` (`org.kalem.docx`, "Word documents", `opens`
   `.docx`, `.docm`, `.dotx`, `.dotm`, `activation` `onDocument`, `api`
   the flow interface's version, no permissions), the README in the
   shape of xlsx's (what it does, try it, tests, not yet), a line in
@@ -647,7 +647,7 @@ order they are done, the spike first.
   is read, shown, edited and written, export, known differences, not
   implemented, limits, code and tests), changed with the code in the
   same pull request (D53); R5.16's docx half ticked.
-  (Done 2026-10-09 but for the tag: `plugin.json` on plugin API
+  (Done 2026-10-09: `plugin.json` on plugin API
   0.2.7's `flow-viewer` (`"api": "^0.2.7"`), the README, the line in
   the repository's README, in `CODEOWNERS` and in `index.json`; the
   Book's chapter "Word documents" in Part III, a pointer in Part I,
@@ -657,10 +657,11 @@ order they are done, the spike first.
   exports, no WASI import; installed into a Kalem of `main` from its
   folder, `kalem plugin check` says it runs, and Kalem's
   `flow_component` test opens, edits, undoes, saves and opens again
-  each file of the corpus through it. Open: the tag `docx-v0.0.1`,
-  which publishes it; a Kalem older than API 0.2.7 refuses it, and
-  Kalem 0.6.0, the first with that API, was not tagged yet on
-  2026-10-09.)
+  each file of the corpus through it. Released 2026-10-09 as
+  `docx-v0.0.1`: the component signed and attached to the GitHub
+  release, its hash in `releases/` and its download in `index.json`; a
+  Kalem older than API 0.2.7 refuses it, and Kalem 0.6.0, the first
+  with that API, was not tagged yet that day.)
 
 ## Open for the owner
 
