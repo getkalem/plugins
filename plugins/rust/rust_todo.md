@@ -251,7 +251,7 @@ spike first.
   (rustup component add rust-analyzer; …)" in 3.4 s rather than 36.
   Open: the branch reviewed and merged, and a Kalem released with it;
   the status bar seen in the two editors by hand.)
-- [ ] RS3b The root. Decided in RS1: the nearest `Cargo.lock`, the
+- [~] RS3b The root. Decided in RS1: the nearest `Cargo.lock`, the
   root Cargo chose; a workspace's members are one root and one
   server; `rust-toolchain.toml` is honored by the proxy because the
   server starts in the root. Left: (1) a file of a dependency or of
@@ -271,6 +271,32 @@ spike first.
   `[workspace]`) and never built on its own has no lock and roots at
   its file's folder until rust-analyzer's first `cargo metadata`
   writes one; recorded, not changed.
+  (Done 2026-10-10 on Kalem's branch `rust-server-start`, after
+  RS3a's commit, not merged. Worse than "loading the whole standard
+  library": with Kalem 0.6.0's rule, `iter`'s definition from the
+  corpus (`core/src/slice/mod.rs`) roots at the `library` folder, and
+  a rust-analyzer started there cannot load it ("failed to parse
+  manifest" for `library/Cargo.toml`, which needs a nightly Cargo;
+  `profiler_builtins`'s build script failing), so hover there answered
+  nothing after 11 s. Kalem's part as made: the service keeps the
+  files each answer names outside the answering server's root, by
+  real path, with that server's key; a file among them opens in that
+  server when it runs and serves the file's language, unless a server
+  already runs in the file's own root (a monorepo's other workspace
+  keeps its own). Not read-only: rust-analyzer serves such a file as
+  any, and edits to the standard library are the user's business.
+  Tested in Kalem with the fake server naming a file of a `library`
+  folder beside its project, a root of its own: served by the
+  project's server, one server; with the rule off the test fails. By
+  hand through Kalem's service with rust-analyzer 1.99.0 on the
+  corpus (a throwaway example on the branch): the definition of
+  `iter` opened `core/src/slice/mod.rs` in the corpus's server ("ready,
+  2 documents"), and hover there gave `core::slice::Iter`'s
+  declaration, 8 s from start. The Book's "Language plugins", T3.8.1,
+  T3.8.6d and the changelog with it; here, the README's project
+  section. (2) stays recorded. Open: the branch merged and released;
+  the editors by hand; a crates.io dependency in the corpus, which
+  needs its tests to fetch it.)
 - [ ] RS3c A `.rs` outside any Cargo project (a `rust-script`, a
   scratch file, the file an Org block will export in RS7b): no
   `requireRoot`, the file's folder as the root, and what rust-analyzer

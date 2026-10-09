@@ -35,6 +35,8 @@ rustup puts a `rust-analyzer` in `~/.cargo/bin` whether or not the component is 
 
 The root is the nearest folder up from the file holding a `Cargo.lock`. Cargo writes the lock where it puts the workspace's root, so a workspace is one root and one server, whatever member a file is in, and a workspace inside another folder with a `Cargo.toml` (this plugin's corpus inside this repository) is a root of its own. A project never built has no lock yet: its file's folder is the root, rust-analyzer finds the `Cargo.toml` above it by itself, and its first `cargo metadata` writes the lock. The server runs in the root, so rustup honors the project's `rust-toolchain.toml`.
 
+A file of the standard library or of a dependency, reached by going to a definition, has a `Cargo.lock` of its own (a crate from crates.io ships one, and so does the standard library's folder). Up to Kalem 0.6.1 it becomes a root of its own, and a second rust-analyzer starts there; in the standard library's folder that one cannot load the workspace and answers nothing. Kalem's change for this (T3.8.1, not released yet) serves the file with the rust-analyzer that named it, which knows it: one server, and hover and definitions work inside the standard library.
+
 ## Checked
 
 With Kalem 0.6.0 and rust-analyzer 1.99.0 (the rustup component of Rust 1.99.0), on `corpus/ws`, from this repository's top:
@@ -59,7 +61,7 @@ kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already for
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; rust-analyzer's settings described for Kalem's settings panel; clippy on save; rustfmt when no server runs; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests. A file of a dependency or of the standard library, reached by going to a definition, gets a root of its own (its crate's or the library's `Cargo.lock`), so Kalem would start a second server there.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; rust-analyzer's settings described for Kalem's settings panel; clippy on save; rustfmt when no server runs; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
 
 ## Sources and licenses
 
