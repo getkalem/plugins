@@ -220,7 +220,7 @@ order they are done, the spike first.
   between cells, notes after the body), the outline comes from the
   headings, and `render` says that Kalem lays the document out (WP5b).
   The plugin builds as a `flow-viewer` component (plugin API 0.2.7)
-  and is 900 kB.
+  of 1.0 MB as released.
 
 - [x] WP5b Kalem's half, a **flow interface for every plugin of flowing
   documents**, not for Word alone (the owner's direction, 2026-10-09:
@@ -238,7 +238,8 @@ order they are done, the spike first.
     `viewer`, `password`, `formats` and `annotations`, and
     `kalem-plugin`'s feature `flow` adapts the Rust contract to it.
     One unit is a document's body, its first section's header and
-    footer and its notes as asides; a section break is a rule.
+    footer and its notes as asides. (Open: a section break given as a
+    rule; the plugin does not mark it yet.)
   - **Items**, fetched a range at a time (`items(unit, from, count)`)
     with a version: WIT has no recursive types, so a table, a row, a
     cell and an aside (a header, a footer, a footnote, an endnote, a
@@ -641,15 +642,25 @@ order they are done, the spike first.
   shape of xlsx's (what it does, try it, tests, not yet), a line in
   the repository's README table and in `CODEOWNERS`, `index.json`
   regenerated, the tag `docx-v0.0.1` once Kalem's flow world is
-  released; the chapter in Part IV of the Book from
+  released; the chapter in Part III of the Book from
   `TEMPLATE-format.org` (the standard and the oracle, which files, what
   is read, shown, edited and written, export, known differences, not
   implemented, limits, code and tests), changed with the code in the
   same pull request (D53); R5.16's docx half ticked.
-  (Done 2026-10-09 but for the release: `plugin.json` on plugin API
+  (Done 2026-10-09 but for the tag: `plugin.json` on plugin API
   0.2.7's `flow-viewer` (`"api": "^0.2.7"`), the README, the line in
-  the repository's README and in `index.json` (not published, no
-  download). The tag waits for a Kalem release with API 0.2.7.)
+  the repository's README, in `CODEOWNERS` and in `index.json`; the
+  Book's chapter "Word documents" in Part III, a pointer in Part I,
+  and T3.7.5 and R5.16 with this plugin's progress (Kalem 5e22a05).
+  The release build checked as the release workflow makes it (SIMD,
+  the functions' names kept): 1.0 MB, the `flow-viewer` world's
+  exports, no WASI import; installed into a Kalem of `main` from its
+  folder, `kalem plugin check` says it runs, and Kalem's
+  `flow_component` test opens, edits, undoes, saves and opens again
+  each file of the corpus through it. Open: the tag `docx-v0.0.1`,
+  which publishes it; a Kalem older than API 0.2.7 refuses it, and
+  Kalem 0.6.0, the first with that API, was not tagged yet on
+  2026-10-09.)
 
 ## Open for the owner
 
