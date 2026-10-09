@@ -10,7 +10,7 @@
   "menus": [
     {
       "title": "Git",
-      "when": "vcs == git || textType == git-status",
+      "when": "vcs == git || textType == git-status || textType == git-commit-view",
       "items": [
         "git.status",
         "-",
@@ -24,6 +24,13 @@
         "-",
         "git.dispatch"
       ]
+    }
+  ],
+  "buttons": [
+    {
+      "title": "Git",
+      "command": "git.status",
+      "when": "vcs == git || textType == git-status || textType == git-commit-view"
     }
   ],
   "settings": {

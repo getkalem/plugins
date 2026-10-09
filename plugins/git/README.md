@@ -4,7 +4,9 @@ The repository's status as a document in Kalem: the changed files with their dif
 
 **Status: phase 1.** `SPC g g` (Word-like keys: the palette's "Git: Status") opens the status as a document of its own: a line of keys, the repository's status (its branch, how far from its upstream, its tag), and lazygit's panels as tabs: **Files** (every changed path in a tree of folders, with git's two letters: `M ` staged, ` M` not, `MM` both, `??` untracked, `UU` in conflict), **Local branches**, **Commits** (hash, author's initials, tags, subject; `↑` not pushed) and **Stash**, in lazygit's colors (what is not staged red, what is staged green, tags magenta). Tab on a file shows its diff under it as magit does, hunk by hunk (the unstaged ones, then the staged), highlighted as a diff; the changed lines of every file opened are marked beside the lines, in both editors. A status bar item (`⎇ main ↑1 ↓2 •3`) and the Git panel stay. It needs Kalem's plugin API 0.2.6 (`process`, `documents`, `decorations`, `styled-documents`) and a repository inside one of Kalem's projects.
 
-A **Git menu** stands in the menu bar (and in the F10 list of both editors) while the current file is in a git repository, and in the status: Status (the same as `SPC g g`), commit, amend, push, pull, fetch, branches, stash, and the file's stage, unstage, revert, delete and blame. It needs Kalem 0.4.1.
+A **Git menu** stands in the menu bar (and in the F10 list of both editors) while the current file is in a git repository, and in the status: Status (the same as `SPC g g`), commit, amend, push, pull, fetch, branches, stash, and the file's stage, unstage, revert, delete and blame. It needs Kalem 0.4.1. Without a file (a new document, the projects view) the first project's folder counts.
+
+A **Git button** stands beside File Manager and Projects, on the window's toolbar and in the terminal's list of open files, in the same places; a click opens the status, as `SPC g g` does, and it is pressed while the status shows. It needs Kalem 0.5.2.
 
 ## Keys
 
