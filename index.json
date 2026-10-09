@@ -9,8 +9,8 @@
       "api": "^0.2.7",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/docx",
-      "download": null,
-      "sha256": null
+      "download": "https://github.com/getkalem/plugins/releases/download/docx-v0.0.2/docx.wasm",
+      "sha256": "e15e055e29c61b210c878200ec06cf901d9a71f7038ed25fdb0c164c9d76051a"
     },
     {
       "id": "org.kalem.elixir",
