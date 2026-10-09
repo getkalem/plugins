@@ -1,0 +1,423 @@
+# rust: Rust served by rust-analyzer, a plugin that is a manifest
+
+The list for the `rust` plugin of getkalem/plugins (`plugins/rust`,
+crate `kalem-plugin-rust`, id `org.kalem.rust`): Kalem's task T3.8.6d,
+decisions D57 (one language server client in the core, the plugins
+declare the servers), D58 (rust-analyzer as the one Rust server,
+proposed, confirmed by the corpus) and D16 (Sublime syntaxes for the
+highlighter). Written 2026-10-09 before the folder existed, at the
+repository's root, and moved here with the crate the same day; each task
+says what was done and what is open. The elixir plugin is the model: a
+declarative language plugin (D57), which is a manifest, syntax files,
+settings and a corpus project, with a conformance test in its crate and
+nothing that runs inside Kalem. What that plugin does for Elixir (Expert
+or ElixirLS started by Kalem's one client, the Mix project as the root)
+this one does for Rust with rust-analyzer and the Cargo workspace. The
+letters are RS; R is the roadmap's.
+
+## A manifest, and what Kalem already has
+
+Three things a Rust plugin might ship are Kalem's already. Rust is
+among the built-in syntaxes of the highlighter (syntect 5.3's default
+set, `("rust", "Rust")` in `kalem-highlight`), so `.rs` files and
+`#+begin_src rust` blocks are colored today; `//` and `/* */` are known
+to the core's comment commands; `Cargo.toml`, `Cargo.lock`,
+`rust-toolchain.toml`, `rustfmt.toml` and `.cargo/config.toml` are
+TOML, the core's (T2.7a.7). So the plugin's work is rust-analyzer:
+finding it, starting it in the right root with the right
+configuration, and making what it answers reachable. It ships a syntax
+only if the built-in one is behind the current edition (RS2).
+
+What rust-analyzer needs from the client, the Elixir servers did not:
+its configuration arrives as the answer to `workspace/configuration`
+for the section `rust-analyzer` (the client answers a section by
+walking `settings`, so the manifest's `settings` holds one object under
+that key) or as `initializationOptions`, which would be the section's
+contents unwrapped, not merged with the user's settings by Kalem, and
+so not sent (whether any setting needs it at `initialize` is RS3d's);
+it reports loading, build scripts, indexing and
+`cargo check` as `$/progress`, so no `busyLog`; it offers UTF-8
+positions, which the client takes; it registers file watchers
+dynamically, which the client declines (`dynamicRegistration: false`),
+so rust-analyzer watches with its own `notify` and Kalem's
+`didChangeWatchedFiles` arrive beside it; it sends
+`experimental/serverStatus` and has a dozen requests of its own (RS9).
+Everything the client lacks is listed by task as waiting on Kalem
+(T3.8.2: the light bulb, lenses, inlay hints, semantic tokens,
+snippets; T3.8.4: the install recipe run with consent, run and test
+commands, a second server), and what the plugin needs beyond the
+manifest is proposed as an addition for every language plugin, in the
+words of the other servers it serves, never in rust-analyzer's.
+
+Each task is done when it works in both editors, is said in the
+manifest where a manifest can say it (a declarative plugin has no
+code), is checked against rust-analyzer on the corpus workspace and on
+Kalem's own repository, and has its tests: the conformance test of the
+crate for the manifest and the syntax, the corpus test through the
+client for the server. "Checked against rust-analyzer" names the
+version checked and the toolchain it ran with, as the elixir README
+names Expert 0.1.11. The tasks are in the order they are done, the
+spike first.
+
+## RS1. The spike: a Cargo project served
+
+- [~] RS1 `plugins/rust` in `plugins/elixir`'s shape: `Cargo.toml`
+  (`kalem-plugin-rust`, no dependencies, `serde_json` and
+  `kalem-highlight` for the test), `src/lib.rs` holding the manifest,
+  `tests/conformance.rs`, and the smallest `plugin.json` that serves a
+  file: `id` `org.kalem.rust`, `name` "Rust", `api` `^0.1` as
+  elixir's, `activation` `onLanguage:rust`, `permissions`
+  `subprocess`; one language, `rust` (`extensions` `rs`; `shebangs`
+  `rust-script` and `cargo`, for a single-file package's
+  `#!/usr/bin/env cargo`; `comment` `//` and `/* */`; `brackets` the
+  three pairs; `syntax` "Rust", the built-in one); one server,
+  `rust-analyzer` (`command` `["rust-analyzer"]`, `candidates` it and
+  `~/.cargo/bin/rust-analyzer`, `rootMarkers` `["Cargo.lock"]`, the
+  nearest; no `requireRoot`, see RS3c; `install` the three ways of
+  RS3a; `settings` `{"rust-analyzer": {}}` for now). The corpus:
+  `corpus/ws`, a Cargo workspace of two crates (`shapes` with a trait,
+  two structs and a `macro_rules!` macro; `app` calling into it, with
+  one unit test, and a deliberate borrow error for RS4 in an
+  integration test, `app/tests/borrow.rs`, so that `cargo build`,
+  `cargo run` and the unit test at the cursor still build), with its
+  own `[workspace]` table so Cargo roots it there, `Cargo.lock`
+  committed, `target/` ignored. Done when `kalem lsp status
+  corpus/ws/app/src/main.rs` names the plugin and the server, `kalem
+  lsp ask hover` answers with rustdoc, and completion after `.` on the
+  struct lists its methods in both editors. Noted: Kalem starts a
+  server in its root (`current_dir(&config.root)`), so rustup's proxy
+  picks the toolchain `rust-toolchain.toml` names.
+  (Done 2026-10-09, but for the editors: the crate, the manifest, the
+  corpus, a line in `CODEOWNERS` and the plugin's entry in
+  `index.json`, with no download until a tag (CI's `build-index.py
+  --check` wants every manifest there). Two changes from the plan.
+  The root marker is `Cargo.lock`, the nearest, not `Cargo.toml`, the
+  outermost: with the outermost `Cargo.toml`, a corpus file rooted at
+  this repository, rust-analyzer loaded the plugins workspace and
+  answered nothing about the corpus, a file of no crate it had
+  loaded. Cargo writes `Cargo.lock` where it puts the workspace's
+  root, so the nearest lock is the root Cargo chose: this repository,
+  Kalem's checkout and the corpus are one root each, every member
+  inside it. A project never built has none: its file's folder is the
+  root, rust-analyzer finds the `Cargo.toml` above it and answers, and
+  its first `cargo metadata` writes the lock, so the next file roots
+  at the workspace (checked on a copy of the corpus without its lock).
+  No `initializationOptions`, for the reason above. The conformance
+  test has five tests: the manifest complete; the root equal to the
+  `workspace_root` `cargo metadata` gives, for every corpus file; the
+  corpus checked, its unit test run, and its one error E0502 in
+  `borrow.rs` with `--all-targets` (in a temporary target folder);
+  Kalem's `Rust` found by the manifest's name and by `.rs`; the corpus
+  colored. Checked with Kalem 0.6.0 and rust-analyzer 1.99.0
+  (b940084d 2026-09-28, the rustup component of Rust 1.99.0), from the
+  command line with `KALEM_PLUGIN_PATH=plugins/rust`: `kalem lsp
+  status` names the plugin, the server and the root `corpus/ws` for
+  both crates; `ask hover` on `Circle` gives its declaration and its
+  rustdoc; `ask completion` after `Circle::new(1.0).` lists `scaled`
+  and `area` with their documentation, in 0.2 s; `ask definition` on
+  `scaled` and `ask references` on `Area` cross the two crates;
+  `check` finds the E0502 in `borrow.rs` and nothing in `main.rs`;
+  `ask format` says `main.rs` is formatted. Open: completion and
+  hover in the graphical and the terminal editor, by hand.)
+
+## RS2. The highlighter: the current edition
+
+- [ ] RS2 The built-in Rust (the sublimehq/Packages snapshot inside
+  syntect 5.3) against the current `Rust/Rust.sublime-syntax` of
+  sublimehq/Packages on `corpus/edition.rs`, a file of the constructs
+  the 2021 and 2024 editions added or Rust gained since the snapshot:
+  `let`–`else`, let chains, `async` closures and blocks, `const {}`
+  blocks, c-string literals (`c"…"`), raw identifiers, `use<'a>`
+  precise capturing, `unsafe extern`, `#[diagnostic::…]`, labeled
+  blocks, `dyn*`, `impl Trait` in argument and return position,
+  `macro_rules!` with every fragment specifier, attributes with nested
+  meta, doc comments with fenced code. Where the built-in one
+  mis-scopes a line, the newer file is shipped as
+  `syntaxes/Rust.sublime-syntax` with its license beside it
+  (`syntaxes/LICENSE-sublimehq-packages.txt`, the pinned commit named
+  in the README, unchanged as the elixir plugin's HTML bases are),
+  named in `syntaxes`, and takes `.rs` from the built-in one (a
+  plugin's syntax comes first for its extensions); its embeds
+  (Markdown in doc comments, if the newer file has it) resolved
+  against what Kalem's set has, through `kalem_highlight::register` in
+  the conformance test as elixir's `templates_through_kalem` does.
+  Where it does not, no file is shipped and the README says why.
+  Seen in RS1, with the built-in syntax and Kalem's kinds: the names
+  of structs and traits get no color (`struct Circle`, `trait Area`:
+  the syntax's scopes or Kalem's mapping of them to kinds, to be told
+  apart), `f64` is a keyword, `$side` inside a doc comment's backticks
+  is colored as a variable, and `macro_rules!` is a function where
+  `square!` is a macro.
+  Either way the conformance test highlights `corpus/edition.rs` to
+  its end with the scopes balanced and asserts the scopes of `fn`, a
+  lifetime, a macro call, a string and a doc comment.
+
+## RS3. The server: found, in the right root, told its settings
+
+- [ ] RS3a Finding rust-analyzer, in the order T3.8.6d gives: the
+  rustup component (the `rust-analyzer` proxy in `~/.cargo/bin`,
+  which resolves to the component of the toolchain the root selects),
+  then the `PATH` (Homebrew's, a release binary renamed), through
+  `candidates` `["rust-analyzer", "~/.cargo/bin/rust-analyzer"]`;
+  `install` says "`rustup component add rust-analyzer`; or `brew
+  install rust-analyzer`; or a release from
+  https://github.com/rust-lang/rust-analyzer/releases on the PATH".
+  The trap: rustup's proxy exists whether or not the component is
+  installed, and without it exits at once with "'rust-analyzer' is
+  not installed for the toolchain …", which the client sees as a
+  crash and restarts with backoff. Kalem's part, for every language
+  whose toolchain ships proxies (rustup's `rust-analyzer` and
+  `rustfmt`, pyenv's shims, corepack's): a server that exits within
+  its first second shows its standard error as the reason in the
+  status bar with the `install` text, and is not restarted; the
+  recipe run with consent is T3.8.4's open item and waits there. Done
+  when a machine without the component says so in `kalem lsp status`
+  and in the status bar.
+- [ ] RS3b The root. Decided in RS1: the nearest `Cargo.lock`, the
+  root Cargo chose; a workspace's members are one root and one
+  server; `rust-toolchain.toml` is honored by the proxy because the
+  server starts in the root. Left: (1) a file of a dependency or of
+  the standard library, reached by going to a definition, has a
+  `Cargo.lock` of its own (a crate from crates.io ships one, and so
+  does the `library` folder of `rust-src`), so `kalem lsp status`
+  gives it a root of its own and Kalem would start a second
+  rust-analyzer there, loading that crate or the whole standard
+  library. Kalem's part, for every language: a file opened from a
+  server's answer (a definition, a reference, a symbol) and outside
+  every root that server serves stays with that server, read-only to
+  it, rather than starting another; the same holds for Go's module
+  cache, Python's `site-packages`, Node's packages outside the root
+  and Elixir's `deps` of another project. Checked in the editors on
+  `Vec::push` and on a dependency of a corpus crate once the corpus
+  has one. (2) A crate excluded from a workspace (`exclude` in its
+  `[workspace]`) and never built on its own has no lock and roots at
+  its file's folder until rust-analyzer's first `cargo metadata`
+  writes one; recorded, not changed.
+- [ ] RS3c A `.rs` outside any Cargo project (a `rust-script`, a
+  scratch file, the file an Org block will export in RS7b): no
+  `requireRoot`, the file's folder as the root, and what rust-analyzer
+  does with it checked: served against the sysroot as a detached file
+  (what it does for a file the client opens with no project around
+  it), or served only when named in `detachedFiles` at start, which
+  Kalem cannot do today; the outcome in the README under known
+  differences, the manifest changed to `requireRoot` true if the
+  server only errors.
+- [ ] RS3d The settings, described for Kalem's settings panel as
+  elixir's ElixirLS settings are (`settings.rust-analyzer.NAME` keys
+  with `type`, `default`, `enum` or `examples`, and a description
+  starting "rust-analyzer: "), the described default equal to what
+  the manifest sends, checked by the conformance test as elixir's
+  `settings_describe_what_elixir_ls_is_sent` does; the keys of RS4
+  and RS5 plus `cargo.features` (`"all"` or a list),
+  `cargo.allTargets`, `cargo.targetDir` (a second target folder so
+  the server's `cargo check` and the terminal's `cargo build` do not
+  wait on each other's lock; off as rust-analyzer's default, see the
+  open questions), `cargo.buildScripts.enable`, `procMacro.enable`,
+  `procMacro.ignored`, `completion.autoimport.enable`,
+  `completion.callable.snippets` (`add_parentheses` rather than its
+  default `fill_arguments`: the client declares no `snippetSupport`,
+  so until the snippet engine (T3.8.3) an argument placeholder would
+  be inserted as text), `diagnostics.disabled`,
+  `diagnostics.experimental.enable`, `files.excludeDirs`,
+  `rustfmt.extraArgs`, `rustfmt.overrideCommand`,
+  `imports.granularity.group`, `imports.prefix`; the user's
+  `plugins."org.kalem.rust".settings.rust-analyzer` merged over them
+  and sent again with `didChangeConfiguration`, which rust-analyzer
+  answers by asking for the section again. Done when a setting
+  changed in the panel reaches the server without a restart (`check`
+  to `clippy`, and the next save shows clippy's warnings).
+
+## RS4. Diagnostics: `cargo check` on save, clippy by setting
+
+- [ ] RS4 `checkOnSave` true and `check.command` `check` in the
+  manifest, `clippy` by setting (what this repository's CI runs;
+  slower); `check.allTargets`, `check.extraArgs`, `check.features`
+  and `check.workspace` described; the run's progress ("cargo check")
+  in the status bar from `$/progress`; the diagnostics in the status
+  bar and the lists (`SPC c x`, `SPC c X`), underlined and marked in
+  the gutter when T3.8.2 lands that; rust-analyzer's own diagnostics
+  (unresolved imports, type mismatches, missing fields; the
+  experimental ones off) beside cargo's, with their quick fixes as
+  code actions (`SPC c a`, Ctrl+. in the Word-like profile, once
+  T3.8.7 binds them; the request is implemented); a `cargo check`
+  that takes minutes on a large workspace (Kalem's own) blocks
+  nothing, the criterion of T3.8.6d. The corpus asserts the borrow
+  error of `app`'s test file through `kalem lsp check` and, in the
+  crate's test, through the client (RS10b). Known differences to
+  record: cargo's diagnostics arrive on save, not while typing, and
+  the first run after a fresh checkout builds the dependencies.
+
+## RS5. Formatting: rustfmt through the server
+
+- [ ] RS5 Format Document (`SPC c f`) formats through rust-analyzer,
+  which runs the toolchain's rustfmt with the crate's edition and the
+  root's `rustfmt.toml`; `rustfmt.extraArgs` and
+  `rustfmt.overrideCommand` described (`leptosfmt`, a nightly rustfmt
+  for unstable options); rustfmt missing from the toolchain (`rustup
+  component add rustfmt`) is the server's `showMessage`, shown in the
+  status bar; `commands.format` for a file no server serves:
+  `["rustfmt", "--edition", "2024"]` on standard input (rustfmt
+  defaults to the 2015 edition, which rejects `async` and `dyn`; a
+  file outside a Cargo project has no edition of its own, and 2024
+  parses the older ones, `gen` as a name excepted). The corpus asserts
+  rustfmt equality: `kalem lsp ask format` on an unformatted file
+  equals `rustfmt --edition 2021` of it. Formatting on save and of a
+  selection are T3.8.2's.
+
+## RS6. What the client already has, checked and written down
+
+- [ ] RS6 Each feature the client implements, exercised on the corpus
+  in both editors and recorded in the README's table as elixir's
+  (feature, Vim keys, Word-like keys, command): completion as you
+  type and on the server's trigger characters (`.`, `:`, `'`, `(`),
+  with the item's rustdoc beside the list, fetched with
+  `completionItem/resolve`; a trait method completed with its `use`
+  added (the item's `additionalTextEdits`, which the client applies
+  with the edit or does not: checked, and if not, T3.8.2's "automatic
+  imports" named as what it waits on); the call's signature after `(`
+  and `,`; documentation at the cursor (`K`, `SPC c k`) with the
+  rustdoc's Markdown rendered and its fenced code highlighted as Rust;
+  definition, declaration, type definition, implementations (`SPC c
+  i` lists a trait's impls) and references across the two crates;
+  rename across the two crates as one undo step, a field's rename
+  reaching its struct literals; document symbols in the outline
+  (`SPC s i`); `code.restartServer` after a `Cargo.toml` edit the
+  server's own watcher missed. Each row asserted in the crate's test
+  of RS10b. Written down as known differences: the position encoding
+  negotiated is UTF-8, which rust-analyzer offers, so the mapping is
+  the simpler one; hover on a `std` item carries the whole rustdoc
+  page, long in the terminal editor's card; a workspace symbol search
+  (`SPC s I`, `SPC c J`) waits for T3.8.2.
+
+## RS7. Cargo.toml, and Rust in Org and Markdown source blocks
+
+- [ ] RS7a `Cargo.toml` stays the core's TOML (T2.7a.7); the plugin
+  names nothing for it. Later, as the second server for the same
+  files that T3.8.4 leaves open: `taplo` with SchemaStore's Cargo
+  schema for the keys, and a crates server (`crates-lsp`) for the
+  versions after `=`, the plugin naming them for the file name
+  `Cargo.toml` only, so a plain `.toml` keeps the core's behavior;
+  the design of a second server for the same files, and how their
+  results merge, is Kalem's and serves Python (ruff beside
+  basedpyright), PHP (PHPStan beside Intelephense) and the web plugin
+  (ESLint) first.
+- [ ] RS7b Rust inside an Org or Markdown source block gets the same
+  completion when the block's document is inside a Cargo project: a
+  temporary file in the project, by setting and off by default since
+  it writes to disk (T3.8.6d's words). This is the core's (the
+  block's text as a document of language `rust`, synchronized to the
+  server as that file), designed for every language plugin at once
+  (Python and Elixir blocks the same way); the plugin's part is only
+  the language id `rust` the block names, already in RS1. Listed here
+  so the README's "not done" can point at it.
+
+## RS8. Run and test: `cargo run`, `cargo test`, and the lenses
+
+- [ ] RS8 `commands` `test` `["cargo", "test"]` and `run` `["cargo",
+  "run"]` in the manifest now (read, not used until the project's run
+  and test keys, T2.7i.8, `SPC p R` and `SPC p T`); `testAtPoint`
+  left out with its reason: `{file}` and `{line}` cannot name the
+  test, and rust-analyzer can (`experimental/runnables` at the cursor
+  gives `cargo test -p CRATE -- path::to::test --exact`, and its
+  `Run` and `Run Test` code lenses carry the same as the argument of
+  its client command `rust-analyzer.runSingle`). Kalem's part,
+  general: a lens or a runnables request whose command the plugin
+  maps to a run or test command, for every server that offers
+  runnables (gopls's `test` lens, ElixirLS's test lenses,
+  rust-analyzer's `runSingle`), declared in the manifest as a client
+  command id and the field of its argument that holds the program
+  and its arguments, rust-analyzer's `cargoArgs` and `executableArgs`
+  named only inside this plugin; waits on T3.8.2's lenses. The
+  `Debug` lens is omitted with its reason: Kalem has no debugger
+  (design document, §1.4).
+
+## RS9. rust-analyzer's own requests, where Kalem can show them (later)
+
+- [ ] RS9 The server's extensions, each a general shape Kalem gains
+  once and the plugin declares by name: *text at the cursor, shown in
+  a read-only document* (`rust-analyzer/expandMacro`,
+  `rust-analyzer/viewSyntaxTree` of the selection,
+  `rust-analyzer/analyzerStatus`; the same shape serves clangd's
+  `textDocument/ast` and ElixirLS's expand macro through
+  `workspace/executeCommand`, so the command `code.expandMacro` is one
+  key in both plugins); *an edit at the cursor*
+  (`experimental/joinLines`, `experimental/moveItem` up and down,
+  `experimental/onEnter`, which continues a `///` comment on Enter);
+  *a location* (`experimental/parentModule`,
+  `experimental/openCargoToml`; clangd's
+  `textDocument/switchSourceHeader` is this shape); *a URL opened*
+  (`experimental/externalDocs`, "open docs"); *a workspace edit from
+  two fields* (`experimental/ssr`, structural search and replace, as
+  a query-replace with a preview); *a notification shown as the
+  server's state* (`experimental/serverStatus` with its `health` and
+  `quiescent`, the status bar's "indexing" until quiescent; clangd's
+  `textDocument/clangd.fileStatus` and Metals's `metals/status` are
+  the same shape); and `rust-analyzer/reloadWorkspace` and
+  `rust-analyzer/rebuildProcMacros` as commands. The manifest names
+  the method, the shape and the command id for each; the client
+  learns the shapes, not the methods. Proposed in the plugin's README
+  under "not done" with this list until Kalem has the shapes; done
+  when expand macro and open docs work on the corpus's macro call.
+
+## RS10. Speed, the big corpus and the tests
+
+- [ ] RS10a Kalem's own repository as the corpus by hand: opened in
+  the GUI and the TUI, rust-analyzer's indexing (minutes, gigabytes)
+  shown as progress, no keystroke delayed meanwhile, completion
+  within the indexing time once it ends (the `lsp` completer's 1.5 s
+  budget against rust-analyzer's first answer measured and recorded),
+  `cargo check` on save against the terminal's `cargo build` (the
+  lock on `target/`, the `cargo.targetDir` setting's case), a
+  `Cargo.toml` edit reloading the workspace through the server's own
+  watcher; memory and time recorded in the README.
+- [ ] RS10b The crate's tests: `tests/conformance.rs` (the manifest
+  complete and consistent, every described setting of RS3d, the
+  syntax of RS2 through Kalem's highlighter) runs everywhere (RS1
+  made it, with the root and the corpus checked through Cargo); a
+  corpus test through `kalem-lsp` as a dev-dependency pinned by
+  revision, as elixir pins `kalem-highlight` (the client started with
+  the manifest's server spec on `corpus/ws`, waiting for quiescence,
+  then the assertions of RS4, RS5 and RS6: completion after `.`, the
+  trait method with its `use`, hover text, definition and rename
+  across the crates, the borrow diagnostic, rustfmt equality) that
+  runs when `rust-analyzer` is found and says it skipped otherwise;
+  `rustup component add rust-analyzer` in `ci.yml`'s test job, the
+  toolchain being there already (or by hand, the open question
+  below). The version checked named in the README: rust-analyzer's
+  date version and the Rust it ran with.
+
+## RS11. Release and the Book
+
+- [ ] RS11 `plugin.json` complete (`description` in the index's
+  words), the README in elixir's shape (what it gives as a table, the
+  server and how to install it, the project and its root, the
+  settings with the TOML example, installing, not done, sources and
+  licenses), a line in the repository's README table (`CODEOWNERS`
+  and `index.json` have it since RS1; the index entry gets its
+  download from `releases/` at the tag), the tag
+  `rust-v0.1.0` once RS1 to RS6 hold on the corpus (the release
+  workflow packs the folder from the tagged source, the corpus inside
+  it as elixir's is); the Book's chapter `book/part-3/rust.org` from
+  elixir's (what is followed: the grammar, and the server as the
+  oracle; the project; installing a server; known differences with
+  the versions checked; not implemented), T3.8.6d and T3.8.8 with
+  this plugin's progress and D58's Rust row confirmed by the corpus,
+  in the same pull request as the code (D53).
+
+## Open for the owner
+
+- The default on save: `cargo check` (faster) or `cargo clippy` (what
+  the repository's CI runs, so the editor shows what CI will).
+- `cargo.targetDir`: off as rust-analyzer ships it, or on by the
+  manifest, so the server's check and a terminal `cargo build` never
+  wait on each other, at the cost of a second `target/` of Kalem's
+  size.
+- Whether a Rust syntax is shipped at all when the built-in one
+  mis-scopes only constructs no corpus file uses (RS2), or the
+  highlighter's built-in set is updated in Kalem instead, for every
+  language at once.
+- The corpus test against a real rust-analyzer in CI (RS10b, the
+  component installed in `ci.yml`), or by hand as the elixir plugin
+  was checked.
+- The first version: the manifest says `0.1.0`, as elixir's line;
+  `0.0.1`, as the components', if the owner prefers it.

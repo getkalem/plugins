@@ -963,6 +963,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalem-plugin-rust"
+version = "0.1.0"
+dependencies = [
+ "kalem-highlight",
+ "serde_json",
+]
+
+[[package]]
 name = "kalem-plugin-template"
 version = "0.0.1"
 dependencies = [

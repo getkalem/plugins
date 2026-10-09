@@ -1,0 +1,16 @@
+# The corpus of Kalem's Rust plugin: a Cargo workspace of two crates.
+# `shapes` has a trait, two structs and a `macro_rules!` macro; `app`
+# calls into it across the workspace, with one unit test. Its own
+# `[workspace]` table makes it a workspace of its own, apart from the
+# plugins repository's around it.
+#
+# `app/tests/borrow.rs` does not compile, on purpose: a borrow error for
+# the plugin's diagnostics. `cargo build`, `cargo run` and `cargo check`
+# do not build it; `cargo check --all-targets` and `cargo test` do.
+[workspace]
+resolver = "3"
+members = ["shapes", "app"]
+
+[workspace.package]
+edition = "2024"
+publish = false

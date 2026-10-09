@@ -1,0 +1,31 @@
+{
+  "id": "org.kalem.rust",
+  "name": "Rust",
+  "version": "0.1.0",
+  "description": "Rust: rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting; the highlighting is Kalem's own",
+  "api": "^0.1",
+  "activation": ["onLanguage:rust"],
+  "permissions": ["subprocess"],
+  "languages": [
+    {
+      "id": "rust",
+      "name": "Rust",
+      "syntax": "Rust",
+      "extensions": ["rs"],
+      "shebangs": ["rust-script", "cargo"],
+      "comment": { "line": "//", "block": ["/*", "*/"] },
+      "brackets": [["(", ")"], ["[", "]"], ["{", "}"]],
+      "servers": ["rust-analyzer"]
+    }
+  ],
+  "servers": {
+    "rust-analyzer": {
+      "name": "rust-analyzer",
+      "command": ["rust-analyzer"],
+      "candidates": ["rust-analyzer", "~/.cargo/bin/rust-analyzer"],
+      "rootMarkers": ["Cargo.lock"],
+      "settings": { "rust-analyzer": {} },
+      "install": "rustup component add rust-analyzer; or brew install rust-analyzer; or a release from https://github.com/rust-lang/rust-analyzer/releases, renamed rust-analyzer and put on the PATH"
+    }
+  }
+}

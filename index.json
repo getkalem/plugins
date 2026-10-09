@@ -87,6 +87,28 @@
       "sha256": "c29dbee56cf1bd28620840fd1b8bca5a590d04eb8ea8a2acdd6a72ad89b6cd1f"
     },
     {
+      "id": "org.kalem.rust",
+      "name": "Rust",
+      "version": "0.1.0",
+      "description": "Rust: rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting; the highlighting is Kalem's own",
+      "api": "^0.1",
+      "permissions": [
+        "subprocess"
+      ],
+      "source": "https://github.com/getkalem/plugins/tree/main/plugins/rust",
+      "download": null,
+      "sha256": null,
+      "kind": "declarative",
+      "languages": [
+        {
+          "id": "rust",
+          "extensions": [
+            "rs"
+          ]
+        }
+      ]
+    },
+    {
       "id": "org.kalem.xlsx",
       "name": "Excel workbooks",
       "version": "0.0.9",
