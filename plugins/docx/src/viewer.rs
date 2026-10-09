@@ -467,6 +467,31 @@ impl ViewerDocument for DocxDoc {
         self.doc.set_revision_author(name, None);
     }
 
+    fn comment(&mut self, on: kalem_viewer::Anchor, text: &str) -> Result<String> {
+        let kalem_viewer::Anchor::Flow { from, to, .. } = on else {
+            return Err(ViewerError(
+                "A Word document's comments are on its text".into(),
+            ));
+        };
+        let a = self.para(from.paragraph)?;
+        let b = self.para(to.paragraph)?;
+        let r = self
+            .doc
+            .add_comment((&a, from.offset as usize), (&b, to.offset as usize), text);
+        let id = r.map_err(err)?;
+        self.refreshed();
+        Ok(format!("c{id}"))
+    }
+
+    fn reply(&mut self, parent: &str, text: &str) -> Result<String> {
+        let parent = parent
+            .strip_prefix('c')
+            .ok_or_else(|| ViewerError(format!("{parent} is not a comment")))?;
+        let id = self.doc.reply_comment(parent, text).map_err(err)?;
+        self.refreshed();
+        Ok(format!("c{id}"))
+    }
+
     fn accept(&mut self, id: &str) -> Result<()> {
         let r = self.doc.decide(revision(id)?, true);
         self.changed(r)

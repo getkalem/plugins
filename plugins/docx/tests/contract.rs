@@ -323,3 +323,58 @@ fn a_tracked_enter_rejected_joins_again() {
     let all = items(&mut d);
     assert!(find(&paras(&all), "Plain, bold").index == Some(plain));
 }
+
+#[test]
+fn comments_added_and_answered_through_the_interface() {
+    let mut d = open("handmade-features.docx");
+    d.set_author("Ayşe Nur");
+    let is = items(&mut d);
+    let ps = paras(&is);
+    let p = find(&ps, "Plain, bold").index.unwrap();
+    let on = kalem_viewer::Anchor::Flow {
+        unit: 0,
+        from: FlowPlace {
+            paragraph: p,
+            offset: 0,
+        },
+        to: FlowPlace {
+            paragraph: p,
+            offset: 5,
+        },
+    };
+    let id = d.comment(on.clone(), "Why plain?").unwrap();
+    let all = d.annotations(None);
+    let c = all.iter().find(|a| a.id == id).unwrap();
+    assert_eq!(c.kind, AnnotationKind::Comment);
+    assert_eq!(
+        (c.author.as_str(), c.text.as_str()),
+        ("Ayşe Nur", "Why plain?")
+    );
+    assert_eq!(c.anchors, [on]);
+    assert_eq!(c.parent, None);
+    // The flow says it: the commented run carries the comment.
+    let is = items(&mut d);
+    let ps = paras(&is);
+    let runs = &find(&ps, "Plain, bold").runs;
+    assert_eq!(runs[0].text, "Plain");
+    assert!(runs[0].annotations.contains(&id));
+    let answer = d.reply(&id, "Because.").unwrap();
+    let all = d.annotations(None);
+    let a = all.iter().find(|a| a.id == answer).unwrap();
+    assert_eq!(a.parent.as_deref(), Some(id.as_str()));
+    assert_eq!(a.anchors, c_anchors(&all, &id));
+    // Each one step of the document's history.
+    assert!(d.undo().unwrap() && d.undo().unwrap());
+    assert!(
+        !d.annotations(None)
+            .iter()
+            .any(|a| a.id == id || a.id == answer)
+    );
+    // Refused with a reason Kalem shows.
+    let e = d.reply("c999", "x").unwrap_err();
+    assert!(e.0.contains("no comment 999"), "{}", e.0);
+}
+
+fn c_anchors(all: &[kalem_viewer::Annotation], id: &str) -> Vec<kalem_viewer::Anchor> {
+    all.iter().find(|a| a.id == id).unwrap().anchors.clone()
+}

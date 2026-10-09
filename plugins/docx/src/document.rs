@@ -8,8 +8,9 @@ use std::fmt;
 use kalem_ooxml::package::{Package, PackageError};
 use kalem_ooxml::rels::{self, Rel};
 use kalem_ooxml::theme::{self, Theme};
-use kalem_ooxml::xml::{Reader, Token};
+use kalem_ooxml::xml::{self, Reader, Token};
 
+use crate::comments;
 use crate::edit::{self, Splice};
 use crate::flow::{self, Env, Layout, ParaAt, StoryId, VBlock, VComment, VNote, VPara, Walker};
 use crate::numbering::Numbering;
@@ -370,6 +371,7 @@ impl Document {
                     | "footnotes"
                     | "endnotes"
                     | "comments"
+                    | "commentsExtended"
                     | "header"
                     | "footer"
             ) && doc.package.contains(&target)
@@ -716,6 +718,7 @@ impl Document {
         };
         let footnotes = notes("footnotes", &w.footnotes, true);
         let endnotes = notes("endnotes", &w.endnotes, false);
+        let threads = self.comment_threads();
         let comments = self
             .related("comments")
             .map(|part| {
@@ -724,10 +727,13 @@ impl Document {
                     .iter()
                     .map(|i| {
                         let mut cw = Walker::new(self.env(&part), StoryId::Comment(i.id.clone()));
+                        let (parent, done) = threads.get(&i.id).cloned().unwrap_or_default();
                         VComment {
                             id: i.id.clone(),
                             author: i.author.clone().unwrap_or_default(),
                             date: i.date.clone(),
+                            parent,
+                            done,
                             blocks: cw.blocks(&i.blocks),
                         }
                     })
@@ -929,11 +935,12 @@ impl Document {
             }
             Err(e) => {
                 if let Some(b) = self.batch.take() {
-                    for (s, old) in b.splices.into_iter().rev() {
+                    for (s, old) in b.splices.iter().rev() {
                         if let Some(t) = self.texts.get_mut(&s.part) {
-                            t.replace_range(s.range.start..s.range.start + s.text.len(), &old);
+                            t.replace_range(s.range.start..s.range.start + s.text.len(), old);
                         }
                     }
+                    self.after_relationships(&b);
                 }
                 Err(e)
             }
@@ -1234,6 +1241,457 @@ impl Document {
         Err(Error::Refused(format!("There is no tracked change {id}")))
     }
 
+    /// The relationships of the main part read again from their text,
+    /// after a step that changed them was made, undone or redone.
+    fn after_relationships(&mut self, step: &Step) {
+        let path = rels::rels_path(&self.main);
+        if step.splices.iter().any(|(s, _)| s.part == path)
+            && let Some(t) = self.texts.get(&path)
+        {
+            self.rels.insert(self.main.clone(), rels::parse(t));
+        }
+    }
+
+    /// A part's text made editable: read from the package when it is
+    /// there, else empty (a part a save adds once an edit writes it).
+    fn ensure_text(&mut self, name: &str) -> Result<()> {
+        if self.texts.contains_key(name) {
+            return Ok(());
+        }
+        if self.package.contains(name) {
+            return self.load(name);
+        }
+        self.texts.insert(name.to_owned(), String::new());
+        Ok(())
+    }
+
+    /// A part's whole text replaced, as one splice of the step.
+    fn rewrite(&mut self, part: &str, new: String) -> Result<()> {
+        let old = self.texts.get(part).map_or("", String::as_str);
+        if old == new {
+            return Ok(());
+        }
+        let len = old.len();
+        self.apply(Splice {
+            part: part.to_owned(),
+            range: 0..len,
+            text: new,
+        })
+    }
+
+    /// Whether the document is written in the strict namespace.
+    fn strict(&self) -> bool {
+        let main = self.texts.get(&self.main).map_or("", String::as_str);
+        main[..main.len().min(4096)].contains("http://purl.oclc.org/ooxml/wordprocessingml/main")
+    }
+
+    /// The part a relationship of the main part names, by its type, made
+    /// when there is none: the part with `initial` as its text, beside
+    /// the main part, its relationship and its content type, in the
+    /// step being made.
+    fn related_or_new(
+        &mut self,
+        kind: &str,
+        rel_type: &str,
+        content_type: &str,
+        file: &str,
+        initial: String,
+    ) -> Result<String> {
+        if let Some(p) = self.related(kind) {
+            self.ensure_text(&p)?;
+            return Ok(p);
+        }
+        if self.strict() {
+            return Err(Error::Refused(
+                "Kalem does not add parts to a document in the strict namespace yet".into(),
+            ));
+        }
+        let dir = self.main.rsplit_once('/').map_or("", |(d, _)| d).to_owned();
+        let at = |f: &str| {
+            if dir.is_empty() {
+                f.to_owned()
+            } else {
+                format!("{dir}/{f}")
+            }
+        };
+        let (stem, ext) = file.rsplit_once('.').unwrap_or((file, "xml"));
+        let mut name = file.to_owned();
+        let mut n = 1;
+        while self.package.contains(&at(&name))
+            || self.texts.get(&at(&name)).is_some_and(|t| !t.is_empty())
+        {
+            name = format!("{stem}{n}.{ext}");
+            n += 1;
+        }
+        let part = at(&name);
+        self.ensure_text(&part)?;
+        self.rewrite(&part, initial)?;
+        let path = rels::rels_path(&self.main);
+        self.ensure_text(&path)?;
+        let (with_rel, _) = rels::add(&self.texts[&path], rel_type, &name, false);
+        self.rewrite(&path, with_rel)?;
+        let types = "[Content_Types].xml";
+        self.ensure_text(types)?;
+        let with_type = rels::add_override(&self.texts[types], &part, content_type);
+        self.rewrite(types, with_type)?;
+        self.rels
+            .insert(self.main.clone(), rels::parse(&self.texts[&path]));
+        Ok(part)
+    }
+
+    /// Whether comments may be written: a document protected for
+    /// comments only takes them, as Word lets it.
+    fn check_commentable(&self) -> Result<()> {
+        match self.protection.as_deref() {
+            None | Some("none") | Some("comments") => Ok(()),
+            Some(p) => Err(Error::Refused(format!(
+                "The document is protected ({p}); Kalem does not take protection away yet"
+            ))),
+        }
+    }
+
+    /// A part's root declaring `w14`, the namespace of paragraph IDs; its
+    /// prefix for it.
+    fn declare_w14(&mut self, part: &str) -> Result<String> {
+        let text = self.texts.get(part).map_or("", String::as_str);
+        let root = comments::root(text)
+            .ok_or_else(|| Error::BadPart(format!("{part} has no root element")))?;
+        let tag = &text[root.tag.clone()];
+        let (new, prefix) = comments::with_extension(tag, "w14", comments::NS_W14);
+        if new != tag {
+            self.apply(Splice {
+                part: part.to_owned(),
+                range: root.tag,
+                text: new,
+            })?;
+        }
+        Ok(prefix)
+    }
+
+    /// Where the content of a part's root ends, the root opened first
+    /// when it closes itself.
+    fn root_content_end(&mut self, part: &str) -> Result<(usize, String)> {
+        let text = self.texts.get(part).map_or("", String::as_str);
+        let root = comments::root(text)
+            .ok_or_else(|| Error::BadPart(format!("{part} has no root element")))?;
+        let prefix = root.prefix().to_owned();
+        if root.empty {
+            let tag = &text[root.tag.clone()];
+            let open = tag.trim_end_matches("/>").trim_end().to_owned() + ">";
+            let at = root.tag.start + open.len();
+            let close = format!("</{}>", root.qname);
+            self.apply(Splice {
+                part: part.to_owned(),
+                range: root.tag,
+                text: format!("{open}{close}"),
+            })?;
+            return Ok((at, prefix));
+        }
+        Ok((root.content_end, prefix))
+    }
+
+    /// Every paragraph ID of the document.
+    fn used_para_ids(&self) -> std::collections::HashSet<u32> {
+        self.texts
+            .values()
+            .flat_map(|t| comments::para_ids(t))
+            .collect()
+    }
+
+    /// What the extended comments part says of each comment, by `w:id`:
+    /// the comment it answers and whether it is done.
+    pub fn comment_threads(&self) -> HashMap<String, (Option<String>, bool)> {
+        let text = |kind: &str| {
+            self.related(kind)
+                .and_then(|p| self.texts.get(&p))
+                .map_or("", String::as_str)
+        };
+        comments::threads(text("comments"), text("commentsExtended"))
+    }
+
+    /// Writes comment `id` by the author into the comments part (made
+    /// when the document has none), each paragraph with an ID; and its
+    /// entry in the extended comments part when it answers the comment
+    /// whose last paragraph is `parent` or the document has that part.
+    /// Its last paragraph's ID.
+    fn write_comment(&mut self, id: &str, text: &str, parent: Option<&str>) -> Result<String> {
+        let part = self.related_or_new(
+            "comments",
+            comments::REL_COMMENTS,
+            comments::CT_COMMENTS,
+            "comments.xml",
+            comments::new_comments_part(),
+        )?;
+        let w14 = self.declare_w14(&part)?;
+        let (at, p) = self.root_content_end(&part)?;
+        let ids = comments::fresh_para_ids(&self.used_para_ids(), comments::lines(text).len());
+        let last = ids
+            .last()
+            .cloned()
+            .ok_or_else(|| Error::Refused("No paragraph ID is left for the comment".into()))?;
+        let date = self.date.clone().unwrap_or_else(now_iso);
+        let author = self.author.clone();
+        let xml = comments::comment_xml(
+            &p,
+            Some(&w14),
+            &comments::NewComment {
+                id,
+                author: &author,
+                date: &date,
+                text,
+            },
+            &ids,
+            self.styles.get("CommentText").is_some(),
+            self.styles.get("CommentReference").is_some(),
+        )
+        .map_err(Error::Refused)?;
+        self.apply(Splice {
+            part,
+            range: at..at,
+            text: xml,
+        })?;
+        if parent.is_some() || self.related("commentsExtended").is_some() {
+            let ex = self.related_or_new(
+                "commentsExtended",
+                comments::REL_COMMENTS_EX,
+                comments::CT_COMMENTS_EX,
+                "commentsExtended.xml",
+                comments::new_comments_ex_part(),
+            )?;
+            let (at, p15) = self.root_content_end(&ex)?;
+            self.apply(Splice {
+                part: ex,
+                range: at..at,
+                text: comments::comment_ex(&p15, &last, parent),
+            })?;
+        }
+        Ok(last)
+    }
+
+    /// Adds a comment by the author ([`Document::set_revision_author`]) on
+    /// the text from `from` to `to`, each a paragraph and a byte of its
+    /// edit text, in one story (the body or a note), as Word writes one:
+    /// the comment in the comments part (made when there is none), its
+    /// range's start and end around the text, a run with its reference
+    /// after the end. An empty range is a comment at a point: its
+    /// reference alone. Its `w:id`. One step.
+    pub fn add_comment(
+        &mut self,
+        from: (&ParaAt, usize),
+        to: (&ParaAt, usize),
+        text: &str,
+    ) -> Result<String> {
+        self.check_commentable()?;
+        if from.0.story != to.0.story {
+            return Err(Error::Refused(
+                "A comment's text is in one story: the body, or one note".into(),
+            ));
+        }
+        match &from.0.story {
+            StoryId::Body | StoryId::Footnote(_) | StoryId::Endnote(_) => {}
+            StoryId::Header(_) | StoryId::Footer(_) => {
+                return Err(Error::Refused(
+                    "Word keeps no comments in headers and footers".into(),
+                ));
+            }
+            StoryId::Comment(_) => {
+                return Err(Error::Refused(
+                    "A comment is not made inside a comment".into(),
+                ));
+            }
+        }
+        if text.trim().is_empty() {
+            return Err(Error::Refused("A comment needs text".into()));
+        }
+        let (from, to) = if (from.0.index, from.1) <= (to.0.index, to.1) {
+            (from, to)
+        } else {
+            (to, from)
+        };
+        let id = self.track().next_id.to_string();
+        self.begin_batch();
+        let r = self.add_comment_steps(&id, from, to, text);
+        self.finish_batch(r).map(|()| id)
+    }
+
+    fn add_comment_steps(
+        &mut self,
+        id: &str,
+        from: (&ParaAt, usize),
+        to: (&ParaAt, usize),
+        text: &str,
+    ) -> Result<()> {
+        self.write_comment(id, text, None)?;
+        let styled = self.styles.get("CommentReference").is_some();
+        let point = from == to;
+        let l = self.layout(to.0)?;
+        let src = &self.texts[&l.part];
+        let p = edit::prefix_of(src, l.start_tag.start);
+        let cut = edit::cut(&l, src, to.1, false).map_err(Error::Refused)?;
+        let reference = comments::reference_run(&p, id, styled);
+        let end = if point {
+            String::new()
+        } else {
+            format!("<{p}commentRangeEnd {p}id=\"{id}\"/>")
+        };
+        match cut.container_end {
+            // Inside a link or an insertion: the reference after it, at
+            // the paragraph's level.
+            Some(e) => {
+                self.apply(Splice {
+                    part: l.part.clone(),
+                    range: e..e,
+                    text: reference,
+                })?;
+                if !point {
+                    self.apply(cut.splice(&l.part, &end))?;
+                }
+            }
+            None => self.apply(cut.splice(&l.part, &format!("{end}{reference}")))?,
+        }
+        if !point {
+            let l = self.layout(from.0)?;
+            let src = &self.texts[&l.part];
+            let cut = edit::cut(&l, src, from.1, true).map_err(Error::Refused)?;
+            self.apply(cut.splice(&l.part, &format!("<{p}commentRangeStart {p}id=\"{id}\"/>")))?;
+        }
+        Ok(())
+    }
+
+    /// Answers comment `parent` (its `w:id`) by the author, as Word does:
+    /// a comment of its own, anchored on the answered one's text, its
+    /// range's start after that one's and its reference after that one's
+    /// reference, and an entry in the extended comments part (made when
+    /// there is none) naming the answered comment's last paragraph, which
+    /// gets an ID when it has none. A thread is one level deep, as in
+    /// Word: an answer to an answer answers the first comment. The
+    /// answer's `w:id`. One step.
+    pub fn reply_comment(&mut self, parent: &str, text: &str) -> Result<String> {
+        self.check_commentable()?;
+        if text.trim().is_empty() {
+            return Err(Error::Refused("An answer needs text".into()));
+        }
+        let missing = || Error::Refused(format!("There is no comment {parent}"));
+        let part = self
+            .related("comments")
+            .filter(|p| self.texts.contains_key(p))
+            .ok_or_else(missing)?;
+        if !comments::comment_paragraphs(&self.texts[&part]).contains_key(parent) {
+            return Err(missing());
+        }
+        let first = self
+            .comment_threads()
+            .get(parent)
+            .and_then(|(p, _)| p.clone())
+            .unwrap_or_else(|| parent.to_owned());
+        let (story, mut m) = self
+            .story_parts()
+            .into_iter()
+            .filter(|p| *p != part)
+            .find_map(|p| {
+                let m = comments::markers(&self.texts[&p], &first);
+                m.found().then_some((p, m))
+            })
+            .ok_or_else(|| {
+                Error::Refused(
+                    "The comment is not anchored in the text, so its answer has no place".into(),
+                )
+            })?;
+        if m.reference_run.is_none() && m.end.is_none() {
+            return Err(Error::Refused("The comment's range has no end".into()));
+        }
+        // After the answers it has already, in the order they were made.
+        for (answer, (p, _)) in self.comment_threads() {
+            if p.as_deref() != Some(first.as_str()) {
+                continue;
+            }
+            let a = comments::markers(&self.texts[&story], &answer);
+            if let (Some(s), Some(ms)) = (a.start, m.start.as_mut())
+                && s.end > ms.end
+            {
+                *ms = s;
+            }
+            if let (Some(r), Some(mr)) = (a.reference_run, m.reference_run.as_mut())
+                && r.end > mr.end
+            {
+                *mr = r;
+            }
+        }
+        let id = self.track().next_id.to_string();
+        self.begin_batch();
+        let r = self.reply_steps(&id, &first, text, &part, &story, &m);
+        self.finish_batch(r).map(|()| id)
+    }
+
+    fn reply_steps(
+        &mut self,
+        id: &str,
+        first: &str,
+        text: &str,
+        part: &str,
+        story: &str,
+        m: &comments::Markers,
+    ) -> Result<()> {
+        let parent_para = self.comment_para_id(part, first)?;
+        self.write_comment(id, text, Some(&parent_para))?;
+        let styled = self.styles.get("CommentReference").is_some();
+        let src = &self.texts[story];
+        let mut inserts: Vec<(usize, String)> = Vec::new();
+        if let Some(s) = &m.start {
+            let p = edit::prefix_of(src, s.start);
+            inserts.push((s.end, format!("<{p}commentRangeStart {p}id=\"{id}\"/>")));
+        }
+        let (after, p) = match (&m.reference_run, &m.end) {
+            (Some(run), _) => (run.end, edit::prefix_of(src, run.start)),
+            (None, Some(e)) => (e.end, edit::prefix_of(src, e.start)),
+            (None, None) => unreachable!("checked before the step"),
+        };
+        let end = if m.start.is_some() {
+            format!("<{p}commentRangeEnd {p}id=\"{id}\"/>")
+        } else {
+            String::new()
+        };
+        inserts.push((
+            after,
+            format!("{end}{}", comments::reference_run(&p, id, styled)),
+        ));
+        inserts.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+        for (at, text) in inserts {
+            self.apply(Splice {
+                part: story.to_owned(),
+                range: at..at,
+                text,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The ID of comment `id`'s last paragraph, given one when it has
+    /// none.
+    fn comment_para_id(&mut self, part: &str, id: &str) -> Result<String> {
+        let w14 = self.declare_w14(part)?;
+        let paras = comments::comment_paragraphs(&self.texts[part]);
+        let (span, para) = paras
+            .get(id)
+            .and_then(|ps| ps.last())
+            .cloned()
+            .ok_or_else(|| Error::Refused(format!("Comment {id} has no paragraph")))?;
+        if let Some(p) = para {
+            return Ok(p);
+        }
+        let fresh = comments::fresh_para_ids(&self.used_para_ids(), 1)
+            .pop()
+            .ok_or_else(|| Error::Refused("No paragraph ID is left for the comment".into()))?;
+        let tag = &self.texts[part][span.clone()];
+        let new = xml::set_attr(tag, &format!("{w14}paraId"), &fresh);
+        self.apply(Splice {
+            part: part.to_owned(),
+            range: span,
+            text: new,
+        })?;
+        Ok(fresh)
+    }
+
     /// Undoes the last step; whether there was one.
     pub fn undo(&mut self) -> bool {
         if self.at == 0 {
@@ -1246,6 +1704,7 @@ impl Document {
                 t.replace_range(s.range.start..s.range.start + s.text.len(), old);
             }
         }
+        self.after_relationships(&step);
         true
     }
 
@@ -1260,6 +1719,7 @@ impl Document {
                 t.replace_range(s.range.clone(), &s.text);
             }
         }
+        self.after_relationships(&step);
         self.at += 1;
         true
     }
@@ -1274,7 +1734,10 @@ impl Document {
         let mut out: Vec<String> = self
             .texts
             .iter()
-            .filter(|(n, t)| self.originals.get(*n) != Some(t))
+            .filter(|(n, t)| match self.originals.get(*n) {
+                Some(o) => o != *t,
+                None => !t.is_empty(),
+            })
             .map(|(n, _)| n.clone())
             .collect();
         out.sort();
@@ -1286,11 +1749,13 @@ impl Document {
     pub fn save(&mut self) -> Result<Vec<u8>> {
         let names: Vec<String> = self.texts.keys().cloned().collect();
         for n in names {
-            if self.originals.get(&n) == self.texts.get(&n) {
-                self.package.restore_part(&n);
-            } else {
-                self.package
-                    .set_part(&n, self.texts[&n].clone().into_bytes());
+            match self.originals.get(&n) {
+                Some(o) if Some(o) == self.texts.get(&n) => self.package.restore_part(&n),
+                // A part an edit made, undone: not written.
+                None if self.texts[&n].is_empty() => self.package.remove_part(&n),
+                _ => self
+                    .package
+                    .set_part(&n, self.texts[&n].clone().into_bytes()),
             }
         }
         let out = self.package.write()?;

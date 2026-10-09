@@ -1255,6 +1255,147 @@ pub fn join(
     })
 }
 
+/// Text as the content of runs with the prefix `p`: text, `w:tab` for a
+/// tab, `w:br` for a line break; refused as typing refuses it.
+pub fn run_content(p: &str, text: &str) -> Result<String, String> {
+    Ok(render(p, &pieces(text)?))
+}
+
+/// The prefix of the element whose start tag begins at `at` (`w:`).
+pub fn prefix_of(src: &str, at: usize) -> String {
+    prefix_at(src, at)
+}
+
+/// Where an element that stands between runs (a comment's range start or
+/// end, a bookmark) goes at a place of a paragraph's edit text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cut {
+    /// The bytes of the part replaced: empty, or a run split in two there.
+    pub range: Range<usize>,
+    /// What goes before the element: the split run's first half.
+    pub before: String,
+    /// What goes after it: the split run's second half.
+    pub after: String,
+    /// The end of the paragraph's top-level element the place is inside
+    /// (a link, an insertion, a field), when it is inside one: where a
+    /// run that has to stand at the paragraph's level goes.
+    pub container_end: Option<usize>,
+}
+
+impl Cut {
+    /// The splice putting `element` at the cut.
+    pub fn splice(&self, part: &str, element: &str) -> Splice {
+        Splice {
+            part: part.to_owned(),
+            range: self.range.clone(),
+            text: format!("{}{element}{}", self.before, self.after),
+        }
+    }
+}
+
+/// Where an element between runs goes at byte `at` of a paragraph's edit
+/// text: inside a text piece, its run is split in two there; between two
+/// pieces of one run, the run is split between them; else it goes before
+/// the run of the piece after `at` (`opening`: the start of a range) or
+/// after the run of the piece before it (the end of one). A place inside
+/// a piece that is not edited (a field's result, deleted text) moves to
+/// that piece's start (`opening`) or end, so the range takes it whole.
+pub fn cut(l: &Layout, src: &str, at: usize, opening: bool) -> Result<Cut, String> {
+    check_range(l, &(at..at))?;
+    if l.empty {
+        // `<w:p/>`: opened, so that the element is inside it.
+        let p = prefix_at(src, l.start_tag.start);
+        let tag = &src[l.start_tag.clone()];
+        return Ok(Cut {
+            range: l.span.clone(),
+            before: tag.trim_end_matches("/>").trim_end().to_owned() + ">",
+            after: format!("</{p}p>"),
+            container_end: None,
+        });
+    }
+    let c0 = l
+        .ppr
+        .as_ref()
+        .map_or(l.start_tag.end, |s| s.end)
+        .min(l.content_end);
+    let container = |run: usize| {
+        let r = &l.runs[run];
+        l.tops
+            .get(r.top)
+            .filter(|t| **t != r.span && t.start <= r.span.start && r.span.end <= t.end)
+            .map(|t| t.end)
+    };
+    let halves = |run: usize, cut_at: usize, mid_left: &str, mid_right: &str, resume: usize| {
+        let r = &l.runs[run];
+        let head = &src[r.start_tag.clone()];
+        let rpr = r.rpr.as_ref().map_or("", |s| &src[s.clone()]);
+        let from = r.rpr.as_ref().map_or(r.start_tag.end, |s| s.end);
+        let end = &src[r.end_tag.clone()];
+        (
+            format!("{head}{rpr}{}{mid_left}{end}", &src[from..cut_at]),
+            format!(
+                "{head}{rpr}{mid_right}{}{end}",
+                &src[resume..r.end_tag.start]
+            ),
+        )
+    };
+    let mut at = at;
+    if let Some(s) = l
+        .segs
+        .iter()
+        .find(|s| s.text.is_some() && s.range.start < at && at < s.range.end)
+    {
+        if s.lock.is_some() || l.runs[s.run].start_tag.is_empty() {
+            at = if opening { s.range.start } else { s.range.end };
+        } else {
+            let (inner, _) = s.text.clone().unwrap_or_default();
+            let t = &l.text[s.range.clone()];
+            let off = at - s.range.start;
+            let left = render_text_atom(src, &s.atom, &inner, &[Piece::Text(t[..off].into())]);
+            let right = render_text_atom(src, &s.atom, &inner, &[Piece::Text(t[off..].into())]);
+            let (before, after) = halves(s.run, s.atom.start, &left, &right, s.atom.end);
+            return Ok(Cut {
+                range: l.runs[s.run].span.clone(),
+                before,
+                after,
+                container_end: container(s.run),
+            });
+        }
+    }
+    let before = l
+        .segs
+        .iter()
+        .rposition(|s| s.range.end <= at && s.range.start < s.range.end);
+    let after = l.segs.iter().position(|s| s.range.start >= at);
+    if let (Some(b), Some(a)) = (before, after) {
+        let (b, a) = (&l.segs[b], &l.segs[a]);
+        if b.run == a.run && !l.runs[a.run].start_tag.is_empty() {
+            let (before, after) = halves(a.run, a.atom.start, "", "", a.atom.start);
+            return Ok(Cut {
+                range: l.runs[a.run].span.clone(),
+                before,
+                after,
+                container_end: container(a.run),
+            });
+        }
+    }
+    let (pos, container_end) = match (opening, before, after) {
+        (true, _, Some(a)) => (l.runs[l.segs[a].run].span.start, None),
+        (true, _, None) => (l.content_end, None),
+        (false, Some(b), _) => {
+            let run = l.segs[b].run;
+            (l.runs[run].span.end, container(run))
+        }
+        (false, None, _) => (c0, None),
+    };
+    Ok(Cut {
+        range: pos..pos,
+        before: String::new(),
+        after: String::new(),
+        container_end,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

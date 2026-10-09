@@ -469,7 +469,7 @@ order they are done, the spike first.
 
 ## WP10. Comments and tracked changes edited
 
-- [ ] WP10a Comments: New Comment on the selection (a `w:comment` in
+- [~] WP10a Comments: New Comment on the selection (a `w:comment` in
   `comments.xml`, made with its relationship and content type override
   when the document has none; `w:commentRangeStart` and `End` around
   the runs and a run with `w:commentReference` in the `CommentReference`
@@ -479,8 +479,26 @@ order they are done, the spike first.
   gone; the parts removed when empty, as Word leaves them); the author
   and initials from Kalem's user name (`set-author`). Kalem's half is
   done (the `annotations` interface's `comment`, `reply`, `resolve`,
-  `remove` and the Review commands, 2026-10-09); the plugin refuses
-  them until this is.
+  `remove` and the Review commands, 2026-10-09).
+  (Done 2026-10-09 but for Resolve, Delete and editing a comment's
+  text: `comments.rs`, `Document::add_comment` and `reply_comment`.
+  New Comment on a range in the body or a note (headers and footers
+  refused, as Word keeps none there), a run split where the range
+  starts or ends inside it, the reference run after the end and, when
+  the end is inside a link or an insertion, after that at the
+  paragraph's level; an empty range a comment at a point, its
+  reference alone. The comment's paragraphs each with a fresh
+  `w14:paraId` (the root declaring `w14` and listing it as ignorable
+  when it did not), `CommentText` and `CommentReference` only when the
+  document has those styles, Word's `w14:textId` `77777777`; its
+  `w15:commentEx` written when the document has the extended part. A
+  reply anchored after the thread's last range start and reference,
+  its parent's last paragraph given an ID when it had none. The
+  `commentsExtended` part read too, so Kalem shows answers under their
+  comment and done comments as resolved. Checked with LibreOffice 7.3:
+  it reads the comments with their authors, texts and ranges, and
+  shows an answer as a comment of its own, as it reads no threads.
+  Word by hand still.)
 - [x] WP10b Tracked changes: Accept and Reject on the change under the
   cursor, Accept All and Reject All, as Word rewrites them (an
   accepted `w:ins` unwrapped, a rejected one removed; an accepted

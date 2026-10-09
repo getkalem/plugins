@@ -356,8 +356,8 @@ pub fn build(view: &DocView) -> FlowCache {
                 author: c.author.clone(),
                 date: c.date.clone(),
                 text: text.trim().to_string(),
-                parent: None,
-                resolved: false,
+                parent: c.parent.as_ref().map(|p| format!("c{p}")),
+                resolved: c.done,
             }
         })
         .collect();

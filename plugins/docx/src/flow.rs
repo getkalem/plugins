@@ -301,6 +301,10 @@ pub struct VComment {
     pub author: String,
     /// Its date.
     pub date: Option<String>,
+    /// The `w:id` of the comment it answers.
+    pub parent: Option<String>,
+    /// Whether it is marked done.
+    pub done: bool,
     /// Its blocks.
     pub blocks: Vec<VBlock>,
 }

@@ -13,10 +13,15 @@
 //! cargo run -p kalem-plugin-docx --example docx -- split   report.docx 3 5 [-o out.docx]
 //! cargo run -p kalem-plugin-docx --example docx -- join    report.docx 3 [-o out.docx]
 //! cargo run -p kalem-plugin-docx --example docx -- track   report.docx on|off [-o out.docx]
+//! cargo run -p kalem-plugin-docx --example docx -- comment report.docx 3 0 5 'Text' [-o out.docx]
+//! cargo run -p kalem-plugin-docx --example docx -- reply   report.docx 0 'Text' [-o out.docx]
 //! ```
 //!
 //! In a document that tracks changes, edits are written as tracked
-//! changes by the author `KALEM_AUTHOR` names (else "Kalem").
+//! changes by the author `KALEM_AUTHOR` names (else "Kalem"); comments
+//! and answers are by that author too. `comment` puts a comment on bytes
+//! FROM to TO of a paragraph's edit text; `reply` answers the comment of
+//! that `w:id`. Each prints the new comment's `w:id`.
 //!
 //! Paragraphs are numbered as `paras` lists them: the body's, from 0,
 //! tables' included. An edit without `-o` writes the file in place,
@@ -285,7 +290,7 @@ fn run(args: &[String]) -> Res<()> {
         out = args.get(i + 1).map(PathBuf::from);
         args.drain(i..(i + 2).min(args.len()));
     }
-    let usage = "usage: docx info|show|text|outline|styles|paras|set|type|split|join|track FILE …";
+    let usage = "usage: docx info|show|text|outline|styles|paras|set|type|split|join|track|comment|reply FILE …";
     let cmd = args.first().ok_or(usage)?;
     let path = PathBuf::from(args.get(1).ok_or(usage)?);
     match cmd.as_str() {
@@ -347,6 +352,23 @@ fn run(args: &[String]) -> Res<()> {
         "join" => {
             let mut doc = open(&path)?;
             doc.join(&at(args.get(2).ok_or("join FILE PARAGRAPH")?)?)?;
+            write_out(&mut doc, &path, out)
+        }
+        "comment" => {
+            let use_ = "comment FILE PARAGRAPH FROM TO TEXT";
+            let mut doc = open(&path)?;
+            let at = at(args.get(2).ok_or(use_)?)?;
+            let from: usize = args.get(3).ok_or(use_)?.parse()?;
+            let to: usize = args.get(4).ok_or(use_)?.parse()?;
+            let id = doc.add_comment((&at, from), (&at, to), args.get(5).ok_or(use_)?)?;
+            println!("{id}");
+            write_out(&mut doc, &path, out)
+        }
+        "reply" => {
+            let use_ = "reply FILE COMMENT TEXT";
+            let mut doc = open(&path)?;
+            let id = doc.reply_comment(args.get(2).ok_or(use_)?, args.get(3).ok_or(use_)?)?;
+            println!("{id}");
             write_out(&mut doc, &path, out)
         }
         _ => Err(usage.into()),
