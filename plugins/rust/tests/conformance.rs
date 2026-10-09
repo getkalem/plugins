@@ -136,6 +136,10 @@ fn the_root_is_cargos_workspace_root() {
     let s = &m["servers"]["rust-analyzer"];
     assert_eq!(list(&s["rootMarkers"]), ["Cargo.lock"]);
     assert_ne!(s["rootOutermost"], true, "the nearest, not the outermost");
+    // A project never built has no `Cargo.lock` yet: its file's folder
+    // is the root, and rust-analyzer finds its `Cargo.toml` above it.
+    // Refusing a server outside a marked folder would refuse it that.
+    assert_ne!(s["requireRoot"], true, "a project never built is served");
     let out = tool("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .current_dir(workspace().join("app"))

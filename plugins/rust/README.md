@@ -37,6 +37,19 @@ The root is the nearest folder up from the file holding a `Cargo.lock`. Cargo wr
 
 A file of the standard library or of a dependency, reached by going to a definition, has a `Cargo.lock` of its own (a crate from crates.io ships one, and so does the standard library's folder). Up to Kalem 0.6.1 it becomes a root of its own, and a second rust-analyzer starts there; in the standard library's folder that one cannot load the workspace and answers nothing. Kalem's change for this (T3.8.1, not released yet) serves the file with the rust-analyzer that named it, which knows it: one server, and hover and definitions work inside the standard library.
 
+## A file outside a project
+
+rust-analyzer serves only files of a Cargo project it has loaded. A `.rs` file with no `Cargo.toml` above it (a scratch file, a `rust-script`) gets a server that finds no project and answers nothing: no documentation, no completion, no diagnostics. Name the file in rust-analyzer's `linkedProjects` and it is served on its own, against the standard library: documentation, completion and definitions work. A `.kalem/settings.toml` in its folder does it, with paths relative to the folder:
+
+```toml
+[plugins."org.kalem.rust".settings.rust-analyzer]
+linkedProjects = ["scratch.rs"]
+```
+
+Such a file gets no diagnostics from `cargo check`, which fails on a file that names no edition, and rust-analyzer gives its own diagnostics only to an editor that asks for them, which Kalem does not do yet (see `rust_todo.md`, RS4). A file inside a project that no `mod` names is not served either; rust-analyzer's "unlinked file" diagnostic, which says so and offers to add the `mod`, is one of those Kalem does not ask for.
+
+The plugin does not refuse such files a server (`requireRoot`): that would refuse one to a project never built too, which has no `Cargo.lock` yet and is served from its file's folder.
+
 ## Checked
 
 With Kalem 0.6.0 and rust-analyzer 1.99.0 (the rustup component of Rust 1.99.0), on `corpus/ws`, from this repository's top:

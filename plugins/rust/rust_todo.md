@@ -297,7 +297,7 @@ spike first.
   section. (2) stays recorded. Open: the branch merged and released;
   the editors by hand; a crates.io dependency in the corpus, which
   needs its tests to fetch it.)
-- [ ] RS3c A `.rs` outside any Cargo project (a `rust-script`, a
+- [~] RS3c A `.rs` outside any Cargo project (a `rust-script`, a
   scratch file, the file an Org block will export in RS7b): no
   `requireRoot`, the file's folder as the root, and what rust-analyzer
   does with it checked: served against the sysroot as a detached file
@@ -306,6 +306,38 @@ spike first.
   Kalem cannot do today; the outcome in the README under known
   differences, the manifest changed to `requireRoot` true if the
   server only errors.
+  (Done 2026-10-10 but for Kalem's part, proposed below and not
+  made. Checked with rust-analyzer 1.99.0 on a scratch file in a
+  folder with nothing above it, through Kalem 0.6.0 and the branch
+  build: rust-analyzer logs "failed to find any projects" and answers
+  nothing, no documentation, completion or diagnostic; it does not
+  serve an opened file on its own. Named in `linkedProjects` (the
+  successor of `detachedFiles`; a path relative to the root works) it
+  serves the file on its own against the standard library:
+  documentation, completion (125 items after a `String`'s `.`),
+  definitions into `alloc`; its `cargo check` fails ("`package.edition`
+  is unspecified", rust-analyzer's health then "warning"), and its own
+  diagnostics come only by pull (RS4). A `.kalem/settings.toml` in the
+  file's folder with `linkedProjects = ["scratch.rs"]` under
+  `plugins."org.kalem.rust".settings.rust-analyzer` does it today, in
+  Kalem 0.6.0 too; the README says so. A file inside a project that no
+  `mod` names is not served either, and rust-analyzer's "unlinked
+  file" diagnostic saying so comes only by pull. No `requireRoot`: it
+  would refuse a server to a project never built (no `Cargo.lock` yet,
+  served from its file's folder since RS1); the conformance test
+  checks that it stays out. Kalem's part, for every language whose
+  server needs its loose files named: root markers in groups tried in
+  order, the nearest of the first group found deciding
+  (`[["Cargo.lock"], ["Cargo.toml"]]`: the workspace by its lock, a
+  crate never built by its manifest; Python's lock files before
+  `pyproject.toml`, a JavaScript workspace's before `package.json`),
+  so that "outside any project" is a fact Kalem knows (no marker of
+  any group); and `${looseFiles}` in a server's `settings`, the open
+  files it serves that are outside any project, kept current with
+  `didChangeConfiguration` (`"linkedProjects": ["${looseFiles}"]`
+  here; gopls, pyright, clangd and TypeScript's servers serve loose
+  files on their own and would not use it). Open: that part, if the
+  owner wants it.)
 - [ ] RS3d The settings, described for Kalem's settings panel as
   elixir's ElixirLS settings are (`settings.rust-analyzer.NAME` keys
   with `type`, `default`, `enum` or `examples`, and a description
@@ -350,6 +382,25 @@ spike first.
   crate's test, through the client (RS10b). Known differences to
   record: cargo's diagnostics arrive on save, not while typing, and
   the first run after a fresh checkout builds the dependencies.
+  Seen in RS3c, and the first thing RS4 needs from Kalem:
+  rust-analyzer 1.99 gives its own diagnostics only to an editor that
+  asks (`textDocument/diagnostic`, the protocol's pull model), even to
+  one that never said it can, and sends `workspace/diagnostic/refresh`
+  when they change. What it pushes (`publishDiagnostics`) is cargo's,
+  and a first batch of its own that it takes back when it reloads the
+  workspace after the build scripts. Kalem's client has only the push
+  model, so no diagnostic of rust-analyzer's own has ever reached
+  Kalem: on the corpus with an unresolved import and a function named
+  `BadName`, `kalem lsp check` lists cargo's E0432 and nothing else,
+  while a pull answers rust-analyzer's `non_snake_case` too; type
+  mismatches, missing fields and "unlinked file" go the same way.
+  Kalem's part, T3.8.2's "push and pull" for every server that has
+  it (rust-analyzer, typescript-language-server's successors, Roslyn,
+  clangd's newer releases): `textDocument.diagnostic` and
+  `workspace.diagnostics.refreshSupport` declared; a document's
+  diagnostics pulled after it opens and after its changes settle,
+  and again on `workspace/diagnostic/refresh`; the pulled and the
+  pushed kept apart per document and shown together.
 
 ## RS5. Formatting: rustfmt through the server
 
