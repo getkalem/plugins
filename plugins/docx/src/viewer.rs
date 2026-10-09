@@ -124,6 +124,14 @@ impl Viewer for DocxViewer {
             flow: None,
         }))
     }
+
+    /// A new document of one of the four kinds, as Word makes a blank
+    /// one; sheets of entries become tables ([`crate::blank`]).
+    fn new_file(&self, extension: &str, sheets: &[kalem_viewer::NewSheet]) -> Result<Vec<u8>> {
+        #[cfg(target_arch = "wasm32")]
+        crate::component_clock();
+        crate::blank::new_document(&extension.to_ascii_lowercase(), sheets).map_err(err)
+    }
 }
 
 /// An open document.

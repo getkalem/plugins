@@ -556,7 +556,7 @@ order they are done, the spike first.
 
 ## WP12. New documents, other formats, passwords, macros
 
-- [ ] WP12a New Document (`Document1.docx`: the parts Word writes for a
+- [~] WP12a New Document (`Document1.docx`: the parts Word writes for a
   blank document, `[Content_Types].xml`, `_rels/.rels`,
   `word/document.xml`, `styles.xml` with Word's defaults, `settings.xml`,
   `fontTable.xml`, `webSettings.xml`, the Office theme, `docProps`),
@@ -571,6 +571,23 @@ order they are done, the spike first.
   text export. `.doc` is not read (no pure-Rust reader; the fallback
   of T3.7.9 offers the system application); `.odt` is a group of its
   own (T3.7.7); `.rtf` neither.
+  (Done 2026-10-09 for the plugin's half of New Document:
+  `Viewer::new_file` writes a blank `.docx`, `.docm`, `.dotx` or
+  `.dotm` with those parts (`blank.rs`), Word 365's document defaults
+  and built-in styles (Normal, Heading 1 to 9, Title, Subtitle, Quote,
+  Intense Quote, List Paragraph, their character styles), compatibility
+  mode 15, and the Office theme of Aptos, which the shared layer now
+  holds (`kalem_ooxml::theme::OFFICE`, with `Package::new` for a
+  package made from nothing); a sheet of entries the contract hands
+  over becomes a table. Not Word's: A4 with margins of 2.5 cm where
+  Word takes Letter or A4 from the locale, and no `w:lang`, so that
+  Word proofs in its own editing language. LibreOffice opens the files
+  and saves them again with the text and the page. Open: Kalem's
+  command, which today makes only workbooks (`app.newWorkbook` is
+  bound to `.xlsx`): a New command for every plugin that makes files,
+  as the manifest's `opens` lists what a plugin opens; New from
+  Template; Save As between the kinds; `.docm` macros listed; Word
+  itself opening a new file, checked by hand.)
 - [~] WP12b A password to open (the shared `crypto`: agile and standard
   encryption, `password.open-with-password`, saved encrypted again
   with the password it opened with, Word's default password opened

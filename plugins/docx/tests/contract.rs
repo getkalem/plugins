@@ -378,3 +378,46 @@ fn comments_added_and_answered_through_the_interface() {
 fn c_anchors(all: &[kalem_viewer::Annotation], id: &str) -> Vec<kalem_viewer::Anchor> {
     all.iter().find(|a| a.id == id).unwrap().anchors.clone()
 }
+
+#[test]
+fn a_new_document_typed_into() {
+    // New Document through the contract (`formats.new-file`): a blank
+    // `.docx` that opens with one empty paragraph in Word's Normal style,
+    // takes typing and Enter, and saves as itself.
+    let bytes = DocxViewer.new_file("docx", &[]).unwrap();
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("docx-new");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("Document1.docx");
+    std::fs::write(&f, &bytes).unwrap();
+    let mut d = DocxViewer.open(FileHandle::new(&f)).unwrap();
+    let all = items(&mut d);
+    let ps = paras(&all);
+    assert_eq!(ps.len(), 1);
+    assert_eq!(ps[0].text, "");
+    let at = ps[0].index.unwrap();
+    assert!(!d.modified());
+    d.flow_replace(0, at, 0..0, "Merhaba dünya").unwrap();
+    d.flow_split(
+        0,
+        FlowPlace {
+            paragraph: at,
+            offset: "Merhaba dünya".len() as u32,
+        },
+    )
+    .unwrap();
+    d.flow_replace(0, at + 1, 0..0, "İkinci satır").unwrap();
+    let saved = d.save().unwrap();
+    assert!(saved.losses.is_empty());
+    std::fs::write(&f, &saved.bytes).unwrap();
+    let again = DocxViewer.open(FileHandle::new(&f)).unwrap();
+    assert_eq!(again.text(0), "Merhaba dünya\nİkinci satır\n");
+    // Each kind, and the styles Kalem offers there.
+    for ext in ["docm", "dotx", "dotm"] {
+        let f = dir.join(format!("Document1.{ext}"));
+        std::fs::write(&f, DocxViewer.new_file(ext, &[]).unwrap()).unwrap();
+        let mut d = DocxViewer.open(FileHandle::new(&f)).unwrap();
+        let styles: Vec<String> = d.flow_styles().into_iter().map(|s| s.name).collect();
+        assert!(styles.iter().any(|s| s == "Heading 1"), "{ext}: {styles:?}");
+    }
+    assert!(DocxViewer.new_file("doc", &[]).is_err());
+}

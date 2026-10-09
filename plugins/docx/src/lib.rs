@@ -20,6 +20,7 @@
 //! paragraphs' edit coordinates, and accepts and rejects changes
 //! ([`review`]); [`viewer`] is the plugin as Kalem's contract.
 
+pub mod blank;
 pub mod chars;
 pub mod comments;
 pub mod contract;

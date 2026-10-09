@@ -2,6 +2,7 @@
 //! lays documents out:
 //!
 //! ```sh
+//! cargo run -p kalem-plugin-docx --example docx -- new     report.docx
 //! cargo run -p kalem-plugin-docx --example docx -- info    report.docx
 //! cargo run -p kalem-plugin-docx --example docx -- show    report.docx
 //! cargo run -p kalem-plugin-docx --example docx -- text    report.docx
@@ -16,6 +17,10 @@
 //! cargo run -p kalem-plugin-docx --example docx -- comment report.docx 3 0 5 'Text' [-o out.docx]
 //! cargo run -p kalem-plugin-docx --example docx -- reply   report.docx 0 'Text' [-o out.docx]
 //! ```
+//!
+//! `new` writes a blank document of the file's kind (`.docx`, `.docm`,
+//! `.dotx`, `.dotm`), as Kalem's New command makes one; it does not
+//! write over a file.
 //!
 //! In a document that tracks changes, edits are written as tracked
 //! changes by the author `KALEM_AUTHOR` names (else "Kalem"); comments
@@ -290,10 +295,22 @@ fn run(args: &[String]) -> Res<()> {
         out = args.get(i + 1).map(PathBuf::from);
         args.drain(i..(i + 2).min(args.len()));
     }
-    let usage = "usage: docx info|show|text|outline|styles|paras|set|type|split|join|track|comment|reply FILE …";
+    let usage = "usage: docx new|info|show|text|outline|styles|paras|set|type|split|join|track|comment|reply FILE …";
     let cmd = args.first().ok_or(usage)?;
     let path = PathBuf::from(args.get(1).ok_or(usage)?);
     match cmd.as_str() {
+        "new" => {
+            if path.exists() {
+                return Err(format!("{} exists", path.display()).into());
+            }
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("docx")
+                .to_ascii_lowercase();
+            std::fs::write(&path, kalem_plugin_docx::blank::new_document(&ext, &[])?)?;
+            Ok(())
+        }
         "info" => info(&path),
         "show" => show(&path),
         "text" => {

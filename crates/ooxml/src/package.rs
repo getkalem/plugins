@@ -165,7 +165,23 @@ fn zip64_fields(extra: &[u8], unc: u32, comp: u32, off: u32) -> Zip64Fields {
     out
 }
 
+impl Default for Package {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Package {
+    /// A package with no parts, for a new file: its parts are added with
+    /// [`Package::set_part`] and written, in the order added, by
+    /// [`Package::write`]. Without parts it writes an empty archive.
+    pub fn new() -> Self {
+        let mut empty = Vec::new();
+        put32(&mut empty, EOCD_SIG);
+        empty.extend_from_slice(&[0; 18]);
+        Package::read(empty).expect("an empty archive reads")
+    }
+
     /// Reads the directory of a package; parts are inflated when asked for.
     pub fn read(bytes: Vec<u8>) -> Result<Self> {
         let len = bytes.len();
@@ -569,13 +585,7 @@ mod tests {
 
     /// A two-part archive written by this module from an empty one.
     fn sample() -> Vec<u8> {
-        let empty = {
-            let mut b = Vec::new();
-            put32(&mut b, EOCD_SIG);
-            b.extend_from_slice(&[0; 18]);
-            b
-        };
-        let mut p = Package::read(empty).unwrap();
+        let mut p = Package::new();
         p.set_part("a.xml", b"<a/>".to_vec());
         p.set_part("b/c.xml", b"<c>hello</c>".to_vec());
         p.write().unwrap()
@@ -620,6 +630,22 @@ mod tests {
         p.restore_part("new.xml");
         assert!(!p.is_dirty());
         assert_eq!(p.write().unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_new_package_writes_its_parts_in_order() {
+        // Without parts: an empty archive, which reads.
+        let none = Package::new().write().unwrap();
+        assert!(Package::read(none).unwrap().names().is_empty());
+        let mut p = Package::new();
+        p.set_part("[Content_Types].xml", b"<Types/>".to_vec());
+        p.set_part("word/document.xml", "<w:document>ç</w:document>".into());
+        let q = Package::read(p.write().unwrap()).unwrap();
+        assert_eq!(q.names(), ["[Content_Types].xml", "word/document.xml"]);
+        assert_eq!(
+            q.part("word/document.xml").unwrap(),
+            "<w:document>ç</w:document>".as_bytes()
+        );
     }
 
     #[test]

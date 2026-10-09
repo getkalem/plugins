@@ -14,6 +14,7 @@ Opens, edits and saves Word documents (WordprocessingML, ECMA-376 part 1: `.docx
 - **Tracked changes**: in a document that tracks changes (`w:trackRevisions`, turned on and off by the plugin too), typed text is written in `w:ins`, deleted text kept in `w:del` as `w:delText`, Enter marks the paragraph mark inserted and Backspace marks it deleted, each with its author, date and an ID of its own, as Word writes them; deleting text of an insertion takes it away, and a deletion over text deleted already leaves it so. A change is **accepted or rejected** as Word does it, one by its ID or all of them in every story: an insertion kept or removed, a deletion removed or its text restored, a paragraph mark kept or the paragraphs joined, a formatting change kept or its old properties restored. The author is Kalem's setting `user.name`.
 - **Comments added and answered** as Word writes them: a comment on the selected text, its range's start and end around it (a run split where the range starts or ends inside it) and a run with its reference after the end; in a document without comments, the comments part made with its relationship and content type. An answer is a comment anchored on the same text, named in the extended comments part (`commentsExtended.xml`, made when there is none) by its parent's last paragraph; an answer to an answer answers the first comment, as in Word. The author and initials come from Kalem's setting `user.name`; each is one step of the history, and undoing it saves the input byte for byte.
 - **Refuses** what it does not write yet, saying why: deleted text, a field's result, a note's mark, a check box, content read through `mc:AlternateContent`, joining across a section break, a document whose protection is enforced.
+- **New documents**: a blank `.docx`, `.docm`, `.dotx` or `.dotm` as Word makes one (`Viewer::new_file`, plugin API 0.2.3's `formats` interface): the main part with an empty paragraph, Word 365's document defaults and built-in styles (Normal, the headings, Title, Subtitle, Quote, List Paragraph), its settings in Word 2013's compatibility mode, the web settings, the font table, the Office theme and the properties. The page is A4 with margins of 2.5 cm, and no language is written, so Word proofs in its own. Sheets of entries handed to `new_file` become tables, named by headings when there are several.
 - **A password to open** ([MS-OFFCRYPTO], the shared layer's): a document encrypted by Word 2007 or later opens with its password, which Kalem asks for, and is saved encrypted again with the same password.
 
 ## Try it
@@ -29,6 +30,7 @@ KALEM_CONFIG_DIR=/tmp/kalem-docx kalem view report.docx
 The library also comes with a command line:
 
 ```sh
+cargo run -p kalem-plugin-docx --example docx -- new     report.docx
 cargo run -p kalem-plugin-docx --example docx -- info    report.docx
 cargo run -p kalem-plugin-docx --example docx -- show    report.docx
 cargo run -p kalem-plugin-docx --example docx -- text    report.docx
@@ -55,4 +57,5 @@ LibreOffice was used by hand as the oracle for edited files (`soffice --convert-
 - Pictures drawn and the comments' margin in Kalem (WP5b).
 - Formatting edits (bold, styles, lists), comments resolved, edited and deleted, pictures, links, tables and notes inserted (WP9 to WP11); text boxes edited.
 - Word itself opening edited files without a repair prompt, checked by hand (the exit criterion of T3.7.5): driving Word from a script stops at its file access prompt.
+- A New command in Kalem for documents: Kalem's New Workbook makes only `.xlsx` files today (WP12a).
 - Pages (WP13).
