@@ -707,7 +707,8 @@ order they are done, the spike first.
   release, its hash in `releases/` and its download in `index.json`.
   It runs with Kalem 0.6.0 (released 2026-10-09, plugin API 0.2.7) and
   later; an older Kalem refuses it. `docx-v0.0.2` the same day: comments
-  added and answered, WP10a.)
+  added and answered, WP10a, and new documents, WP12a; `docx-v0.0.3`:
+  comments resolved and deleted.)
 
 ## Open for the owner
 
