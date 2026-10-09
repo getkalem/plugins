@@ -245,9 +245,62 @@ pub fn reference_run(p: &str, id: &str, styled: bool) -> String {
 }
 
 /// An entry of the extended comments part with prefix `p`.
-pub fn comment_ex(p: &str, para: &str, parent: Option<&str>) -> String {
+pub fn comment_ex(p: &str, para: &str, parent: Option<&str>, done: bool) -> String {
     let parent = parent.map_or(String::new(), |id| format!(" {p}paraIdParent=\"{id}\""));
-    format!("<{p}commentEx {p}paraId=\"{para}\"{parent} {p}done=\"0\"/>")
+    let done = u8::from(done);
+    format!("<{p}commentEx {p}paraId=\"{para}\"{parent} {p}done=\"{done}\"/>")
+}
+
+/// Every element named `name` (its local name) with attribute `attr`:
+/// the whole element, its start tag, and the attribute's value.
+pub fn elements(src: &str, name: &str, attr: &str) -> Vec<(Span, Span, String)> {
+    let mut out = Vec::new();
+    let mut r = Reader::new(src);
+    while let Some(t) = r.next_token() {
+        let Token::Start(tag) = t else { continue };
+        if tag.name != name {
+            continue;
+        }
+        let Some(v) = tag.attr(attr).map(|v| v.into_owned()) else {
+            continue;
+        };
+        let start = tag.span.clone();
+        let end = if tag.empty {
+            start.end
+        } else {
+            r.skip_element()
+        };
+        out.push((start.start..end, start, v));
+    }
+    out
+}
+
+/// Whether a run holds nothing but a comment's reference (and its
+/// properties), so that it goes with the comment.
+pub fn reference_only(src: &str, run: &Span) -> bool {
+    let mut r = Reader::new(&src[run.clone()]);
+    let _ = r.next_token();
+    let mut depth = 0usize;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) => {
+                if depth == 0 && !matches!(tag.name, "rPr" | "commentReference") {
+                    return false;
+                }
+                if !tag.empty {
+                    depth += 1;
+                }
+            }
+            Token::End { .. } => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            Token::Text { .. } => {}
+        }
+    }
+    true
 }
 
 /// Where a comment is anchored in a story part.
@@ -259,6 +312,8 @@ pub struct Markers {
     pub end: Option<Span>,
     /// The run holding its `w:commentReference`.
     pub reference_run: Option<Span>,
+    /// The `w:commentReference` itself.
+    pub reference: Option<Span>,
 }
 
 impl Markers {
@@ -283,6 +338,7 @@ pub fn markers(src: &str, id: &str) -> Markers {
                     "commentRangeStart" if mine() => out.start = Some(tag.span.clone()),
                     "commentRangeEnd" if mine() => out.end = Some(tag.span.clone()),
                     "commentReference" if mine() => {
+                        out.reference = Some(tag.span.clone());
                         if let Some(&start) = runs.last() {
                             let mut rr = Reader::new(&src[start..]);
                             let _ = rr.next_token();

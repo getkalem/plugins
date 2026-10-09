@@ -298,3 +298,188 @@ fn every_file_takes_a_comment_and_an_answer() {
         assert_eq!(d.save().unwrap(), input, "{name}");
     }
 }
+
+#[test]
+fn resolved_and_opened_again_on_the_thread() {
+    let input = corpus("handmade-features.docx");
+    let mut d = opened(input.clone());
+    let first = d.view().comments[0].id.clone();
+    d.resolve_comment(&first, true).unwrap();
+    assert_eq!(d.comment_threads()[&first], (None, true));
+    let mut changed = d.changed_parts();
+    changed.sort();
+    assert_eq!(
+        changed,
+        [
+            "[Content_Types].xml",
+            "word/_rels/document.xml.rels",
+            "word/comments.xml",
+            "word/commentsExtended.xml"
+        ]
+    );
+    let out = d.save().unwrap();
+    assert!(part(&out, "word/commentsExtended.xml").contains(r#"w15:done="1"/>"#));
+    assert_eq!(opened(out).comment_threads()[&first], (None, true));
+    // Done already: nothing to do, no step.
+    let at = d.save().unwrap();
+    d.resolve_comment(&first, true).unwrap();
+    assert_eq!(d.save().unwrap(), at);
+    // An answer resolves its thread's first comment, and opens it again.
+    let answer = d.reply_comment(&first, "Reopened?").unwrap();
+    d.resolve_comment(&answer, false).unwrap();
+    assert_eq!(d.comment_threads()[&first], (None, false));
+    assert!(part(&d.save().unwrap(), "word/commentsExtended.xml").contains(r#"w15:done="0"/>"#));
+    assert!(d.undo() && d.undo() && d.undo());
+    assert_eq!(d.save().unwrap(), input);
+}
+
+#[test]
+fn a_comment_deleted_with_its_answers() {
+    let input = corpus("handmade-features.docx");
+    let mut d = opened(input.clone());
+    let text: Vec<String> = paras(&d).iter().map(flow::para_text).collect();
+    let first = d.view().comments[0].id.clone();
+    let answer = d.reply_comment(&first, "Yes.").unwrap();
+    let answered = d.save().unwrap();
+    d.remove_comment(&first).unwrap();
+    assert!(d.view().comments.is_empty());
+    assert!(d.comment_threads().is_empty());
+    let out = d.save().unwrap();
+    let xml = part(&out, "word/document.xml");
+    for m in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+        assert!(!xml.contains(m), "{m} left");
+    }
+    assert!(!part(&out, "word/comments.xml").contains("<w:comment "));
+    assert!(!part(&out, "word/commentsExtended.xml").contains("commentEx "));
+    let again = opened(out);
+    assert!(again.view().comments.is_empty());
+    let after: Vec<String> = paras(&again).iter().map(flow::para_text).collect();
+    assert_eq!(after, text);
+    // Undone: the answered file, then the input.
+    assert!(d.undo());
+    assert_eq!(d.save().unwrap(), answered);
+    assert_eq!(
+        d.comment_threads()[&answer].0.as_deref(),
+        Some(first.as_str())
+    );
+    assert!(d.undo());
+    assert_eq!(d.save().unwrap(), input);
+}
+
+#[test]
+fn an_answer_deleted_alone() {
+    let mut d = opened(corpus("handmade-features.docx"));
+    let first = d.view().comments[0].id.clone();
+    let answer = d.reply_comment(&first, "Yes.").unwrap();
+    d.remove_comment(&answer).unwrap();
+    let view = d.view();
+    assert_eq!(view.comments.len(), 1);
+    assert_eq!(view.comments[0].id, first);
+    let i = index_of(&d, "Commented text");
+    assert_eq!(commented(&d, i)[0].1, std::slice::from_ref(&first));
+    let xml = part(&d.save().unwrap(), "word/document.xml");
+    assert!(!xml.contains(&format!("w:id=\"{answer}\"")));
+    assert!(xml.contains(&format!("<w:commentReference w:id=\"{first}\"/>")));
+}
+
+#[test]
+fn every_file_loses_its_comments() {
+    for name in [
+        "handmade-features.docx",
+        "libreoffice-features.docx",
+        "python-docx-basic.docx",
+        "libreoffice-basic.docx",
+    ] {
+        let input = corpus(name);
+        let mut d = opened(input.clone());
+        let text: Vec<String> = paras(&d).iter().map(flow::para_text).collect();
+        let ids: Vec<String> = d.view().comments.iter().map(|c| c.id.clone()).collect();
+        assert!(!ids.is_empty(), "{name} has comments");
+        for id in &ids {
+            d.remove_comment(id).unwrap();
+        }
+        assert!(d.view().comments.is_empty(), "{name}");
+        let out = d.save().unwrap();
+        let xml = part(&out, "word/document.xml");
+        assert!(
+            !xml.contains("commentRangeStart") && !xml.contains("commentReference"),
+            "{name}"
+        );
+        let again = opened(out);
+        assert!(again.view().comments.is_empty(), "{name}");
+        let after: Vec<String> = paras(&again).iter().map(flow::para_text).collect();
+        assert_eq!(after, text, "{name}");
+        for _ in &ids {
+            assert!(d.undo(), "{name}");
+        }
+        assert_eq!(d.save().unwrap(), input, "{name}");
+    }
+}
+
+/// The handmade document with the parts Word 2019 keeps beside its
+/// comments: the extended part, `commentsIds` and `commentsExtensible`,
+/// each with an entry for comment 0 (paragraph `1A2B3C4D`, durable ID
+/// `5E6F7A8B`) and one for a paragraph of no comment.
+fn with_word_parts() -> Vec<u8> {
+    let bytes = corpus("handmade-features.docx");
+    let mut pkg = Package::read(bytes.clone()).unwrap();
+    let comments = part(&bytes, "word/comments.xml").replacen(
+        "<w:p><w:pPr><w:pStyle w:val=\"CommentText\"/>",
+        "<w:p w14:paraId=\"1A2B3C4D\" w14:textId=\"77777777\"><w:pPr><w:pStyle w:val=\"CommentText\"/>",
+        1,
+    );
+    pkg.set_part("word/comments.xml", comments.into_bytes());
+    let parts = [
+        (
+            "commentsExtended.xml",
+            "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml",
+            r#"<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"><w15:commentEx w15:paraId="1A2B3C4D" w15:done="0"/><w15:commentEx w15:paraId="00000099" w15:done="0"/></w15:commentsEx>"#,
+        ),
+        (
+            "commentsIds.xml",
+            "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml",
+            r#"<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid"><w16cid:commentId w16cid:paraId="1A2B3C4D" w16cid:durableId="5E6F7A8B"/><w16cid:commentId w16cid:paraId="00000099" w16cid:durableId="11111111"/></w16cid:commentsIds>"#,
+        ),
+        (
+            "commentsExtensible.xml",
+            "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtensible+xml",
+            r#"<w16cex:commentsExtensible xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex"><w16cex:commentExtensible w16cex:durableId="5E6F7A8B" w16cex:dateUtc="2026-10-01T09:00:00Z"/><w16cex:commentExtensible w16cex:durableId="11111111" w16cex:dateUtc="2026-10-01T09:00:00Z"/></w16cex:commentsExtensible>"#,
+        ),
+    ];
+    let mut rels_xml = part(&bytes, "word/_rels/document.xml.rels");
+    let mut types = part(&bytes, "[Content_Types].xml");
+    for (file, ty, ct, xml) in parts {
+        pkg.set_part(&format!("word/{file}"), xml.as_bytes().to_vec());
+        rels_xml = rels::add(&rels_xml, ty, file, false).0;
+        types = rels::add_override(&types, &format!("word/{file}"), ct);
+    }
+    pkg.set_part("word/_rels/document.xml.rels", rels_xml.into_bytes());
+    pkg.set_part("[Content_Types].xml", types.into_bytes());
+    pkg.write().unwrap()
+}
+
+#[test]
+fn deleting_takes_the_entries_word_keeps_beside() {
+    let input = with_word_parts();
+    let mut d = opened(input.clone());
+    assert_eq!(d.view().comments.len(), 1);
+    d.remove_comment("0").unwrap();
+    let out = d.save().unwrap();
+    let ex = part(&out, "word/commentsExtended.xml");
+    assert!(!ex.contains("1A2B3C4D") && ex.contains("00000099"), "{ex}");
+    let ids = part(&out, "word/commentsIds.xml");
+    assert!(
+        !ids.contains("1A2B3C4D") && ids.contains("11111111"),
+        "{ids}"
+    );
+    let cex = part(&out, "word/commentsExtensible.xml");
+    assert!(
+        !cex.contains("5E6F7A8B") && cex.contains("11111111"),
+        "{cex}"
+    );
+    assert!(d.undo());
+    assert_eq!(d.save().unwrap(), input);
+}

@@ -342,6 +342,12 @@ pub fn build(view: &DocView) -> FlowCache {
             })
             .unwrap_or_default()
     };
+    // An answer is resolved with its thread, as Word shows it.
+    let done: HashMap<&str, bool> = view
+        .comments
+        .iter()
+        .map(|c| (c.id.as_str(), c.done))
+        .collect();
     let mut annotations: Vec<kv::Annotation> = view
         .comments
         .iter()
@@ -357,7 +363,10 @@ pub fn build(view: &DocView) -> FlowCache {
                 date: c.date.clone(),
                 text: text.trim().to_string(),
                 parent: c.parent.as_ref().map(|p| format!("c{p}")),
-                resolved: c.done,
+                resolved: c.done
+                    || c.parent
+                        .as_deref()
+                        .is_some_and(|p| done.get(p).copied().unwrap_or(false)),
             }
         })
         .collect();

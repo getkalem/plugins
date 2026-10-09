@@ -14,7 +14,7 @@ use crate::comments;
 use crate::edit::{self, Splice};
 use crate::flow::{self, Env, Layout, ParaAt, StoryId, VBlock, VComment, VNote, VPara, Walker};
 use crate::numbering::Numbering;
-use crate::props::children;
+use crate::props::{Span, children};
 use crate::story::PartTree;
 use crate::styles::Styles;
 
@@ -372,6 +372,8 @@ impl Document {
                     | "endnotes"
                     | "comments"
                     | "commentsExtended"
+                    | "commentsIds"
+                    | "commentsExtensible"
                     | "header"
                     | "footer"
             ) && doc.package.contains(&target)
@@ -1462,7 +1464,7 @@ impl Document {
             self.apply(Splice {
                 part: ex,
                 range: at..at,
-                text: comments::comment_ex(&p15, &last, parent),
+                text: comments::comment_ex(&p15, &last, parent, false),
             })?;
         }
         Ok(last)
@@ -1661,6 +1663,196 @@ impl Document {
                 part: story.to_owned(),
                 range: at..at,
                 text,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The comments part, holding comment `id`.
+    fn comment_part(&self, id: &str) -> Result<String> {
+        let missing = || Error::Refused(format!("There is no comment {id}"));
+        let part = self
+            .related("comments")
+            .filter(|p| self.texts.contains_key(p))
+            .ok_or_else(missing)?;
+        if !comments::comment_paragraphs(&self.texts[&part]).contains_key(id) {
+            return Err(missing());
+        }
+        Ok(part)
+    }
+
+    /// Marks comment `id` done (`done`) or open again, as Word does: on
+    /// its thread's first comment, by `w15:done` in the extended comments
+    /// part (made when there is none, and its last paragraph given an ID
+    /// when it has none). One step.
+    pub fn resolve_comment(&mut self, id: &str, done: bool) -> Result<()> {
+        self.check_commentable()?;
+        let part = self.comment_part(id)?;
+        let threads = self.comment_threads();
+        let first = threads
+            .get(id)
+            .and_then(|(p, _)| p.clone())
+            .unwrap_or_else(|| id.to_owned());
+        if threads.get(&first).is_some_and(|(_, d)| *d) == done {
+            return Ok(());
+        }
+        self.begin_batch();
+        let r = self.resolve_steps(&part, &first, done);
+        self.finish_batch(r)
+    }
+
+    fn resolve_steps(&mut self, part: &str, first: &str, done: bool) -> Result<()> {
+        let para = self.comment_para_id(part, first)?;
+        let ex = self.related_or_new(
+            "commentsExtended",
+            comments::REL_COMMENTS_EX,
+            comments::CT_COMMENTS_EX,
+            "commentsExtended.xml",
+            comments::new_comments_ex_part(),
+        )?;
+        let entry = comments::elements(&self.texts[&ex], "commentEx", "paraId")
+            .into_iter()
+            .find(|(_, _, v)| v.eq_ignore_ascii_case(&para));
+        match entry {
+            Some((_, tag, _)) => {
+                let text = &self.texts[&ex][tag.clone()];
+                let p = edit::prefix_of(&self.texts[&ex], tag.start);
+                let new = xml::set_attr(text, &format!("{p}done"), if done { "1" } else { "0" });
+                self.apply(Splice {
+                    part: ex,
+                    range: tag,
+                    text: new,
+                })
+            }
+            None => {
+                let (at, p15) = self.root_content_end(&ex)?;
+                self.apply(Splice {
+                    part: ex,
+                    range: at..at,
+                    text: comments::comment_ex(&p15, &para, None, done),
+                })
+            }
+        }
+    }
+
+    /// Takes comment `id` away, as Word does: with its answers when it is
+    /// a thread's first comment; its range's start and end and its
+    /// reference (the run, when it holds nothing else) out of the
+    /// stories, the comment out of the comments part, its entries out of
+    /// the parts Word keeps beside it (`commentsExtended`, `commentsIds`,
+    /// `commentsExtensible`). The runs a range split stay as they are,
+    /// as in Word. One step.
+    pub fn remove_comment(&mut self, id: &str) -> Result<()> {
+        self.check_commentable()?;
+        let part = self.comment_part(id)?;
+        let threads = self.comment_threads();
+        let mut ids = vec![id.to_owned()];
+        if threads.get(id).and_then(|(p, _)| p.as_ref()).is_none() {
+            let mut answers: Vec<String> = threads
+                .iter()
+                .filter(|(_, (p, _))| p.as_deref() == Some(id))
+                .map(|(a, _)| a.clone())
+                .collect();
+            answers.sort();
+            ids.extend(answers);
+        }
+        self.begin_batch();
+        let r = self.remove_steps(&part, &ids);
+        self.finish_batch(r)
+    }
+
+    fn remove_steps(&mut self, part: &str, ids: &[String]) -> Result<()> {
+        // The stories: the markers and references.
+        for story in self.story_parts() {
+            if story == part {
+                continue;
+            }
+            let src = &self.texts[&story];
+            let mut spans: Vec<Span> = Vec::new();
+            for id in ids {
+                let m = comments::markers(src, id);
+                spans.extend(m.start);
+                spans.extend(m.end);
+                match (&m.reference_run, &m.reference) {
+                    (Some(run), _) if comments::reference_only(src, run) => spans.push(run.clone()),
+                    (_, Some(r)) => spans.push(r.clone()),
+                    _ => {}
+                }
+            }
+            self.remove_spans(&story, spans)?;
+        }
+        // The comments, and the paragraph IDs they leave.
+        let paras = comments::comment_paragraphs(&self.texts[part]);
+        let gone: Vec<String> = ids
+            .iter()
+            .filter_map(|id| paras.get(id))
+            .flatten()
+            .filter_map(|(_, p)| p.clone())
+            .collect();
+        let tree = self.tree(part);
+        let spans = tree
+            .items
+            .iter()
+            .filter(|i| ids.contains(&i.id))
+            .map(|i| i.span.clone())
+            .collect();
+        self.remove_spans(part, spans)?;
+        // Their entries beside: by paragraph ID, and by the durable ID
+        // `commentsIds` gives each.
+        let has = |v: &str| gone.iter().any(|g| g.eq_ignore_ascii_case(v));
+        let mut durable: Vec<String> = Vec::new();
+        for (kind, name) in [
+            ("commentsExtended", "commentEx"),
+            ("commentsIds", "commentId"),
+        ] {
+            let Some(p) = self.related(kind).filter(|p| self.texts.contains_key(p)) else {
+                continue;
+            };
+            let src = &self.texts[&p];
+            let mut spans = Vec::new();
+            for (span, tag, v) in comments::elements(src, name, "paraId") {
+                if has(&v) {
+                    spans.push(span);
+                    if let Some(d) = comments::elements(&src[tag.clone()], name, "durableId")
+                        .first()
+                        .map(|e| e.2.clone())
+                    {
+                        durable.push(d);
+                    }
+                }
+            }
+            self.remove_spans(&p, spans)?;
+        }
+        if let Some(p) = self
+            .related("commentsExtensible")
+            .filter(|p| self.texts.contains_key(p))
+        {
+            let spans = comments::elements(&self.texts[&p], "commentExtensible", "durableId")
+                .into_iter()
+                .filter(|(_, _, v)| durable.iter().any(|d| d.eq_ignore_ascii_case(v)))
+                .map(|(s, _, _)| s)
+                .collect();
+            self.remove_spans(&p, spans)?;
+        }
+        Ok(())
+    }
+
+    /// Takes spans of a part away, those that overlap as one, the last
+    /// first.
+    fn remove_spans(&mut self, part: &str, mut spans: Vec<Span>) -> Result<()> {
+        spans.sort_by_key(|s| (s.start, s.end));
+        let mut merged: Vec<Span> = Vec::new();
+        for s in spans {
+            match merged.last_mut() {
+                Some(m) if s.start < m.end => m.end = m.end.max(s.end),
+                _ => merged.push(s),
+            }
+        }
+        for s in merged.into_iter().rev() {
+            self.apply(Splice {
+                part: part.to_owned(),
+                range: s,
+                text: String::new(),
             })?;
         }
         Ok(())

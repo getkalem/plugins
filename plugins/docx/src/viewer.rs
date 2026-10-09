@@ -491,6 +491,22 @@ impl ViewerDocument for DocxDoc {
         Ok(format!("c{id}"))
     }
 
+    fn resolve(&mut self, id: &str, done: bool) -> Result<()> {
+        let id = id
+            .strip_prefix('c')
+            .ok_or_else(|| ViewerError(format!("{id} is not a comment")))?;
+        let r = self.doc.resolve_comment(id, done);
+        self.changed(r)
+    }
+
+    fn remove_comment(&mut self, id: &str) -> Result<()> {
+        let id = id
+            .strip_prefix('c')
+            .ok_or_else(|| ViewerError(format!("{id} is not a comment")))?;
+        let r = self.doc.remove_comment(id);
+        self.changed(r)
+    }
+
     fn reply(&mut self, parent: &str, text: &str) -> Result<String> {
         let parent = parent
             .strip_prefix('c')

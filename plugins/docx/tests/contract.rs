@@ -421,3 +421,40 @@ fn a_new_document_typed_into() {
     }
     assert!(DocxViewer.new_file("doc", &[]).is_err());
 }
+
+#[test]
+fn comments_resolved_and_deleted_through_the_interface() {
+    let mut d = open("handmade-features.docx");
+    let first = d
+        .annotations(None)
+        .into_iter()
+        .find(|a| a.kind == AnnotationKind::Comment)
+        .unwrap()
+        .id;
+    let answer = d.reply(&first, "Agreed.").unwrap();
+    d.resolve(&first, true).unwrap();
+    let all = d.annotations(None);
+    // The thread is resolved: the comment and its answer.
+    for id in [&first, &answer] {
+        assert!(all.iter().find(|a| &a.id == id).unwrap().resolved, "{id}");
+    }
+    d.resolve(&answer, false).unwrap();
+    assert!(!d.annotations(None).iter().any(|a| a.resolved));
+    d.remove_comment(&first).unwrap();
+    assert!(
+        !d.annotations(None)
+            .iter()
+            .any(|a| a.kind == AnnotationKind::Comment)
+    );
+    // The commented text has no annotation left.
+    let is = items(&mut d);
+    let ps = paras(&is);
+    assert!(
+        find(&ps, "Commented text")
+            .runs
+            .iter()
+            .all(|r| r.annotations.is_empty())
+    );
+    let e = d.remove_comment("c999").unwrap_err();
+    assert!(e.0.contains("no comment 999"), "{}", e.0);
+}

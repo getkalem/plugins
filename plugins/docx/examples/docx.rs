@@ -16,6 +16,8 @@
 //! cargo run -p kalem-plugin-docx --example docx -- track   report.docx on|off [-o out.docx]
 //! cargo run -p kalem-plugin-docx --example docx -- comment report.docx 3 0 5 'Text' [-o out.docx]
 //! cargo run -p kalem-plugin-docx --example docx -- reply   report.docx 0 'Text' [-o out.docx]
+//! cargo run -p kalem-plugin-docx --example docx -- resolve report.docx 0 on|off [-o out.docx]
+//! cargo run -p kalem-plugin-docx --example docx -- delete  report.docx 0 [-o out.docx]
 //! ```
 //!
 //! `new` writes a blank document of the file's kind (`.docx`, `.docm`,
@@ -26,7 +28,8 @@
 //! changes by the author `KALEM_AUTHOR` names (else "Kalem"); comments
 //! and answers are by that author too. `comment` puts a comment on bytes
 //! FROM to TO of a paragraph's edit text; `reply` answers the comment of
-//! that `w:id`. Each prints the new comment's `w:id`.
+//! that `w:id`, `resolve` marks its thread done or open, `delete` takes
+//! it away with its answers. Each prints the new comment's `w:id`.
 //!
 //! Paragraphs are numbered as `paras` lists them: the body's, from 0,
 //! tables' included. An edit without `-o` writes the file in place,
@@ -295,7 +298,7 @@ fn run(args: &[String]) -> Res<()> {
         out = args.get(i + 1).map(PathBuf::from);
         args.drain(i..(i + 2).min(args.len()));
     }
-    let usage = "usage: docx new|info|show|text|outline|styles|paras|set|type|split|join|track|comment|reply FILE …";
+    let usage = "usage: docx new|info|show|text|outline|styles|paras|set|type|split|join|track|comment|reply|resolve|delete FILE …";
     let cmd = args.first().ok_or(usage)?;
     let path = PathBuf::from(args.get(1).ok_or(usage)?);
     match cmd.as_str() {
@@ -386,6 +389,22 @@ fn run(args: &[String]) -> Res<()> {
             let mut doc = open(&path)?;
             let id = doc.reply_comment(args.get(2).ok_or(use_)?, args.get(3).ok_or(use_)?)?;
             println!("{id}");
+            write_out(&mut doc, &path, out)
+        }
+        "resolve" => {
+            let use_ = "resolve FILE COMMENT on|off";
+            let mut doc = open(&path)?;
+            let done = match args.get(3).map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => return Err(use_.into()),
+            };
+            doc.resolve_comment(args.get(2).ok_or(use_)?, done)?;
+            write_out(&mut doc, &path, out)
+        }
+        "delete" => {
+            let mut doc = open(&path)?;
+            doc.remove_comment(args.get(2).ok_or("delete FILE COMMENT")?)?;
             write_out(&mut doc, &path, out)
         }
         _ => Err(usage.into()),
