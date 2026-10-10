@@ -126,6 +126,15 @@ fn manifest_is_complete() {
         for s in list(&l["servers"]) {
             assert!(servers.contains_key(&s), "{id}: server {s} is described");
         }
+        // `Cargo.toml` and `Cargo.lock` stay Kalem's TOML: a second
+        // server for them (taplo, crates-lsp) waits for Kalem (RS7a).
+        let claimed = [list(&l["extensions"]), list(&l["filenames"])].concat();
+        assert!(
+            claimed
+                .iter()
+                .all(|f| !f.ends_with("toml") && !f.starts_with("Cargo.")),
+            "{id} claims {claimed:?}"
+        );
     }
 }
 

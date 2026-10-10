@@ -100,6 +100,12 @@ Format Document (`SPC c f`) formats through rust-analyzer, which runs the toolch
 
 rust-analyzer answers with no edits both when the file is formatted and when rustfmt fails: not installed for the project's toolchain (`rustup component add rustfmt`), or a syntax error in the file. Kalem 0.6.1 and earlier say "Already formatted" either way; Kalem's change for this (not released yet) says that rust-analyzer changed nothing. Why it changed nothing is in its log: `kalem lsp check --log FILE`.
 
+## Cargo.toml, and Rust in Org and Markdown
+
+`Cargo.toml` stays Kalem's: TOML, highlighted by its own syntax; the plugin claims no TOML file. Completion of its keys and of crate versions would come from a second server for the same file (taplo with Cargo's schema, crates-lsp), which Kalem does not run yet.
+
+A `rust` source block in Org (`#+begin_src rust`) or Markdown (a fenced block marked `rust`) is highlighted with the plugin's syntax. rust-analyzer does not serve it: a block is not a file of a Cargo project, and serving one through a temporary file in the project is Kalem's to build, for every language at once.
+
 ## A file outside a project
 
 rust-analyzer serves only files of a Cargo project it has loaded. A `.rs` file with no `Cargo.toml` above it (a scratch file, a `rust-script`) gets a server that finds no project and answers nothing: no documentation, no completion, no diagnostics. Name the file in rust-analyzer's `linkedProjects` and it is served on its own, against the standard library: documentation, completion and definitions work. A `.kalem/settings.toml` in its folder does it, with paths relative to the folder:
@@ -137,7 +143,7 @@ kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already for
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; completion of `Cargo.toml`; rust-analyzer in source blocks; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
 
 ## Sources and licenses
 

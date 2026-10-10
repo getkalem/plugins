@@ -581,7 +581,7 @@ spike first.
 
 ## RS7. Cargo.toml, and Rust in Org and Markdown source blocks
 
-- [ ] RS7a `Cargo.toml` stays the core's TOML (T2.7a.7); the plugin
+- [~] RS7a `Cargo.toml` stays the core's TOML (T2.7a.7); the plugin
   names nothing for it. Later, as the second server for the same
   files that T3.8.4 leaves open: `taplo` with SchemaStore's Cargo
   schema for the keys, and a crates server (`crates-lsp`) for the
@@ -591,6 +591,15 @@ spike first.
   results merge, is Kalem's and serves Python (ruff beside
   basedpyright), PHP (PHPStan beside Intelephense) and the web plugin
   (ESLint) first.
+  (Done 2026-10-10 for its first half. The plugin claims no TOML
+  file, which the conformance test now checks (no extension ending in
+  `toml`, no file name starting `Cargo.`). With Kalem 0.6.0, a
+  `Cargo.toml` of the corpus: `kalem lsp status` says no language
+  plugin serves it; it is highlighted by Kalem's TOML; `kalem check`
+  says nothing of it and `kalem fmt --check` that its language has no
+  formatter, T2.7a.7's TOML pack (outline, formatting, syntax errors)
+  being still open in Kalem. The README says what it gets. Open: the
+  second server, Kalem's first.)
 - [ ] RS7b Rust inside an Org or Markdown source block gets the same
   completion when the block's document is inside a Cargo project: a
   temporary file in the project, by setting and off by default since
@@ -600,6 +609,12 @@ spike first.
   (Python and Elixir blocks the same way); the plugin's part is only
   the language id `rust` the block names, already in RS1. Listed here
   so the README's "not done" can point at it.
+  (Seen 2026-10-10: a `rust` block in Org or Markdown is highlighted
+  with the plugin's syntax, which Kalem finds by the name `rust` once
+  the plugin is loaded (RS2's test); no server serves it. Kalem's
+  todo has no task for language servers in source blocks besides
+  T3.8.6d's sentence, so the core's part has no number yet. The
+  README says so.)
 
 ## RS8. Run and test: `cargo run`, `cargo test`, and the lenses
 
