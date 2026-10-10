@@ -5,7 +5,7 @@
       "id": "org.kalem.docx",
       "name": "Word documents",
       "version": "0.0.5",
-      "description": "Opens Word documents (.docx, .docm, .dotx, .dotm) as themselves, laid out by Kalem: styles, lists, tables, notes, comments and tracked changes read; text edited and formatted (marks, typefaces, sizes, colors, paragraph styles, alignment, indents, spacing, lists), tracked changes accepted and rejected, comments added, answered, edited, resolved and deleted, every other part kept byte for byte",
+      "description": "Opens Word documents (.docx, .docm, .dotx, .dotm) as themselves, laid out by Kalem: styles, lists, tables, pictures, notes, comments and tracked changes read; text edited and formatted (marks, typefaces, sizes, colors, paragraph styles, alignment, indents, spacing, lists), tracked changes accepted and rejected, comments added, answered, edited, resolved and deleted, every other part kept byte for byte",
       "api": "^0.2.8",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/docx",
@@ -96,8 +96,8 @@
         "subprocess"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/rust",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/rust-v0.1.1/rust-v0.1.1.tar.gz",
+      "sha256": "0dbcb1404c20d3353509bf1de771a4399a8426b22173e6c04d5c053f6ace3403",
       "kind": "declarative",
       "languages": [
         {
