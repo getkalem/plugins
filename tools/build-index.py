@@ -2,14 +2,20 @@
 """Build index.json from the manifests under plugins/.
 
 For every plugins/NAME/plugin.json the entry carries the manifest's id, name,
-version, description, api and permissions, the extensions a viewer opens
-(`opens`), the languages a plugin serves and the markers of its layers
-(`languages`, `markers`: what makes Kalem suggest it), the download URL of the component of that version, and its
-SHA-256 when releases/NAME-vVERSION.sha256 exists (the release workflow
-writes that file). A declarative plugin (a language
+version, description, api and permissions, the download URL of the component
+of that version, and its SHA-256 when releases/NAME-vVERSION.sha256 exists
+(the release workflow writes that file). A declarative plugin (a language
 plugin: a manifest and syntax files, no `main`) is published as an archive of
-its folder, NAME-vVERSION.tar.gz, and its entry lists its languages. `--check` fails when index.json is
-not what this script would write, so CI keeps the index current.
+its folder, NAME-vVERSION.tar.gz.
+
+The entry also carries, as the manifest writes them, the parts that say when
+the plugin serves a file: the extensions a viewer `opens`; the extensions,
+whole names and `#!` interpreters of its `languages`; the markers of its
+`layers`; its own `applies`. Kalem reads them from the index and from an
+installed manifest by the same code (kalem_core::applies), so the plugin it
+names for a file is the one that serves it once installed: they are copied,
+never interpreted here. `--check` fails when index.json is not what this
+script would write, so CI keeps the index current.
 """
 import json, os, sys
 
@@ -45,28 +51,32 @@ def build():
             "download": f"{REPO}/releases/download/{tag}/{asset}" if sha else None,
             "sha256": sha,
         }
-        # The extensions a viewer opens, so that Kalem can name the plugin
-        # for a file it cannot open yet, without downloading it.
+        # When it serves a file, as the manifest says it (see above).
         if m.get("opens"):
             entry["opens"] = list(m["opens"])
-        # What makes Kalem suggest the plugin when a file opens: the
-        # extensions of the languages it serves, and the files or folders
-        # that, in the file's folder or above it, mean it serves it (a
-        # layer's markers: logseq/config.edn, .obsidian).
         if declarative:
             entry["kind"] = "declarative"
         if declarative or m.get("languages"):
             entry["languages"] = [
-                {"id": l["id"], "extensions": l.get("extensions", [])}
+                {
+                    "id": l["id"],
+                    **{
+                        k: l[k]
+                        for k in ("extensions", "filenames", "shebangs")
+                        if l.get(k)
+                    },
+                }
                 for l in m.get("languages", [])
             ]
-        markers = list(m.get("markers", []))
-        for layer in m.get("layers", []):
-            for marker in layer.get("markers", []):
-                if marker not in markers:
-                    markers.append(marker)
-        if markers:
-            entry["markers"] = markers
+            for l in entry["languages"]:
+                l.setdefault("extensions", [])
+        if m.get("layers"):
+            entry["layers"] = [
+                {"id": l.get("id"), "markers": l.get("markers", [])}
+                for l in m["layers"]
+            ]
+        if m.get("applies"):
+            entry["applies"] = m["applies"]
         entries.append(entry)
     return {"schema": 1, "plugins": entries}
 

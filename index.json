@@ -37,6 +37,17 @@
           "extensions": [
             "ex",
             "exs"
+          ],
+          "filenames": [
+            "mix.lock",
+            ".formatter.exs",
+            ".credo.exs",
+            ".iex.exs"
+          ],
+          "shebangs": [
+            "elixir",
+            "iex",
+            "mix"
           ]
         },
         {
@@ -139,6 +150,10 @@
           "id": "rust",
           "extensions": [
             "rs"
+          ],
+          "shebangs": [
+            "rust-script",
+            "cargo"
           ]
         }
       ]
