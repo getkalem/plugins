@@ -2,7 +2,7 @@
 
 Rust for [Kalem](https://github.com/getkalem/kalem): highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting.
 
-**Status: early** (RS1 and RS2 of [`rust_todo.md`](rust_todo.md)). A Cargo project is served, checked from the command line, and highlighted with Sublime Text's current Rust syntax; the settings, clippy, run and test, and rust-analyzer's own requests are the list's later tasks.
+**Status: 0.1.0**, for Kalem 0.6.0 and later: highlighting for the current editions; rust-analyzer found and rooted at the workspace; completion, documentation, signatures, definitions, references, implementations, rename and code actions across a workspace's crates; cargo's diagnostics; formatting; rust-analyzer's settings in the settings panel. Some parts wait for Kalem's next release, and the sections below say which: rust-analyzer's own diagnostics, its own requests (Expand Macro, Open Documentation, …), the standard library's files served by the same server, a missing component said as such. Its list of tasks is [`rust_todo.md`](rust_todo.md).
 
 A language plugin is declarative (Kalem's D57): this folder holds a manifest, `plugin.json`, the Sublime syntax under `syntaxes/`, a corpus and its tests, and nothing that runs inside Kalem. Kalem's core reads the manifest, adds the syntax to its highlighter and starts rust-analyzer through its one language server client.
 
@@ -174,6 +174,12 @@ While edits keep coming, rust-analyzer starts its indexing over: typing without 
 `corpus/edition.rs` holds the constructs Rust gained after Kalem's built-in syntax was written (`let`–`else`, let chains, `async` closures, `const` blocks, C strings, raw identifiers, `use<'a>`, `unsafe extern` with `safe` items, `&raw const`, exclusive range patterns, every macro fragment specifier); it compiles as a library. `corpus/script.rs` is a single-file package with a `#!` line and a frontmatter, which needs nightly Cargo.
 
 `corpus/ws` is a Cargo workspace of its own (its own `[workspace]` table), not a member of this repository's: `shapes` has a trait, two structs and a `macro_rules!` macro, and `app` calls into it with one unit test. `app/tests/borrow.rs` does not compile, on purpose: it is the borrow error the diagnostics are checked on. `cargo build`, `cargo run` and `cargo test -p app --bin app` do not build it; `cargo check --all-targets`, rust-analyzer's check, does.
+
+## Installing
+
+From Kalem: the Kalem menu's **Install Plugin…**, then `rust` (or this folder's link, `https://github.com/getkalem/plugins/tree/main/plugins/rust`). **Browse Plugins** lists it too. Kalem shows what the plugin is and which programs it may run before installing, and the open Rust files are highlighted and served at once. On the command line: `kalem plugin install rust`. rust-analyzer itself is installed apart (above).
+
+To work on the plugin itself, point Kalem at this repository's `plugins/` folder instead: `KALEM_PLUGIN_PATH=$PWD/plugins kalem`. That copy takes the place of an installed one.
 
 ## Not done
 

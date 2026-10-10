@@ -793,7 +793,7 @@ spike first.
 
 ## RS11. Release and the Book
 
-- [ ] RS11 `plugin.json` complete (`description` in the index's
+- [~] RS11 `plugin.json` complete (`description` in the index's
   words), the README in elixir's shape (what it gives as a table, the
   server and how to install it, the project and its root, the
   settings with the TOML example, installing, not done, sources and
@@ -808,8 +808,41 @@ spike first.
   the versions checked; not implemented), T3.8.6d and T3.8.8 with
   this plugin's progress and D58's Rust row confirmed by the corpus,
   in the same pull request as the code (D53).
+  (Done 2026-10-10 but for the release, which publishes and is the
+  owner's to start. `plugin.json`'s description is the index's, the
+  version 0.1.0. The README in elixir's shape with more: its status
+  (what works with Kalem 0.6.0, what waits for Kalem's next release),
+  what it gives as a table, the server, the project, the settings
+  with the TOML, diagnostics, formatting, run and test, `Cargo.toml`
+  and source blocks, a file outside a project, a large workspace,
+  installing, not done, sources and licenses. A line in the
+  repository's README table. In Kalem, on its branch with the code
+  the chapter describes (D53): `book/part-3/rust.org` from elixir's
+  (what is followed, the project, installing a server, the known
+  differences with the versions checked, not implemented), linked
+  from the Book's index and from "Language plugins"; `kalem book check
+  book` says 66 pages, no problem. T3.8.6d and T3.8.8 with this
+  plugin's progress, R5.12 with the chapter, and D58's row with Rust
+  confirmed. The release itself: `main` pushed with this plugin's
+  commits, then the tag `rust-v0.1.0` pushed; the release workflow
+  packs the folder from the tagged source (the corpus inside it, as
+  elixir's), signs it, makes the GitHub release, and commits "Publish
+  rust-v0.1.0" with `releases/rust-v0.1.0.sha256` and the index's
+  download. It runs with Kalem 0.6.0: the `version` and `requests`
+  of the manifest are read by Kalem's next release and passed over
+  by 0.6.0. Open: that, the owner's.)
 
 ## Open for the owner
+
+- The release: `main` pushed with this plugin's commits, and the tag
+  `rust-v0.1.0` pushed, which publishes it (RS11).
+- Kalem's branch `rust-server-start` (the worktree `org-rust` beside
+  Kalem's checkout): reviewed and merged, with the Book's chapter
+  "Rust"; then the pin of `kalem-highlight` and `kalem-lsp` in this
+  crate moved past it, and the corpus test given rust-analyzer's own
+  diagnostics (RS4, RS10b).
+- Kalem's part of RS3c (root markers in groups, `${looseFiles}`) and
+  of RS6 (automatic imports): wanted or not.
 
 - The default on save: `cargo check` (faster) or `cargo clippy` (what
   the repository's CI runs, so the editor shows what CI will).

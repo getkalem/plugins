@@ -10,6 +10,7 @@ The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, M
 | [`elixir`](plugins/elixir) | Elixir, EEx and HEEx: highlighting, and Expert or ElixirLS for completion, documentation, definitions, references, diagnostics and formatting | language |
 | [`git`](plugins/git) | Git: the status as a document, changed files with their diffs, staged by file, hunk or line, committed and pushed on Doom's `SPC g` keys (phase 0: the library) | component |
 | [`pdf-viewer`](plugins/pdf-viewer) | PDF files shown page by page with their outline, page labels, links and text | component |
+| [`rust`](plugins/rust) | Rust: highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting across a workspace's crates | language |
 | [`xlsx`](plugins/xlsx) | Excel workbooks opened, edited and saved as themselves | component |
 
 ## How a plugin is built and shipped
