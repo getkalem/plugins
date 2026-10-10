@@ -322,4 +322,64 @@ fn the_corpus_through_rust_analyzer() {
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+
+    // Enter's new line by the server (the manifest's `edit.newline`): at
+    // the end of a doc comment the comment goes on, indented as its line,
+    // the cursor after `/// ` (a snippet's `$0`); after a `{` nothing,
+    // Kalem's own new line standing.
+    let enter = |line: &str, word: &str, offset: usize| {
+        ask(
+            &s,
+            "experimental/onEnter",
+            json!({ "textDocument": doc(lib), "position": at(&s, lib, line, word, offset) }),
+            60,
+            |_| true,
+        )
+    };
+    let comment = "    /// The area, in square units.";
+    let goes_on = enter(comment, "units.", "units.".len());
+    assert_eq!(goes_on[0]["newText"], "\n    /// $0", "{goes_on}");
+    assert_eq!(goes_on[0]["insertTextFormat"], 2, "{goes_on}");
+    assert!(enter("pub trait Area {", "{", 1).is_null());
+
+    // Structural search and replace (`code.structuralReplace`): the
+    // query Kalem makes of the two inputs, every `square!` call of the
+    // crate in a workspace edit, none outside the selection when there is
+    // one; a query that does not parse refused with rust-analyzer's
+    // reason.
+    let ssr = |query: &str, selections: Value| {
+        s.client
+            .request(
+                "experimental/ssr",
+                json!({ "query": query, "parseOnly": false, "textDocument": doc(main),
+                        "position": at(&s, main, "Circle::new(1.0)", "Circle", 0),
+                        "selections": selections }),
+            )
+            .wait(Duration::from_secs(60))
+    };
+    let edit = ssr("square!($a) ==>> square!($a + 1.0)", json!([])).expect("an edit");
+    let files = features::workspace_edit(&edit).expect("a workspace edit");
+    let changed: Vec<(&str, usize)> = files
+        .iter()
+        .filter(|(_, e)| !e.is_empty())
+        .map(|(u, e)| (u.rsplit('/').next().unwrap_or(u), e.len()))
+        .collect();
+    assert_eq!(changed, [("main.rs", 2)], "{edit}");
+    // The call `Circle::new(1.0)` selected, which holds no `square!`.
+    let from = at(&s, main, "Circle::new(1.0)", "Circle", 0);
+    let to = at(&s, main, "Circle::new(1.0)", "(1.0)", "(1.0)".len());
+    let none = ssr(
+        "square!($a) ==>> square!($a + 1.0)",
+        json!([{ "start": from, "end": to }]),
+    )
+    .expect("an edit");
+    assert!(
+        features::workspace_edit(&none)
+            .expect("a workspace edit")
+            .iter()
+            .all(|(_, e)| e.is_empty()),
+        "{none}"
+    );
+    let refused = ssr("square!(", json!([])).expect_err("refused");
+    assert!(refused.message.contains("Parse error"), "{refused:?}");
 }

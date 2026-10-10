@@ -26,6 +26,8 @@
       "candidates": ["rust-analyzer", "~/.cargo/bin/rust-analyzer"],
       "rootMarkers": ["Cargo.lock"],
       "version": ["--version"],
+      "capabilities": { "experimental": { "serverStatusNotification": true } },
+      "status": { "method": "experimental/serverStatus", "text": "/message", "level": "/health", "warning": "warning", "error": "error", "idle": { "/quiescent": true } },
       "settings": { "rust-analyzer": {} },
       "install": "rustup component add rust-analyzer; or brew install rust-analyzer; or a release from https://github.com/rust-lang/rust-analyzer/releases, renamed rust-analyzer and put on the PATH"
     }
@@ -38,7 +40,9 @@
     "code.reloadProject": { "method": "rust-analyzer/reloadWorkspace", "params": "none", "shape": "none" },
     "code.joinLines": { "method": "experimental/joinLines", "params": "ranges", "shape": "edits" },
     "code.moveItemUp": { "method": "experimental/moveItem", "params": "range", "extra": { "direction": "Up" }, "shape": "edits" },
-    "code.moveItemDown": { "method": "experimental/moveItem", "params": "range", "extra": { "direction": "Down" }, "shape": "edits" }
+    "code.moveItemDown": { "method": "experimental/moveItem", "params": "range", "extra": { "direction": "Down" }, "shape": "edits" },
+    "code.structuralReplace": { "method": "experimental/ssr", "shape": "workspaceEdit", "extra": { "query": "{search} ==>> {replace}", "parseOnly": false, "selections": "{selections}" } },
+    "edit.newline": { "method": "experimental/onEnter", "shape": "edits" }
   },
   "commands": {
     "format": ["rustfmt", "--edition", "2024"],
