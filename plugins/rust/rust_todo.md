@@ -793,7 +793,7 @@ spike first.
 
 ## RS11. Release and the Book
 
-- [~] RS11 `plugin.json` complete (`description` in the index's
+- [x] RS11 `plugin.json` complete (`description` in the index's
   words), the README in elixir's shape (what it gives as a table, the
   server and how to install it, the project and its root, the
   settings with the TOML example, installing, not done, sources and
@@ -830,12 +830,17 @@ spike first.
   rust-v0.1.0" with `releases/rust-v0.1.0.sha256` and the index's
   download. It runs with Kalem 0.6.0: the `version` and `requests`
   of the manifest are read by Kalem's next release and passed over
-  by 0.6.0. Open: that, the owner's.)
+  by 0.6.0. Released 2026-10-10 as `rust-v0.1.0`, the owner's
+  version kept: `main` pulled (rebased over docx 0.0.5), pushed, the
+  tag pushed; the workflow's release carries `rust-v0.1.0.tar.gz`
+  (53,570 bytes, 30 files, the corpus inside, no `target`), its
+  Sigstore signature and `SHA256SUMS`; "Publish rust-v0.1.0" on
+  `main` with the hash in `releases/` and the index's download; CI
+  green. Open: the Book's chapter and T3.8.6d's note are on Kalem's
+  branch, unmerged.)
 
 ## Open for the owner
 
-- The release: `main` pushed with this plugin's commits, and the tag
-  `rust-v0.1.0` pushed, which publishes it (RS11).
 - Kalem's branch `rust-server-start` (the worktree `org-rust` beside
   Kalem's checkout): reviewed and merged, with the Book's chapter
   "Rust"; then the pin of `kalem-highlight` and `kalem-lsp` in this
