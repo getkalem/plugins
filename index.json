@@ -184,6 +184,13 @@
             "rust-script",
             "cargo"
           ]
+        },
+        {
+          "id": "toml",
+          "filenames": [
+            "Cargo.toml"
+          ],
+          "extensions": []
         }
       ]
     },

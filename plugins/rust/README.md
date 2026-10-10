@@ -2,7 +2,7 @@
 
 Rust for [Kalem](https://github.com/getkalem/kalem): highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting.
 
-**Status: 0.1.1**, for Kalem 0.6.0 and later: highlighting for the current editions; rust-analyzer found and rooted at the workspace; completion, documentation, signatures, definitions, references, implementations, rename and code actions across a workspace's crates; cargo's diagnostics; formatting; rust-analyzer's settings in the settings panel. Some parts need Kalem 0.6.7 or 0.6.10, and the sections below say which: rust-analyzer's own diagnostics, its own requests (Expand Macro, Open Documentation, …), the standard library's files served by the same server, a missing component said as such (0.6.7); its state in the status bar, Enter going on with a comment, structural search and replace (0.6.10). Its list of tasks is [`rust_todo.md`](rust_todo.md).
+**Status: 0.1.1**, for Kalem 0.6.0 and later: highlighting for the current editions; rust-analyzer found and rooted at the workspace; completion, documentation, signatures, definitions, references, implementations, rename and code actions across a workspace's crates; cargo's diagnostics; formatting; rust-analyzer's settings in the settings panel. Some parts need a later Kalem, and the sections below say which: rust-analyzer's own diagnostics, its own requests (Expand Macro, Open Documentation, …), the standard library's files served by the same server, a missing component said as such (0.6.7); its state in the status bar, Enter going on with a comment, structural search and replace (0.6.10); `Cargo.toml` by Taplo and crates-lsp, the project's run and test keys (after 0.6.10). Its list of tasks is [`rust_todo.md`](rust_todo.md).
 
 A language plugin is declarative (Kalem's D57): this folder holds a manifest, `plugin.json`, the Sublime syntax under `syntaxes/`, a corpus and its tests, and nothing that runs inside Kalem. Kalem's core reads the manifest, adds the syntax to its highlighter and starts rust-analyzer through its one language server client.
 
@@ -122,11 +122,16 @@ rust-analyzer answers with no edits both when the file is formatted and when rus
 
 ## Run and test
 
-The manifest names `cargo run` and `cargo test`, run in the project's root, for Kalem's project keys to run the project and its tests (`SPC p R`, `SPC p T`), which Kalem does not have yet. The test at the cursor needs more than a file and a line: rust-analyzer knows it, and gives the command to run it (`cargo test --package app --bin app -- tests::total_adds_the_areas --exact` on the corpus) and Run and Run Test above each `main` and test. Kalem does not show those yet either: they wait on its code lenses (T3.8.2), and rust-analyzer offers them only to an editor that says it can run them. There is no Debug: Kalem has no debugger.
+The manifest names `cargo run` and `cargo test`, which Run Project and Test Project (`SPC p R`, `SPC p T` with Vim keys; Kalem after 0.6.10) run in the workspace's root, their output in a document as it comes and how they ended at its end and in the status bar. The files are run as saved. The test at the cursor needs more than a file and a line: rust-analyzer knows it, and gives the command to run it (`cargo test --package app --bin app -- tests::total_adds_the_areas --exact` on the corpus) and Run and Run Test above each `main` and test. Kalem does not show those yet either: they wait on its code lenses (T3.8.2), and rust-analyzer offers them only to an editor that says it can run them. There is no Debug: Kalem has no debugger.
 
 ## Cargo.toml, and Rust in Org and Markdown
 
-`Cargo.toml` stays Kalem's: TOML, highlighted by its own syntax; the plugin claims no TOML file. Completion of its keys and of crate versions would come from a second server for the same file (taplo with Cargo's schema, crates-lsp), which Kalem does not run yet.
+`Cargo.toml` is served by two servers beside each other (Kalem after 0.6.10; before, it is Kalem's TOML only):
+
+- **Taplo** for its keys: documentation and completion from SchemaStore's Cargo schema (`descr` offers `description` with what it is), and Format Document;
+- **crates-lsp** beside it for the crates' versions: completed in a version's string (`serde = "1` offers the latest), a newer version than the one asked for said as information, a crate crates.io does not have as a warning ("Unknown crate").
+
+Both read the network (the schema, crates.io). Install them with `brew install taplo` (or `cargo install taplo-cli --locked --features lsp`) and `cargo install crates-lsp --locked`; either runs without the other, and `kalem lsp status Cargo.toml` says which are found. The plugin claims `Cargo.toml` by its name only, highlighted by Kalem's TOML: another `.toml` file, and `Cargo.lock`, stay Kalem's. Taplo 0.10 cannot read SchemaStore's catalog any more and logs "failed to fetch catalog"; the plugin gives it the Cargo schema by name instead.
 
 A `rust` source block in Org (`#+begin_src rust`) or Markdown (a fenced block marked `rust`) is highlighted with the plugin's syntax. rust-analyzer does not serve it: a block is not a file of a Cargo project, and serving one through a temporary file in the project is Kalem's to build, for every language at once.
 
@@ -190,7 +195,7 @@ To work on the plugin itself, point Kalem at this repository's `plugins/` folder
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; completion of `Cargo.toml`; rust-analyzer in source blocks; the project's run and test keys, and a test at the cursor.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; rust-analyzer in source blocks; a test at the cursor (rust-analyzer's runnables and lenses).
 
 ## Sources and licenses
 

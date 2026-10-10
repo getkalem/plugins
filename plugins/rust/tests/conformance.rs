@@ -100,42 +100,70 @@ fn manifest_is_complete() {
     for (key, s) in servers {
         assert!(!list(&s["command"]).is_empty(), "{key} has a command");
         assert!(s["install"].is_string(), "{key} says how to install it");
-        // rust-analyzer asks for its settings as the section
-        // `rust-analyzer` of `workspace/configuration`, which Kalem
-        // answers from `settings` by that key.
-        assert!(
-            s["settings"]["rust-analyzer"].is_object(),
-            "{key}: settings under `rust-analyzer`"
-        );
-        // `kalem lsp status` runs it: rustup's proxy is found whether or
-        // not the component is installed, and only running it tells.
-        assert_eq!(list(&s["version"]), ["--version"], "{key}: its version");
     }
+    let ra = &servers["rust-analyzer"];
+    // rust-analyzer asks for its settings as the section `rust-analyzer`
+    // of `workspace/configuration`, which Kalem answers from `settings`
+    // by that key.
+    assert!(ra["settings"]["rust-analyzer"].is_object());
+    // `kalem lsp status` runs it: rustup's proxy is found whether or not
+    // the component is installed, and only running it tells.
+    assert_eq!(list(&ra["version"]), ["--version"]);
     for l in m["languages"].as_array().expect("languages") {
         let id = l["id"].as_str().expect("id");
         let syntax = l["syntax"].as_str().expect("syntax");
+        // Rust's syntax is the plugin's; a `Cargo.toml` is highlighted by
+        // Kalem's own TOML.
         assert!(
-            names.iter().any(|n| n == syntax),
+            names.iter().any(|n| n == syntax) || (id, syntax) == ("toml", "TOML"),
             "{id}: syntax {syntax} is shipped"
         );
-        assert!(!list(&l["extensions"]).is_empty(), "{id} has extensions");
+        let claimed = [list(&l["extensions"]), list(&l["filenames"])].concat();
+        assert!(!claimed.is_empty(), "{id} claims files");
         assert!(
             list(&m["activation"]).contains(&format!("onLanguage:{id}")),
             "{id} activates the plugin"
         );
-        for s in list(&l["servers"]) {
+        for s in [list(&l["servers"]), list(&l["alongside"])].concat() {
             assert!(servers.contains_key(&s), "{id}: server {s} is described");
         }
-        // `Cargo.toml` and `Cargo.lock` stay Kalem's TOML: a second
-        // server for them (taplo, crates-lsp) waits for Kalem (RS7a).
-        let claimed = [list(&l["extensions"]), list(&l["filenames"])].concat();
+        // Of TOML, `Cargo.toml` only, by its name: another `.toml` file
+        // and `Cargo.lock` stay Kalem's TOML.
         assert!(
-            claimed
-                .iter()
-                .all(|f| !f.ends_with("toml") && !f.starts_with("Cargo.")),
+            list(&l["extensions"]).iter().all(|e| !e.ends_with("toml"))
+                && list(&l["filenames"]).iter().all(|f| f == "Cargo.toml"),
             "{id} claims {claimed:?}"
         );
     }
+}
+
+/// `Cargo.toml` by two servers beside each other (RS7a): Taplo for its
+/// keys, documented and completed from SchemaStore's Cargo schema given
+/// by name (Taplo 0.10 cannot read SchemaStore's catalog), with
+/// crates-lsp beside it for the crates' versions.
+#[test]
+fn cargo_toml_is_taplos_with_crates_lsp_beside_it() {
+    let m = manifest();
+    let cargo = m["languages"]
+        .as_array()
+        .expect("languages")
+        .iter()
+        .find(|l| list(&l["filenames"]).contains(&"Cargo.toml".to_string()))
+        .expect("a language for Cargo.toml");
+    assert_eq!(cargo["id"], "toml");
+    assert_eq!(list(&cargo["filenames"]), ["Cargo.toml"]);
+    assert!(list(&cargo["extensions"]).is_empty());
+    assert_eq!(list(&cargo["servers"]), ["taplo"]);
+    assert_eq!(list(&cargo["alongside"]), ["crates-lsp"]);
+    let taplo = &m["servers"]["taplo"];
+    assert_eq!(list(&taplo["command"]), ["taplo", "lsp", "stdio"]);
+    let schema = &taplo["settings"]["evenBetterToml"]["schema"];
+    assert_eq!(schema["enabled"], true);
+    assert_eq!(
+        schema["associations"]["Cargo\\.toml$"],
+        "https://json.schemastore.org/cargo.json"
+    );
+    assert_eq!(list(&m["servers"]["crates-lsp"]["command"]), ["crates-lsp"]);
 }
 
 /// The settings Kalem's settings panel shows: rust-analyzer's, keyed as

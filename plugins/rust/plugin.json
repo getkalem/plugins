@@ -4,7 +4,7 @@
   "version": "0.1.1",
   "description": "Rust: highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting",
   "api": "^0.1",
-  "activation": ["onLanguage:rust"],
+  "activation": ["onLanguage:rust", "onLanguage:toml"],
   "permissions": ["subprocess"],
   "syntaxes": ["syntaxes/Rust.sublime-syntax"],
   "languages": [
@@ -17,6 +17,15 @@
       "comment": { "line": "//", "block": ["/*", "*/"] },
       "brackets": [["(", ")"], ["[", "]"], ["{", "}"]],
       "servers": ["rust-analyzer"]
+    },
+    {
+      "id": "toml",
+      "name": "Cargo manifest",
+      "syntax": "TOML",
+      "filenames": ["Cargo.toml"],
+      "comment": { "line": "#" },
+      "servers": ["taplo"],
+      "alongside": ["crates-lsp"]
     }
   ],
   "servers": {
@@ -30,6 +39,22 @@
       "status": { "method": "experimental/serverStatus", "text": "/message", "level": "/health", "warning": "warning", "error": "error", "idle": { "/quiescent": true } },
       "settings": { "rust-analyzer": {} },
       "install": "rustup component add rust-analyzer; or brew install rust-analyzer; or a release from https://github.com/rust-lang/rust-analyzer/releases, renamed rust-analyzer and put on the PATH"
+    },
+    "taplo": {
+      "name": "Taplo",
+      "command": ["taplo", "lsp", "stdio"],
+      "candidates": ["~/.cargo/bin/taplo"],
+      "rootMarkers": ["Cargo.lock"],
+      "version": ["--version"],
+      "settings": { "evenBetterToml": { "schema": { "enabled": true, "catalogs": [], "associations": { "Cargo\\.toml$": "https://json.schemastore.org/cargo.json" } } } },
+      "install": "brew install taplo; or cargo install taplo-cli --locked --features lsp"
+    },
+    "crates-lsp": {
+      "name": "crates-lsp",
+      "command": ["crates-lsp"],
+      "candidates": ["~/.cargo/bin/crates-lsp"],
+      "rootMarkers": ["Cargo.lock"],
+      "install": "cargo install crates-lsp --locked"
     }
   },
   "requests": {

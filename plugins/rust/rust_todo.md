@@ -474,8 +474,16 @@ spike first.
   (`rustc` and rust-analyzer), as VS Code lists it; cargo's after the
   save only. Merged as getkalem/kalem#27, released in Kalem 0.6.7;
   the borrow error asserted through the client (RS10b); Kalem's own
-  workspace (RS10a). Open: the editors by hand (underlines and gutter
-  marks are T3.8.2's open part).)
+  workspace (RS10a). Then, on Kalem's branch `rust-core-tasks`
+  (2026-10-10, not merged): the underlines and the gutter's colored
+  line numbers were Kalem's since 2026-10-04 (c2483f81), T3.8.2's note
+  being out of date; what was missing is made: errors, warnings and
+  the rest underlined in three colors (red, orange or yellow in the
+  terminal, blue; `view::Flag` in place of a bool, LaTeX's checks red
+  and blue as before) and a problem over several lines underlined on
+  each of them (the fake server's `SPAN`, in the service test). Open:
+  the editors by hand; a mark when line numbers are off, the light
+  bulb (T3.8.2).)
 
 ## RS5. Formatting: rustfmt through the server
 
@@ -599,8 +607,29 @@ spike first.
   plugin serves it; it is highlighted by Kalem's TOML; `kalem check`
   says nothing of it and `kalem fmt --check` that its language has no
   formatter, T2.7a.7's TOML pack (outline, formatting, syntax errors)
-  being still open in Kalem. The README says what it gets. Open: the
-  second server, Kalem's first.)
+  being still open in Kalem. The README says what it gets. Then the
+  second server, Kalem's first, on Kalem's branch `rust-core-tasks`
+  (2026-10-10, not merged): a language's servers beside its own
+  (`alongside`), each in its own root and kept in step, their
+  diagnostics with the first's under their sources, completion and
+  code actions joined, any other question to the first that has it,
+  `servers.KEY.enabled = false` to turn one off, Language Server
+  Status and `kalem lsp status` naming them; tested with the fake
+  server's `beside` linter. Here: the language `toml` ("Cargo
+  manifest") claims `Cargo.toml` by its name, highlighted by Kalem's
+  TOML, its server `taplo` (`taplo lsp stdio`) and `crates-lsp` beside
+  it; another `.toml` file and `Cargo.lock` stay Kalem's (the
+  conformance test). Taplo 0.10.0 cannot read SchemaStore's catalog
+  ("failed to fetch catalog"), so its settings associate `Cargo.toml`
+  with `https://json.schemastore.org/cargo.json` by name. Checked with
+  the branch's terminal build, Taplo 0.10.0 and crates-lsp 0.4.3 on a
+  copy of the corpus: documentation of `edition` and 112 key
+  completions at `descr` (`description` first) from Taplo, Format
+  Document by Taplo; `serde = "0.9.0"` said as "serde: 1.0.229"
+  (information), a crate crates.io does not have as "Unknown crate" (a
+  warning), version completion `1.0.229` from crates-lsp;
+  `rustfmt.toml` served by no plugin. Not in the corpus test: both
+  read the network. Open: the editors by hand.)
 - [ ] RS7b Rust inside an Org or Markdown source block gets the same
   completion when the block's document is inside a Cargo project: a
   temporary file in the project, by setting and off by default since
@@ -615,7 +644,9 @@ spike first.
   the plugin is loaded (RS2's test); no server serves it. Kalem's
   todo has no task for language servers in source blocks besides
   T3.8.6d's sentence, so the core's part has no number yet. The
-  README says so.)
+  README says so.
+  Put off by the owner on 2026-10-10, while Kalem's other parts
+  of RS4, RS7a and RS8 were made.)
 
 ## RS8. Run and test: `cargo run`, `cargo test`, and the lenses
 
@@ -658,8 +689,20 @@ spike first.
   carries and how its argument makes a program, its arguments and a
   folder, and Kalem declares the command to the server, shows the
   lens, and runs it as `SPC p T` runs the project's tests; gopls and
-  ElixirLS name theirs. Open: that part, and T2.7i.8's `p R` and
-  `p T`.)
+  ElixirLS name theirs. Then T2.7i.8's keys, on Kalem's branch
+  `rust-core-tasks` (2026-10-10, not merged): Run Project, Test
+  Project and Test at Cursor (`project.run`, `project.test`,
+  `project.testAtCursor`; `SPC p R`, `SPC p T`) run the file's
+  plugin's `run`, `test` and `testAtPoint` in the project's root as
+  its server finds it, `{file}` and `{line}` filled in, the output in
+  a read-only document as it comes (standard error too) and how it
+  ended there and in the status bar; the same command again, or its
+  document closed, stops it; without the plugin's, a command is asked
+  for and run by the shell. With the branch's terminal build on the
+  corpus, `SPC p T` (Vim keys) opens "cargo test (ws)" with
+  `borrow.rs`'s E0502 and ends "cargo test: exit status 101". Open:
+  the test at the cursor by rust-analyzer's runnables and lenses (the
+  part above); the editors by hand.)
 
 ## RS9. rust-analyzer's own requests, where Kalem can show them (later)
 
