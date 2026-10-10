@@ -143,8 +143,11 @@ measurements ignored.
   `MergeCells`, each readable back; `RGB()` and Excel's alignment,
   border and font constants; `Worksheet.Name` and `Visible` set; one
   undo step for the run as before; tests in `tests/macros.rs`. Open:
-  sheets added, deleted, copied and moved (their indexes shift under
-  the macro's variables), and the rest of the list above.) (Done
+  sheets added, deleted, copied and moved: the interpreter holds
+  sheets by their index in about eighty places, and a sheet added or
+  deleted shifts the indexes under the macro's variables, so sheets
+  must first be held by a lasting identity; and the rest of the list
+  above.) (Done
   2026-10-10 too: `Resume` and `Resume Next` in handlers, the handler
   run where the error was so that a loop goes on, `Resume without
   error` (20) outside one; `Empty = ""` true, as VBA compares Empty
@@ -328,9 +331,11 @@ measurements ignored.
   table's Total Row and Convert to Range; a pivot table's Refresh and
   Options; Show Comments on a thread; the rows' and columns' menus
   with Paste Special, Format Cells and Ungroup, Row Height and Column
-  Width typed; tested in the terminal. Open: Standard Width, View Code,
-  Select All Sheets, and the menus of charts, pictures, slicers,
-  sparklines, the formula bar, the Name Box and the status line.)
+  Width typed; a chart's items (type, title, legend, labels,
+  trendline, place, template, Delete) and a picture's first when one
+  is over the cell; tested in the terminal. Open: Standard Width, View
+  Code, Select All Sheets, and the menus of slicers, sparklines, the
+  formula bar, the Name Box and the status line.)
 
 ## Checks and documents
 
