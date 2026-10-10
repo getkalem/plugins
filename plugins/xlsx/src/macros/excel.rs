@@ -906,6 +906,37 @@ fn set_range_value(it: &mut Interp<'_>, r: &RangeRef, v: V) -> R<()> {
     Ok(())
 }
 
+/// `Range.Formula = "=…"` on several cells: entered in the first and
+/// filled into the others, relative references following, as Excel
+/// does; `FormulaR1C1` read relative to each cell. An array, or text
+/// that is not a formula, is written as `Value` writes it.
+fn set_range_formula(it: &mut Interp<'_>, r: &RangeRef, v: V, r1c1: bool) -> R<()> {
+    let text = match &v {
+        V::Str(t) if t.starts_with('=') => t[1..].to_owned(),
+        _ => return set_range_value(it, r, v),
+    };
+    if count(r) > MAX_CELLS {
+        return Err(RtError::new(
+            7,
+            "Out of memory: the range is too large to fill",
+        ));
+    }
+    let first = CellRef::new(r.r0, r.c0);
+    for at in cells_of(r).collect::<Vec<_>>() {
+        let f = if r1c1 {
+            crate::formula::from_r1c1(&text, at)
+        } else {
+            crate::formula::shift(
+                &text,
+                i64::from(at.row) - i64::from(first.row),
+                i64::from(at.col) - i64::from(first.col),
+            )
+        };
+        write_v(it, r.sheet, at, &V::Str(format!("={f}")))?;
+    }
+    Ok(())
+}
+
 /// Clears the values of the cells that exist in the range.
 fn clear(it: &mut Interp<'_>, r: &RangeRef) -> R<()> {
     let cells: Vec<CellRef> = it
@@ -1131,19 +1162,22 @@ fn range_get(it: &mut Interp<'_>, r: &RangeRef, m: &str, a: Vec<V>) -> R<V> {
     Ok(match m {
         "value" | "value2" => range_value(it, r)?,
         "formula" | "formulalocal" | "formular1c1" => {
-            if m == "formular1c1" {
-                return Err(unsupported("FormulaR1C1"));
-            }
+            // A formula as the cell holds it, or for FormulaR1C1 with its
+            // references relative to the cell.
+            let r1c1 = m == "formular1c1";
+            let text = |it: &mut Interp<'_>, at: CellRef| -> R<V> {
+                let t = it.wb.edit_text(r.sheet, at).map_err(wb_err)?;
+                Ok(V::Str(match t.strip_prefix('=') {
+                    Some(f) if r1c1 => format!("={}", crate::formula::to_r1c1(f, at)),
+                    _ => t,
+                }))
+            };
             if count(r) == 1 {
-                V::Str(
-                    it.wb
-                        .edit_text(r.sheet, CellRef::new(r.r0, r.c0))
-                        .map_err(wb_err)?,
-                )
+                text(it, CellRef::new(r.r0, r.c0))?
             } else {
                 let mut arr = Array::new(&[(1, i64::from(r.rows())), (1, i64::from(r.cols()))]);
                 for (k, at) in cells_of(r).enumerate() {
-                    arr.data[k] = V::Str(it.wb.edit_text(r.sheet, at).map_err(wb_err)?);
+                    arr.data[k] = text(it, at)?;
                 }
                 V::Arr(Box::new(arr))
             }
@@ -1897,8 +1931,10 @@ pub fn get(it: &mut Interp<'_>, o: &Obj, m: &str, a: Vec<V>) -> R<V> {
 pub fn set(it: &mut Interp<'_>, o: &Obj, m: &str, a: Vec<V>, v: V) -> R<()> {
     match o {
         Obj::Range(r) => match m {
-            "value" | "value2" | "formula" | "formulalocal" => set_range_value(it, r, v),
-            "formular1c1" => Err(unsupported("FormulaR1C1")),
+            "value" | "value2" => set_range_value(it, r, v),
+            "formula" | "formulalocal" | "formular1c1" => {
+                set_range_formula(it, r, v, m == "formular1c1")
+            }
             _ => range_format_set(it, r, m, &v),
         },
         // `Rows(2).RowHeight = 20`, `Columns("A:C").ColumnWidth = 12`.

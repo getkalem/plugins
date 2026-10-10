@@ -143,7 +143,8 @@ measurements ignored.
   2026-10-10 too: `Resume` and `Resume Next` in handlers, the handler
   run where the error was so that a loop goes on, `Resume without
   error` (20) outside one; `Empty = ""` true, as VBA compares Empty
-  with a string.)
+  with a string; `FormulaR1C1` read and written, and a formula set on
+  several cells filled into them, relative references following.)
 
 ### XL9. Memory and speed (`publish_todo.md`, E38's last part)
 

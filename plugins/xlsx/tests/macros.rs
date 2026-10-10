@@ -384,6 +384,28 @@ End Sub
 }
 
 #[test]
+fn formulas_in_r1c1_and_filled() {
+    let mut wb = book();
+    let src = r#"
+Sub Recorded()
+    Range("E2:E4").FormulaR1C1 = "=RC[-3]+RC[-2]"
+    Range("F2:F4").Formula = "=B2*2"
+    Range("E5").FormulaR1C1 = "=SUM(R[-3]C:R[-1]C)"
+    Debug.Print Range("E3").Formula, Range("F4").Formula, Range("E5").FormulaR1C1, _
+        Range("D2").FormulaR1C1, Range("E5").Value
+End Sub
+"#;
+    let report = run(&mut wb, src, "Recorded").unwrap();
+    assert_eq!(
+        report.output,
+        ["=B3+C3 =B4*2 =SUM(R[-3]C:R[-1]C) =RC[-2]+RC[-1] 4293.75"]
+    );
+    assert_eq!(wb.edit_text(0, at("E2")).unwrap(), "=B2+C2");
+    assert_eq!(wb.edit_text(0, at("F2")).unwrap(), "=B2*2");
+    assert_eq!(wb.display(0, at("F3")).unwrap(), "863");
+}
+
+#[test]
 fn listing_macros() {
     let p = Project {
         name: "VBAProject".into(),

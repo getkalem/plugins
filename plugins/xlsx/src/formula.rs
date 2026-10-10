@@ -139,7 +139,16 @@ pub fn quote_sheet(name: &str) -> String {
 /// qualified with (`Some`), written before it in place of its own.
 pub fn map_refs_ex(
     formula: &str,
+    f: impl FnMut(&Context<'_>, Reference) -> Option<(Option<String>, Reference)>,
+) -> String {
+    map_refs_with(formula, f, write_reference)
+}
+
+/// As [`map_refs_ex`], each reference written by `write`.
+fn map_refs_with(
+    formula: &str,
     mut f: impl FnMut(&Context<'_>, Reference) -> Option<(Option<String>, Reference)>,
+    write: impl Fn(&Reference) -> String,
 ) -> String {
     let chars: Vec<(usize, char)> = formula.char_indices().collect();
     let mut out = String::with_capacity(formula.len() + 8);
@@ -265,7 +274,7 @@ pub fn map_refs_ex(
                         out.push_str(&quote_sheet(&q));
                         out.push('!');
                     }
-                    out.push_str(&write_reference(r));
+                    out.push_str(&write(r));
                 };
                 let ctx = Context {
                     sheet: ctx_sheet.as_deref(),
@@ -316,6 +325,180 @@ pub fn map_refs_ex(
                     None => out.push_str(w),
                 }
                 i = j;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// `formula` (A1 references) as `FormulaR1C1` gives it for a cell at
+/// `base`: `R2C3` for `$C$2`, `R[-1]C` for the cell above, `C[1]` for
+/// the next column, `R1:R3` for `$1:$3`.
+pub fn to_r1c1(formula: &str, base: CellRef) -> String {
+    let part = |out: &mut String, letter: char, v: Option<(u32, bool)>, at: u32| {
+        if let Some((n, abs)) = v {
+            out.push(letter);
+            if abs {
+                out.push_str(&(n + 1).to_string());
+            } else if n != at {
+                out.push_str(&format!("[{}]", i64::from(n) - i64::from(at)));
+            }
+        }
+    };
+    let end = |e: &End| {
+        let mut out = String::new();
+        part(&mut out, 'R', e.row, base.row);
+        part(&mut out, 'C', e.col, base.col);
+        out
+    };
+    map_refs_with(
+        formula,
+        |_, r| Some((None, r)),
+        |r| {
+            let (a, b) = (end(&r.start), end(&r.end));
+            // A whole row or column once: `C[-1]`, `R2`.
+            if r.single || (a == b && (r.start.row.is_none() || r.start.col.is_none())) {
+                a
+            } else {
+                format!("{a}:{b}")
+            }
+        },
+    )
+}
+
+/// One end of an R1C1 reference at `chars[i..]`: its row and column parts
+/// (`None` when absent, else the number and whether absolute, a relative
+/// one as an offset), and where it ends; `None` when no reference starts
+/// there (a name, `ROUND(`).
+#[allow(clippy::type_complexity)]
+fn r1c1_end(chars: &[char], i: usize) -> Option<(Option<(i64, bool)>, Option<(i64, bool)>, usize)> {
+    let part = |letter: char, mut j: usize| -> Option<(Option<(i64, bool)>, usize)> {
+        if !chars
+            .get(j)
+            .is_some_and(|c| c.eq_ignore_ascii_case(&letter))
+        {
+            return Some((None, j));
+        }
+        j += 1;
+        if chars.get(j) == Some(&'[') {
+            let close = chars[j..].iter().position(|c| *c == ']')? + j;
+            let n: i64 = chars[j + 1..close]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .ok()?;
+            return Some((Some((n, false)), close + 1));
+        }
+        let digits = chars[j..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if digits == 0 {
+            return Some((Some((0, false)), j));
+        }
+        let n: i64 = chars[j..j + digits]
+            .iter()
+            .collect::<String>()
+            .parse()
+            .ok()?;
+        Some((Some((n, true)), j + digits))
+    };
+    let (row, j) = part('R', i)?;
+    let (col, k) = part('C', j)?;
+    if row.is_none() && col.is_none() {
+        return None;
+    }
+    // Not the start of a longer name or a function.
+    if chars.get(k).is_some_and(|c| is_word(*c) || *c == '(') {
+        return None;
+    }
+    Some((row, col, k))
+}
+
+/// `formula` written with R1C1 references (`FormulaR1C1`) as the A1
+/// formula of the cell at `base`; a reference off the sheet is `#REF!`.
+pub fn from_r1c1(formula: &str, base: CellRef) -> String {
+    let chars: Vec<char> = formula.chars().collect();
+    let mut out = String::with_capacity(formula.len());
+    let resolve = |v: Option<(i64, bool)>, at: u32, max: u32| -> Result<Option<(u32, bool)>, ()> {
+        match v {
+            None => Ok(None),
+            Some((n, true)) => u32::try_from(n - 1)
+                .ok()
+                .filter(|n| *n < max)
+                .map(|n| Some((n, true)))
+                .ok_or(()),
+            Some((d, false)) => add(at, d, max).map(|n| Some((n, false))).ok_or(()),
+        }
+    };
+    let a1 = |row: Option<(i64, bool)>, col: Option<(i64, bool)>| -> Option<End> {
+        Some(End {
+            row: resolve(row, base.row, MAX_ROW).ok()?,
+            col: resolve(col, base.col, MAX_COL).ok()?,
+        })
+    };
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '"' | '\'' => {
+                let mut j = i + 1;
+                while j < chars.len() {
+                    if chars[j] == c {
+                        if chars.get(j + 1) == Some(&c) {
+                            j += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    j += 1;
+                }
+                let end = (j + 1).min(chars.len());
+                out.extend(&chars[i..end]);
+                i = end;
+            }
+            // A structured reference or another workbook: as it is.
+            '[' => {
+                let end = chars[i..]
+                    .iter()
+                    .position(|c| *c == ']')
+                    .map_or(chars.len(), |p| i + p + 1);
+                out.extend(&chars[i..end]);
+                i = end;
+            }
+            c if is_word(c) => {
+                let starts = i == 0 || !is_word(chars[i - 1]);
+                let Some((row, col, j)) = starts.then(|| r1c1_end(&chars, i)).flatten() else {
+                    let j = chars[i..].iter().take_while(|c| is_word(**c)).count() + i;
+                    out.extend(&chars[i..j]);
+                    i = j;
+                    continue;
+                };
+                // A range: `R1C1:R2C2`, `R1:R3`, `C[1]:C[2]`.
+                let second = (chars.get(j) == Some(&':'))
+                    .then(|| r1c1_end(&chars, j + 1))
+                    .flatten();
+                let (start, end, next) = match second {
+                    Some((row2, col2, k)) => (a1(row, col), a1(row2, col2), k),
+                    None => {
+                        let e = a1(row, col);
+                        (e, e, j)
+                    }
+                };
+                match (start, end) {
+                    (Some(a), Some(b)) => {
+                        // A whole row or column is written as a range.
+                        let single = second.is_none() && a.row.is_some() && a.col.is_some();
+                        out.push_str(&write_reference(&Reference {
+                            start: a,
+                            end: b,
+                            single,
+                        }));
+                    }
+                    _ => out.push_str("#REF!"),
+                }
+                i = next;
             }
             _ => {
                 out.push(c);
@@ -985,6 +1168,24 @@ pub fn without_future_prefixes(formula: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn r1c1_both_ways() {
+        let c3 = CellRef::new(2, 2);
+        for (a1, r1c1) in [
+            ("A1+$B$2", "R[-2]C[-2]+R2C2"),
+            ("SUM(C1:C2)*C$3", "SUM(R[-2]C:R[-1]C)*R3C"),
+            ("SUM(B:B)+SUM($4:$5)", "SUM(C[-1])+SUM(R4:R5)"),
+            ("Data!C3&\"R1C1\"", "Data!RC&\"R1C1\""),
+            ("ROUND(RATE,2)", "ROUND(RATE,2)"),
+        ] {
+            assert_eq!(to_r1c1(a1, c3), r1c1, "{a1}");
+            assert_eq!(from_r1c1(r1c1, c3), a1, "{r1c1}");
+        }
+        assert_eq!(from_r1c1("r[-1]c+rc[1]", c3), "C2+D3");
+        assert_eq!(from_r1c1("R[-5]C", c3), "#REF!");
+        assert_eq!(from_r1c1("Table1[Amount]*RC1", c3), "Table1[Amount]*$A3");
+    }
 
     #[test]
     fn hyperlinks_as_the_value_they_show() {
