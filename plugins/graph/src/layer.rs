@@ -284,6 +284,99 @@ fn inline(
             _ => {}
         }
     }
+    if flavor != Flavor::Obsidian {
+        highlights(o, line, at, "^^");
+    }
+}
+
+/// A line's highlights between `mark`s (Logseq's `^^`, Obsidian's
+/// `==`): the marks hidden, the text bold.
+fn highlights(o: &mut Overlays, line: &str, at: usize, mark: &str) {
+    let w = mark.len();
+    let mut from = 0;
+    while let Some(p) = line[from..].find(mark) {
+        let s = from + p;
+        let Some(q) = line[s + w..].find(mark) else {
+            break;
+        };
+        let e = s + w + q;
+        if q > 0 && !line[s + w..e].starts_with(' ') {
+            o.span(at + s, at + s + w, Effect::Hide);
+            o.span(
+                at + s + w,
+                at + e,
+                Effect::Style(Look {
+                    bold: true,
+                    ..Look::default()
+                }),
+            );
+            o.span(at + e, at + e + w, Effect::Hide);
+        }
+        from = e + w;
+    }
+}
+
+/// An admonition of Logseq's (`#+BEGIN_NOTE`) as it is shown: its icon
+/// and name.
+fn admonition(name: &str) -> Option<&'static str> {
+    Some(match name.to_ascii_lowercase().as_str() {
+        "note" => "✎ Note",
+        "tip" => "✦ Tip",
+        "important" => "❗ Important",
+        "caution" => "⚠ Caution",
+        "warning" => "⚠ Warning",
+        "pinned" => "📌 Pinned",
+        _ => return None,
+    })
+}
+
+/// A `#+BEGIN_…` or `#+END_…` line's marker at byte `at` (`marker`
+/// trimmed): an admonition's beginning shown as its icon and name and
+/// its end's line hidden, as Logseq draws the box; another block's
+/// marker dimmed. False when `marker` is neither.
+fn block_marker(
+    o: &mut Overlays,
+    text: &str,
+    line: (usize, &str),
+    at: usize,
+    marker: &str,
+) -> bool {
+    let upper = marker.to_ascii_uppercase();
+    let (name, begin) = if let Some(n) = upper.strip_prefix("#+BEGIN_") {
+        (n, true)
+    } else if let Some(n) = upper.strip_prefix("#+END_") {
+        (n, false)
+    } else {
+        return false;
+    };
+    let name = name.split_whitespace().next().unwrap_or("");
+    match admonition(name) {
+        Some(label) if begin => o.span(
+            at,
+            at + marker.len(),
+            Effect::Replace(
+                label.into(),
+                Look {
+                    bold: true,
+                    ..Look::default()
+                },
+            ),
+        ),
+        Some(_) if line.1.trim() == marker => o.lines.push(Lines {
+            start: line.0,
+            end: line_end(text, line.0, line.1),
+            effect: LineEffect::Hidden,
+        }),
+        _ => o.span(
+            at,
+            at + marker.len(),
+            Effect::Style(Look {
+                dim: true,
+                ..Look::default()
+            }),
+        ),
+    }
+    true
 }
 
 /// The references of a line, as the scanner finds them.
@@ -414,6 +507,9 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
                     }),
                 );
             }
+            if block_marker(&mut o, text, (start, line), start + at, rest.trim_end()) {
+                continue;
+            }
             if let Some((ks, ke, key)) = property(content) {
                 // A pre-block's first property.
                 property_look(
@@ -473,15 +569,7 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
             continue;
         }
         in_props = false;
-        if trimmed.starts_with("#+BEGIN_") || trimmed.starts_with("#+END_") {
-            o.span(
-                start + indent,
-                start + indent + trimmed.len(),
-                Effect::Style(Look {
-                    dim: true,
-                    ..Look::default()
-                }),
-            );
+        if block_marker(&mut o, text, (start, line), start + indent, trimmed) {
             continue;
         }
         inline(
@@ -498,6 +586,7 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
     let s = scan::scan(text, Flavor::LogseqMarkdown, &scan::Options::default());
     let starts: Vec<usize> = ls.iter().map(|(s, _)| *s).collect();
     let at = |n: u32| starts.get(n as usize).copied().unwrap_or(text.len());
+    numbered(&mut o, &s.blocks, &ls);
     for (i, b) in s.blocks.iter().enumerate() {
         if b.collapsed && s.blocks.get(i + 1).is_some_and(|c| c.parent == Some(i)) {
             let (_, end) = crate::edit::subtree(&s.blocks, i);
@@ -513,6 +602,88 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
         }
     }
     o.finish()
+}
+
+/// The blocks with `logseq.order-list-type:: number` numbered as Logseq
+/// numbers them: their bullets shown as `1.`, counting the siblings
+/// before with the property; nested in such blocks, `a.`, then `I.`.
+fn numbered(o: &mut Overlays, blocks: &[scan::Block], ls: &[(usize, &str)]) {
+    let number = |b: &scan::Block| {
+        b.props
+            .iter()
+            .any(|(k, v)| k == "logseq.order-list-type" && v.trim().eq_ignore_ascii_case("number"))
+    };
+    let mut idx = vec![0usize; blocks.len()];
+    // The last block seen under each parent (`None` at the top level).
+    let mut last: std::collections::HashMap<Option<usize>, usize> = Default::default();
+    for (i, b) in blocks.iter().enumerate() {
+        let prev = last.insert(b.parent, i);
+        if !number(b) {
+            continue;
+        }
+        idx[i] = prev.filter(|&p| idx[p] > 0).map_or(1, |p| idx[p] + 1);
+        let mut depth = 0;
+        let mut p = b.parent;
+        while let Some(q) = p.filter(|&q| number(&blocks[q])) {
+            depth += 1;
+            p = blocks[q].parent;
+        }
+        let label = match depth % 3 {
+            0 => idx[i].to_string(),
+            1 => letters(idx[i]),
+            _ => roman(idx[i]),
+        };
+        let Some((start, line)) = ls.get(b.line as usize) else {
+            continue;
+        };
+        let indent = line.len() - line.trim_start().len();
+        if line[indent..].starts_with('-') {
+            o.put(
+                start + indent,
+                start + indent + 1,
+                Effect::Replace(format!("{label}."), Look::default()),
+            );
+        }
+    }
+}
+
+/// 1 as `a`, 27 as `aa`.
+fn letters(mut n: usize) -> String {
+    let mut s = Vec::new();
+    while n > 0 {
+        let t = (n - 1) % 26;
+        s.push(b'a' + t as u8);
+        n = (n - t) / 26;
+    }
+    s.reverse();
+    String::from_utf8(s).unwrap_or_default()
+}
+
+/// 4 as `IV`.
+fn roman(mut n: usize) -> String {
+    const R: &[(usize, &str)] = &[
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let mut s = String::new();
+    for &(v, r) in R {
+        while n >= v {
+            s.push_str(r);
+            n -= v;
+        }
+    }
+    s
 }
 
 /// A property line: hidden whole when Logseq hides it, else its key
@@ -721,28 +892,7 @@ fn inline_obsidian(
     rel: Option<&str>,
 ) {
     inline(o, line, at, Flavor::Obsidian, index, rel);
-    // `==highlight==`: the markers hidden, the text bold.
-    let mut from = 0;
-    while let Some(p) = line[from..].find("==") {
-        let s = from + p;
-        let Some(q) = line[s + 2..].find("==") else {
-            break;
-        };
-        let e = s + 2 + q;
-        if q > 0 && !line[s + 2..e].starts_with(' ') {
-            o.span(at + s, at + s + 2, Effect::Hide);
-            o.span(
-                at + s + 2,
-                at + e,
-                Effect::Style(Look {
-                    bold: true,
-                    ..Look::default()
-                }),
-            );
-            o.span(at + e, at + e + 2, Effect::Hide);
-        }
-        from = e + 2;
-    }
+    highlights(o, line, at, "==");
     // A block's `^id` at the end of its line.
     let t = line.trim_end();
     if let Some(p) = t.rfind(" ^") {
@@ -889,6 +1039,37 @@ mod tests {
             at += c.len_utf8();
         }
         out
+    }
+
+    #[test]
+    fn highlights_numbered_lists_and_admonitions() {
+        let text = "- a ^^bright^^ idea\n\
+- one\n  logseq.order-list-type:: number\n\
+- two\n  logseq.order-list-type:: number\n\
+\t- under\n\t  logseq.order-list-type:: number\n\
+\t\t- deeper\n\t\t  logseq.order-list-type:: number\n\
+\t- plain\n\
+\t- again\n\t  logseq.order-list-type:: number\n\
+- #+BEGIN_NOTE\n  Read **this**\n  #+END_NOTE\n\
+- #+BEGIN_QUOTE\n  said\n  #+END_QUOTE\n";
+        let o = logseq_markdown(text, None, None);
+        assert_eq!(
+            shown(text, &o),
+            "- a bright idea\n\
+1. one\n\
+2. two\n\
+\ta. under\n\
+\t\tI. deeper\n\
+\t- plain\n\
+\ta. again\n\
+- ✎ Note\n  Read **this**\n\
+- #+BEGIN_QUOTE\n  said\n  #+END_QUOTE\n"
+        );
+        assert_eq!(letters(27), "aa");
+        assert_eq!(roman(1994), "MCMXCIV");
+        // Org's highlights too.
+        let org = "* a ^^lit^^ word\n";
+        assert_eq!(shown(org, &logseq_org(org, None, None)), "* a lit word\n");
     }
 
     #[test]
