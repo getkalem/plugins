@@ -1108,3 +1108,112 @@ fn pages_sorted_and_a_blocks_references() {
         "{out:?}"
     );
 }
+
+/// Kalem's own keys under `SPC m`, `SPC n` and `SPC o`, the plugin's
+/// groups, in the Vim profile, by the mode their when-clause names (`""`
+/// for every mode), as `crates/kalem-core/keymaps/vim.json` of Kalem
+/// 0.6.12 binds them, its `leader` written `space`. No key of Kalem's
+/// starts with one of the plugin's single keys (Enter, Tab, `alt+[` …).
+/// To be refreshed when Kalem's change.
+const KALEM_VIM_KEYS: &[(&str, &str)] = &[
+    (
+        "",
+        "space n l, space n s, space n shift+f, space n y, space n shift+y, \
+         space o p, space o o, space o shift+o, space o i, space o shift+i, \
+         space o t, space o shift+t, space o b, space o l, space o x, \
+         space o f, space o -, space o shift+p",
+    ),
+    (
+        "markdown",
+        "space m e, space m i b, space m i i, space m i e, space m i s, \
+         space m i c, space m i l, space m i u, space m i w, space m t e, \
+         space m t l, space m t m, space m t w, space m x, space m t x, \
+         space m b a, space m b s, space o l",
+    ),
+    (
+        "org",
+        "space m t, space m q, space m o, space m x, space m ., space m /, \
+         space m shift+a, space m e, space m f, space m k, space m j, \
+         space m n, space m @, space m ,, space m +, space m h, space m *, \
+         space m i, space m l d, space m b -, space m b a, space m b c, \
+         space m b f, space m b r, space m b s, space m b i c, \
+         space m b i r, space m b i h, space m b i shift+h, space m b d c, \
+         space m b d r, space m c e, space m c shift+e, space m d d, \
+         space m d s, space m d t, space m d shift+t, space m g g, \
+         space m g shift+g, space m g x, space m l i, space m l l, \
+         space m l shift+l, space m l s, space m l shift+s, space m l t, \
+         space m p p, space m p u, space m p d, space m r r, space m r ., \
+         space m s a, space m s shift+a, space m s d, space m s h, \
+         space m s l, space m s j, space m s k, space m s n, \
+         space m s shift+n, space m s r, space m s s, space m s shift+s",
+    ),
+];
+
+/// The modes of a graph's notes a when-clause lets its binding apply in:
+/// those it names, else both (none for the plugin's documents).
+fn note_modes(when: &str) -> Vec<&'static str> {
+    let names_a_type = when.contains("editorMode == ") || when.contains("textType == ");
+    ["markdown", "org"]
+        .into_iter()
+        .filter(|m| {
+            !names_a_type
+                || when.contains(&format!("editorMode == {m}"))
+                || when.contains(&format!("textType == {m}"))
+        })
+        .collect()
+}
+
+/// Every key of the plugin runs its command in a graph's notes with Vim
+/// keys. Kalem waits for the next key after keys that a longer binding
+/// starts with (`Keymap::lookup`), whatever the order of the bindings:
+/// Cycle Task on `SPC m t` never ran in Markdown, where Kalem has Doom's
+/// toggles `SPC m t e` and `SPC m t x`, nor Set Priority on `SPC m p` in
+/// Org, beside `SPC m p u`. A key of the plugin that one of Kalem's
+/// starts would take that key from its notes the same way. A key equal
+/// to one of Kalem's is the plugin's in its notes once the keys of a
+/// layer's notes come after the profile's (Kalem's ed4a3dd7, after
+/// 0.6.12); in 0.6.12 Kalem's own runs.
+#[test]
+fn note_keys_are_reachable_in_the_vim_profile() {
+    // A longer key sequence starting with a shorter one, chord by chord.
+    let starts = |long: &str, short: &str| {
+        long.strip_prefix(short)
+            .is_some_and(|rest| rest.starts_with(' '))
+    };
+    let mut bound = Vec::new();
+    for c in COMMANDS {
+        let leader = c.keys.iter().map(|k| (*k, LEADER_WHEN));
+        for (keys, when) in leader.chain(c.note_keys.iter().copied()) {
+            for mode in note_modes(when) {
+                bound.push((mode, keys, c.id));
+            }
+        }
+    }
+    let mut clashes = Vec::new();
+    for &(mode, keys, id) in &bound {
+        let kalem = KALEM_VIM_KEYS
+            .iter()
+            .filter(|(m, _)| m.is_empty() || *m == mode)
+            .flat_map(|(_, list)| list.split(", "));
+        for theirs in kalem {
+            if starts(theirs, keys) {
+                clashes.push(format!(
+                    "{id}: `{keys}` never runs in {mode}, Kalem's `{theirs}` starts with it"
+                ));
+            }
+            if starts(keys, theirs) {
+                clashes.push(format!(
+                    "{id}: `{keys}` takes Kalem's `{theirs}` from {mode} notes"
+                ));
+            }
+        }
+        for &(_, other, other_id) in bound.iter().filter(|b| b.0 == mode) {
+            if starts(other, keys) {
+                clashes.push(format!(
+                    "{id}: `{keys}` never runs in {mode}, {other_id}'s `{other}` starts with it"
+                ));
+            }
+        }
+    }
+    assert!(clashes.is_empty(), "{}", clashes.join("\n"));
+}

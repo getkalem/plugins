@@ -120,7 +120,8 @@ fn logseq_variables(text: &str, index: &Index, v: &Values) -> String {
             "yesterday" => day(v.today.map(|d| d.add_days(-1))),
             "tomorrow" => day(v.today.map(|d| d.add_days(1))),
             "current page" => format!("[[{}]]", v.title),
-            // Kalem gives plugins no clock: the time is not known.
+            // Kalem's clock gives plugins UTC, not the zone's offset: the
+            // local time is not known.
             "time" => String::new(),
             _ => rest[p..p + q + 2].to_string(),
         };

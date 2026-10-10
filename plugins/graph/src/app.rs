@@ -184,12 +184,20 @@ pub const COMMANDS: &[CommandInfo] = &[
         note_keys: &[],
     },
     // Editing as an outliner (GR8): in a graph's notes only, Doom's Org
-    // keys under `SPC m` and Logseq's elsewhere.
+    // keys under `SPC m` and Logseq's elsewhere. A key that starts one of
+    // Kalem's longer keys never runs (Kalem waits for the next key), so
+    // these avoid them (GR8d, `note_keys_are_reachable_in_the_vim_profile`).
     n(
         "graph.cycleTodo",
         "Cycle Task",
         &[
-            ("space m t", in_note!(" && vimCommand")),
+            // Doom's Org `t`; Kalem's Markdown has Doom's toggles under
+            // `SPC m t` (`t e`, `t x` …), the task among them.
+            ("space m t", in_note!(" && vimCommand && editorMode == org")),
+            (
+                "space m t t",
+                in_note!(" && vimCommand && editorMode == markdown"),
+            ),
             // In the Tasks and Query documents: the task of the line.
             ("t", TASK_DOC_WHEN),
         ],
@@ -197,7 +205,8 @@ pub const COMMANDS: &[CommandInfo] = &[
     n(
         "graph.setPriority",
         "Set Priority",
-        &[("space m p", in_note!(" && vimCommand"))],
+        // Doom's Org `p p`: Kalem's Org has `p u` and `p d` beside it.
+        &[("space m p p", in_note!(" && vimCommand"))],
     ),
     n(
         "graph.schedule",
@@ -645,8 +654,8 @@ impl App {
         })
     }
 
-    /// The day the plugin was told is today; Kalem gives plugins no clock
-    /// yet.
+    /// The day the plugin was told is today; Kalem's clock gives plugins
+    /// UTC and the zone's name, not its offset.
     pub fn set_today(&mut self, today: Date) {
         self.today = Some(today);
     }
@@ -1256,7 +1265,7 @@ impl App {
         let t = self.token(Pending::Today(then));
         vec![Effect::Prompt {
             token: t,
-            title: "Today's date (Kalem gives plugins no clock yet: asked once a session)".into(),
+            title: "Today's date (Kalem's clock gives plugins UTC: asked once a session)".into(),
             value: guess,
             placeholder: Some("2026-10-10".into()),
         }]

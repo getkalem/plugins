@@ -64,13 +64,13 @@ kalem run graph graph.pages ~/notes
 
 ## Editing as an outliner
 
-In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`):
+In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`). With Kalem 0.6.12 the Vim profile's keys win over a plugin's: in an Org note `SPC m t`, `SPC m p p`, `SPC m d s` and `SPC m d d` run Kalem's Org commands, and `SPC n s` in any note searches Kalem's notes folder; a Kalem after 0.6.12, whose keymap puts a layer's keys before the profile's, runs the plugin's.
 
 | Keys | Command | What it does |
 |---|---|---|
 | Enter (typing, in a Logseq note in Markdown) | New Block | As Logseq's Enter: a new block after the block's properties and dates, the first child when its children are shown, the block split at the cursor (its properties staying with the first part), an empty child outdented; elsewhere Markdown's Enter. Needs a Kalem after 0.6.12, whose keymap puts a layer's keys before the profile's |
-| `SPC m t` | Cycle Task | The block's keyword as Logseq cycles it: `TODO` to `DOING`, `LATER` to `NOW`, both to `DONE`, `DONE` to none, and none (or `WAITING`, `CANCELED`) to `LATER` (`TODO` with `:preferred-workflow :todo`); in a vault the check box: none, `[ ]`, `[x]`, none |
-| `SPC m p` | Set Priority | `[#A]`, `[#B]`, `[#C]` or none, after the keyword |
+| `SPC m t` in Org, `SPC m t t` in Markdown | Cycle Task | The block's keyword as Logseq cycles it: `TODO` to `DOING`, `LATER` to `NOW`, both to `DONE`, `DONE` to none, and none (or `WAITING`, `CANCELED`) to `LATER` (`TODO` with `:preferred-workflow :todo`); in a vault the check box: none, `[ ]`, `[x]`, none. In Markdown, `SPC m t` is Doom's toggles (`SPC m t x` the check box, `SPC m t m` the markup) |
+| `SPC m p p` | Set Priority | `[#A]`, `[#B]`, `[#C]` or none, after the keyword (Doom's Org key; `SPC m p u` and `SPC m p d` stay Org's) |
 | `SPC m d s`, `SPC m d d` | Schedule, Deadline | `SCHEDULED: <2026-10-12 Mon>` after the block's first line and properties (after an Org headline), replaced where it is, removed when the answer is empty |
 | `Alt+Shift+Up`, `Alt+Shift+Down` | Move Block Up, Down | The block with the blocks under it past its sibling |
 | `Tab`, `Shift+Tab` (typing, in the Vim profile), `Alt+Shift+Right`, `Alt+Shift+Left` | Indent, Outdent Block | The block with the blocks under it a level deeper (under its previous sibling) or out (the blocks after it at its level becoming its children, as Logseq outdents); a tab or the note's own spaces |

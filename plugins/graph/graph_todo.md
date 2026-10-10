@@ -737,6 +737,30 @@ below replace the earlier GR4a to GR4d.
   the page, and a vault's note renamed at all, which need a way to
   rename a file (K11); a block moved to another page.)
 
+- [x] GR8d The outliner's keys reachable with Vim keys. Kalem waits
+  for the next key after a key that a longer binding starts with,
+  whatever the bindings' order (`Keymap::lookup`), and its check of the
+  keymap (`PrefixShadowed`) misses a binding whose when-clause differs
+  from the longer one's: `SPC m t`, Cycle Task, never ran in a graph's
+  Markdown, where Kalem has Doom's toggles `SPC m t e`, `t l`, `t m`,
+  `t w` and `t x`, nor `SPC m p`, Set Priority, in its Org, beside
+  `SPC m p p`, `p u` and `p d`. Found in a demo in the terminal editor;
+  the commands ran from the palette.
+  (Done 2026-10-10: Cycle Task on `SPC m t` in Org, Doom's `org-todo`,
+  and on `SPC m t t` in Markdown, among Doom's toggles; Set Priority on
+  `SPC m p p` in both, Doom's `org-priority`. The test
+  `note_keys_are_reachable_in_the_vim_profile` checks every key of the
+  plugin against Kalem 0.6.12's `SPC m`, `SPC n` and `SPC o` keys
+  (`keymaps/vim.json`) and against the plugin's own; it names both keys
+  of 0.2.0. The date prompt no longer says Kalem has no clock. Found
+  with it: Kalem 0.6.12 puts a plugin's keys before the Vim profile's,
+  so in a graph's Org notes `SPC m t`, `SPC m p p`, `SPC m d s` and
+  `SPC m d d` ran Kalem's Org commands and `SPC n s` in every note
+  Kalem's notes search; Kalem's ed4a3dd7 (unreleased) puts the keys of
+  the notes a layer serves after the profile's, and with it every key
+  above ran the plugin's command in the terminal editor, in Logseq's
+  Markdown and Org. Open: K14.)
+
 ## GR9. Queries and tasks
 
 - [x] GR9a Logseq's simple queries over the index: `{{query (and [[page]]
@@ -1003,6 +1027,13 @@ Each is the plugin's gate or its ask, written for every plugin.
   `kalem` function, or an event when one is added), so that the graphs
   among them are found at start, and a notice can say which folder to
   add when a note's folder is no project's. Not blocking.
+- K14 Kalem's check of the keymap (`Keymap::conflicts`) names a binding
+  that a longer binding shadows under another when-clause: it looks only
+  at equal or missing when-clauses, so the plugin's `SPC m t` in a
+  graph's Markdown ran nothing and the log said nothing (GR8d). A check
+  of when-clauses that may hold together (one mode named by both,
+  `vimCommand` in both) would name such keys for every plugin. Not
+  blocking: GR8d's test covers this plugin.
 
 ## Decisions, and what waits in Kalem's repository
 
