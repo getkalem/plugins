@@ -372,8 +372,13 @@ order they are done, the spike first.
   (`a:hlinkClick`).
   (Read 2026-10-09: inline and floating drawings, their size,
   name and alternative text, the picture's part through its
-  relationship (embedded or linked), VML pictures. Open: decoding the
-  picture for Kalem (WP5b's `render-picture`), cropping, links on pictures.)
+  relationship (embedded or linked), VML pictures. Drawn 2026-10-10:
+  `render-picture` decodes the part (PNG, JPEG, GIF, BMP, TIFF, WebP;
+  an SVG picture through the PNG Word keeps of it, the blip's own
+  `r:embed`) and scales it down to the size Kalem asks for; EMF and WMF
+  refused, naming the format, and Kalem shows the alternative text;
+  the component 2.0 MB with the decoders, 1.1 MB without. Open:
+  cropping, links on pictures, SVG through `resvg`, EMF and WMF.)
 - [~] WP7g Placeholders, kept in the file and shown by name: text boxes
   (`wps:txbx`, their content shown inline inside a frame marker),
   shapes (`wps:wsp` with their text), groups, SmartArt (`dgm:`),
@@ -691,9 +696,20 @@ order they are done, the spike first.
   under 6 MB with them (T3.7.11's size budget in `plugin.json`).
   (Measured 2026-10-09 on 20,000 paragraphs, 4.4 MB of
   `document.xml`: shown in 0.18 s in 82 MB, an edit and its save in
-  0.17 s; the component is 710 kB. Open: a paragraph's edit re-reads
-  its whole story, which a cache of the story's layout will end; a 40
-  MB `document.xml` is not measured yet.)
+  0.17 s; the component is 710 kB. 2026-10-10: the body is kept as
+  walked (`body.rs`), the walk's state every sixteen elements, and an
+  edit walks again from the last state before it until the walk is
+  where it was, the blocks after it moved, their bytes when next read;
+  the flow Kalem holds is made again for the blocks changed only
+  (`contract.rs`), the annotations found where they are, and Kalem is
+  told what changed (plugin API 0.2.9's `flow-3`). A character typed in
+  the middle of the 20,000 paragraphs: 0.06 ms the edit and 2 ms the
+  flow brought up to date natively, 0.4 ms in the component, 1.4 ms
+  the whole keystroke in Kalem (0.66 s before); Enter 4.6 ms; the save
+  7 ms; `examples/speed.rs` measures them. `tests/body.rs` checks the
+  body kept against the body walked whole after edits of every kind,
+  and the flow brought up to date against the flow of the document
+  read anew. Open: a 40 MB `document.xml` is not measured yet.)
 - [~] WP14b The corpus (`tests/corpus/make.py`, as xlsx's): documents
   written by python-docx (MIT) with every construct of WP2 to WP7,
   then the same saved again by LibreOffice Writer headless as `.docx`

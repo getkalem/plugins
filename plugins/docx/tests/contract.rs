@@ -565,3 +565,39 @@ fn paragraphs_and_lists_through_the_interface() {
     let ps = paras(&is);
     assert_eq!(find(&ps, "Plain, bold").role, FlowRole::Body);
 }
+
+/// Pictures drawn for Kalem (the flow's `render-picture`): the image part
+/// decoded, scaled down to the size asked for; a picture not in the
+/// document refused, saying why.
+#[test]
+fn pictures_drawn_at_the_size_asked() {
+    let mut d = open("handmade-features.docx");
+    let all = items(&mut d);
+    let pic = paras(&all)
+        .into_iter()
+        .flat_map(|p| &p.runs)
+        .find_map(|r| match &r.piece {
+            Piece::Picture(p) => Some(p.clone()),
+            _ => None,
+        })
+        .expect("a picture");
+    assert_eq!(pic.id, "word/media/image1.png");
+    assert_eq!(
+        (pic.width, pic.height, pic.alt.as_str()),
+        (24.0, 24.0, "A red square")
+    );
+    // At its own size (16 by 16), and red.
+    let b = d.flow_picture(0, &pic.id, 1024).unwrap();
+    assert_eq!((b.width, b.height), (16, 16));
+    assert_eq!(&b.rgba[..4], &[0xC8, 0x1E, 0x1E, 0xFF]);
+    // Smaller when asked.
+    let b = d.flow_picture(0, &pic.id, 4).unwrap();
+    assert_eq!((b.width, b.height, b.rgba.len()), (4, 4, 64));
+    assert_eq!(&b.rgba[..4], &[0xC8, 0x1E, 0x1E, 0xFF]);
+    let e = d.flow_picture(0, "word/media/none.png", 64).unwrap_err();
+    assert!(e.0.contains("not in the document"), "{e:?}");
+    let e = d
+        .flow_picture(0, "https://example.com/a.png", 64)
+        .unwrap_err();
+    assert!(e.0.contains("linked"), "{e:?}");
+}

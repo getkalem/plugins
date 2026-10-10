@@ -12,7 +12,7 @@ use kalem_viewer::{
     Structure, Unit, UnitKind, Viewer, ViewerDocument, ViewerError,
 };
 
-use crate::document::{DocView, Document, Kind};
+use crate::document::{Document, Kind};
 use crate::flow::{self, VBlock, VPara};
 
 /// The extensions of WordprocessingML documents.
@@ -114,14 +114,14 @@ impl Viewer for DocxViewer {
             (bytes, None)
         };
         let doc = Document::open(bytes).map_err(err)?;
-        let view = doc.view();
         Ok(Box::new(DocxDoc {
             doc,
-            view,
             password,
             name: file.name().to_owned(),
             version: 0,
             flow: None,
+            flow_at: 0,
+            changes: Vec::new(),
         }))
     }
 
@@ -137,14 +137,21 @@ impl Viewer for DocxViewer {
 /// An open document.
 struct DocxDoc {
     doc: Document,
-    view: DocView,
     password: Option<String>,
     name: String,
     /// The flow's version: one more at each change.
     version: u64,
-    /// The flow as last given to Kalem, until the next change.
+    /// The flow as last given to Kalem.
     flow: Option<crate::contract::FlowCache>,
+    /// The version it was made at.
+    flow_at: u64,
+    /// What changed in it from a version to the next it was made at: the
+    /// version before, and the change; the last few.
+    changes: Vec<(u64, crate::contract::ItemChange)>,
 }
+
+/// How many of the flow's changes are kept.
+const CHANGES_KEPT: usize = 32;
 
 /// A tracked change's `w:id` from its annotation's ID (`r` and the ID).
 fn revision(id: &str) -> Result<&str> {
@@ -153,12 +160,50 @@ fn revision(id: &str) -> Result<&str> {
 }
 
 impl DocxDoc {
-    /// The flow Kalem is given, made once a version.
+    /// The flow Kalem is given, brought up to date once a version: the
+    /// body's blocks an edit changed made again, the rest kept.
     fn cache(&mut self) -> &crate::contract::FlowCache {
-        if self.flow.is_none() {
-            self.flow = Some(crate::contract::build(&self.doc.view_with(true)));
+        if self.flow.is_none() || self.flow_at != self.version {
+            let view = self.doc.flow_view();
+            let changed = self.doc.take_body_change();
+            let change = match (self.flow.as_mut(), changed) {
+                (Some(f), crate::body::Changed::Nothing) => Some(f.update(&view, None)),
+                (Some(f), crate::body::Changed::Blocks(b)) => Some(f.update(&view, Some(b))),
+                (old, _) => {
+                    // Made whole again (the lists or the relationships
+                    // changed): what changed found by comparing.
+                    let new = crate::contract::build(&view);
+                    let change = old.map(|o| crate::contract::compare(&o.items, &new.items));
+                    self.flow = Some(new);
+                    change
+                }
+            };
+            match change {
+                Some(c) => {
+                    self.changes.push((self.flow_at, c));
+                    if self.changes.len() > CHANGES_KEPT {
+                        self.changes.remove(0);
+                    }
+                }
+                None => self.changes.clear(),
+            }
+            self.flow_at = self.version;
         }
         self.flow.get_or_insert_with(Default::default)
+    }
+
+    /// What changed in the flow's items since version `since`, as one
+    /// change; `None` when that is not known.
+    fn changes_since(&mut self, since: u64) -> Option<crate::contract::ItemChange> {
+        self.cache();
+        if since == self.flow_at {
+            return Some(crate::contract::ItemChange::default());
+        }
+        let i = self.changes.iter().position(|(v, _)| *v == since)?;
+        self.changes[i..]
+            .iter()
+            .map(|(_, c)| *c)
+            .reduce(crate::contract::ItemChange::then)
     }
 
     /// The paragraph of a flow index.
@@ -170,11 +215,9 @@ impl DocxDoc {
             .ok_or_else(|| ViewerError(format!("There is no paragraph {index}")))
     }
 
-    /// After a change: a new version, the view read again.
+    /// After a change: a new version.
     fn refreshed(&mut self) {
         self.version += 1;
-        self.flow = None;
-        self.view = self.doc.view();
     }
 
     /// An edit's result; the view read again when it was made.
@@ -250,7 +293,8 @@ impl ViewerDocument for DocxDoc {
                 duration_ms: None,
             }],
             outline: self
-                .view
+                .doc
+                .view()
                 .outline()
                 .into_iter()
                 .map(|(title, level)| OutlineEntry {
@@ -271,13 +315,14 @@ impl ViewerDocument for DocxDoc {
     }
 
     fn text(&self, _unit: usize) -> String {
-        self.view.text()
+        self.doc.view().text()
     }
 
     fn info(&self) -> Vec<kalem_viewer::InfoField> {
         let p = self.doc.properties();
+        let view = self.doc.view();
         let mut c = Counts::default();
-        count(&self.view.body, &mut c);
+        count(&view.body, &mut c);
         let mut out = vec![InfoField::new("Name", self.name.clone())];
         let kind = match self.doc.kind() {
             Kind::Document => "Word document",
@@ -311,9 +356,9 @@ impl ViewerDocument for DocxDoc {
         for (label, n) in [
             ("Tables", c.tables),
             ("Pictures", c.pictures),
-            ("Footnotes", self.view.footnotes.len()),
-            ("Endnotes", self.view.endnotes.len()),
-            ("Comments", self.view.comments.len()),
+            ("Footnotes", view.footnotes.len()),
+            ("Endnotes", view.endnotes.len()),
+            ("Comments", view.comments.len()),
             ("Insertions (tracked)", c.inserted),
             ("Deletions (tracked)", c.deleted),
             ("Shown by name", c.placeholders),
@@ -353,6 +398,23 @@ impl ViewerDocument for DocxDoc {
             items,
             version: self.version,
             editable: self.doc.protection().is_none(),
+        })
+    }
+
+    fn flow_picture(&mut self, _unit: usize, id: &str, max: u32) -> Result<kalem_viewer::Bitmap> {
+        crate::pictures::render(&self.doc, id, max).map_err(ViewerError)
+    }
+
+    fn flow_changes(&mut self, unit: usize, since: u64) -> Option<kalem_viewer::FlowChange> {
+        if unit != 0 {
+            return None;
+        }
+        let c = self.changes_since(since)?;
+        Some(kalem_viewer::FlowChange {
+            from: c.from as u32,
+            removed: c.removed as u32,
+            added: c.added as u32,
+            shift: c.shift as i32,
         })
     }
 

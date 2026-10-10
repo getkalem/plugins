@@ -287,6 +287,13 @@ pub struct Label {
 pub struct Counters<'a> {
     numbering: &'a Numbering,
     styles: &'a Styles,
+    counts: Counts,
+}
+
+/// Where the counters of every list are: what a walk of the body keeps
+/// to go on from a paragraph again.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Counts {
     counts: HashMap<String, [Option<i64>; 9]>,
     started: HashSet<(String, u8)>,
 }
@@ -297,9 +304,18 @@ impl<'a> Counters<'a> {
         Counters {
             numbering,
             styles,
-            counts: HashMap::new(),
-            started: HashSet::new(),
+            counts: Counts::default(),
         }
+    }
+
+    /// Where they are.
+    pub fn counts(&self) -> &Counts {
+        &self.counts
+    }
+
+    /// Set where they were.
+    pub fn set_counts(&mut self, c: Counts) {
+        self.counts = c;
     }
 
     /// The label of the next paragraph of list `num_id` at level `ilvl`,
@@ -332,11 +348,11 @@ impl<'a> Counters<'a> {
                 .or_else(|| levels[i].as_ref().map(|l| l.start))
                 .unwrap_or(0)
         };
-        let counts = self.counts.entry(key.clone()).or_insert([None; 9]);
+        let counts = self.counts.counts.entry(key.clone()).or_insert([None; 9]);
         let i = usize::from(ilvl);
         // The first use of an overridden level starts it from its
         // override, whatever came before.
-        if self.started.insert((key, ilvl)) && inst.overrides.contains_key(&ilvl) {
+        if self.counts.started.insert((key, ilvl)) && inst.overrides.contains_key(&ilvl) {
             counts[i] = None;
         }
         counts[i] = Some(match counts[i] {

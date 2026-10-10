@@ -22,6 +22,10 @@ kalem-viewer = { git = "https://github.com/getkalem/kalem", branch = "main" }
 # part, the span-keeping XML reader, relationships, encryption, the
 # theme.
 kalem-ooxml = { path = "../../crates/ooxml" }
+# Pictures decoded for Kalem to draw (the flow's `render-picture`): the
+# raster formats Word inserts. An SVG picture comes with a PNG of it,
+# which is the one drawn; EMF and WMF are not decoded.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tiff", "webp"] }
 
 # The component's exports (`kalem plugin build`): the Rust contract
 # adapted to the WIT world `flow-viewer` (with the feature `flow`: Kalem

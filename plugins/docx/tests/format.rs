@@ -244,7 +244,7 @@ fn every_file_formatted_and_undone() {
         // The first half of every paragraph edited, as the view with
         // edit coordinates gives them.
         let spans: Vec<(ParaAt, Range<usize>)> = d
-            .view_with(true)
+            .view()
             .body_paragraphs()
             .into_iter()
             .filter_map(|p| {

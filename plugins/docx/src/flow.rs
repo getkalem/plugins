@@ -724,6 +724,29 @@ struct CellStyle {
     format: TableFormat,
 }
 
+/// What a walk carries from one block to the next: the lists' counts,
+/// the fields and comments open. The body's cache keeps it every few
+/// blocks, to walk again from there after an edit ([`crate::body`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WalkState {
+    counts: crate::numbering::Counts,
+    fields: Vec<(String, bool)>,
+    comments: Vec<String>,
+}
+
+/// Where a walk goes on from, with a [`WalkState`].
+#[derive(Debug, Default)]
+pub(crate) struct Resume {
+    /// The paragraphs counted.
+    pub paragraphs: usize,
+    /// The containers numbered.
+    pub containers: usize,
+    /// The notes referred to.
+    pub footnotes: Vec<(String, String)>,
+    /// The endnotes referred to.
+    pub endnotes: Vec<(String, String)>,
+}
+
 /// A story walked in order: lists counted, fields and comments followed
 /// across paragraphs, notes numbered as they are referred to.
 #[derive(Debug)]
@@ -741,9 +764,6 @@ pub struct Walker<'a> {
     /// Endnotes referred to.
     pub endnotes: Vec<(String, String)>,
     note_mark: Option<String>,
-    /// Whether paragraphs keep their edit coordinates ([`VPara::layout`]):
-    /// a view only to show leaves them out.
-    pub layouts: bool,
     faces: HashMap<String, Arc<str>>,
     footnote_format: (String, i64),
     endnote_format: (String, i64),
@@ -764,7 +784,6 @@ impl<'a> Walker<'a> {
             footnotes: Vec::new(),
             endnotes: Vec::new(),
             note_mark: None,
-            layouts: true,
             faces: HashMap::new(),
             footnote_format: ("decimal".into(), 1),
             endnote_format: ("lowerRoman".into(), 1),
@@ -840,10 +859,7 @@ impl<'a> Walker<'a> {
     ) {
         match b {
             Block::Paragraph(p) => {
-                let (mut vp, frames) = self.paragraph(p, cell, editable, sibling);
-                if !self.layouts {
-                    vp.layout = Layout::default();
-                }
+                let (vp, frames) = self.paragraph(p, cell, editable, sibling);
                 // Nothing but lines drawn as shapes: a rule.
                 let line = |r: &VRun| matches!(&r.piece, Piece::Placeholder(t) if t == LINE_SHAPE);
                 if vp.runs.iter().any(line)
@@ -875,38 +891,48 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The view of the body of a main document part's text, read a block
-    /// at a time so that the whole tree is never held.
-    pub fn body(&mut self, text: &str) -> Vec<VBlock> {
-        let mut r = kalem_ooxml::xml::Reader::new(text);
-        loop {
-            match r.next_token() {
-                Some(kalem_ooxml::xml::Token::Start(t)) if t.name == "body" => {
-                    if t.empty {
-                        return Vec::new();
-                    }
-                    break;
-                }
-                None => return Vec::new(),
-                _ => {}
-            }
+    /// Where the walk is: what it carries from one block to the next.
+    pub(crate) fn state(&self) -> WalkState {
+        WalkState {
+            counts: self.counters.counts().clone(),
+            fields: self.fields.clone(),
+            comments: self.comments.clone(),
         }
-        let container = self.containers;
+    }
+
+    /// Whether the walk is where `s` was.
+    pub(crate) fn is_at(&self, s: &WalkState) -> bool {
+        *self.counters.counts() == s.counts
+            && self.fields == s.fields
+            && self.comments == s.comments
+    }
+
+    /// Goes on from where a walk was: its state, the paragraphs and
+    /// containers counted, the notes referred to.
+    pub(crate) fn resume(&mut self, s: &WalkState, at: Resume) {
+        self.counters.set_counts(s.counts.clone());
+        self.fields.clone_from(&s.fields);
+        self.comments.clone_from(&s.comments);
+        self.index = at.paragraphs;
+        self.containers = at.containers;
+        self.footnotes = at.footnotes;
+        self.endnotes = at.endnotes;
+    }
+
+    /// The paragraphs and containers counted so far.
+    pub(crate) fn counted(&self) -> (usize, usize) {
+        (self.index, self.containers)
+    }
+
+    /// A new container's number (the body's).
+    pub(crate) fn container(&mut self) -> usize {
         self.containers += 1;
-        let mut out = Vec::new();
-        let mut i = 0;
-        while let Some(t) = r.next_token() {
-            match t {
-                kalem_ooxml::xml::Token::Start(tag) => {
-                    let b = crate::story::block(&mut r, tag);
-                    self.block(&b, None, true, (container, i), &mut out);
-                    i += 1;
-                }
-                kalem_ooxml::xml::Token::End { .. } => break,
-                kalem_ooxml::xml::Token::Text { .. } => {}
-            }
-        }
-        out
+        self.containers - 1
+    }
+
+    /// The view of a block of the body, the `i`th of its container.
+    pub(crate) fn top(&mut self, b: &Block, sibling: (usize, usize), out: &mut Vec<VBlock>) {
+        self.block(b, None, true, sibling, out);
     }
 
     fn marker(&mut self, m: &MarkerKind) {
@@ -1682,6 +1708,92 @@ pub fn para_text(p: &VPara) -> String {
         }
     }
     s
+}
+
+/// How the blocks after an edit of the body move: their bytes in the
+/// part, their paragraphs' indexes, their places among the body's
+/// elements and their containers' numbers ([`crate::body`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Shift {
+    /// Bytes.
+    pub bytes: isize,
+    /// Paragraphs' indexes.
+    pub paragraphs: isize,
+    /// The body's container: its elements' places move by `tops`.
+    pub body: usize,
+    /// Places among the body's elements.
+    pub tops: isize,
+    /// The other containers' numbers.
+    pub containers: isize,
+}
+
+impl Shift {
+    fn pos(&self, p: &mut usize) {
+        *p = p.saturating_add_signed(self.bytes);
+    }
+
+    fn span(&self, s: &mut Span) {
+        self.pos(&mut s.start);
+        self.pos(&mut s.end);
+    }
+
+    /// Moves `blocks`.
+    pub(crate) fn blocks(&self, blocks: &mut [VBlock]) {
+        for b in blocks {
+            match b {
+                VBlock::Para(p) => self.para(p),
+                VBlock::Table(t) => {
+                    for c in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()) {
+                        self.blocks(&mut c.blocks);
+                    }
+                }
+                VBlock::Frame(f) => self.blocks(f),
+                VBlock::Placeholder(_) | VBlock::Rule => {}
+            }
+        }
+    }
+
+    pub(crate) fn para(&self, p: &mut VPara) {
+        if let Some(at) = &mut p.at {
+            at.index = at.index.saturating_add_signed(self.paragraphs);
+        }
+        let l = &mut p.layout;
+        self.span(&mut l.span);
+        self.span(&mut l.start_tag);
+        for s in [&mut l.ppr, &mut l.mark_rpr, &mut l.sect]
+            .into_iter()
+            .flatten()
+        {
+            self.span(s);
+        }
+        self.pos(&mut l.content_end);
+        for seg in &mut l.segs {
+            self.span(&mut seg.atom);
+            if let Some((t, _)) = &mut seg.text {
+                self.span(t);
+            }
+        }
+        for r in &mut l.runs {
+            self.span(&mut r.span);
+            self.span(&mut r.start_tag);
+            if let Some(s) = &mut r.rpr {
+                self.span(s);
+            }
+            self.span(&mut r.end_tag);
+            for a in &mut r.atoms {
+                self.span(a);
+            }
+        }
+        for t in &mut l.tops {
+            self.span(t);
+        }
+        let (c, i) = l.sibling;
+        l.sibling = if c == self.body {
+            (c, i.saturating_add_signed(self.tops))
+        } else {
+            (c.saturating_add_signed(self.containers), i)
+        };
+    }
 }
 
 #[cfg(test)]

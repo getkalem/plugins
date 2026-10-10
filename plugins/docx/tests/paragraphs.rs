@@ -53,7 +53,7 @@ fn set(d: &mut Document, from: usize, to: usize, changes: &[ParagraphChange]) {
 
 /// The paragraphs' edit texts: what formatting leaves as it is.
 fn texts(doc: &Document) -> Vec<String> {
-    doc.view_with(true)
+    doc.view()
         .body_paragraphs()
         .iter()
         .map(|p| p.layout.text.clone())
@@ -281,7 +281,7 @@ fn every_file_listed_aligned_and_undone() {
         let mut d = Document::open(input.clone()).unwrap();
         let before = texts(&d);
         let ps: Vec<ParaAt> = d
-            .view_with(true)
+            .view()
             .body_paragraphs()
             .into_iter()
             .filter_map(|p| p.at.clone())

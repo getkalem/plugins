@@ -21,6 +21,7 @@
 //! ([`review`]); [`viewer`] is the plugin as Kalem's contract.
 
 pub mod blank;
+pub mod body;
 pub mod chars;
 pub mod comments;
 pub mod contract;
@@ -30,6 +31,7 @@ pub mod flow;
 pub mod format;
 pub mod lists;
 pub mod numbering;
+pub mod pictures;
 pub mod props;
 pub mod review;
 pub mod story;

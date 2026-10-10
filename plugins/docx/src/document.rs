@@ -2,14 +2,17 @@
 //! their relationships, the stories read and shown, and edits written
 //! into the paragraphs they touch.
 
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use kalem_ooxml::package::{Package, PackageError};
 use kalem_ooxml::rels::{self, Rel};
 use kalem_ooxml::theme::{self, Theme};
 use kalem_ooxml::xml::{self, Reader, Token};
 
+use crate::body::Body;
 use crate::comments;
 use crate::edit::{self, Splice};
 use crate::flow::{self, Env, Layout, ParaAt, StoryId, VBlock, VComment, VNote, VPara, Walker};
@@ -138,7 +141,7 @@ pub struct DocView {
     /// The first section's header, shown once at the top.
     pub header: Vec<VBlock>,
     /// The body.
-    pub body: Vec<VBlock>,
+    pub body: Arc<Vec<VBlock>>,
     /// The first section's footer, shown once at the bottom.
     pub footer: Vec<VBlock>,
     /// The footnotes, in the order they are referred to.
@@ -174,7 +177,7 @@ fn still_on(look: &flow::Look, change: &kalem_viewer::MarkChange) -> bool {
     }
 }
 
-fn find_para<'a>(blocks: &'a [VBlock], at: &ParaAt) -> Option<&'a VPara> {
+pub(crate) fn find_para<'a>(blocks: &'a [VBlock], at: &ParaAt) -> Option<&'a VPara> {
     for b in blocks {
         match b {
             VBlock::Para(p) if p.at.as_ref() == Some(at) => return Some(p),
@@ -299,6 +302,17 @@ pub struct Document {
     batch: Option<Step>,
     author: String,
     date: Option<String>,
+    /// The body as last walked ([`crate::body`]).
+    body: RefCell<BodyCache>,
+}
+
+/// The body as last walked, and where the main part changed since.
+#[derive(Debug, Default)]
+struct BodyCache {
+    /// None when it is walked again whole.
+    body: Option<Body>,
+    /// Bytes of the main part as walked replaced since.
+    edit: Option<crate::body::Replaced>,
 }
 
 /// Now as ISO 8601 in UTC, to the second (`2026-10-09T12:00:00Z`), as
@@ -382,6 +396,7 @@ impl Document {
             batch: None,
             author: "Kalem".into(),
             date: None,
+            body: RefCell::default(),
         };
         doc.load(&main)?;
         for rel in doc.part_rels(&main) {
@@ -597,23 +612,9 @@ impl Document {
     /// The sections, in order, from the body's section properties.
     pub fn sections(&self) -> Vec<Section> {
         let text = self.texts.get(&self.main).map_or("", String::as_str);
-        // Every `w:sectPr` of the body, in order, read without building
-        // the tree: one ends each paragraph that ends a section, the last
-        // one the body. A `w:sectPrChange`'s is inside one and skipped.
-        let mut spans = Vec::new();
-        let mut r = Reader::new(text);
-        while let Some(t) = r.next_token() {
-            if let Token::Start(tag) = t
-                && tag.name == "sectPr"
-            {
-                let end = if tag.empty {
-                    tag.span.end
-                } else {
-                    r.skip_element()
-                };
-                spans.push(tag.span.start..end);
-            }
-        }
+        // Every `w:sectPr` of the body, in order: one ends each paragraph
+        // that ends a section, the last one the body.
+        let spans = self.body().sections();
         let rels = self.rels.get(&self.main).cloned().unwrap_or_default();
         let target = |id: &str| {
             rels.iter()
@@ -676,11 +677,11 @@ impl Document {
             StoryId::Endnote(_) => self.related("endnotes").unwrap_or_default(),
             StoryId::Comment(_) => self.related("comments").unwrap_or_default(),
         };
+        if *story == StoryId::Body {
+            return self.settled_body().blocks.to_vec();
+        }
         let mut w = Walker::new(self.env(&part), story.clone());
         w.note_formats(self.footnote_format.clone(), self.endnote_format.clone());
-        if *story == StoryId::Body {
-            return w.body(self.texts.get(&part).map_or("", String::as_str));
-        }
         let tree = self.tree(&part);
         match story {
             StoryId::Body | StoryId::Header(_) | StoryId::Footer(_) => w.blocks(&tree.blocks),
@@ -693,20 +694,109 @@ impl Document {
         }
     }
 
-    /// The whole document as shown.
-    pub fn view(&self) -> DocView {
-        self.view_with(false)
+    /// The body as walked, brought up to date with the edits since.
+    fn body(&self) -> Ref<'_, Body> {
+        {
+            let mut cache = self.body.borrow_mut();
+            let BodyCache { body, edit } = &mut *cache;
+            let text = self.texts.get(&self.main).map_or("", String::as_str);
+            let fresh = match (body.as_mut(), edit.take()) {
+                (Some(_), None) => true,
+                (Some(b), Some((lo, old, new))) => b.update(&mut self.walker(), text, lo, old, new),
+                (None, _) => false,
+            };
+            if !fresh {
+                *body = Some(Body::walk(&mut self.walker(), text));
+            }
+        }
+        Ref::map(self.body.borrow(), |c| c.body.as_ref().expect("walked"))
     }
 
-    /// The whole document as shown; with `layouts`, each paragraph of the
-    /// body with its edit coordinates too (as the other stories always
-    /// have them), for Kalem's flow.
-    pub fn view_with(&self, layouts: bool) -> DocView {
-        let main = self.main.clone();
-        let mut w = Walker::new(self.env(&main), StoryId::Body);
-        w.layouts = layouts;
+    /// The body as kept edit by edit and as walked whole, with the notes
+    /// each refers to: the same, unless the cache is wrong (for tests).
+    #[doc(hidden)]
+    #[allow(clippy::type_complexity)]
+    pub fn body_both_ways(
+        &self,
+    ) -> (
+        (Vec<VBlock>, Vec<(String, String)>),
+        (Vec<VBlock>, Vec<(String, String)>),
+    ) {
+        let kept = {
+            let b = self.settled_body();
+            (b.blocks.to_vec(), b.footnotes.clone())
+        };
+        let text = self.texts.get(&self.main).map_or("", String::as_str);
+        let whole = Body::walk(&mut self.walker(), text);
+        (kept, (whole.blocks.to_vec(), whole.footnotes))
+    }
+
+    /// What changed in the body's blocks since last asked.
+    pub fn take_body_change(&self) -> crate::body::Changed {
+        drop(self.body());
+        let mut cache = self.body.borrow_mut();
+        cache.body.as_mut().map_or(crate::body::Changed::All, |b| {
+            std::mem::replace(&mut b.changed, crate::body::Changed::Nothing)
+        })
+    }
+
+    /// The body as walked, its edit coordinates where the text is.
+    fn settled_body(&self) -> Ref<'_, Body> {
+        drop(self.body());
+        if let Some(b) = self.body.borrow_mut().body.as_mut() {
+            b.settle();
+        }
+        self.body()
+    }
+
+    /// A walker of the body.
+    fn walker(&self) -> Walker<'_> {
+        let mut w = Walker::new(self.env(&self.main), StoryId::Body);
         w.note_formats(self.footnote_format.clone(), self.endnote_format.clone());
-        let body = w.body(self.texts.get(&main).map_or("", String::as_str));
+        w
+    }
+
+    /// The body walked again whole when next shown: the lists or the
+    /// relationships it is resolved with changed.
+    fn forget_body(&mut self) {
+        self.body.get_mut().body = None;
+    }
+
+    /// Bytes `range` of a part replaced with `text`, the body's walk told.
+    fn splice_text(&mut self, part: &str, range: std::ops::Range<usize>, text: &str) {
+        if let Some(t) = self.texts.get_mut(part) {
+            t.replace_range(range.clone(), text);
+            if part == self.main {
+                let cache = self.body.get_mut();
+                cache.edit = Some(crate::body::then(cache.edit, range, text.len()));
+            }
+        }
+    }
+
+    /// A paragraph as shown.
+    fn para_view(&self, at: &ParaAt) -> Option<VPara> {
+        if at.story == StoryId::Body {
+            return self.body().paragraph(at);
+        }
+        find_para(&self.story_view(&at.story), at).cloned()
+    }
+
+    /// The whole document as shown, each paragraph with its edit
+    /// coordinates.
+    pub fn view(&self) -> DocView {
+        drop(self.settled_body());
+        self.flow_view()
+    }
+
+    /// The whole document as shown, the body's edit coordinates maybe
+    /// behind the text by bytes an edit added or took away before them:
+    /// for Kalem's flow, which reads the paragraphs' texts and places, not
+    /// their bytes in the part.
+    pub(crate) fn flow_view(&self) -> DocView {
+        let (body, footnotes, endnotes) = {
+            let b = self.body();
+            (b.blocks.clone(), b.footnotes.clone(), b.endnotes.clone())
+        };
         let sections = self.sections();
         let first = |pick: fn(&Section) -> &Vec<(String, String)>| {
             sections.iter().find_map(|s| {
@@ -745,8 +835,8 @@ impl Document {
                 })
                 .collect()
         };
-        let footnotes = notes("footnotes", &w.footnotes, true);
-        let endnotes = notes("endnotes", &w.endnotes, false);
+        let footnotes = notes("footnotes", &footnotes, true);
+        let endnotes = notes("endnotes", &endnotes, false);
         let threads = self.comment_threads();
         let comments = self
             .related("comments")
@@ -781,12 +871,14 @@ impl Document {
 
     /// A paragraph's layout, for edits.
     pub fn layout(&self, at: &ParaAt) -> Result<Layout> {
-        let blocks = self.story_view(&at.story);
-        find_para(&blocks, at)
-            .map(|p| p.layout.clone())
-            .ok_or_else(|| {
-                Error::Refused(format!("there is no paragraph {} in that story", at.index))
-            })
+        let found = if at.story == StoryId::Body {
+            self.body().paragraph(at).map(|p| p.layout)
+        } else {
+            find_para(&self.story_view(&at.story), at).map(|p| p.layout.clone())
+        };
+        found.ok_or_else(|| {
+            Error::Refused(format!("there is no paragraph {} in that story", at.index))
+        })
     }
 
     fn check_editable(&self) -> Result<()> {
@@ -848,10 +940,10 @@ impl Document {
     fn apply(&mut self, s: Splice) -> Result<()> {
         let text = self
             .texts
-            .get_mut(&s.part)
+            .get(&s.part)
             .ok_or_else(|| Error::Refused(format!("{} is not read", s.part)))?;
         let old = text[s.range.clone()].to_owned();
-        text.replace_range(s.range.clone(), &s.text);
+        self.splice_text(&s.part, s.range.clone(), &s.text);
         let step = (s, old);
         match &mut self.batch {
             Some(b) => b.splices.push(step),
@@ -965,9 +1057,7 @@ impl Document {
             Err(e) => {
                 if let Some(b) = self.batch.take() {
                     for (s, old) in b.splices.iter().rev() {
-                        if let Some(t) = self.texts.get_mut(&s.part) {
-                            t.replace_range(s.range.start..s.range.start + s.text.len(), old);
-                        }
+                        self.splice_text(&s.part, s.range.start..s.range.start + s.text.len(), old);
                     }
                     self.after_relationships(&b);
                 }
@@ -1102,9 +1192,11 @@ impl Document {
                 // Undone: nothing of a refused deletion stays.
                 if let Some(b) = self.batch.take() {
                     for (s, old) in b.splices.into_iter().rev() {
-                        if let Some(t) = self.texts.get_mut(&s.part) {
-                            t.replace_range(s.range.start..s.range.start + s.text.len(), &old);
-                        }
+                        self.splice_text(
+                            &s.part,
+                            s.range.start..s.range.start + s.text.len(),
+                            &old,
+                        );
                     }
                 }
                 Err(e)
@@ -1278,6 +1370,7 @@ impl Document {
             && let Some(t) = self.texts.get(&path)
         {
             self.rels.insert(self.main.clone(), rels::parse(t));
+            self.forget_body();
         }
         // The lists, read again when their part changed.
         if let Some(part) = self.related("numbering")
@@ -1294,6 +1387,7 @@ impl Document {
             .and_then(|p| self.texts.get(&p).cloned())
             .unwrap_or_default();
         self.numbering = Numbering::parse(&text);
+        self.forget_body();
     }
 
     /// A part's text made editable: read from the package when it is
@@ -1326,7 +1420,13 @@ impl Document {
     /// Whether the document is written in the strict namespace.
     fn strict(&self) -> bool {
         let main = self.texts.get(&self.main).map_or("", String::as_str);
-        main[..main.len().min(4096)].contains("http://purl.oclc.org/ooxml/wordprocessingml/main")
+        // Its root's namespaces, in the first bytes: cut where a
+        // character ends.
+        let mut head = main.len().min(4096);
+        while !main.is_char_boundary(head) {
+            head -= 1;
+        }
+        main[..head].contains("http://purl.oclc.org/ooxml/wordprocessingml/main")
     }
 
     /// The part a relationship of the main part names, by its type, made
@@ -1868,8 +1968,7 @@ impl Document {
             return Ok(());
         }
         let l = self.layout(at)?;
-        let blocks = self.story_view(&at.story);
-        let Some(vp) = find_para(&blocks, at) else {
+        let Some(vp) = self.para_view(at) else {
             return Ok(());
         };
         let mut need: Vec<(usize, Vec<format::Op>)> = Vec::new();
@@ -2241,8 +2340,7 @@ impl Document {
             return Ok(());
         }
         // What a style still overrides: written explicitly.
-        let blocks = self.story_view(&at.story);
-        let Some(vp) = find_para(&blocks, at) else {
+        let Some(vp) = self.para_view(at) else {
             return Ok(());
         };
         let mut more: Vec<POp> = Vec::new();
@@ -2512,9 +2610,7 @@ impl Document {
         self.at -= 1;
         let step = self.history[self.at].clone();
         for (s, old) in step.splices.iter().rev() {
-            if let Some(t) = self.texts.get_mut(&s.part) {
-                t.replace_range(s.range.start..s.range.start + s.text.len(), old);
-            }
+            self.splice_text(&s.part, s.range.start..s.range.start + s.text.len(), old);
         }
         self.after_relationships(&step);
         true
@@ -2527,9 +2623,7 @@ impl Document {
         }
         let step = self.history[self.at].clone();
         for (s, _) in &step.splices {
-            if let Some(t) = self.texts.get_mut(&s.part) {
-                t.replace_range(s.range.clone(), &s.text);
-            }
+            self.splice_text(&s.part, s.range.clone(), &s.text);
         }
         self.after_relationships(&step);
         self.at += 1;

@@ -209,6 +209,15 @@ impl<'a> Reader<'a> {
         Self { s, pos: 0 }
     }
 
+    /// A reader at byte `pos` of `s`, where a token starts: a part read
+    /// again from an element on.
+    pub fn at(s: &'a str, pos: usize) -> Self {
+        Self {
+            s,
+            pos: pos.min(s.len()),
+        }
+    }
+
     /// The next token; comments, processing instructions and the XML
     /// declaration are skipped, CDATA comes as text.
     pub fn next_token(&mut self) -> Option<Token<'a>> {
