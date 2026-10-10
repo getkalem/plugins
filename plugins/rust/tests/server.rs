@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use kalem_lsp::features;
 use kalem_lsp::position::{Encoding, position};
-use kalem_lsp::{Client, ServerConfig};
+use kalem_lsp::{Client, Health, ServerConfig, StatusSpec};
 use serde_json::{Value, json};
 
 const MANIFEST: &str = include_str!("../plugin.json");
@@ -80,6 +80,30 @@ fn at(s: &Server, f: &str, line: &str, word: &str, offset: usize) -> Value {
     position(&t, byte, s.enc).to_json()
 }
 
+/// The manifest's `status`, read as Kalem reads it: the notification and
+/// the JSON pointers into it.
+fn status_spec(v: &Value) -> StatusSpec {
+    let list = |v: &Value| match v {
+        Value::String(s) => vec![s.clone()],
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+    StatusSpec {
+        method: v["method"].as_str().expect("status.method").to_string(),
+        text: list(&v["text"]),
+        level: v["level"].as_str().map(str::to_string),
+        warning: list(&v["warning"]),
+        error: list(&v["error"]),
+        idle: v["idle"]
+            .as_object()
+            .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default(),
+    }
+}
+
 /// Asks until the answer is one `ok` takes, rust-analyzer answering
 /// nothing (or cancelling) while it loads the project; at most `secs`.
 fn ask(s: &Server, method: &str, params: Value, secs: u64, ok: impl Fn(&Value) -> bool) -> Value {
@@ -109,12 +133,15 @@ fn start(program: String, m: &Value) -> Server {
     // that nothing is written into the corpus.
     let mut settings = m["servers"]["rust-analyzer"]["settings"].clone();
     settings["rust-analyzer"]["cargo"]["targetDir"] = json!(target);
+    let ra = &m["servers"]["rust-analyzer"];
     let client = Client::start(
         ServerConfig {
             name: "rust-analyzer".into(),
             command: program.into(),
             root: workspace(),
             settings,
+            capabilities: ra["capabilities"].clone(),
+            status: Some(status_spec(&ra["status"])),
             ..ServerConfig::default()
         },
         Arc::new(|| {}),
@@ -319,6 +346,85 @@ fn the_corpus_through_rust_analyzer() {
         assert!(
             t.elapsed() < Duration::from_secs(120),
             "no non_snake_case at line {bad_line}: {own:?}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // Enter's new line by the server (the manifest's `edit.newline`): at
+    // the end of a doc comment the comment goes on, indented as its line,
+    // the cursor after `/// ` (a snippet's `$0`); after a `{` nothing,
+    // Kalem's own new line standing.
+    let enter = |line: &str, word: &str, offset: usize| {
+        ask(
+            &s,
+            "experimental/onEnter",
+            json!({ "textDocument": doc(lib), "position": at(&s, lib, line, word, offset) }),
+            60,
+            |_| true,
+        )
+    };
+    let comment = "    /// The area, in square units.";
+    let goes_on = enter(comment, "units.", "units.".len());
+    assert_eq!(goes_on[0]["newText"], "\n    /// $0", "{goes_on}");
+    assert_eq!(goes_on[0]["insertTextFormat"], 2, "{goes_on}");
+    assert!(enter("pub trait Area {", "{", 1).is_null());
+
+    // Structural search and replace (`code.structuralReplace`): the
+    // query Kalem makes of the two inputs, every `square!` call of the
+    // crate in a workspace edit, none outside the selection when there is
+    // one; a query that does not parse refused with rust-analyzer's
+    // reason.
+    let ssr = |query: &str, selections: Value| {
+        s.client
+            .request(
+                "experimental/ssr",
+                json!({ "query": query, "parseOnly": false, "textDocument": doc(main),
+                        "position": at(&s, main, "Circle::new(1.0)", "Circle", 0),
+                        "selections": selections }),
+            )
+            .wait(Duration::from_secs(60))
+    };
+    let edit = ssr("square!($a) ==>> square!($a + 1.0)", json!([])).expect("an edit");
+    let files = features::workspace_edit(&edit).expect("a workspace edit");
+    let changed: Vec<(&str, usize)> = files
+        .iter()
+        .filter(|(_, e)| !e.is_empty())
+        .map(|(u, e)| (u.rsplit('/').next().unwrap_or(u), e.len()))
+        .collect();
+    assert_eq!(changed, [("main.rs", 2)], "{edit}");
+    // The call `Circle::new(1.0)` selected, which holds no `square!`.
+    let from = at(&s, main, "Circle::new(1.0)", "Circle", 0);
+    let to = at(&s, main, "Circle::new(1.0)", "(1.0)", "(1.0)".len());
+    let none = ssr(
+        "square!($a) ==>> square!($a + 1.0)",
+        json!([{ "start": from, "end": to }]),
+    )
+    .expect("an edit");
+    assert!(
+        features::workspace_edit(&none)
+            .expect("a workspace edit")
+            .iter()
+            .all(|(_, e)| e.is_empty()),
+        "{none}"
+    );
+    let refused = ssr("square!(", json!([])).expect_err("refused");
+    assert!(refused.message.contains("Parse error"), "{refused:?}");
+
+    // rust-analyzer's state, which it tells only to a client with the
+    // manifest's capability: the corpus loaded, it works fully and is
+    // quiescent.
+    let t = Instant::now();
+    loop {
+        let st = s.client.status();
+        if st
+            .as_ref()
+            .is_some_and(|st| st.health == Health::Ok && !st.busy)
+        {
+            break;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(120),
+            "rust-analyzer's state: {st:?}"
         );
         std::thread::sleep(Duration::from_millis(200));
     }

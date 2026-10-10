@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use kalem_highlight::{Kind, Language, Span, SyntaxSource};
-use serde_json::Value;
+use serde_json::{Value, json};
 use syntect::parsing::{ParseState, SyntaxDefinition, SyntaxSet};
 
 const MANIFEST: &str = include_str!("../plugin.json");
@@ -322,7 +322,9 @@ fn requests_are_rust_analyzers_for_kalems_commands() {
             "code.openDocs",
             "code.openManifest",
             "code.parentModule",
-            "code.reloadProject"
+            "code.reloadProject",
+            "code.structuralReplace",
+            "edit.newline"
         ]
     );
     for (command, r) in requests {
@@ -333,7 +335,7 @@ fn requests_are_rust_analyzers_for_kalems_commands() {
         );
         let shape = r["shape"].as_str().unwrap_or("text");
         assert!(
-            ["text", "url", "location", "edits", "none"].contains(&shape),
+            ["text", "url", "location", "edits", "workspaceEdit", "none"].contains(&shape),
             "{command}: {shape}"
         );
         let params = r["params"].as_str().unwrap_or("position");
@@ -350,6 +352,39 @@ fn requests_are_rust_analyzers_for_kalems_commands() {
     assert_eq!(list(&expand["answer"]), ["/expansion"]);
     assert_eq!(expand["language"], "rust");
     assert_eq!(requests["code.openDocs"]["shape"], "url");
+    // The last three: Enter's new line as edits at the cursor; the
+    // structural search and replace's query made of Kalem's two inputs,
+    // the selection given, the edits offered across the files.
+    let enter = &requests["edit.newline"];
+    assert_eq!(
+        (&enter["method"], &enter["shape"]),
+        (&json!("experimental/onEnter"), &json!("edits"))
+    );
+    let ssr = &requests["code.structuralReplace"];
+    assert_eq!(ssr["shape"], "workspaceEdit");
+    assert_eq!(
+        ssr["extra"],
+        json!({"query": "{search} ==>> {replace}", "parseOnly": false,
+               "selections": "{selections}"})
+    );
+}
+
+/// rust-analyzer's state in the status bar: the notification it sends
+/// only to a client that asks (`experimental/serverStatus`), read as its
+/// health, its message and whether it is quiescent.
+#[test]
+fn the_server_state_is_rust_analyzers() {
+    let m = manifest();
+    let ra = &m["servers"]["rust-analyzer"];
+    assert_eq!(
+        ra["capabilities"],
+        json!({"experimental": {"serverStatusNotification": true}})
+    );
+    assert_eq!(
+        ra["status"],
+        json!({"method": "experimental/serverStatus", "text": "/message", "level": "/health",
+               "warning": "warning", "error": "error", "idle": {"/quiescent": true}})
+    );
 }
 
 /// The project's run and test commands, for Kalem's `SPC p R` and

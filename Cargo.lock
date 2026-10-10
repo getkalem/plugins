@@ -892,8 +892,8 @@ dependencies = [
 
 [[package]]
 name = "kalem-highlight"
-version = "0.6.6"
-source = "git+https://github.com/getkalem/kalem?rev=b0b8765074cbe70b237804ef80c13e262dfc2b38#b0b8765074cbe70b237804ef80c13e262dfc2b38"
+version = "0.6.9"
+source = "git+https://github.com/getkalem/kalem?rev=e24a9959c0364719ab419d79c5385b31b05ce6d7#e24a9959c0364719ab419d79c5385b31b05ce6d7"
 dependencies = [
  "serde",
  "syntect",
@@ -903,8 +903,8 @@ dependencies = [
 
 [[package]]
 name = "kalem-lsp"
-version = "0.6.6"
-source = "git+https://github.com/getkalem/kalem?rev=b0b8765074cbe70b237804ef80c13e262dfc2b38#b0b8765074cbe70b237804ef80c13e262dfc2b38"
+version = "0.6.9"
+source = "git+https://github.com/getkalem/kalem?rev=e24a9959c0364719ab419d79c5385b31b05ce6d7#e24a9959c0364719ab419d79c5385b31b05ce6d7"
 dependencies = [
  "serde_json",
  "tracing",
@@ -995,7 +995,7 @@ dependencies = [
 name = "kalem-plugin-rust"
 version = "0.1.1"
 dependencies = [
- "kalem-highlight 0.6.6",
+ "kalem-highlight 0.6.9",
  "kalem-lsp",
  "serde_json",
  "syntect",

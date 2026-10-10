@@ -718,12 +718,56 @@ spike first.
   syntax tree: `rust-analyzer/viewSyntaxTree` answers a JSON tree for
   VS Code's own view, on one line, so neither the manifest nor Kalem
   has the command. The README's table of the requests. Merged as
-  getkalem/kalem#27, released in Kalem 0.6.7. Open: the three shapes
-  left (a notification as the server's state:
-  `experimental/serverStatus`'s health, which RS3c saw say "cargo
-  check failed to start"; a workspace edit from two fields for
-  `experimental/ssr`; Enter's `experimental/onEnter`); the editors
-  by hand.)
+  getkalem/kalem#27, released in Kalem 0.6.7. Then the three shapes
+  left, on Kalem's branch `rust-server-requests` (2026-10-10, not
+  merged), each general: (1) the server's state, a server's
+  `capabilities` added to Kalem's where Kalem says nothing
+  (rust-analyzer sends `experimental/serverStatus` only to a client
+  with `serverStatusNotification`) and its `status`, the
+  notification's method and JSON pointers for its text, its level (the
+  server's words for a warning and an error) and the values that say
+  it is idle (clangd's file status and Metals's status fit the same
+  fields); the client keeps the last state, the status bar says the
+  text while the server works only in part (after the problem on the
+  cursor's line and the progress, before the counts), Language Server
+  Status too, a server not idle counts as busy so `kalem lsp check`
+  waits, and `check` prints the state on standard error. (2) Enter:
+  the request keyed `edit.newline` (the command Enter runs in code) is
+  asked as Enter makes a new line there and in Vim's Insert mode,
+  before Kalem's new line reaches the server; nothing waits, Kalem's
+  new line is made at once, and the server's edits, read against the
+  text Enter was pressed in, take its place as one edit of the text
+  now when Kalem's new line is the one change since (the document's
+  text revision), joined to its undo step (`History::join_next`) with
+  the cursor at the snippet's `$0`; dropped quietly otherwise, and
+  `null` leaves Kalem's. The `edits` shape keeps a snippet's cursor
+  for every request (Move Item's `$0`). (3) Structural Search and
+  Replace (`code.structuralReplace`): `{search}` and `{replace}` in a
+  request's `extra` are asked one after the other (labels of Kalem's
+  own, Turkish too) and `{selections}` is the selection in a list,
+  empty when nothing is selected; the shape `workspaceEdit` offers the
+  edits as a rename's are. `kalem lsp ask` takes `--input NAME=TEXT`
+  and asks `edit.newline` too; a request that finds nothing says
+  "nothing for" its command (it said "no that request"). Tested with
+  the fake server's `fake/status`, `fake/onEnter` and `fake/ssr` in
+  the service test (one undo step, the cursor, an answer dropped when
+  typed on, nothing outside a comment, the selection, a refused query,
+  the state in the status bar and the report, busy), the reading in
+  unit tests. With rust-analyzer 1.99.0 through the branch's terminal
+  build: Enter at the end of `/// A shape with an area.` in
+  `shapes/src/lib.rs` gives `/// ` on the next line in the Word and
+  the Vim profiles (a pty); SSR `square!($a) ==>> square!($a + 1.0)`
+  offers 2 changes in `main.rs`, `Circle::new($a)` 1, `square!(` is
+  refused with rust-analyzer's parse error; a project whose path
+  dependency is missing says "cargo check failed to start: …". The
+  corpus test asserts rust-analyzer's `onEnter` and `ssr` answers.
+  Merged as getkalem/kalem#28 (2026-10-10), in Kalem 0.6.10. Then the
+  pin of `kalem-highlight` and `kalem-lsp` moved to e24a9959 (#28's
+  merge) and the corpus test asserts rust-analyzer's state, started
+  with the manifest's `capabilities` and `status`: healthy and
+  quiescent once the corpus loaded; without the capability it tells
+  none (checked, the test failing after two minutes). Open: the
+  graphical editor by hand.)
 
 ## RS10. Speed, the big corpus and the tests
 

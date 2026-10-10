@@ -2,7 +2,7 @@
 
 Rust for [Kalem](https://github.com/getkalem/kalem): highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting.
 
-**Status: 0.1.1**, for Kalem 0.6.0 and later: highlighting for the current editions; rust-analyzer found and rooted at the workspace; completion, documentation, signatures, definitions, references, implementations, rename and code actions across a workspace's crates; cargo's diagnostics; formatting; rust-analyzer's settings in the settings panel. Some parts need Kalem 0.6.7, and the sections below say which: rust-analyzer's own diagnostics, its own requests (Expand Macro, Open Documentation, …), the standard library's files served by the same server, a missing component said as such. Its list of tasks is [`rust_todo.md`](rust_todo.md).
+**Status: 0.1.1**, for Kalem 0.6.0 and later: highlighting for the current editions; rust-analyzer found and rooted at the workspace; completion, documentation, signatures, definitions, references, implementations, rename and code actions across a workspace's crates; cargo's diagnostics; formatting; rust-analyzer's settings in the settings panel. Some parts need Kalem 0.6.7 or 0.6.10, and the sections below say which: rust-analyzer's own diagnostics, its own requests (Expand Macro, Open Documentation, …), the standard library's files served by the same server, a missing component said as such (0.6.7); its state in the status bar, Enter going on with a comment, structural search and replace (0.6.10). Its list of tasks is [`rust_todo.md`](rust_todo.md).
 
 A language plugin is declarative (Kalem's D57): this folder holds a manifest, `plugin.json`, the Sublime syntax under `syntaxes/`, a corpus and its tests, and nothing that runs inside Kalem. Kalem's core reads the manifest, adds the syntax to its highlighter and starts rust-analyzer through its one language server client.
 
@@ -50,11 +50,16 @@ And rust-analyzer's own requests, each through a command of Kalem's that any lan
 | Go to Project File: the crate's `Cargo.toml` | `experimental/openCargoToml` |
 | Join Lines (Language Server), Move Item Up, Move Item Down | `experimental/joinLines`, `experimental/moveItem` |
 | Reload Project | `rust-analyzer/reloadWorkspace` |
+| Structural Search and Replace: a pattern and its replacement, asked one after the other (`square!($a)`, then `square!($a + 1.0)`; `$a` stands for any expression), every match of the workspace or of the selection changed, offered before anything changes (Kalem 0.6.10) | `experimental/ssr` |
+
+Enter in a `//`, `///` or `//!` comment goes on with the comment, indented as its line, as rust-analyzer makes the new line (`experimental/onEnter`): Kalem makes its own new line at once, and rust-analyzer's takes its place as it answers, in the same undo step, the cursor after `/// ` (Kalem 0.6.10; before, Enter only indents). Where rust-analyzer has nothing to do, after a `{` for one, Kalem's new line stands. In the Vim profile, in Insert mode.
 
 Known differences:
 
 - Open Documentation gives docs.rs's address for any crate, a workspace's own too, which docs.rs has only once the crate is published.
 - No syntax tree: rust-analyzer answers that request with a tree for VS Code's own view, not text.
+- Structural search and replace puts a placeholder's expression in parentheses in the replacement: `square!(3.0)` becomes `square!((3.0) + 1.0)`. A pattern rust-analyzer finds nothing for is said as such ("rust-analyzer: nothing for Structural Search and Replace"), as is a replacement it gives no edits for.
+- Enter typed on before rust-analyzer answers keeps Kalem's new line: its answer is for the text as it was.
 - A completion does not add its `use`: rust-analyzer offers an item or a trait's method not imported only to an editor that fetches the import when the item is taken (`completionItem/resolve` of `additionalTextEdits`), which Kalem does not do yet (T3.8.2's automatic imports). What is in scope is offered.
 - A rename is one undo step in each file it changes, not one for all of them.
 - The documentation of a standard library item is its whole rustdoc, long in the terminal editor's card.
@@ -71,6 +76,8 @@ rust-analyzer, found as `rust-analyzer` on the `PATH` or in `~/.cargo/bin`. Inst
 - a release from <https://github.com/rust-lang/rust-analyzer/releases>, renamed `rust-analyzer` and put on the `PATH`.
 
 Kalem never installs a server by itself.
+
+rust-analyzer tells its state to an editor that asks (`experimental/serverStatus`): working fully, in part, or hardly, and whether it is still loading. While it works only in part, as for a project whose dependencies Cargo cannot read ("cargo check failed to start: … no matching package named …"), Kalem says why in the status bar and in Language Server Status, `kalem lsp check` prints it, and while it loads Kalem counts it as busy (Kalem 0.6.10).
 
 rustup puts a `rust-analyzer` in `~/.cargo/bin` whether or not the component is installed; without it, that program ends at once with rustup's reason, such as "Unknown binary 'rust-analyzer' in official toolchain '1.88-aarch64-apple-darwin'" for a project pinned to a toolchain installed without it. Kalem 0.6.6 and earlier start it again five times over half a minute and then say only that it stopped. Kalem 0.6.7 (T3.8.1) says at once that rust-analyzer did not start, in rustup's words and with the three ways above, in the status bar and from `kalem lsp check`; and `kalem lsp status` runs `rust-analyzer --version`, the manifest's `version`, printing the version or `does not run:` with the reason.
 
@@ -150,7 +157,7 @@ kalem lsp check plugins/rust/corpus/ws/app/tests/borrow.rs         # the borrow 
 kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already formatted
 ```
 
-`cargo test -p kalem-plugin-rust` runs the conformance tests: the manifest; the root against the one `cargo metadata` gives; the corpus built with its one deliberate error and `edition.rs` compiled without a warning; the syntax registered as Kalem registers it, found for `.rs` and `rust`, parsing every corpus file to its end, and coloring what the built-in one does not. Where rust-analyzer runs (CI installs it with rustfmt), `tests/server.rs` also speaks to it through Kalem's language server client (`kalem-lsp`, pinned as `kalem-highlight` is) on the corpus: documentation, completion, definition, references, implementations and rename across the crates, formatting equal to rustfmt's, cargo's borrow error, and rust-analyzer's own diagnostic of a function named against Rust's custom (given only when asked); a few seconds to 15. Without rust-analyzer it says it skipped.
+`cargo test -p kalem-plugin-rust` runs the conformance tests: the manifest; the root against the one `cargo metadata` gives; the corpus built with its one deliberate error and `edition.rs` compiled without a warning; the syntax registered as Kalem registers it, found for `.rs` and `rust`, parsing every corpus file to its end, and coloring what the built-in one does not. Where rust-analyzer runs (CI installs it with rustfmt), `tests/server.rs` also speaks to it through Kalem's language server client (`kalem-lsp`, pinned as `kalem-highlight` is) on the corpus: documentation, completion, definition, references, implementations and rename across the crates, formatting equal to rustfmt's, cargo's borrow error, rust-analyzer's own diagnostic of a function named against Rust's custom (given only when asked), Enter's new line in a doc comment and after a `{`, a structural search and replace of the workspace and of a selection, and one refused, and rust-analyzer's state, healthy once the corpus loaded; a few seconds to 15. Without rust-analyzer it says it skipped.
 
 ## A large workspace
 
@@ -183,7 +190,7 @@ To work on the plugin itself, point Kalem at this repository's `plugins/` folder
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; completion of `Cargo.toml`; rust-analyzer in source blocks; the project's run and test keys, and a test at the cursor; structural search and replace, Enter continuing a `///` comment, and rust-analyzer's state in the status bar.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; completion of `Cargo.toml`; rust-analyzer in source blocks; the project's run and test keys, and a test at the cursor.
 
 ## Sources and licenses
 
