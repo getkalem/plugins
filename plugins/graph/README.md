@@ -60,7 +60,7 @@ kalem run graph graph.pages ~/notes
 
 `graph.tasks`, `graph.tags`, `graph.journals` and `graph.graph` take the graph's folder too, `graph.backlinksDocument` a page's file; `--format json` gives the title, kind and text.
 
-**Today's date.** Kalem's plugin API 0.2.10 gives a plugin the time in UTC and the time zone's name, not its offset. The Tasks document and the queries count from the UTC day until the user gives the date. The first journal command of a session asks for today's date, offering the clock's day (the newest journal's without the clock), and keeps it until Kalem quits.
+**Today's date.** Kalem's plugin API 0.2.11 gives the plugin the local time (`clock-2`): Today's Journal opens the user's day, and the Tasks document and the queries count from it.
 
 ## Editing as an outliner
 
@@ -90,7 +90,20 @@ Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq a
 | Styled | task keywords and priorities as Org's (in Org notes `LATER`, `NOW`, `DOING`, `WAITING`, `CANCELED` too), dates, `#tags`, `^^highlights^^`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
 | Folded | `:LOGBOOK:` to its first line; the blocks under a block with `collapsed:: true` hidden | a callout with `-` to its first line |
 
-The layer needs plugin API 0.2.10's `layer`, which the plugin is built with (`kalem-plugin`'s feature `layer`).
+The layer needs plugin API 0.2.10's `layer`, which the plugin is built with (`kalem-plugin`'s feature `completer`, which brings it).
+
+## Completion
+
+As the user types in a note of a graph, Kalem's completion menu offers (plugin API 0.2.11's `completer`; Tab or Enter takes an item, Ctrl+Space asks anywhere):
+
+| After | Offers | Writes |
+|---|---|---|
+| `[[` | The pages and aliases whose title holds what is typed, journals last | The link as the graph writes links (Logseq's `[[Title]]`, Org's `file:` form when `config.edn` asks for it; Obsidian's shortest path, or as `.obsidian/app.json` says), closed unless `]]` follows |
+| `#` (after a space or at a line's start) | Logseq's pages, the most used first; Obsidian's tags | `#name`, `#[[two words]]` |
+| `((`, in a Logseq graph | The blocks that have an id, by their text | `((uuid))` |
+| `<`, in a Logseq note in Markdown | Logseq's blocks: Quote, Src, Query, Note, Tip, Important, Caution, Pinned, Warning, Example, Export, Verse, Center, Comment… | `#+BEGIN_NOTE` … `#+END_NOTE` with the block's indentation, the cursor inside |
+
+Where it offers something, Kalem's own completion of Markdown files after `[[` and of the document's words is left out. The items come from the index: before the graph is indexed, Kalem's own completion answers.
 
 ## Queries
 
@@ -136,6 +149,7 @@ From Logseq:
 - An embed shows one line, not the block or page in full; a query shows one line in its note and its results as a document (Kalem's layers add no lines yet).
 - No real-time sync: Syncthing or git on the folder, as Logseq's file version is used.
 - The database version's graph itself does not open; its Markdown Mirror does, read only.
+- Completion offers no property keys or values after `::`, no `/` commands and no blocks without an id after `((` (Insert Block Reference writes the id).
 - The index follows saves, changes on disk and, when a command runs in a note, its unsaved text; the panel and the documents are written again after a save. Recent Pages remembers this session's pages only.
 
 From Obsidian:

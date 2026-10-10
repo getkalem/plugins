@@ -298,10 +298,11 @@ impl Plugin for Graph {
         APP.with(|a| {
             *a.borrow_mut() = Some(App::new(read_settings()));
             // Block IDs from the clock's random bits, the views' day from its
-            // time (API 0.2.10).
+            // time (API 0.2.10), today from the local time (API 0.2.11).
             if let Some(app) = a.borrow_mut().as_mut() {
                 app.random = Some(kalem_plugin::clock::random);
                 app.now = Some(kalem_plugin::clock::now);
+                app.local_now = Some(kalem_plugin::clock::local_now);
             }
         });
         for c in app::COMMANDS {

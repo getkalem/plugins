@@ -696,9 +696,16 @@ below replace the earlier GR4a to GR4d.
   page, Query, Template, A, B, C) when the setting `slash_commands` is
   on; `<` offers the `#+BEGIN_*` blocks. Each item tested through
   `kalem complete FILE:LINE:COL`.
-  (Open: a plugin cannot give completions yet (T3.1.9c). Insert Link and
-  Insert Block Reference cover `[[` and `((` from the palette and `SPC n
-  r i`, `SPC n r b` meanwhile.)
+  (Done 2026-10-10 on Kalem's plugin API 0.2.11, its `completer`
+  export, which this item asked for and which every plugin can use:
+  the manifest's completer `refs` serves the graph's notes (its layers
+  `logseq` and `obsidian`), opened by `[[`, `((`, `#` and `<`, standing
+  in for Kalem's `wiki` and `words` where it gives items: pages and
+  aliases as the graph writes links, tags, blocks with an id, and
+  Logseq's sixteen `<` blocks as `->block` writes them, indented as the
+  block's lines. Open: blocks without an id after `((` (a completion
+  cannot write another file; Insert Block Reference does), property
+  keys and values after `::`, `/` commands, Obsidian's `[[note#heading`.)
 
 - [~] GR8c Writing into another file: a block referenced for the first
   time gets its `id:: uuid` (a v4 UUID from `clock.random`) written
@@ -1006,6 +1013,10 @@ Each is the plugin's gate or its ask, written for every plugin.
   the zone without its offset and the plugin carries no time zone
   database. Open: the local date or the zone's offset from the clock
   (a function added to `clock`, for every plugin that shows a date).
+  (Done 2026-10-10: plugin API 0.2.11's `clock-2` import, `offset(at)`,
+  the zone's offset at an instant, a new interface since `clock` is
+  frozen; the plugin's today is the local clock's, and the journals no
+  longer ask. Logseq's `<% time %>` is still left empty.)
 - K12 Opening a file with its application, or an application's link
   (`obsidian://open?vault=…&file=…`, `logseq://graph/…?page=…`), from a
   plugin: a whiteboard or a canvas opened where it is drawn. A command a

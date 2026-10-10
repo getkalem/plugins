@@ -609,6 +609,9 @@ pub struct App {
     /// Milliseconds since 1970 in UTC, when Kalem gives the plugin its
     /// clock (API 0.2.10).
     pub now: Option<fn() -> i64>,
+    /// The same in the user's local time, when Kalem gives the plugin
+    /// its time zone's offset (API 0.2.11).
+    pub local_now: Option<fn() -> i64>,
     /// The pages opened last, newest first, absolute.
     recent: Vec<String>,
     /// What the `{{query …}}` of the notes show, by graph and query, with
@@ -639,23 +642,32 @@ impl App {
             made: 0,
             random: None,
             now: None,
+            local_now: None,
             recent: Vec::new(),
             queries: std::cell::RefCell::new(BTreeMap::new()),
         }
     }
 
-    /// The day the views count from: the one the user gave, else the
-    /// clock's day in UTC (Kalem gives no time zone's offset, so the
-    /// journals' commands still ask), else none.
-    fn day(&self) -> Option<Date> {
+    /// Today: the day the user gave, else the local clock's (API 0.2.11);
+    /// none with a Kalem that gives no time zone's offset, when the
+    /// journals' commands ask.
+    fn known_today(&self) -> Option<Date> {
         self.today.or_else(|| {
+            self.local_now
+                .map(|now| Date::from_days(now().div_euclid(86_400_000)))
+        })
+    }
+
+    /// The day the views count from: today, else the clock's day in UTC,
+    /// else none.
+    fn day(&self) -> Option<Date> {
+        self.known_today().or_else(|| {
             self.now
                 .map(|now| Date::from_days(now().div_euclid(86_400_000)))
         })
     }
 
-    /// The day the plugin was told is today; Kalem's clock gives plugins
-    /// UTC and the zone's name, not its offset.
+    /// The day the plugin was told is today, before the local clock's.
     pub fn set_today(&mut self, today: Date) {
         self.today = Some(today);
     }
@@ -1147,7 +1159,7 @@ impl App {
                     .and_then(|r| index.page_of(r))
                     .and_then(|p| p.journal);
                 let journals = index.journals();
-                let found = match (id, here.or(self.today)) {
+                let found = match (id, here.or(self.known_today())) {
                     ("graph.nextJournal", Some(d)) => journals.iter().find(|(x, _)| *x > d),
                     (_, Some(d)) => journals.iter().rev().find(|(x, _)| *x < d),
                     (_, None) => journals.last(),
@@ -1251,9 +1263,10 @@ impl App {
         out
     }
 
-    /// Asks today's date once, then does `then`.
+    /// Does `then` on today's date, asked once when Kalem's clock gives
+    /// no local time (before API 0.2.11).
     fn with_today(&mut self, files: &dyn Files, then: Then) -> Vec<Effect> {
-        if let Some(today) = self.today {
+        if let Some(today) = self.known_today() {
             return self.then(files, today, then);
         }
         let Then::Journal { root, .. } = &then;
@@ -1292,7 +1305,7 @@ impl App {
         let title = index.graph.journal_title.format(date);
         let values = template::Values {
             title,
-            today: self.today,
+            today: self.known_today(),
             date: Some(date),
         };
         let text = template::journal(index, files, &values);
@@ -1590,10 +1603,10 @@ impl App {
                     return Vec::new();
                 };
                 let date = Date::parse_iso(&t)
-                    .or_else(|| self.today.and_then(|d| date::parse_input(&t, d)));
+                    .or_else(|| self.known_today().and_then(|d| date::parse_input(&t, d)));
                 match date {
                     Some(d) => self.journal(files, &root, d),
-                    None if self.today.is_none() => vec![Effect::Notify(
+                    None if self.known_today().is_none() => vec![Effect::Notify(
                         format!(
                             "{t}: write the date as 2026-10-03; today is not known until SPC n r d t is told it"
                         ),
@@ -1661,7 +1674,7 @@ impl App {
                     None
                 } else {
                     match Date::parse_iso(&t)
-                        .or_else(|| self.today.and_then(|d| date::parse_input(&t, d)))
+                        .or_else(|| self.known_today().and_then(|d| date::parse_input(&t, d)))
                     {
                         Some(d) => Some(d),
                         None => {

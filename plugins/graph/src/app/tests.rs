@@ -1282,3 +1282,29 @@ fn completion_of_pages_blocks_tags_and_blocks_of_text() {
             .is_empty()
     );
 }
+
+#[test]
+fn today_from_the_local_clock() {
+    // 2026-10-09 at 23:00 in UTC, 2026-10-10 at 02:00 in Istanbul.
+    fn utc() -> i64 {
+        1_791_590_400_000 - 3_600_000
+    }
+    fn local() -> i64 {
+        utc() + 3 * 3_600_000
+    }
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.now = Some(utc);
+    app.local_now = Some(local);
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    // No question: the local day's journal, made from the template.
+    let out = app.command(&m, "graph.today", &ctx("/w/notes/pages/Kalem.md", "", 0));
+    assert_eq!(
+        opens(&out),
+        [("/w/notes/journals/2026_10_10.md".to_string(), 1)]
+    );
+    assert_eq!(
+        m.get("/w/notes/journals/2026_10_10.md").as_deref(),
+        Some("- TODO plan [[Oct 10th, 2026]]\n")
+    );
+}
