@@ -198,6 +198,11 @@ impl Styles {
     }
 }
 
+/// A color of the legacy indexed palette (18.8.27) by its index.
+pub fn indexed_color(i: usize) -> Option<Rgb> {
+    INDEXED.get(i).copied()
+}
+
 /// The 64 colors of the legacy indexed palette (18.8.27).
 const INDEXED: [Rgb; 64] = [
     0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF, 0x00FFFF, 0x000000,

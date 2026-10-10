@@ -4,8 +4,9 @@
 //! Covered: the built-in formats, sections and conditions, literals and
 //! escapes, digit placeholders, thousands separators and scaling, percent,
 //! scientific notation, simple fractions, text sections, dates and times
-//! with elapsed hours, minutes and seconds, colors and locale tags skipped,
-//! currency tags shown by their symbol. The decimal and thousands marks are
+//! with elapsed hours, minutes and seconds, colors (`[Red]`, `[Color10]`)
+//! given apart from the text, locale tags skipped, currency tags shown by
+//! their symbol. The decimal and thousands marks are
 //! the file's (`.` and `,`); a locale-aware view is a later step.
 
 /// The format code of a built-in format id (18.8.30), en-US.
@@ -99,6 +100,30 @@ impl Cond {
 struct Section {
     toks: Vec<Tok>,
     cond: Option<Cond>,
+    /// The color the section's text is drawn in (`[Red]`), RGB.
+    color: Option<u32>,
+}
+
+/// A color named in a format code's brackets: one of the eight names, or
+/// `ColorN` of the legacy palette (1 to 56, the indexed colors from 8).
+fn named_color(s: &str) -> Option<u32> {
+    Some(match s.to_ascii_lowercase().as_str() {
+        "black" => 0x000000,
+        "white" => 0xFFFFFF,
+        "red" => 0xFF0000,
+        "green" => 0x00FF00,
+        "blue" => 0x0000FF,
+        "yellow" => 0xFFFF00,
+        "magenta" => 0xFF00FF,
+        "cyan" => 0x00FFFF,
+        l => {
+            let n: usize = l.strip_prefix("color")?.parse().ok()?;
+            return (1..=56)
+                .contains(&n)
+                .then(|| crate::styles::indexed_color(n + 7))
+                .flatten();
+        }
+    })
 }
 
 impl Section {
@@ -194,8 +219,10 @@ fn parse_section(s: &str) -> Section {
                     sec.toks.push(Tok::Elapsed('s', li.len()));
                 } else if let Some(cond) = parse_cond(&inner) {
                     sec.cond = Some(cond);
+                } else if let Some(color) = named_color(&inner) {
+                    sec.color = Some(color);
                 }
-                // Colors and anything else in brackets are not shown.
+                // Locale tags and anything else in brackets are not shown.
                 i = end + 1;
             }
             '0' | '#' | '?' => {
@@ -281,45 +308,66 @@ pub fn is_date_format(code: &str) -> bool {
         .is_some_and(|s| parse_section(s).is_date())
 }
 
-/// A number shown through a format code.
-pub fn format_number(v: f64, code: &str, date1904: bool) -> String {
-    if v.is_nan() {
-        return "#NUM!".into();
-    }
-    let secs: Vec<Section> = split_sections(code)
-        .into_iter()
-        .map(parse_section)
-        .collect();
+/// The section of a format code that shows a number.
+enum Pick<'a> {
+    /// The section, and whether it shows the number without its sign.
+    Section(&'a Section, bool),
+    /// No section shows numbers: shown as General.
+    General,
+    /// No section's condition holds and none is without one.
+    Hashes,
+}
+
+fn pick_section(v: f64, secs: &[Section]) -> Pick<'_> {
     let numeric: Vec<&Section> = secs
         .iter()
         .filter(|s| !s.toks.contains(&Tok::At) || s.toks.len() > 1)
         .collect();
     let has_conds = secs.iter().any(|s| s.cond.is_some());
-    let (sec, abs) = if has_conds {
+    if has_conds {
         let pick = secs
             .iter()
             .take(3)
             .find(|s| s.cond.as_ref().is_some_and(|c| c.holds(v)));
-        match pick {
-            Some(s) => (s, v < 0.0),
+        return match pick {
+            Some(s) => Pick::Section(s, v < 0.0),
             None => match secs.iter().take(3).find(|s| s.cond.is_none()) {
-                Some(s) => (
+                Some(s) => Pick::Section(
                     s,
                     v < 0.0 && secs.iter().filter(|s| s.cond.is_some()).count() >= 1,
                 ),
-                None => return "#".repeat(5),
+                None => Pick::Hashes,
             },
-        }
-    } else {
-        match (numeric.len(), v) {
-            (0, _) => return format_general(v),
-            (1, _) => (numeric[0], false),
-            (2, v) if v < 0.0 => (numeric[1], true),
-            (2, _) => (numeric[0], false),
-            (_, v) if v < 0.0 => (numeric[1], true),
-            (_, 0.0) => (numeric[2], false),
-            _ => (numeric[0], false),
-        }
+        };
+    }
+    match (numeric.len(), v) {
+        (0, _) => Pick::General,
+        (1, _) => Pick::Section(numeric[0], false),
+        (2, v) if v < 0.0 => Pick::Section(numeric[1], true),
+        (2, _) => Pick::Section(numeric[0], false),
+        (_, v) if v < 0.0 => Pick::Section(numeric[1], true),
+        (_, 0.0) => Pick::Section(numeric[2], false),
+        _ => Pick::Section(numeric[0], false),
+    }
+}
+
+fn sections(code: &str) -> Vec<Section> {
+    split_sections(code)
+        .into_iter()
+        .map(parse_section)
+        .collect()
+}
+
+/// A number shown through a format code.
+pub fn format_number(v: f64, code: &str, date1904: bool) -> String {
+    if v.is_nan() {
+        return "#NUM!".into();
+    }
+    let secs = sections(code);
+    let (sec, abs) = match pick_section(v, &secs) {
+        Pick::Section(s, abs) => (s, abs),
+        Pick::General => return format_general(v),
+        Pick::Hashes => return "#".repeat(5),
     };
     let v = if abs { v.abs() } else { v };
     if sec.is_date() {
@@ -328,20 +376,49 @@ pub fn format_number(v: f64, code: &str, date1904: bool) -> String {
     format_with(v, sec)
 }
 
+/// The color a format code draws a number in (`[Red]` in the negative
+/// section, `[Blue]`, `[Color10]`), RGB; none when its section names none.
+pub fn number_color(v: f64, code: &str) -> Option<u32> {
+    if v.is_nan() {
+        return None;
+    }
+    let secs = sections(code);
+    match pick_section(v, &secs) {
+        Pick::Section(s, _) => s.color,
+        Pick::General | Pick::Hashes => None,
+    }
+}
+
+/// The section of a format code that shows text: the fourth, else the one
+/// with `@`.
+fn text_section(code: &str) -> Option<Section> {
+    let secs = split_sections(code);
+    if secs.len() >= 4 {
+        return Some(parse_section(secs[3]));
+    }
+    secs.iter()
+        .map(|s| parse_section(s))
+        .find(|s| s.toks.contains(&Tok::At))
+}
+
+/// The color a format code draws a text in: its text section's, or the
+/// color of a code of one section, which shows every value.
+pub fn text_color(code: &str) -> Option<u32> {
+    match text_section(code) {
+        Some(s) => s.color,
+        None => {
+            let secs = split_sections(code);
+            (secs.len() == 1)
+                .then(|| parse_section(secs[0]).color)
+                .flatten()
+        }
+    }
+}
+
 /// A text value shown through the text section of a format code.
 pub fn format_text(s: &str, code: &str) -> String {
-    let secs = split_sections(code);
-    let sec = if secs.len() >= 4 {
-        parse_section(secs[3])
-    } else {
-        match secs
-            .iter()
-            .map(|s| parse_section(s))
-            .find(|s| s.toks.contains(&Tok::At))
-        {
-            Some(s) => s,
-            None => return s.to_owned(),
-        }
+    let Some(sec) = text_section(code) else {
+        return s.to_owned();
     };
     let mut out = String::new();
     for t in &sec.toks {
@@ -935,6 +1012,24 @@ mod tests {
 
     fn f(v: f64, code: &str) -> String {
         format_number(v, code, false)
+    }
+
+    #[test]
+    fn colors_apart_from_the_text() {
+        let code = "#,##0.00_);[Red](#,##0.00)";
+        assert_eq!(f(-5.0, code), "(5.00)");
+        assert_eq!(number_color(-5.0, code), Some(0xFF0000));
+        assert_eq!(number_color(5.0, code), None);
+        let code = "[Blue][>=100]0;[Color10][<0]0;0";
+        assert_eq!(f(150.0, code), "150");
+        assert_eq!(number_color(150.0, code), Some(0x0000FF));
+        assert_eq!(number_color(-1.0, code), Some(0x008000));
+        assert_eq!(number_color(5.0, code), None);
+        assert_eq!(number_color(1.0, "[$-tr-TR]0;[Magenta]-0"), None);
+        assert_eq!(text_color("0;0;0;[Green]@"), Some(0x00FF00));
+        assert_eq!(text_color("[Red]General"), Some(0xFF0000));
+        assert_eq!(text_color("[Red]0;0"), None);
+        assert_eq!(number_color(1.0, "[Color99]0"), None);
     }
 
     #[test]

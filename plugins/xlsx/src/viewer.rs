@@ -1021,6 +1021,9 @@ impl ViewerDocument for XlsxDoc {
         let notes: Vec<CellRef> = self.notes(unit).keys().copied().collect();
         let base = self.book().style(0);
         let mut out = Vec::with_capacity(positions.len());
+        // Colors the number formats give (`[Red]`), drawn over the font's
+        // and a conditional format's, as Excel draws them.
+        let mut format_colors: Vec<(u32, u32, [u8; 3])> = Vec::new();
         for at in positions {
             let text = self.book().display(unit, at).unwrap_or_default();
             let value = self.book().value(unit, at).unwrap_or(Value::Empty);
@@ -1032,6 +1035,14 @@ impl ViewerDocument for XlsxDoc {
             };
             let (formula, style) = (cell.formula.is_some(), cell.style);
             let style = self.book().style(style);
+            let format_color = match &value {
+                Value::Number(n) => crate::numfmt::number_color(*n, &style.num_fmt),
+                Value::Text(_) => crate::numfmt::text_color(&style.num_fmt),
+                _ => None,
+            };
+            if let Some(c) = format_color {
+                format_colors.push((at.row, at.col, rgb(c)));
+            }
             let align = match style.align.as_deref() {
                 Some("left") => Align::Left,
                 Some("center" | "centerContinuous") => Align::Center,
@@ -1124,6 +1135,18 @@ impl ViewerDocument for XlsxDoc {
         }
         self.table_look(unit, &rows, &cols, &mut out);
         self.conditional(unit, &rows, &cols, &mut out);
+        if !format_colors.is_empty() {
+            let index: HashMap<(u32, u32), usize> = out
+                .iter()
+                .enumerate()
+                .map(|(i, (r, c, _))| ((*r, *c), i))
+                .collect();
+            for (r, c, color) in format_colors {
+                if let Some(&i) = index.get(&(r, c)) {
+                    out[i].2.color = Some(color);
+                }
+            }
+        }
         // Notes on cells that hold nothing still show their mark.
         for at in notes {
             if rows.contains(&at.row)
@@ -3131,6 +3154,41 @@ mod tests {
         assert!(d.undo().unwrap());
         assert_eq!(d.cell_input(0, 8, 0), "");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn number_formats_color_the_grid() {
+        let mut d = open("openpyxl-budget.xlsx");
+        // A1:A2 red when negative, blue text in B1, a font color under both.
+        d.set_cell(0, 0, 0, "-5").unwrap();
+        d.set_cell(0, 1, 0, "5").unwrap();
+        d.set_cell(0, 0, 1, "words").unwrap();
+        d.change_style(
+            0,
+            [0, 0, 1, 0],
+            StyleChange {
+                number_format: Some("0;[Red]-0".into()),
+                color: Some(Some([0, 0x80, 0])),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        d.change_style(
+            0,
+            [0, 1, 0, 1],
+            StyleChange {
+                number_format: Some("0;0;0;[Blue]@".into()),
+                ..StyleChange::default()
+            },
+        )
+        .unwrap();
+        let c = |d: &mut Box<dyn ViewerDocument>, r: u32, col: u32| {
+            d.grid_cells(0, r..r + 1, col..col + 1).remove(0).2
+        };
+        assert_eq!(c(&mut d, 0, 0).text, "-5");
+        assert_eq!(c(&mut d, 0, 0).color, Some([0xFF, 0, 0]));
+        assert_eq!(c(&mut d, 1, 0).color, Some([0, 0x80, 0]));
+        assert_eq!(c(&mut d, 0, 1).color, Some([0, 0, 0xFF]));
     }
 
     #[test]
