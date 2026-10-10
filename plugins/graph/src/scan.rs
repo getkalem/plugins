@@ -449,7 +449,9 @@ fn inline(line: &str, flavor: Flavor) -> Vec<Raw> {
                 let before = line[..i].chars().next_back();
                 let starts = before.is_none_or(|c| c.is_whitespace() || c == '(' || c == ',');
                 let next = line[i + 1..].chars().next();
-                if !starts || next.is_none_or(|c| c.is_whitespace() || c == '#') {
+                // `#+BEGIN_QUOTE`, `#+title:`: Org's directives, which
+                // Logseq writes in Markdown too, are no tags.
+                if !starts || next.is_none_or(|c| c.is_whitespace() || c == '#' || c == '+') {
                     i += 1;
                     continue;
                 }

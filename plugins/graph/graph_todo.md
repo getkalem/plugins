@@ -761,7 +761,7 @@ below replace the earlier GR4a to GR4d.
 
 ## GR10. Search and views
 
-- [ ] GR10 Search Notes (`notes.search`, `SPC n s`) over the graph's
+- [x] GR10 Search Notes (`notes.search`, `SPC n s`) over the graph's
   root when the notes folder setting is empty and a graph is open;
   "Search the notes' headings" (`SPC n S`, "not yet" in the leader
   table) as the plugin's `graph.findHeading` over the index's
@@ -773,6 +773,31 @@ below replace the earlier GR4a to GR4d.
   as pages, their highlights not drawn; the status bar item's click;
   `kalem run graph.pages ROOT`, `graph.backlinks PAGE`, `graph.tasks
   ROOT` printing the documents.
+  (Done 2026-10-10. Search the Graph (`SPC n s` in a graph's notes and
+  documents) runs Kalem's Search in Folder over the root with `ignore`
+  (`/logseq/`, `/.obsidian/`, `/.trash/`, the hidden folders), which
+  Kalem's branch `graph-mode` adds (K8's first half); a Kalem without it
+  searches the folder whole. Find Heading (`SPC n S`): the headings and
+  the top-level blocks of pages, not of journals, at most 20,000, by
+  page. The Graph document's unlinked mentions, counted in one pass over
+  the blocks (the names by their first word), equal to each page's own
+  list on the three corpora. Recent Pages (`SPC n r l`) for the session,
+  and Random Page (`SPC n r a`, the leader table's row, the clock's
+  random bits). Whiteboards and canvases are pages without blocks,
+  linked as their applications link them (`[[Design]]`,
+  `[[Board.canvas]]`), listed in All pages; Enter or a link shows the
+  file in the file manager (`file.reveal` with a `path`, also added on
+  the branch; built without it, a notice names the file), as a plugin
+  opening a file with its application could start programs, which is
+  for the owner to decide (K12). `hls__` pages are pages, named in All
+  pages as a PDF's highlights, their `ls-type::`, `hl-*::` properties
+  hidden by the layer. The status bar's click was there (All pages).
+  `kalem run` is T3.1.16, built on the branch: `kalem run graph
+  graph.pages ROOT`, `graph.tasks ROOT`, `graph.backlinksDocument
+  PAGE`; a folder is a graph's root from itself. Found on the way: `#+`
+  directives (`#+BEGIN_NOTE`) were read as tags. Checked in the
+  terminal editor of the branch: the search without `logseq/`, Find
+  Heading; and `kalem run` on the corpus.)
 
 ## GR11. Speed, limits and the tests
 
@@ -848,7 +873,9 @@ Each is the plugin's gate or its ask, written for every plugin.
   only at install, before `graph-v0.1.0` reaches users. Recommended,
   not blocking.
 - K8 `notes.search` over a folder a plugin names, and headings search
-  from a plugin (GR10). Not blocking.
+  from a plugin (GR10). Not blocking. (The first half done on the
+  branch `graph-mode`: Search in Folder's `ignore`; headings are the
+  plugin's Find Heading.)
 
 - K9 The `clock` interface in the `extension` world (the viewers'
   worlds import it already): done on Kalem's branch `graph-mode` with
@@ -860,6 +887,14 @@ Each is the plugin's gate or its ask, written for every plugin.
   the zone without its offset and the plugin carries no time zone
   database. Open: the local date or the zone's offset from the clock
   (a function added to `clock`, for every plugin that shows a date).
+- K12 Opening a file with its application, or an application's link
+  (`obsidian://open?vault=…&file=…`, `logseq://graph/…?page=…`), from a
+  plugin: a whiteboard or a canvas opened where it is drawn. A command a
+  plugin may run that opens a path for the system can start programs
+  (a `.command` file, an application), past the `process` permission:
+  for the owner to decide, with a confirmation or a permission. Until
+  then the plugin shows the file in the file manager (`file.reveal`'s
+  `path`). Not blocking.
 - K11 Renaming (and deleting) a file through `fs`, under
   `fs:write:workspace`: a page renamed with its file as Logseq does, a
   vault's note renamed at all (GR8c). Not blocking.

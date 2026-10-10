@@ -2,7 +2,7 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: early** (GR1 to GR4 and GR9 of the list, GR5 to GR8 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.10's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
+**Status: early** (GR1 to GR4, GR9 and GR10 of the list, GR5 to GR8 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.10's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
 
 ## What it needs
 
@@ -25,15 +25,29 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r d t`, `d y`, `d m` | Today's, Yesterday's, Tomorrow's Journal | Opens the journal; one not written yet is made from the graph's journal template (Logseq's `:default-templates {:journals …}`, Obsidian's daily notes template) |
 | `SPC n r d d` | Journal of a Date | `2026-10-03`, `oct 3`, `yesterday`, `-3`, `monday` |
 | `SPC n r d f`, `d b` | Next, Previous Journal | The next and previous journal that exists |
-| `SPC n r p` | All Pages | Every page with its links and blocks, then the pages only referenced |
+| `SPC n r p` | All Pages | Every page with its links and blocks (a PDF's highlights named for the PDF), the whiteboards or canvases, then the pages only referenced |
 | `SPC n r j` | Journals | The last thirty journals, newest first, with their blocks |
 | `SPC n r T` | Tags | Every tag with how often it is used |
 | `SPC n r t` | Tasks | NOW and DOING, then LATER and TODO by priority, then WAITING; what is scheduled or due within a week. Enter opens the task, `t` cycles its keyword in its file |
 | `SPC n r q` | Run Query | A Logseq simple query typed, its results as a document |
-| `SPC n r g` | Graph | The pages as a tree of namespaces with their links in and out, then the orphans |
+| `SPC n r l` | Recent Pages | The graph's pages opened last in this session |
+| `SPC n r a` | Random Page | A page of the graph at random |
+| `SPC n s` (in a graph) | Search the Graph | Kalem's search over the graph's folder, without `logseq/`, `.obsidian/`, `.trash/` and the hidden folders; elsewhere `SPC n s` searches Kalem's notes folder |
+| `SPC n S` (in a graph) | Find Heading | The graph's headings, and the top-level blocks of its pages (not its journals'), each with its page |
+| `SPC n r g` | Graph | The pages as a tree of namespaces with their links in and out, then the pages named without a link and how often, then the orphans |
 | `SPC n r s` | Index Again | Reads the graph again |
 
 The status bar shows the graph of the current note and its pages (`⌬ notes · 1,240 pages`); a click lists them.
+
+**Whiteboards and canvases.** A Logseq whiteboard (`whiteboards/*.edn`) and an Obsidian canvas (`*.canvas`) are pages: links to them resolve, and they show in All pages with the application that draws them. Kalem does not draw them. Following one shows the file in the file manager, to be opened there (with a Kalem whose plugin API is 0.2.10; before, the notice names the file).
+
+**From the command line.** With a Kalem that has batch mode, the documents print without a window:
+
+```bash
+kalem run graph graph.pages ~/notes
+```
+
+`graph.tasks`, `graph.tags`, `graph.journals` and `graph.graph` take the graph's folder too, `graph.backlinksDocument` a page's file; `--format json` gives the title, kind and text.
 
 **Today's date.** Kalem's plugin API 0.2.10 gives a plugin the time in UTC and the time zone's name, not its offset. The Tasks document and the queries count from the UTC day until the user gives the date. The first journal command of a session asks for today's date, offering the clock's day (the newest journal's without the clock), and keeps it until Kalem quits.
 
@@ -105,6 +119,7 @@ With `fs:write:workspace`: a new journal made from a template, and only when no 
 - Advanced queries (`#+BEGIN_QUERY`, Datalog) are not run. Of the simple ones, `(sample n)` takes the first n, not n at random; `created-at` and `updated-at` sort by a journal's day only, which file graphs keep; a clause Kalem does not read finds nothing and says so.
 - Whiteboards, canvases, flashcards, PDF highlights and the database version's SQLite graphs are out of scope.
 - The index follows saves and changes on disk, not unsaved typing.
+- Recent Pages remembers the pages of this session only; Logseq keeps its list across sessions.
 - The graph's folder must be a project of Kalem's (see above).
 
 ## Tests

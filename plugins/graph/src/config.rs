@@ -149,6 +149,8 @@ pub struct Graph {
     pub link_format: LinkFormat,
     /// The templates' folder (Obsidian's core Templates).
     pub templates_dir: Option<String>,
+    /// Logseq's whiteboards' folder (`whiteboards`), relative.
+    pub whiteboards_dir: Option<String>,
     /// What could not be read, for one notice.
     pub problems: Vec<String>,
 }
@@ -321,6 +323,9 @@ impl Graph {
             markdown_links: false,
             link_format: LinkFormat::Shortest,
             templates_dir: None,
+            whiteboards_dir: Some(
+                s("whiteboards-directory").map_or_else(|| "whiteboards".into(), |p| folder(&p)),
+            ),
             problems,
         }
     }
@@ -403,6 +408,7 @@ impl Graph {
                 _ => LinkFormat::Shortest,
             },
             templates_dir: text(&tpl, "folder").map(|f| folder(&f)),
+            whiteboards_dir: None,
             problems,
         }
     }

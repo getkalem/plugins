@@ -33,6 +33,8 @@ pub const KINDS: &[&str] = &[
 ];
 /// Where the documents' keys apply.
 pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query) && (vimCommand || !vimActive)";
+/// Where the leader's keys of a graph's notes apply in its documents too.
+pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query) && vimCommand";
 /// Where `t` cycles a task's keyword: the documents listing tasks.
 pub const TASK_DOC_WHEN: &str =
     "(textType == graph-tasks || textType == graph-query) && (vimCommand || !vimActive)";
@@ -120,6 +122,26 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("graph.tasks", "Tasks", &["space n r t"]),
     c("graph.graph", "Graph", &["space n r g"]),
     c("graph.runQuery", "Run Query", &["space n r q"]),
+    c("graph.recent", "Recent Pages", &["space n r l"]),
+    c("graph.random", "Random Page", &["space n r a"]),
+    // Doom's notes search, `SPC n s` and `SPC n S`, over the graph in its
+    // notes and documents; Kalem's notes folder elsewhere.
+    n(
+        "graph.search",
+        "Search the Graph",
+        &[
+            ("space n s", in_note!(" && vimCommand")),
+            ("space n s", DOC_LEADER_WHEN),
+        ],
+    ),
+    n(
+        "graph.findHeading",
+        "Find Heading",
+        &[
+            ("space n shift+s", in_note!(" && vimCommand")),
+            ("space n shift+s", DOC_LEADER_WHEN),
+        ],
+    ),
     c("graph.reindex", "Index Again", &["space n r s"]),
     CommandInfo {
         id: "graph.open",
@@ -397,6 +419,15 @@ pub enum Effect {
     },
     /// Inserts text at the cursor of the document the command runs in.
     Insert(String),
+    /// A whiteboard or canvas `app` draws: shown in the file manager, to
+    /// be opened there (`file.reveal` with a path, Kalem's plugin API
+    /// 0.2.10), else named.
+    Reveal {
+        /// Absolute.
+        path: String,
+        /// `Logseq`, `Obsidian`.
+        app: &'static str,
+    },
     /// What the layers show changed: Kalem asks the documents' overlays
     /// again (plugin API 0.2.10).
     RefreshLayers,
@@ -450,6 +481,10 @@ enum Pending {
     Query {
         root: String,
     },
+    /// Files and lines (from 1) to open, by the item picked.
+    Places {
+        targets: Vec<(String, u32)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -492,6 +527,8 @@ pub struct App {
     /// Milliseconds since 1970 in UTC, when Kalem gives the plugin its
     /// clock (API 0.2.10).
     pub now: Option<fn() -> i64>,
+    /// The pages opened last, newest first, absolute.
+    recent: Vec<String>,
     /// What the `{{query …}}` of the notes show, by graph and query, with
     /// the index's version they were computed from.
     queries: std::cell::RefCell<BTreeMap<(String, String), (u64, String)>>,
@@ -518,6 +555,7 @@ impl App {
             made: 0,
             random: None,
             now: None,
+            recent: Vec::new(),
             queries: std::cell::RefCell::new(BTreeMap::new()),
         }
     }
@@ -568,7 +606,14 @@ impl App {
         }
         let mut known = self.known.clone();
         known.extend(self.settings.graphs.iter().cloned());
-        let (root, kind) = config::find_root(files, &path, &known, &mut self.not)?;
+        // A folder (Kalem's listing of it, `kalem run … FOLDER`) is looked
+        // for from itself.
+        let from = if files.list(&path).is_ok() {
+            files::join(&path, ".")
+        } else {
+            path.clone()
+        };
+        let (root, kind) = config::find_root(files, &from, &known, &mut self.not)?;
         Some(self.load(files, &root, kind, out))
     }
 
@@ -654,6 +699,7 @@ impl App {
         if let Some(root) = self.graph_of(files, &path, &mut out) {
             self.last = Some(root);
         }
+        self.track_recent(&path);
         out.extend(self.panel_effects());
         out.push(self.status());
         // A graph indexed just now: the note was drawn without it.
@@ -927,6 +973,9 @@ impl App {
             "graph.tasks" => {
                 out.extend(self.render(id, &root, true));
             }
+            "graph.search" | "graph.findHeading" | "graph.recent" | "graph.random" => {
+                out.extend(self.browse_command(id, &root, ctx));
+            }
             "graph.runQuery" => {
                 let t = self.token(Pending::Query { root });
                 out.push(Effect::Prompt {
@@ -1182,10 +1231,7 @@ impl App {
                             .map(|h| h.line + 1)
                     })
                     .unwrap_or(1);
-                vec![Effect::Open {
-                    path: index.graph.path(&rel),
-                    line,
-                }]
+                self.open_or_reveal(index.graph.path(&rel), line)
             }
             Some(Page {
                 journal: Some(day), ..
@@ -1298,10 +1344,7 @@ impl App {
         };
         match content.target(n).cloned() {
             Some(Target::File { path, line } | Target::Block { path, line }) => {
-                vec![Effect::Open {
-                    path,
-                    line: line + 1,
-                }]
+                self.open_or_reveal(path, line + 1)
             }
             Some(Target::Page(page)) => {
                 let root = key.split(SEP).next().unwrap_or_default().to_string();
@@ -1317,10 +1360,7 @@ impl App {
     pub fn panel_clicked(&mut self, key: &str) -> Vec<Effect> {
         match self.panel_targets.get(key).cloned() {
             Some(Target::File { path, line } | Target::Block { path, line }) => {
-                vec![Effect::Open {
-                    path,
-                    line: line + 1,
-                }]
+                self.open_or_reveal(path, line + 1)
             }
             Some(Target::Page(page)) => match &self.panel {
                 Some((root, _)) => {
@@ -1516,6 +1556,7 @@ impl App {
                     args: serde_json::json!({ "priority": p }).to_string(),
                 }]
             }
+            Pending::Places { targets } => self.place_picked(&targets, picked(&answer)),
             Pending::Query { root } => {
                 let Some(t) = text(&answer).filter(|t| !t.is_empty()) else {
                     return Vec::new();
@@ -1564,6 +1605,7 @@ fn relative_path(from: &str, to: &str) -> String {
     }
 }
 
+mod browse;
 mod outline;
 mod queries;
 

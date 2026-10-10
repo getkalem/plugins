@@ -54,6 +54,15 @@ pub fn block_text(index: &Index, rel: &str, block: Option<usize>, line: u32) -> 
     }
 }
 
+/// The file name of a path a property names (`../assets/paper.pdf`).
+fn files_name(path: &str) -> String {
+    path.trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_string()
+}
+
 /// The title of the page of file `rel`.
 fn title_of(index: &Index, rel: &str) -> String {
     index
@@ -251,9 +260,14 @@ pub fn pages(index: &Index) -> Content {
         None,
     );
     c.blank();
+    let drawn = |p: &crate::index::Page| {
+        p.path
+            .as_deref()
+            .is_some_and(|r| crate::index::drawn_elsewhere(&index.graph, r))
+    };
     let mut written: Vec<_> = index
         .pages()
-        .filter(|p| p.path.is_some() && p.journal.is_none())
+        .filter(|p| p.path.is_some() && p.journal.is_none() && !drawn(p))
         .collect();
     written.sort_by_key(|p| p.title.to_lowercase());
     let width = written
@@ -274,11 +288,27 @@ pub fn pages(index: &Index) -> Content {
             .and_then(|r| index.file(r))
             .map_or(0, |d| d.scanned.blocks.len());
         let pad = width.saturating_sub(p.title.chars().count());
+        // Logseq's PDF highlights: a page per PDF, its blocks the
+        // highlights (drawn by Logseq over the PDF).
+        let pdf = p
+            .title
+            .starts_with("hls__")
+            .then(|| {
+                p.props
+                    .iter()
+                    .find(|(k, _)| k == "file-path")
+                    .map(|(_, v)| files_name(v))
+            })
+            .flatten()
+            .map_or(String::new(), |f| format!("  highlights of {f}"));
         c.line(
             &[
                 (&p.title, Style::Link),
                 (&" ".repeat(pad + 2), Style::Normal),
-                (&format!("{links:>4} links  {n:>5} blocks"), Style::Muted),
+                (
+                    &format!("{links:>4} links  {n:>5} blocks{pdf}"),
+                    Style::Muted,
+                ),
             ],
             p.path.as_ref().map(|r| Target::File {
                 path: index.graph.path(r),
@@ -287,6 +317,38 @@ pub fn pages(index: &Index) -> Content {
         );
     }
     c.blank();
+    let mut drawings: Vec<_> = index.pages().filter(|p| drawn(p)).collect();
+    if !drawings.is_empty() {
+        drawings.sort_by_key(|p| p.title.to_lowercase());
+        let (what, app) = match index.graph.kind {
+            Kind::Logseq => ("Whiteboards", "Logseq"),
+            Kind::Obsidian => ("Canvases", "Obsidian"),
+        };
+        c.line(
+            &[
+                (&format!("{what} ({})", drawings.len()), Style::Heading),
+                (
+                    &format!("  drawn by {app}: Enter shows the file, to open it there"),
+                    Style::Muted,
+                ),
+            ],
+            None,
+        );
+        for p in drawings {
+            let links = index.backlinks(&p.key).len();
+            c.line(
+                &[
+                    (&p.title, Style::Link),
+                    (&format!("  {links} links · opens in {app}"), Style::Muted),
+                ],
+                p.path.as_ref().map(|r| Target::File {
+                    path: index.graph.path(r),
+                    line: 0,
+                }),
+            );
+        }
+        c.blank();
+    }
     let mut unwritten: Vec<_> = index.pages().filter(|p| p.path.is_none()).collect();
     unwritten.sort_by_key(|p| p.title.to_lowercase());
     c.line(
@@ -603,6 +665,30 @@ pub fn graph(index: &Index) -> Content {
                 (&leaf, Style::Link),
                 (&format!("  ←{incoming} →{outgoing}"), Style::Muted),
             ],
+            Some(Target::Page(p.key.clone())),
+        );
+    }
+    c.blank();
+    // The pages named without a link: where links are missing.
+    let mut unlinked: Vec<(usize, &crate::index::Page)> = index
+        .unlinked_counts()
+        .into_iter()
+        .filter_map(|(k, n)| index.page(&k).map(|p| (n, p)))
+        .collect();
+    unlinked.sort_by_key(|(n, p)| (std::cmp::Reverse(*n), p.title.to_lowercase()));
+    c.line(
+        &[
+            (
+                &format!("Unlinked mentions ({})", unlinked.len()),
+                Style::Heading,
+            ),
+            ("  named without a link; Enter lists them", Style::Muted),
+        ],
+        None,
+    );
+    for (n, p) in unlinked {
+        c.line(
+            &[(&p.title, Style::Link), (&format!("  {n}"), Style::Muted)],
             Some(Target::Page(p.key.clone())),
         );
     }

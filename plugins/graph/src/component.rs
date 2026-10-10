@@ -79,6 +79,27 @@ fn apply(effect: Effect) {
                 d.dispose();
             }
         }
+        Effect::Reveal { path, app } => {
+            let name = crate::files::file_name(&path).to_string();
+            // `file.reveal` takes a path from Kalem's plugin API 0.2.10;
+            // before, it would show the current document's file.
+            #[cfg(kalem_layer)]
+            {
+                let args = serde_json::json!({ "path": path }).to_string();
+                match kalem::run("file.reveal", &args) {
+                    Ok(()) => ui::notify(
+                        &format!("{app} draws {name}: shown in the file manager, to open it there"),
+                        ui::Level::Info,
+                    ),
+                    Err(e) => ui::notify(&e, ui::Level::Error),
+                }
+            }
+            #[cfg(not(kalem_layer))]
+            ui::notify(
+                &format!("{app} draws {name}: open it there ({path})"),
+                ui::Level::Info,
+            );
+        }
         Effect::Open { path, line } => {
             let args = serde_json::json!({ "path": path, "line": line }).to_string();
             if let Err(e) = kalem::run("file.open", &args) {

@@ -101,7 +101,13 @@ fn a_logseq_graph_in_markdown() {
     assert_eq!(g.comma_properties, ["related", "alias", "tags"]);
     assert!(i.problems.is_empty(), "{:?}", i.problems);
     let (pages, journals, _, _) = i.counts();
-    assert_eq!((pages, journals), (17, 10));
+    assert_eq!((pages, journals), (19, 10));
+    // `#+BEGIN_NOTE` is a directive, no tag.
+    assert!(
+        i.pages().all(|p| !p.title.starts_with('+')),
+        "{:?}",
+        i.pages().map(|p| &p.title).collect::<Vec<_>>()
+    );
     // Never read: the backup, the hidden folder, the assets.
     assert!(i.page("ignored").is_none());
     // Titles from the file name, decoded, and from `title::`.
@@ -246,7 +252,7 @@ fn an_obsidian_vault() {
     assert_eq!(g.templates_dir.as_deref(), Some("Templates"));
     assert_eq!(g.journal_template.as_deref(), Some("Templates/Daily"));
     let (pages, journals, _, _) = i.counts();
-    assert_eq!((pages, journals), (8, 3));
+    assert_eq!((pages, journals), (9, 3));
     assert!(i.page("old").is_none(), ".trash is not read");
     // The same name in two folders: the note's own folder first, else the
     // shortest path.
@@ -439,4 +445,65 @@ fn queries_on_the_corpus() {
         c.target(4),
         Some(kalem_plugin_graph::content::Target::Block { line: 1, .. })
     ));
+}
+
+#[test]
+fn drawings_highlights_and_unlinked_mentions() {
+    use kalem_plugin_graph::index;
+    // A Logseq whiteboard is a page by its file's name, linked as one,
+    // never read; an Obsidian canvas is linked with its extension.
+    let l = load("logseq-md");
+    let design = l.page("design").expect("the whiteboard");
+    assert_eq!(design.path.as_deref(), Some("whiteboards/Design.edn"));
+    assert!(index::drawn_elsewhere(&l.graph, "whiteboards/Design.edn"));
+    assert!(l.file("whiteboards/Design.edn").is_none());
+    assert_eq!(titles(&l, "design"), ["Project/Plugins/Graph"]);
+    let o = load("obsidian");
+    assert_eq!(
+        o.resolve("Board.canvas", "Projects/Graph.md"),
+        "board.canvas"
+    );
+    assert_eq!(
+        o.page("board.canvas").unwrap().path.as_deref(),
+        Some("Board.canvas")
+    );
+    assert_eq!(titles(&o, "board.canvas"), ["Graph"]);
+    // All pages lists them apart, with the application that draws them.
+    let text = views::pages(&l).text;
+    assert!(text.contains("Whiteboards (1)"), "{text}");
+    assert!(text.contains("Design  1 links · opens in Logseq"), "{text}");
+    let text = views::pages(&o).text;
+    assert!(text.contains("Canvases (1)"), "{text}");
+    // A PDF's highlights are a page of blocks, named for the PDF.
+    let hls = l
+        .page("hls__paper_1700000000000_0")
+        .expect("the highlights");
+    assert_eq!(
+        hls.path.as_deref(),
+        Some("pages/hls__paper_1700000000000_0.md")
+    );
+    assert!(
+        views::pages(&l)
+            .text
+            .lines()
+            .any(|line| line.starts_with("hls__paper")
+                && line.ends_with("highlights of paper_1700000000000_0.pdf"))
+    );
+    // The mentions without a link, counted in one pass, as the page's
+    // own list counts them.
+    for name in ["logseq-md", "logseq-org", "obsidian"] {
+        let i = load(name);
+        let all = i.unlinked_counts();
+        for p in i.pages().filter(|p| p.path.is_some()) {
+            assert_eq!(
+                all.get(&p.key).copied().unwrap_or(0),
+                i.unlinked(&p.key).len(),
+                "{name}: {}",
+                p.title
+            );
+        }
+        assert!(name == "logseq-org" || !all.is_empty(), "{name}");
+    }
+    let text = views::graph(&o).text;
+    assert!(text.contains("Unlinked mentions ("), "{text}");
 }

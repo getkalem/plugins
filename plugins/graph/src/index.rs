@@ -82,12 +82,32 @@ pub struct Index {
     tags: BTreeMap<String, (String, Vec<BackRef>)>,
     /// Files not read, and why.
     pub problems: Vec<String>,
+    /// The whiteboards and canvases: pages drawn by their application.
+    drawings: std::collections::BTreeSet<String>,
     /// Changed with every change of the index, across indexes.
     version: u64,
 }
 
 /// The versions given out.
 static VERSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Whether the file `rel` is a page its application draws and Kalem does
+/// not: a Logseq whiteboard (`whiteboards/*.edn`), an Obsidian canvas
+/// (`*.canvas`). Indexed by name, so that links to it resolve; never
+/// read.
+pub fn drawn_elsewhere(graph: &Graph, rel: &str) -> bool {
+    let (_, ext) = files::stem_ext(rel);
+    match graph.kind {
+        Kind::Logseq => {
+            ext == "edn"
+                && graph
+                    .whiteboards_dir
+                    .as_deref()
+                    .is_some_and(|d| rel.starts_with(&format!("{d}/")))
+        }
+        Kind::Obsidian => ext == "canvas",
+    }
+}
 
 /// The files the index reads, by extension.
 fn readable(kind: Kind, ext: &str) -> Option<Flavor> {
@@ -113,6 +133,7 @@ impl Index {
             block_incoming: HashMap::new(),
             tags: BTreeMap::new(),
             problems: Vec::new(),
+            drawings: std::collections::BTreeSet::new(),
             version: VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -132,6 +153,7 @@ impl Index {
                     index.graph.pages_dir.clone(),
                     index.graph.journals_dir.clone(),
                 ];
+                f.extend(index.graph.whiteboards_dir.clone());
                 f.dedup();
                 f
             }
@@ -162,6 +184,10 @@ impl Index {
                         continue;
                     }
                     let (_, ext) = files::stem_ext(&rel);
+                    if drawn_elsewhere(&index.graph, &rel) {
+                        index.add_drawing(&rel);
+                        continue;
+                    }
                     if readable(index.graph.kind, &ext).is_none() {
                         continue;
                     }
@@ -184,6 +210,19 @@ impl Index {
             return false;
         };
         let (_, ext) = files::stem_ext(&rel);
+        if drawn_elsewhere(&self.graph, &rel) && !self.graph.is_hidden(&rel) {
+            let there = files.read(&path).is_ok() || files.list(&path).is_ok();
+            let known = self.drawings.contains(&rel);
+            match (there, known) {
+                (true, false) => self.add_drawing(&rel),
+                (false, true) => {
+                    self.remove(&rel);
+                }
+                _ => return false,
+            }
+            self.derive();
+            return true;
+        }
         let ours = readable(self.graph.kind, &ext).is_some()
             && !self.graph.is_hidden(&rel)
             && self.in_folders(&rel);
@@ -218,6 +257,10 @@ impl Index {
     }
 
     fn remove(&mut self, rel: &str) -> bool {
+        if self.drawings.remove(rel) {
+            self.pages.retain(|_, p| p.path.as_deref() != Some(rel));
+            return true;
+        }
         match self.files.remove(rel) {
             Some(data) => {
                 if self.pages.get(&data.key).and_then(|p| p.path.as_deref()) == Some(rel) {
@@ -272,6 +315,45 @@ impl Index {
                 }
             }
         }
+    }
+
+    /// Adds the whiteboard or canvas `rel` as a page without blocks;
+    /// [`Index::derive`] must follow.
+    fn add_drawing(&mut self, rel: &str) {
+        let g = &self.graph;
+        let (stem, _) = files::stem_ext(rel);
+        let page = match g.kind {
+            Kind::Logseq => {
+                let title = names::file_to_title(stem, g.file_names);
+                Page {
+                    key: names::key(&title),
+                    title,
+                    path: Some(rel.to_string()),
+                    aliases: Vec::new(),
+                    journal: None,
+                    props: Vec::new(),
+                }
+            }
+            // Linked with its extension, `[[Board.canvas]]`.
+            Kind::Obsidian => Page {
+                key: rel.to_lowercase(),
+                title: files::file_name(rel).to_string(),
+                path: Some(rel.to_string()),
+                aliases: Vec::new(),
+                journal: None,
+                props: Vec::new(),
+            },
+        };
+        if self.pages.get(&page.key).is_some_and(|p| p.path.is_some()) {
+            return;
+        }
+        self.drawings.insert(rel.to_string());
+        self.pages.insert(page.key.clone(), page);
+    }
+
+    /// The whiteboards and canvases, by path relative to the root.
+    pub fn drawings(&self) -> impl Iterator<Item = &String> {
+        self.drawings.iter()
     }
 
     /// Adds the file `rel` with `text`; [`Index::derive`] must follow.
@@ -331,11 +413,13 @@ impl Index {
                         .or_insert_with(|| key.clone());
                 }
             } else if let Some(path) = &p.path {
-                let (stem, _) = files::stem_ext(path);
-                self.stems
-                    .entry(stem.to_lowercase())
-                    .or_default()
-                    .push(key.clone());
+                let (stem, ext) = files::stem_ext(path);
+                let name = if ext == "md" {
+                    stem.to_lowercase()
+                } else {
+                    files::file_name(path).to_lowercase()
+                };
+                self.stems.entry(name).or_default().push(key.clone());
             }
         }
         if self.graph.kind == Kind::Logseq {
@@ -635,6 +719,82 @@ impl Index {
                         block: i,
                         marker: m.clone(),
                     });
+                }
+            }
+        }
+        out
+    }
+
+    /// How many blocks name each page without linking to it, for every
+    /// page with a file: as [`Index::unlinked`] counts them, in one pass
+    /// over the blocks (the names looked up by their first word).
+    pub fn unlinked_counts(&self) -> BTreeMap<String, usize> {
+        let first_word =
+            |n: &str| -> String { n.chars().take_while(|c| c.is_alphanumeric()).collect() };
+        let mut by_word: HashMap<String, Vec<(String, &str)>> = HashMap::new();
+        for p in self.pages.values().filter(|p| p.path.is_some()) {
+            let mut names: Vec<String> = std::iter::once(p.title.clone())
+                .chain(p.aliases.iter().cloned())
+                .map(|n| n.to_lowercase())
+                .filter(|n| n.chars().count() >= 3)
+                .collect();
+            names.sort();
+            names.dedup();
+            for n in names {
+                by_word
+                    .entry(first_word(&n))
+                    .or_default()
+                    .push((n, p.key.as_str()));
+            }
+        }
+        let mut out: BTreeMap<String, usize> = BTreeMap::new();
+        for (rel, d) in &self.files {
+            for (i, b) in d.scanned.blocks.iter().enumerate() {
+                let text = b.text.to_lowercase();
+                let mut here: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+                let mut prev: Option<char> = None;
+                for (at, ch) in text.char_indices() {
+                    let boundary = !prev.is_some_and(char::is_alphanumeric);
+                    prev = Some(ch);
+                    if !boundary {
+                        continue;
+                    }
+                    let word = if ch.is_alphanumeric() {
+                        first_word(&text[at..])
+                    } else {
+                        String::new()
+                    };
+                    let Some(cands) = by_word.get(&word) else {
+                        continue;
+                    };
+                    let inside_link = text[..at].ends_with("[[") || text[..at].ends_with('#');
+                    if inside_link {
+                        continue;
+                    }
+                    for (name, key) in cands {
+                        if text[at..].starts_with(name.as_str())
+                            && !text[at + name.len()..]
+                                .chars()
+                                .next()
+                                .is_some_and(char::is_alphanumeric)
+                        {
+                            here.insert(key);
+                        }
+                    }
+                }
+                for key in here {
+                    let page = &self.pages[key];
+                    if page.path.as_deref() == Some(rel.as_str()) {
+                        continue;
+                    }
+                    let linked = d
+                        .scanned
+                        .refs
+                        .iter()
+                        .any(|r| r.block == Some(i) && self.resolve(&r.target, rel) == key);
+                    if !linked {
+                        *out.entry(key.to_string()).or_default() += 1;
+                    }
                 }
             }
         }

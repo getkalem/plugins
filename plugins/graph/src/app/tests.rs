@@ -799,3 +799,91 @@ fn a_task_cycled_from_the_tasks_document() {
             .starts_with("- DOING")
     );
 }
+
+#[test]
+fn searching_headings_recent_pages_and_whiteboards() {
+    let m = logseq();
+    m.write("/w/notes/whiteboards/Plan.edn", "{:blocks () :pages ()}")
+        .unwrap();
+    m.write("/w/notes/pages/Board.md", "- see [[Plan]]\n")
+        .unwrap();
+    m.write(
+        "/w/notes/pages/Guide.md",
+        "- Intro\n- ## Usage\n\t- run it\n",
+    )
+    .unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    // The graph's folder searched by Kalem, Logseq's own folder left out.
+    let out = app.command(&m, "graph.search", &ctx("/w/notes/pages/Kalem.md", "", 0));
+    let [Effect::Run { id, args }] = &out[..] else {
+        panic!("{out:?}")
+    };
+    assert_eq!(id, "search.folder");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(args).unwrap(),
+        serde_json::json!({ "path": "/w/notes", "ignore": ["/logseq/"] })
+    );
+    // Headings and the top-level blocks of pages, by page.
+    let out = app.command(
+        &m,
+        "graph.findHeading",
+        &ctx("/w/notes/pages/Kalem.md", "", 0),
+    );
+    let Effect::Pick { token, items, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let n = items
+        .iter()
+        .position(|(t, page)| t == "Usage" && page.as_deref() == Some("Guide"))
+        .unwrap_or_else(|| panic!("{items:?}"));
+    assert!(items.iter().any(|(t, _)| t == "An editor of [[Org]] files"));
+    // A journal's top-level blocks are its entries, not headings.
+    assert!(!items.iter().any(|(t, _)| t == "met [[Editor]]"));
+    let out = app.answer(&m, *token, Answer::Picked(Some(vec![n as u32])));
+    assert_eq!(opens(&out), [("/w/notes/pages/Guide.md".to_string(), 2)]);
+    assert!(!items.iter().any(|(t, _)| t == "run it"));
+    // The pages opened last, the current one left out.
+    app.opened(&m, "/w/notes/pages/Other.md");
+    app.opened(&m, "/w/notes/pages/Board.md");
+    let out = app.command(&m, "graph.recent", &ctx("/w/notes/pages/Board.md", "", 0));
+    let Effect::Pick { token, items, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let titles: Vec<&str> = items.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(titles, ["Other", "Kalem"]);
+    let out = app.answer(&m, *token, Answer::Picked(Some(vec![1])));
+    assert_eq!(opens(&out), [("/w/notes/pages/Kalem.md".to_string(), 1)]);
+    // A whiteboard followed: shown in the file manager, Logseq draws it.
+    let out = app.command(
+        &m,
+        "graph.follow",
+        &ctx("/w/notes/pages/Board.md", "- see [[Plan]]\n", 9),
+    );
+    assert_eq!(
+        out,
+        [Effect::Reveal {
+            path: "/w/notes/whiteboards/Plan.edn".into(),
+            app: "Logseq"
+        }]
+    );
+}
+
+#[test]
+fn a_graphs_folder_is_its_root() {
+    // As `kalem run graph graph.pages FOLDER` and Kalem's listing of the
+    // folder give it.
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    let out = app.command(&m, "graph.pages", &ctx("/w/notes", "", 0));
+    let (_, key, kind, content) = document(&out);
+    assert_eq!((key.as_str(), kind.as_str()), ("/w/notes", "graph-pages"));
+    assert!(content.text.contains("Kalem"));
+    // A page at random, by the clock's bits.
+    app.random = Some(|| 1);
+    let out = app.command(&m, "graph.random", &ctx("/w/notes", "", 0));
+    assert_eq!(opens(&out), [("/w/notes/pages/Kalem.md".to_string(), 1)]);
+    app.random = None;
+    let out = app.command(&m, "graph.random", &ctx("/w/notes", "", 0));
+    assert_eq!(opens(&out).len(), 1);
+}

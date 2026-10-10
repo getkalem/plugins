@@ -146,6 +146,17 @@ const HIDDEN: &[&str] = &[
     "card-next-schedule",
     "card-last-reviewed",
     "card-last-score",
+    "custom-id",
+    "background-color",
+    "last-modified-at",
+    "created_at",
+    "last_modified_at",
+    // A PDF highlight's (`hls__` pages).
+    "ls-type",
+    "hl-type",
+    "hl-page",
+    "hl-stamp",
+    "hl-color",
 ];
 
 /// Whether property `key` is one Logseq hides.
