@@ -221,8 +221,8 @@
         "subprocess"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/rust",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/rust-v0.1.2/rust-v0.1.2.tar.gz",
+      "sha256": "c0d44c7a27b2942058f7ecc92e0a8ded832e2046d98bbe13fce7267e7c49fb8e",
       "kind": "declarative",
       "languages": [
         {
