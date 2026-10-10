@@ -1,7 +1,7 @@
 {
   "id": "org.kalem.rust",
   "name": "Rust",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Rust: highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting",
   "api": "^0.1",
   "activation": ["onLanguage:rust"],

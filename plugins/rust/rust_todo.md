@@ -848,14 +848,12 @@ spike first.
   (53,570 bytes, 30 files, the corpus inside, no `target`), its
   Sigstore signature and `SHA256SUMS`; "Publish rust-v0.1.0" on
   `main` with the hash in `releases/` and the index's download; CI
-  green. Open: the Book's chapter and T3.8.6d's note are on Kalem's
-  branch, unmerged.)
+  green. Then `rust-v0.1.1` with Kalem 0.6.7 (getkalem/kalem#27
+  released): the pin moved, rust-analyzer's own diagnostics in the
+  corpus test, the README's "not released yet" made 0.6.7.)
 
 ## Open for the owner
 
-- A Kalem release with getkalem/kalem#27 (merged 2026-10-10, with the
-  Book's chapter "Rust"): then the README's "not released yet" made
-  that version, and `rust-v0.1.1`.
 - Kalem's part of RS3c (root markers in groups, `${looseFiles}`) and
   of RS6 (automatic imports): wanted or not.
 

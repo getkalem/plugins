@@ -2,7 +2,7 @@
 
 Rust for [Kalem](https://github.com/getkalem/kalem): highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting.
 
-**Status: 0.1.0**, for Kalem 0.6.0 and later: highlighting for the current editions; rust-analyzer found and rooted at the workspace; completion, documentation, signatures, definitions, references, implementations, rename and code actions across a workspace's crates; cargo's diagnostics; formatting; rust-analyzer's settings in the settings panel. Some parts wait for Kalem's next release, and the sections below say which: rust-analyzer's own diagnostics, its own requests (Expand Macro, Open Documentation, …), the standard library's files served by the same server, a missing component said as such. Its list of tasks is [`rust_todo.md`](rust_todo.md).
+**Status: 0.1.1**, for Kalem 0.6.0 and later: highlighting for the current editions; rust-analyzer found and rooted at the workspace; completion, documentation, signatures, definitions, references, implementations, rename and code actions across a workspace's crates; cargo's diagnostics; formatting; rust-analyzer's settings in the settings panel. Some parts need Kalem 0.6.7, and the sections below say which: rust-analyzer's own diagnostics, its own requests (Expand Macro, Open Documentation, …), the standard library's files served by the same server, a missing component said as such. Its list of tasks is [`rust_todo.md`](rust_todo.md).
 
 A language plugin is declarative (Kalem's D57): this folder holds a manifest, `plugin.json`, the Sublime syntax under `syntaxes/`, a corpus and its tests, and nothing that runs inside Kalem. Kalem's core reads the manifest, adds the syntax to its highlighter and starts rust-analyzer through its one language server client.
 
@@ -40,7 +40,7 @@ With rust-analyzer running, in either of Kalem's editors:
 | Restart rust-analyzer | | | `code.restartServer` |
 | What serves the file | | | `code.serverStatus` |
 
-And rust-analyzer's own requests, each through a command of Kalem's that any language server with such a request serves, in the command palette where the server has it (Kalem's change for this is not released yet):
+And rust-analyzer's own requests, each through a command of Kalem's that any language server with such a request serves, in the command palette where the server has it (Kalem 0.6.7 and later):
 
 | Command | rust-analyzer's request |
 |---|---|
@@ -72,13 +72,13 @@ rust-analyzer, found as `rust-analyzer` on the `PATH` or in `~/.cargo/bin`. Inst
 
 Kalem never installs a server by itself.
 
-rustup puts a `rust-analyzer` in `~/.cargo/bin` whether or not the component is installed; without it, that program ends at once with rustup's reason, such as "Unknown binary 'rust-analyzer' in official toolchain '1.88-aarch64-apple-darwin'" for a project pinned to a toolchain installed without it. Kalem 0.6.1 and earlier start it again five times over half a minute and then say only that it stopped. Kalem's change for this (T3.8.1, not released yet) says at once that rust-analyzer did not start, in rustup's words and with the three ways above, in the status bar and from `kalem lsp check`; and `kalem lsp status` runs `rust-analyzer --version`, the manifest's `version`, printing the version or `does not run:` with the reason.
+rustup puts a `rust-analyzer` in `~/.cargo/bin` whether or not the component is installed; without it, that program ends at once with rustup's reason, such as "Unknown binary 'rust-analyzer' in official toolchain '1.88-aarch64-apple-darwin'" for a project pinned to a toolchain installed without it. Kalem 0.6.6 and earlier start it again five times over half a minute and then say only that it stopped. Kalem 0.6.7 (T3.8.1) says at once that rust-analyzer did not start, in rustup's words and with the three ways above, in the status bar and from `kalem lsp check`; and `kalem lsp status` runs `rust-analyzer --version`, the manifest's `version`, printing the version or `does not run:` with the reason.
 
 ## The project
 
 The root is the nearest folder up from the file holding a `Cargo.lock`. Cargo writes the lock where it puts the workspace's root, so a workspace is one root and one server, whatever member a file is in, and a workspace inside another folder with a `Cargo.toml` (this plugin's corpus inside this repository) is a root of its own. A project never built has no lock yet: its file's folder is the root, rust-analyzer finds the `Cargo.toml` above it by itself, and its first `cargo metadata` writes the lock. The server runs in the root, so rustup honors the project's `rust-toolchain.toml`.
 
-A file of the standard library or of a dependency, reached by going to a definition, has a `Cargo.lock` of its own (a crate from crates.io ships one, and so does the standard library's folder). Up to Kalem 0.6.1 it becomes a root of its own, and a second rust-analyzer starts there; in the standard library's folder that one cannot load the workspace and answers nothing. Kalem's change for this (T3.8.1, not released yet) serves the file with the rust-analyzer that named it, which knows it: one server, and hover and definitions work inside the standard library.
+A file of the standard library or of a dependency, reached by going to a definition, has a `Cargo.lock` of its own (a crate from crates.io ships one, and so does the standard library's folder). Up to Kalem 0.6.6 it becomes a root of its own, and a second rust-analyzer starts there; in the standard library's folder that one cannot load the workspace and answers nothing. Kalem 0.6.7 (T3.8.1) serves the file with the rust-analyzer that named it, which knows it: one server, and hover and definitions work inside the standard library.
 
 ## Settings
 
@@ -103,7 +103,7 @@ A change reaches rust-analyzer without starting it again; a new check command ru
 Two kinds, as in VS Code:
 
 - **cargo's**: `cargo check` (or `cargo clippy`, by the setting `check.command`) runs when rust-analyzer has loaded the project and each time a file is saved, its progress in the status bar ("rust-analyzer: cargo check"), its errors and warnings for the whole workspace after it ends. The first run builds the dependencies.
-- **rust-analyzer's own**, as you type: type mismatches, names not in snake case, unresolved imports, a file no module includes, and their quick fixes as code actions (`SPC c a`; "Rename to bad_name"). rust-analyzer gives these only to an editor that asks for them. Kalem 0.6.1 and earlier do not ask, and show cargo's only; Kalem's change for this (T3.8.2, not released yet) asks after a file opens and after its changes.
+- **rust-analyzer's own**, as you type: type mismatches, names not in snake case, unresolved imports, a file no module includes, and their quick fixes as code actions (`SPC c a`; "Rename to bad_name"). rust-analyzer gives these only to an editor that asks for them. Kalem 0.6.6 and earlier do not ask, and show cargo's only; Kalem 0.6.7 (T3.8.2) asks after a file opens and after its changes.
 
 An error both find, a type mismatch, is listed twice, once from `rustc` and once from rust-analyzer, as VS Code lists it. While rust-analyzer loads the project (half a minute the first time, the standard library indexed) it may answer "content modified" to what it is asked; the same Kalem change asks again rather than showing that.
 
@@ -111,7 +111,7 @@ An error both find, a type mismatch, is listed twice, once from `rustc` and once
 
 Format Document (`SPC c f`) formats through rust-analyzer, which runs the toolchain's rustfmt with the crate's edition and the project's `rustfmt.toml` (from the file's folder up). `rustfmt.extraArgs` and `rustfmt.overrideCommand` (a nightly rustfmt, `leptosfmt`) are among the settings. When no server formats (servers turned off, rust-analyzer not installed), the plugin's command does: `rustfmt --edition 2024` on the text, run in the project's root so that its `rustfmt.toml` is read; a file alone names no edition, and 2024 reads the older ones.
 
-rust-analyzer answers with no edits both when the file is formatted and when rustfmt fails: not installed for the project's toolchain (`rustup component add rustfmt`), or a syntax error in the file. Kalem 0.6.1 and earlier say "Already formatted" either way; Kalem's change for this (not released yet) says that rust-analyzer changed nothing. Why it changed nothing is in its log: `kalem lsp check --log FILE`.
+rust-analyzer answers with no edits both when the file is formatted and when rustfmt fails: not installed for the project's toolchain (`rustup component add rustfmt`), or a syntax error in the file. Kalem 0.6.6 and earlier say "Already formatted" either way; Kalem 0.6.7 says that rust-analyzer changed nothing. Why it changed nothing is in its log: `kalem lsp check --log FILE`.
 
 ## Run and test
 

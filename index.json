@@ -89,15 +89,15 @@
     {
       "id": "org.kalem.rust",
       "name": "Rust",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Rust: highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting",
       "api": "^0.1",
       "permissions": [
         "subprocess"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/rust",
-      "download": "https://github.com/getkalem/plugins/releases/download/rust-v0.1.0/rust-v0.1.0.tar.gz",
-      "sha256": "8cfa587eaf2f5ae1a00ed9f8ed025c6c7d56a7384a834c31add36a4aa1b6b789",
+      "download": null,
+      "sha256": null,
       "kind": "declarative",
       "languages": [
         {
