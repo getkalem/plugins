@@ -1217,3 +1217,68 @@ fn note_keys_are_reachable_in_the_vim_profile() {
     }
     assert!(clashes.is_empty(), "{}", clashes.join("\n"));
 }
+
+#[test]
+fn completion_of_pages_blocks_tags_and_blocks_of_text() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    let other = "/w/notes/pages/Other.md";
+    // Before the graph is indexed: nothing, Kalem's own completers answer.
+    assert!(app.complete("refs", Some(other), "- [[Ka", 0, 6).is_empty());
+    app.opened(&m, other);
+    let complete = |text: &str| {
+        let (text, after) = text.split_once('|').unwrap_or((text, ""));
+        let whole = format!("{text}{after}");
+        app.complete("refs", Some(other), &whole, 0, text.len())
+    };
+    // `[[`: pages by title, the link replacing the `[[`.
+    let found = complete("- see [[Ka");
+    assert_eq!(
+        (
+            found[0].label.as_str(),
+            found[0].insert.as_str(),
+            found[0].start
+        ),
+        ("Kalem", "[[Kalem]]", 6)
+    );
+    assert_eq!(found[0].detail, "pages/Kalem.md");
+    // A closing `]]` after the cursor is kept.
+    assert_eq!(complete("- see [[Ka|]] more")[0].insert, "[[Kalem");
+    // Aliases, written as typed.
+    let found = complete("- [[edi");
+    assert_eq!(
+        (
+            found[0].label.as_str(),
+            found[0].insert.as_str(),
+            found[0].detail.as_str()
+        ),
+        ("Editor", "[[Editor]]", "alias of Kalem")
+    );
+    // `((`: blocks with an id by their text.
+    let found = complete("- see ((an ed");
+    assert_eq!(found[0].label, "An editor of [[Org]] files");
+    assert_eq!(found[0].insert, "11111111-2222-3333-4444-555555555555))");
+    assert_eq!((found[0].start, found[0].detail.as_str()), (8, "Kalem"));
+    // `#`: tags, a title with a space in `[[…]]`.
+    let found = complete("- an #id");
+    assert_eq!(
+        (
+            found[0].label.as_str(),
+            found[0].insert.as_str(),
+            found[0].start
+        ),
+        ("idea", "idea", 6)
+    );
+    assert!(complete("- C#").is_empty(), "no tag inside a word");
+    // `<`: Logseq's blocks of text, indented as the block's lines.
+    let found = complete("\t- <no");
+    assert_eq!(found[0].label, "Note");
+    assert_eq!(found[0].insert, "#+BEGIN_NOTE\n\t  \n\t  #+END_NOTE");
+    assert_eq!((found[0].start, found[0].cursor), (3, Some(16)));
+    // Elsewhere, or another completer: nothing.
+    assert!(complete("- plain words").is_empty());
+    assert!(
+        app.complete("other", Some(other), "- [[Ka", 0, 6)
+            .is_empty()
+    );
+}

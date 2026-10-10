@@ -1743,6 +1743,7 @@ fn relative_path(from: &str, to: &str) -> String {
 }
 
 mod browse;
+pub mod complete;
 mod outline;
 mod queries;
 

@@ -12,6 +12,12 @@
     { "id": "logseq", "markers": ["logseq/config.edn", "mirror/markdown/.index.edn"], "modes": ["markdown", "org"] },
     { "id": "obsidian", "markers": [".obsidian"], "modes": ["markdown"] }
   ],
+  "completers": [
+    {
+      "id": "refs", "types": ["markdown", "org"], "layers": ["logseq", "obsidian"],
+      "triggers": ["[[", "((", "#", "<"], "replaces": ["wiki", "words"], "priority": 12
+    }
+  ],
   "menus": [
     {
       "title": "Graph",

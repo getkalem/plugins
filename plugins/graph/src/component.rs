@@ -396,6 +396,46 @@ impl Plugin for Graph {
         Ok(())
     }
 
+    /// The completer's items (plugin API 0.2.11).
+    fn complete(
+        completer: &str,
+        request: &kalem_plugin::completer::Request,
+    ) -> Vec<kalem_plugin::completer::Item> {
+        use crate::app::complete::What;
+        use kalem_plugin::completer::{Item, ItemKind};
+        let found = APP
+            .with(|a| {
+                a.try_borrow().ok().and_then(|a| {
+                    a.as_ref().map(|app| {
+                        app.complete(
+                            completer,
+                            request.path.as_deref(),
+                            &request.text,
+                            request.base as usize,
+                            request.cursor as usize,
+                        )
+                    })
+                })
+            })
+            .unwrap_or_default();
+        found
+            .into_iter()
+            .map(|s| Item {
+                label: s.label,
+                insert: s.insert,
+                start: s.start as u64,
+                cursor: s.cursor.map(|c| c as u32),
+                kind: match s.what {
+                    What::Link => ItemKind::Link,
+                    What::Tag => ItemKind::Tag,
+                    What::Snippet => ItemKind::Snippet,
+                },
+                detail: s.detail,
+                documentation: None,
+            })
+            .collect()
+    }
+
     /// The layer's overlays (plugin API 0.2.10).
     fn overlays(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet {
         use crate::layer::{Effect as E, LineEffect as L};
