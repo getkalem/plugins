@@ -1,0 +1,27 @@
+[package]
+name = "kalem-plugin-graph"
+description = "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references and tasks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+# cdylib is the component; rlib lets the tests link the crate.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Obsidian's three settings files (`.obsidian/daily-notes.json`,
+# `app.json`, `templates.json`), read read-only.
+serde_json = "1"
+
+# The component (`src/component.rs`): Kalem's `extension` world with its
+# `fs`, `documents`, `ui` and `editor` interfaces (plugin API 0.2.8).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main" }
+
+[lints]
+workspace = true

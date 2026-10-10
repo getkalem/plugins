@@ -1,0 +1,69 @@
+{
+  "id": "org.kalem.graph",
+  "name": "Note graphs",
+  "version": "0.0.1",
+  "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags and tasks, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
+  "main": "dist/graph.wasm",
+  "api": "^0.2.8",
+  "activation": ["onStartup"],
+  "permissions": ["fs:read:workspace", "fs:write:workspace"],
+  "menus": [
+    {
+      "title": "Graph",
+      "when": "textType == markdown || textType == org || textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph",
+      "items": [
+        "graph.today", "graph.yesterday", "graph.tomorrow", "graph.journalOn",
+        "graph.previousJournal", "graph.nextJournal",
+        "-",
+        "graph.findPage", "graph.insertLink", "graph.insertBlockRef", "graph.follow",
+        "-",
+        "graph.backlinks", "graph.backlinksDocument",
+        "-",
+        "graph.pages", "graph.journals", "graph.tags", "graph.tasks", "graph.graph",
+        "-",
+        "graph.reindex"
+      ]
+    }
+  ],
+  "settings": {
+    "graphs": {
+      "type": "array",
+      "default": [],
+      "description": "Folders that are graphs without Logseq's logseq/config.edn or Obsidian's .obsidian/: a path, or {\"path\": PATH, \"kind\": \"logseq\" or \"obsidian\"}"
+    },
+    "obsidian.daily_notes": {
+      "type": "string",
+      "default": "",
+      "description": "The daily notes' folder of a vault whose .obsidian/daily-notes.json does not say; empty for the vault's root"
+    },
+    "obsidian.daily_format": {
+      "type": "string",
+      "default": "YYYY-MM-DD",
+      "description": "The daily notes' names, in Moment's tokens, when .obsidian/daily-notes.json does not say"
+    },
+    "obsidian.new_notes": {
+      "type": "string",
+      "default": "",
+      "description": "The folder of new notes when .obsidian/app.json does not say; empty for the vault's root"
+    },
+    "obsidian.link_style": {
+      "type": "string",
+      "enum": ["shortest", "relative", "absolute", "markdown"],
+      "default": "shortest",
+      "description": "How links are written when .obsidian/app.json does not say: the shortest path, relative, from the root, or as Markdown links"
+    },
+    "glyphs": {
+      "type": "string",
+      "enum": ["unicode", "ascii"],
+      "default": "unicode",
+      "description": "Fold marks and bullets as ▾ and •, or as v and * for a terminal font without them"
+    },
+    "journals_shown": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "default": 30,
+      "description": "How many journals the Journals document shows"
+    }
+  }
+}

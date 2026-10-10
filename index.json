@@ -82,6 +82,20 @@
       "sha256": "ce719b0d3cab1544def83393faa5d63a6e4b3832fd4125e3bdfd495cf6c2cc84"
     },
     {
+      "id": "org.kalem.graph",
+      "name": "Note graphs",
+      "version": "0.0.1",
+      "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags and tasks, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
+      "api": "^0.2.8",
+      "permissions": [
+        "fs:read:workspace",
+        "fs:write:workspace"
+      ],
+      "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
+      "download": null,
+      "sha256": null
+    },
+    {
       "id": "org.kalem.image-viewer",
       "name": "Image viewer",
       "version": "0.0.2",

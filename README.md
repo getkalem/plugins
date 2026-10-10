@@ -9,6 +9,7 @@ The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, M
 | [`docx`](plugins/docx) | Word documents opened and edited as themselves: styles, lists, tables, notes, comments and tracked changes read; laid out by Kalem (plugin API 0.2.7's flow interface); text edited in its runs, as tracked changes when the document tracks them; tracked changes accepted and rejected | component |
 | [`elixir`](plugins/elixir) | Elixir, EEx and HEEx: highlighting, and Expert or ElixirLS for completion, documentation, definitions, references, diagnostics and formatting | language |
 | [`git`](plugins/git) | Git: the status as a document, changed files with their diffs, staged by file, hunk or line, committed and pushed on Doom's `SPC g` keys (phase 0: the library) | component |
+| [`graph`](plugins/graph) | Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks (a panel and a document), block references, tags and tasks found and followed on Doom's `SPC n r` keys; new journals from the graph's template; nothing converted, `logseq/` and `.obsidian/` never written | component |
 | [`pdf-viewer`](plugins/pdf-viewer) | PDF files shown page by page with their outline, page labels, links and text | component |
 | [`rust`](plugins/rust) | Rust: highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting across a workspace's crates | language |
 | [`xlsx`](plugins/xlsx) | Excel workbooks opened, edited and saved as themselves | component |
