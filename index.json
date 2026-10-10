@@ -214,15 +214,15 @@
     {
       "id": "org.kalem.rust",
       "name": "Rust",
-      "version": "0.1.1",
-      "description": "Rust: highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting",
+      "version": "0.1.2",
+      "description": "Rust: highlighting for the current editions, rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting, and Taplo and crates-lsp for Cargo.toml's keys and crate versions",
       "api": "^0.1",
       "permissions": [
         "subprocess"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/rust",
-      "download": "https://github.com/getkalem/plugins/releases/download/rust-v0.1.1/rust-v0.1.1.tar.gz",
-      "sha256": "0dbcb1404c20d3353509bf1de771a4399a8426b22173e6c04d5c053f6ace3403",
+      "download": null,
+      "sha256": null,
       "kind": "declarative",
       "languages": [
         {

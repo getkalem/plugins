@@ -1,8 +1,8 @@
 {
   "id": "org.kalem.rust",
   "name": "Rust",
-  "version": "0.1.1",
-  "description": "Rust: highlighting for the current editions, and rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting",
+  "version": "0.1.2",
+  "description": "Rust: highlighting for the current editions, rust-analyzer for completion, documentation, definitions, references, rename, diagnostics and formatting, and Taplo and crates-lsp for Cargo.toml's keys and crate versions",
   "api": "^0.1",
   "activation": ["onLanguage:rust", "onLanguage:toml"],
   "permissions": ["subprocess"],

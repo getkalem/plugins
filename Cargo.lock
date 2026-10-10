@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "kalem-plugin-rust"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "kalem-highlight 0.6.9",
  "kalem-lsp",

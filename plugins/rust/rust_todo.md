@@ -474,8 +474,8 @@ spike first.
   (`rustc` and rust-analyzer), as VS Code lists it; cargo's after the
   save only. Merged as getkalem/kalem#27, released in Kalem 0.6.7;
   the borrow error asserted through the client (RS10b); Kalem's own
-  workspace (RS10a). Then, on Kalem's branch `rust-core-tasks`
-  (2026-10-10, not merged): the underlines and the gutter's colored
+  workspace (RS10a). Then, in Kalem 0.6.12 (merged 2026-10-10,
+  a180227a): the underlines and the gutter's colored
   line numbers were Kalem's since 2026-10-04 (c2483f81), T3.8.2's note
   being out of date; what was missing is made: errors, warnings and
   the rest underlined in three colors (red, orange or yellow in the
@@ -608,8 +608,8 @@ spike first.
   says nothing of it and `kalem fmt --check` that its language has no
   formatter, T2.7a.7's TOML pack (outline, formatting, syntax errors)
   being still open in Kalem. The README says what it gets. Then the
-  second server, Kalem's first, on Kalem's branch `rust-core-tasks`
-  (2026-10-10, not merged): a language's servers beside its own
+  second server, Kalem's first, in Kalem 0.6.12 (merged 2026-10-10,
+  a180227a): a language's servers beside its own
   (`alongside`), each in its own root and kept in step, their
   diagnostics with the first's under their sources, completion and
   code actions joined, any other question to the first that has it,
@@ -689,8 +689,8 @@ spike first.
   carries and how its argument makes a program, its arguments and a
   folder, and Kalem declares the command to the server, shows the
   lens, and runs it as `SPC p T` runs the project's tests; gopls and
-  ElixirLS name theirs. Then T2.7i.8's keys, on Kalem's branch
-  `rust-core-tasks` (2026-10-10, not merged): Run Project, Test
+  ElixirLS name theirs. Then T2.7i.8's keys, in Kalem 0.6.12 (merged
+  2026-10-10, a180227a): Run Project, Test
   Project and Test at Cursor (`project.run`, `project.test`,
   `project.testAtCursor`; `SPC p R`, `SPC p T`) run the file's
   plugin's `run`, `test` and `testAtPoint` in the project's root as
@@ -938,7 +938,10 @@ spike first.
   `main` with the hash in `releases/` and the index's download; CI
   green. Then `rust-v0.1.1` with Kalem 0.6.7 (getkalem/kalem#27
   released): the pin moved, rust-analyzer's own diagnostics in the
-  corpus test, the README's "not released yet" made 0.6.7.)
+  corpus test, the README's "not released yet" made 0.6.7. Then
+  `rust-v0.1.2` with Kalem 0.6.12: `Cargo.toml` by Taplo with
+  crates-lsp beside it, and the README naming 0.6.12 for it and for
+  `SPC p R` and `SPC p T`.)
 
 ## Open for the owner
 
