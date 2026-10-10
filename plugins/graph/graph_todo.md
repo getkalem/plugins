@@ -1059,6 +1059,24 @@ Each is the plugin's gate or its ask, written for every plugin.
   of when-clauses that may hold together (one mode named by both,
   `vimCommand` in both) would name such keys for every plugin. Not
   blocking: GR8d's test covers this plugin.
+- K15 A link opened by the editor through a plugin with its own link
+  rules. In the Word-like profile a link is opened with Ctrl and a click
+  (or Kalem's own Open Link), which the core resolves by its wiki rules:
+  in a graph's note `[[page]]` misses the graph's aliases, `title::`,
+  namespaces and Obsidian's shortest path, and the plugin's Open Link
+  (graph 0.3.0) has no key there, only the palette (`SPC o l` in the Vim
+  profile). Asks: the core asking the plugin whose layer serves the
+  document to open the link at a place first (a function of the `layer`
+  export, or a command the manifest's layer names), for every plugin
+  whose notes link by rules of their own. Not blocking.
+- K16 `kalem complete FILE:LINE:COL` with the plugins' completers (API
+  0.2.11). Batch mode starts no extension plugin, so the command prints
+  Kalem's own completers' items only, and a plugin's completer cannot
+  be tried from the command line as the Book says completers can.
+  Asks: `kalem complete` starting the plugins whose completers apply to
+  the file, as `kalem run` starts its plugin, and waiting for what they
+  need first (the graph's index). Not blocking: the plugin's tests call
+  its completion directly.
 
 ## Decisions, and what waits in Kalem's repository
 
