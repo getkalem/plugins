@@ -941,7 +941,8 @@ spike first.
   corpus test, the README's "not released yet" made 0.6.7. Then
   `rust-v0.1.2` with Kalem 0.6.12: `Cargo.toml` by Taplo with
   crates-lsp beside it, and the README naming 0.6.12 for it and for
-  `SPC p R` and `SPC p T`.)
+  `SPC p R` and `SPC p T`; the pin of `kalem-highlight` and
+  `kalem-lsp` moved to Kalem 0.6.12's version commit (dec56dcb).)
 
 ## Open for the owner
 
