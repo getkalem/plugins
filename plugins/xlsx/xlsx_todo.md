@@ -214,7 +214,7 @@ measurements ignored.
 
 ### XL12. The menu bar
 
-- [~] XL12 No menu of the bar names a workbook: Kalem's ten menus
+- [x] XL12 No menu of the bar names a workbook: Kalem's ten menus
   (Kalem, File, Project, Edit, Format, Review, Insert, Table for CSV,
   BibTeX, View) carry none of the 278 `viewer.grid.*` commands, the
   plugin's manifest declares no `menus` (the git plugin's does), and
@@ -280,11 +280,11 @@ measurements ignored.
   `hasComments`, so a PDF's or a picture's menus carry none of them,
   and the text's Find, Find and Replace and Select All leave a grid
   (`!viewerGrid`) for the grid's own; tests in `menus.rs` and both
-  editors' workbook tests. Open: the text commands without a
-  when-clause (the line commands, Go to Line, Source View, the
-  encodings, Paste as Plain Text) still show in a viewer's menus; they
-  need a scope that leaves viewers out, a change to Kalem's command
-  scopes for every viewer, not the workbook's alone.)
+  editors' workbook tests. The commands on a text (the line commands,
+  Go to Matching Bracket, Trim Trailing Whitespace, Go to Line, Source
+  View, the encodings) leave every viewer's menus and keys, through
+  the when-clause `editorMode != viewer`; Paste as Plain Text stays,
+  as it pastes into the cells.)
 
 ### XL13. The toolbar
 
@@ -329,11 +329,15 @@ measurements ignored.
 
 ### XL15. The oracle, the chapter and the README
 
-- [ ] XL15 Excel itself opening edited files without a repair prompt
+- [~] XL15 Excel itself opening edited files without a repair prompt
   (T3.7.4's exit criterion, checked by hand only); LibreOffice as the
   CI oracle for recalculated files (used by hand); the `.xlsm` corpus
   compared with Excel's runs; the Book's workbook chapter (T3.7.10:
   the Book has a paragraph in part 1 and no chapter), where
   `fullCalcOnLoad`, the dropped calculation chain and the rewritten
   cached results are to be said (`publish_todo.md`'s Doc item). (The
-  README's "Not yet" list brought up to date 2026-10-10.)
+  README's "Not yet" list brought up to date 2026-10-10; the Book's
+  chapter "Workbooks" written the same day in Kalem's branch
+  `xlsx-menus`, `book/part-3/workbooks.org`, with what a save writes
+  and limits measured. Open: Excel's no-repair check, LibreOffice in
+  CI, the `.xlsm` corpus.)
