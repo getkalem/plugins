@@ -27,14 +27,16 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 |---|---|---|
 | `SPC n r r` | Backlinks Panel | The side panel: the page's linked references grouped by page, then its unlinked mentions; a click opens the line |
 | `SPC n r R` | Backlinks | The same as a document, with the references to the page's blocks; Enter on a line opens it |
+| `SPC o l` in a note; Enter (Vim's normal mode) and `SPC m g x` in a Logseq Org note | Open Link | What Follow Reference follows, by the graph's rules (`[[page]]` in Org opens the page, not a heading of the file); any other link as the mode opens it |
 | `SPC n r o` | Follow Reference | The `[[page]]`, `#tag`, `((uuid))`, `{{embed}}`, `[[note#Heading]]` or `[[note#^id]]` under the cursor; a page not written yet opens as a new file, written when saved. On a `{{query …}}`'s line, its results (below) |
 | `SPC n r f` | Find Page | Every page by title, aliases in the detail; "Create a page…" first |
 | `SPC n r i` | Insert Link | A link to the chosen page, written as the graph writes links (Logseq's `[[Title]]`; Obsidian's shortest path, or as `.obsidian/app.json` says) |
 | `SPC n r b` | Insert Block Reference | `((uuid))` or `[[note#^id]]` of a block that has an id |
 | `SPC n r d t`, `d y`, `d m` | Today's, Yesterday's, Tomorrow's Journal | Opens the journal; one not written yet is made from the graph's journal template (Logseq's `:default-templates {:journals …}`, Obsidian's daily notes template) |
 | `SPC n r d d` | Journal of a Date | `2026-10-03`, `oct 3`, `yesterday`, `-3`, `monday` |
-| `SPC n r d f`, `d b` | Next, Previous Journal | The next and previous journal that exists |
-| `SPC n r p` | All Pages | Every page with its links and blocks (a PDF's highlights named for the PDF), the whiteboards or canvases, then the pages only referenced |
+| `SPC n r d f`, `d b`; `Alt+]`, `Alt+[` in a note | Next, Previous Journal | The next and previous journal that exists (from a page, counting from today). A terminal without the kitty keyboard protocol cannot send `Alt+[` |
+| `SPC n r p` | All Pages | Every page with its links and blocks (a PDF's highlights named for the PDF), the whiteboards or canvases, then the pages only referenced; `s` sorts it by title, links or blocks |
+| | Block References | What refers to the block at the cursor, as a document |
 | `SPC n r j` | Journals | The last thirty journals, newest first, with their blocks |
 | `SPC n r T` | Tags | Every tag with how often it is used |
 | `SPC n r t` | Tasks | NOW and DOING, then LATER and TODO by priority, then WAITING; what is scheduled or due within a week. Enter opens the task, `t` cycles its keyword in its file |
@@ -66,6 +68,7 @@ In a note of a graph (a document the plugin's layer serves, Kalem's when-clause 
 
 | Keys | Command | What it does |
 |---|---|---|
+| Enter (typing, in a Logseq note in Markdown) | New Block | As Logseq's Enter: a new block after the block's properties and dates, the first child when its children are shown, the block split at the cursor (its properties staying with the first part), an empty child outdented; elsewhere Markdown's Enter. Needs a Kalem after 0.6.12, whose keymap puts a layer's keys before the profile's |
 | `SPC m t` | Cycle Task | The block's keyword as Logseq cycles it: `TODO` to `DOING`, `LATER` to `NOW`, both to `DONE`, `DONE` to none, and none (or `WAITING`, `CANCELED`) to `LATER` (`TODO` with `:preferred-workflow :todo`); in a vault the check box: none, `[ ]`, `[x]`, none |
 | `SPC m p` | Set Priority | `[#A]`, `[#B]`, `[#C]` or none, after the keyword |
 | `SPC m d s`, `SPC m d d` | Schedule, Deadline | `SCHEDULED: <2026-10-12 Mon>` after the block's first line and properties (after an Org headline), replaced where it is, removed when the answer is empty |
@@ -83,8 +86,8 @@ Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq a
 | | Logseq | Obsidian |
 |---|---|---|
 | Hidden | a block's `id::`, `collapsed::`, `heading::` and the other properties Logseq hides | a `^id` at a line's end, `%%comments%%` |
-| Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page; `{{query …}}` as `⌕`, how many blocks or pages it finds and the first two; `#+BEGIN_QUERY` marked as not run | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
-| Styled | task keywords and priorities as Org's, dates, `#tags`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
+| Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page; `{{query …}}` as `⌕`, how many blocks or pages it finds and the first two; `#+BEGIN_QUERY` marked as not run; `#+BEGIN_NOTE`, `TIP`, `IMPORTANT`, `CAUTION`, `WARNING`, `PINNED` as the admonition's icon and name, its `#+END_` line hidden; a numbered block's bullet (`logseq.order-list-type:: number`) as `1.`, nested `a.` and `I.` | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
+| Styled | task keywords and priorities as Org's (in Org notes `LATER`, `NOW`, `DOING`, `WAITING`, `CANCELED` too), dates, `#tags`, `^^highlights^^`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
 | Folded | `:LOGBOOK:` to its first line; the blocks under a block with `collapsed:: true` hidden | a callout with `-` to its first line |
 
 The layer needs plugin API 0.2.10's `layer`, which the plugin is built with (`kalem-plugin`'s feature `layer`).
@@ -133,7 +136,7 @@ From Logseq:
 - An embed shows one line, not the block or page in full; a query shows one line in its note and its results as a document (Kalem's layers add no lines yet).
 - No real-time sync: Syncthing or git on the folder, as Logseq's file version is used.
 - The database version's graph itself does not open; its Markdown Mirror does, read only.
-- The index follows saves and changes on disk, not unsaved typing. Recent Pages remembers this session's pages only.
+- The index follows saves, changes on disk and, when a command runs in a note, its unsaved text; the panel and the documents are written again after a save. Recent Pages remembers this session's pages only.
 
 From Obsidian:
 

@@ -317,10 +317,11 @@ profile gets a **Graph** menu with the same commands.
   backlinks, block backlinks, tags and tasks, built from the files and
   kept by `document-after-save` and `workspace-file-changed`; the maps
   are derived again after each file, which is simple and enough for the
-  corpus; a page only referenced is kept as one. Open: the unsaved text
-  of the current document (`Index::update_text` exists, not yet called).
-  GR11 measured the large graph, made a save change only its file's
-  entries, and lists the problems beyond the one notice in All pages.)
+  corpus; a page only referenced is kept as one. GR11 measured the large graph, made a save change only its file's
+  entries, and lists the problems beyond the one notice in All pages.
+  Later the same day: a command run in a note with unsaved changes
+  indexes it from the text the command gets, `Index::update_unsaved`,
+  and a note closed unsaved is read from its file again.)
 
 ## GR3. What works without the mode
 
@@ -367,9 +368,10 @@ profile gets a **Graph** menu with the same commands.
   typed in the forms listed. Kalem gives an extension plugin no clock
   (the `extension` world imports no `clock`), so the first journal
   command of a session asks today's date, offering the newest journal's,
-  and keeps it: K9 removes the question. Open: `Alt+[` and `Alt+]`,
-  which need a context key for "in a journal"; the journals as `d n` and
-  `d p` meanwhile.)
+  and keeps it: K9 removes the question. Later the same day: `Alt+]`
+  and `Alt+[` in a graph's notes (`editorLayer`), from a page counting
+  from today; a terminal without the kitty keyboard protocol cannot
+  send `Alt+[`, where `SPC n r d b` stays.)
 
 - [~] GR3c Find, insert, backlinks. `graph.findPage` (`SPC n r f`): a
   quick-pick of every page by title and alias, journals last, the
@@ -436,9 +438,13 @@ profile gets a **Graph** menu with the same commands.
   the page's blocks), All pages, Journals, Tags (an Obsidian tag opens a
   "Tag:" document, tags not being notes there), Tasks (template blocks
   left out) and Graph, styled, with Enter on every line that names a
-  place, written anew when a file of their graph changes. Open: the `s`
-  sort of All pages, "PageDown loads thirty more", and the dates of
-  tasks before today's date is known.)
+  place, written anew when a file of their graph changes. Open:
+  "PageDown loads thirty more", and the dates of tasks before today's
+  date is known. Later the same day: `s` in All pages sorts it by
+  title, links and blocks in turn (the dates of Logseq's columns need a
+  file's times, which `fs` does not give); Block References, a
+  document of what refers to the block at the cursor, as Logseq's count
+  beside a referenced block opens them.)
 
 ## GR4. Kalem's core: layers over a core mode's view
 
@@ -571,10 +577,16 @@ below replace the earlier GR4a to GR4d.
 
   (Done 2026-10-10 but for what follows. Open: an embed's block or
   page drawn in full under its line, which needs lines a layer adds
-  (virtual lines, K6's kin); an admonition drawn as a callout box;
-  `logseq.order-list-type:: number`'s numbers; `^^highlight^^`;
-  `collapsed:: true` folding the block on open, which needs a layer's
-  folds (a `folded` effect on lines); `{{query}}`'s results (GR9a).)
+  (virtual lines, K6's kin); an admonition drawn as a box with its
+  color; `collapsed:: true` folding the block on open, which needs a
+  layer's folds (a `folded` effect on lines); `{{query}}`'s results
+  (GR9a). Later the same day: `^^highlight^^` bold with its marks
+  hidden, in Org too; the blocks with `logseq.order-list-type:: number`
+  numbered as Logseq 0.10 numbers them (the siblings before with the
+  property counted, `1.`, then `a.` and `I.` nested, read from its
+  `get-idx-of-order-list-block`); `#+BEGIN_NOTE`, `TIP`, `IMPORTANT`,
+  `CAUTION`, `WARNING` and `PINNED`, Logseq's admonitions, as their
+  icon and name, the `#+END_` line hidden.)
 
 ## GR6. The layer: an Obsidian vault drawn as Obsidian draws it
 
@@ -599,7 +611,13 @@ below replace the earlier GR4a to GR4d.
   as `↳` and the block's text, and styles `#tags`. (Done 2026-10-10.
   Open: `[[page]]` resolved by the graph's rules before Org's own (Org
   takes `[[page]]` as a fuzzy link inside the file), the TODO keywords
-  of `:preferred-workflow` added to the document's keyword set.)
+  of `:preferred-workflow` added to the document's keyword set. Later
+  the same day: Open Link, on `SPC o l` in a graph's notes and on Enter
+  and `SPC m g x` in Vim's command mode in Logseq's Org notes, follows
+  the graph's references by its rules and leaves anything else to the
+  mode (`org.dwim`, `markdown.openLink`); the layer styles `LATER`,
+  `NOW`, `DOING`, `WAITING` and `CANCELED` in Org's headlines. Org's own
+  commands still cycle `TODO` and `DONE` only.)
 
 ## GR8. Editing as an outliner
 
@@ -646,11 +664,22 @@ below replace the earlier GR4a to GR4d.
   the cursor taken to a moved block by `edit.gotoLine`. Checked in the
   terminal editor of the branch: fold, cycle, move, save. The scanner
   learned that a block's lines end at its last line that is not blank
-  and include its code and drawers. Open: Enter splitting a block as
-  Logseq does (Markdown's own Enter continues the list); zoom, which
-  needs narrowing a Markdown document to a range; the Word-like
-  profile's `tab`, which its keymap gives to `view.fold`; a done task's
-  clock. Corrected with GR9: the cycle is Logseq's own, each keyword to
+  and include its code and drawers. Open: zoom, which needs narrowing a
+  Markdown document to a range; a done task's clock. Later the same
+  day: New Block on Enter while typing in a Logseq note in Markdown, as
+  Logseq's Enter: the new block after the block's properties and
+  dates, as the first child when its children are shown and after them
+  when they are folded, the block split at the cursor with its
+  properties kept by the first part, an empty child outdented, an empty
+  block above at the start of a block; elsewhere Markdown's Enter.
+  There is no cursor placement in the API: the edits insert the
+  block's own lines and the new bullet at the cursor and delete them
+  below, the cursor following the insertion. Kalem's keymap put a
+  plugin's keys in its layer's notes behind the profile's (Word's Enter
+  in a list, `tab` to `view.fold`); Kalem's branch `graph-apis` puts
+  them before, as a plugin's keys in its own documents are, and
+  `Alt+[` is now known as a key a legacy terminal cannot send. Checked
+  in the terminal editor of that branch, Word and Vim profiles. Corrected with GR9: the cycle is Logseq's own, each keyword to
   its next whatever the workflow (`TODO → DOING`, `LATER → NOW`, both
   `→ DONE`, `DONE →` none), and none, `WAITING` or `CANCELED` to the
   workflow's first keyword.)
