@@ -360,6 +360,25 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
             );
             continue;
         }
+        // A property as a list item, as the Markdown Mirror of Logseq's
+        // database graphs writes it: drawn as a property line is.
+        if let Some(after) = body.strip_prefix("* ")
+            && let Some((ks, ke, key)) = property(after)
+        {
+            let base = start + indent + 2;
+            property_look(&mut o, text, base, ks, ke, &key, &extra, line, start, false);
+            if !hidden_property(&key, &extra) {
+                inline(
+                    &mut o,
+                    &after[ke..],
+                    base + ke,
+                    Flavor::LogseqMarkdown,
+                    index,
+                    rel,
+                );
+            }
+            continue;
+        }
         let bullet = trimmed == "-" || body.starts_with("- ");
         if bullet {
             in_props = true;
@@ -1000,5 +1019,25 @@ mod tests {
         for w in o.spans.windows(2) {
             assert!(w[0].end <= w[1].start);
         }
+    }
+}
+#[cfg(test)]
+mod mirror {
+    /// A mirror's page: its id line hidden, its properties' keys dimmed
+    /// as a file graph's are, their values' tags styled.
+    #[test]
+    fn a_mirror_page_drawn_as_a_graphs() {
+        let t = "id:: 11111111-1111-4111-8111-111111111111\n* type:: [[Plan]]\n\n- Read\n  * owner:: #alice\n  * collapsed:: true\n";
+        let o = super::logseq_markdown(t, None, None);
+        let hidden: Vec<&str> = o.lines.iter().map(|l| &t[l.start..l.end]).collect();
+        assert_eq!(
+            hidden,
+            [
+                "id:: 11111111-1111-4111-8111-111111111111\n",
+                "  * collapsed:: true\n"
+            ]
+        );
+        let styled: Vec<&str> = o.spans.iter().map(|s| &t[s.start..s.end]).collect();
+        assert_eq!(styled, ["type::", "owner::", "#alice"]);
     }
 }

@@ -151,6 +151,9 @@ pub struct Graph {
     pub templates_dir: Option<String>,
     /// Logseq's whiteboards' folder (`whiteboards`), relative.
     pub whiteboards_dir: Option<String>,
+    /// Never written: the Markdown Mirror of a Logseq database graph,
+    /// which Logseq writes over from its database.
+    pub read_only: bool,
     /// What could not be read, for one notice.
     pub problems: Vec<String>,
 }
@@ -171,8 +174,29 @@ pub fn kind_of(files: &dyn Files, dir: &str) -> Option<Kind> {
     {
         return Some(Kind::Logseq);
     }
-    has(".obsidian").then_some(Kind::Obsidian)
+    if has(".obsidian") {
+        return Some(Kind::Obsidian);
+    }
+    is_mirror(files, dir).then_some(Kind::Logseq)
 }
+
+/// Whether `dir` is the Markdown Mirror of a Logseq database graph:
+/// `mirror/markdown/` in the graph's folder, with the mirror's
+/// `.index.edn` (Logseq's ADR 0016). Its notes are Logseq Markdown, read
+/// as a graph's and never written.
+pub fn is_mirror(files: &dyn Files, dir: &str) -> bool {
+    let dir = dir.trim_end_matches('/');
+    files::file_name(dir) == "markdown"
+        && files::parent(dir).is_some_and(|p| files::file_name(p) == "mirror")
+        && files.list(dir).is_ok_and(|l| {
+            l.iter()
+                .any(|e| files::file_name(e) == ".index.edn" && !e.ends_with('/'))
+        })
+}
+
+/// What a mirror's graph is set as: Logseq's defaults, its file names
+/// the pages' titles.
+const MIRROR_CONFIG: &str = "{:file/name-format :triple-lowbar}";
 
 /// The graph a file at `path` is in: the nearest folder above it that is
 /// one of `known` or holds a graph's marker. The walk stops at a folder
@@ -219,6 +243,11 @@ impl Graph {
     pub fn load(files: &dyn Files, root: &str, kind: Kind, fallbacks: &Fallbacks) -> Graph {
         let root = files::normalize(root);
         match kind {
+            Kind::Logseq if is_mirror(files, &root) => {
+                let mut g = Graph::logseq(&root, MIRROR_CONFIG);
+                g.read_only = true;
+                g
+            }
             Kind::Logseq => {
                 let path = files::join(&root, "logseq/config.edn");
                 let text = files.read(&path);
@@ -326,6 +355,7 @@ impl Graph {
             whiteboards_dir: Some(
                 s("whiteboards-directory").map_or_else(|| "whiteboards".into(), |p| folder(&p)),
             ),
+            read_only: false,
             problems,
         }
     }
@@ -409,12 +439,19 @@ impl Graph {
             },
             templates_dir: text(&tpl, "folder").map(|f| folder(&f)),
             whiteboards_dir: None,
+            read_only: false,
             problems,
         }
     }
 
     /// The graph's name: its folder's.
     pub fn name(&self) -> &str {
+        // A mirror by its database graph's folder, not `markdown`.
+        if self.read_only
+            && let Some(graph) = files::parent(&self.root).and_then(files::parent)
+        {
+            return files::file_name(graph);
+        }
         files::file_name(&self.root)
     }
 

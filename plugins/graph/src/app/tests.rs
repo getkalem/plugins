@@ -917,3 +917,49 @@ fn the_panels_unlinked_references_searched_when_opened() {
     assert_eq!(p[2].expanded, Some(true));
     assert!(app.panel_expanded("1", false).is_empty());
 }
+
+#[test]
+fn a_mirror_is_never_written() {
+    // A Logseq database graph's Markdown Mirror: read, never written.
+    let m = Memory::new(&[
+        ("/db/mirror/markdown/.index.edn", "{}"),
+        (
+            "/db/mirror/markdown/pages/Plan.md",
+            "id:: 11111111-1111-4111-8111-111111111111\n\n- TODO write [[Kalem]]\n",
+        ),
+    ]);
+    let mut app = App::new(Settings::default());
+    let out = app.opened(&m, "/db/mirror/markdown/pages/Plan.md");
+    assert!(
+        out.contains(&Effect::Status(Some("⌬ db · 1 page".into()))),
+        "{out:?}"
+    );
+    let text = "id:: 11111111-1111-4111-8111-111111111111\n\n- TODO write [[Kalem]]\n";
+    let c = ctx("/db/mirror/markdown/pages/Plan.md", text, 46);
+    for id in [
+        "graph.cycleTodo",
+        "graph.toggleFold",
+        "graph.insertLink",
+        "graph.renamePage",
+    ] {
+        let out = app.command(&m, id, &c);
+        assert!(
+            matches!(&out[..], [Effect::Notify(t, _)] if t.starts_with("This is the Markdown Mirror")),
+            "{id}: {out:?}"
+        );
+    }
+    // A page only referenced is not made.
+    let out = app.command(
+        &m,
+        "graph.follow",
+        &ctx("/db/mirror/markdown/pages/Plan.md", text, 60),
+    );
+    assert!(
+        matches!(&out[..], [Effect::Notify(t, _)] if t.starts_with("This is the Markdown Mirror")),
+        "{out:?}"
+    );
+    assert!(m.read("/db/mirror/markdown/pages/Kalem.md").is_err());
+    // Reading works: the pages.
+    let out = app.command(&m, "graph.pages", &c);
+    assert!(matches!(&out[0], Effect::Document { .. }));
+}

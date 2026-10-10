@@ -492,6 +492,30 @@ enum Then {
     Journal { root: String, offset: i64 },
 }
 
+/// The commands that write a note or a page, refused in a graph that is
+/// never written (a Logseq database graph's Markdown Mirror).
+const WRITES: &[&str] = &[
+    "graph.insertLink",
+    "graph.insertBlockRef",
+    "graph.cycleTodo",
+    "graph.setPriority",
+    "graph.schedule",
+    "graph.deadline",
+    "graph.moveBlockUp",
+    "graph.moveBlockDown",
+    "graph.indent",
+    "graph.outdent",
+    "graph.toggleFold",
+    "graph.renamePage",
+    "graph.setDateNow",
+    "graph.setPriorityNow",
+    "graph.renameNow",
+    "graph.refBlockNow",
+];
+
+/// Why a mirror's notes are not written.
+const READ_ONLY: &str = "This is the Markdown Mirror of a Logseq database graph: Logseq writes it from its database and writes over any change, so change the page in Logseq";
+
 /// The separator of a document key's parts.
 const SEP: char = '\u{1f}';
 
@@ -655,7 +679,8 @@ impl App {
             } else {
                 "⌬"
             };
-            format!("{mark} {} · {pages} pages", i.graph.name())
+            let noun = if pages == 1 { "page" } else { "pages" };
+            format!("{mark} {} · {pages} {noun}", i.graph.name())
         }))
     }
 
@@ -956,6 +981,10 @@ impl App {
         let Some(root) = self.root_for(files, ctx, &mut out) else {
             return out;
         };
+        if WRITES.contains(&id) && self.indexes.get(&root).is_some_and(|i| i.graph.read_only) {
+            out.push(Effect::Notify(READ_ONLY.into(), Level::Info));
+            return out;
+        }
         let rel = ctx
             .path
             .as_deref()
@@ -1192,6 +1221,10 @@ impl App {
         let Some(index) = self.indexes.get(root) else {
             return out;
         };
+        if index.graph.read_only {
+            out.push(Effect::Notify(READ_ONLY.into(), Level::Info));
+            return out;
+        }
         let path = index.graph.path(rel);
         if let Some(text) = text
             && files.read(&path).is_err()

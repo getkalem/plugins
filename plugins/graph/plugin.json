@@ -2,14 +2,14 @@
   "id": "org.kalem.graph",
   "name": "Note graphs",
   "version": "0.0.1",
-  "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags and tasks, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
+  "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags, tasks and queries, edited as an outliner, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
   "main": "dist/graph.wasm",
-  "api": "^0.2.8",
+  "api": "^0.2.9",
   "activation": ["onStartup"],
   "limits": { "memory_mb": 1024, "time_ms": 10000 },
   "permissions": ["fs:read:workspace", "fs:write:workspace"],
   "layers": [
-    { "id": "logseq", "markers": ["logseq/config.edn"], "modes": ["markdown", "org"] },
+    { "id": "logseq", "markers": ["logseq/config.edn", "mirror/markdown/.index.edn"], "modes": ["markdown", "org"] },
     { "id": "obsidian", "markers": [".obsidian"], "modes": ["markdown"] }
   ],
   "menus": [

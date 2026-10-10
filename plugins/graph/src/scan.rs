@@ -808,6 +808,11 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
     let mut page: Vec<(String, String, usize)> = Vec::new();
     // The first block is the page's properties when it holds only them.
     let mut pre_block = false;
+    // A property written as a list item (`* key::`, as the Markdown
+    // Mirror of Logseq's database graphs writes them) whose values follow
+    // as items under it: its columns, its block (none: the page's) and
+    // its key.
+    let mut value_of: Option<(usize, Option<usize>, String)> = None;
     for (n, line) in lines.iter().enumerate().skip(start) {
         let (cols, bytes) = indent(line);
         let rest = &line[bytes..];
@@ -822,6 +827,88 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             continue;
         }
         let bullet = trimmed == "-" || rest.starts_with("- ") || rest.starts_with("* ");
+        // An open property's values, one item each.
+        if let Some((pcols, owner, key)) = value_of.clone() {
+            if bullet && cols > pcols && rest.starts_with("- ") {
+                let content_at = bytes + 2;
+                let content = line.get(content_at..).unwrap_or("").trim();
+                let add = |v: &mut String| {
+                    if !v.is_empty() {
+                        v.push_str(", ");
+                    }
+                    v.push_str(content);
+                };
+                match owner {
+                    Some(b) => {
+                        if let Some((_, v)) =
+                            s.blocks[b].props.iter_mut().rev().find(|(k, _)| *k == key)
+                        {
+                            add(v);
+                        }
+                        s.blocks[b].end = n as u32 + 1;
+                    }
+                    None => {
+                        if let Some((_, v, _)) = page.iter_mut().rev().find(|(k, _, _)| *k == key) {
+                            add(v);
+                        }
+                    }
+                }
+                place(
+                    &mut s.refs,
+                    inline(content, Flavor::LogseqMarkdown),
+                    n,
+                    content_at,
+                    owner,
+                );
+                continue;
+            }
+            if !trimmed.is_empty() {
+                value_of = None;
+            }
+        }
+        if rest.starts_with("* ")
+            && let Some((k, v)) = property(line.get(bytes + 2..).unwrap_or(""))
+        {
+            while stack.last().is_some_and(|(c, _)| *c >= cols) {
+                stack.pop();
+            }
+            let owner = stack.last().map(|(_, b)| *b);
+            let at = bytes + 2;
+            match owner {
+                Some(c) => {
+                    let b = &mut s.blocks[c];
+                    match k.as_str() {
+                        "id" => b.id = Some(v.to_lowercase()),
+                        "collapsed" => b.collapsed = v == "true",
+                        _ => {}
+                    }
+                    b.end = n as u32 + 1;
+                    b.props.push((k.clone(), v.to_string()));
+                    place(
+                        &mut s.refs,
+                        inline(&line[at..], Flavor::LogseqMarkdown),
+                        n,
+                        at,
+                        Some(c),
+                    );
+                    current = Some(c);
+                }
+                None => {
+                    value_refs(
+                        &mut s.refs,
+                        line,
+                        &k,
+                        n,
+                        Flavor::LogseqMarkdown,
+                        options,
+                        None,
+                    );
+                    page.push((k.clone(), v.to_string(), n));
+                }
+            }
+            value_of = Some((cols, owner, k));
+            continue;
+        }
         if bullet {
             while stack.last().is_some_and(|(c, _)| *c >= cols) {
                 stack.pop();

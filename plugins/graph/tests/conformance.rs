@@ -49,7 +49,9 @@ fn the_manifest() {
     let m: Value = serde_json::from_str(MANIFEST).expect("plugin.json parses");
     assert_eq!(m["id"], "org.kalem.graph");
     assert_eq!(m["main"], "dist/graph.wasm");
-    assert_eq!(m["api"], "^0.2.8");
+    // The release imports the plugin API of the kalem-plugin it is built
+    // with: 0.2.9, Kalem 0.6.8.
+    assert_eq!(m["api"], "^0.2.9");
     assert_eq!(m["activation"], serde_json::json!(["onStartup"]));
     // A large graph is indexed in one call: a viewer's limits, not an
     // extension's 64 MB and 100 ms (GR11).
@@ -626,4 +628,77 @@ fn folds_round_trip_and_overlays_keep_to_the_text() {
         }
     }
     assert!(folded_blocks >= 10, "{folded_blocks} blocks folded");
+}
+
+/// The Markdown Mirror of a Logseq database graph (Logseq's ADR 0016 and
+/// `docs/logseq-markdown-syntax.md`): found by its `.index.edn`, read as
+/// a Logseq graph, its `* key::` items read as properties, never written.
+#[test]
+fn a_database_graphs_markdown_mirror() {
+    use kalem_plugin_graph::query;
+    let root = files::normalize(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("corpus/logseq-db-mirror/mirror/markdown")
+            .to_string_lossy(),
+    );
+    assert_eq!(config::kind_of(&Native, &root), Some(Kind::Logseq));
+    let i = Index::build(
+        &Native,
+        Graph::load(&Native, &root, Kind::Logseq, &Fallbacks::default()),
+    );
+    assert!(i.graph.read_only);
+    assert_eq!(i.graph.name(), "logseq-db-mirror");
+    assert!(
+        i.problems.is_empty() && i.graph.problems.is_empty(),
+        "{:?}",
+        i.problems
+    );
+    let (pages, journals, _, _) = i.counts();
+    assert_eq!((pages, journals), (4, 1));
+    // Page properties as items, an open one's value from the item under it.
+    let plan = i.page("project plan").expect("the page");
+    assert!(
+        plan.props.contains(&("type".into(), "[[Plan]]".into())),
+        "{:?}",
+        plan.props
+    );
+    assert!(
+        plan.props
+            .contains(&("description".into(), "The plan of the release".into()))
+    );
+    // A block's properties as items under it; their references count.
+    let d = i.file("pages/Project Plan.md").unwrap();
+    let read = &d.scanned.blocks[0];
+    assert_eq!(read.text, "Read [[Reading List]]");
+    assert_eq!(read.props, [("owner".to_string(), "[[Alice]]".to_string())]);
+    assert_eq!(d.scanned.blocks.len(), 5, "{:?}", d.scanned.blocks);
+    assert_eq!(titles(&i, "alice"), ["Oct 9th, 2026", "Project Plan"]);
+    assert_eq!(
+        titles(&i, "reading list"),
+        ["Oct 9th, 2026", "Project Plan"]
+    );
+    let wilde = &i.file("pages/Reading List.md").unwrap().scanned.blocks[1];
+    assert_eq!(wilde.text, "Oscar Wilde");
+    assert!(
+        wilde
+            .props
+            .contains(&("description".into(), "Irish poet and playwright".into()))
+    );
+    assert!(
+        wilde
+            .props
+            .contains(&("books".into(), "The Picture of Dorian Gray".into()))
+    );
+    // A title's colon written as an underscore stays in the title.
+    assert!(i.page("a_b").is_some());
+    // Tasks, tags, journals and queries as in a graph of files.
+    let markers: Vec<String> = i.tasks().into_iter().map(|t| t.marker).collect();
+    assert_eq!(markers.len(), 3, "{markers:?}");
+    assert!(i.tags().contains_key("quarterly plan") && i.tags().contains_key("writing"));
+    let a = query::run(
+        &query::parse("(property owner [[Alice]])").unwrap(),
+        &i,
+        None,
+    );
+    assert_eq!(a.hits.len(), 1);
 }

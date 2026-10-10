@@ -2,13 +2,22 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: early** (GR1 to GR4 and GR9 to GR11 of the list, GR5 to GR8 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.10's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
+**Status: 0.1.0**, for Kalem 0.6.8 and later (0.6.7 runs it too). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph. Its list of tasks is [`graph_todo.md`](graph_todo.md).
+
+With Kalem 0.6.8 the notes open in Kalem's own Markdown and Org modes and show as they are written: Logseq's `id::` and `collapsed::` lines, a bare `((uuid))`, `{{embed …}}` and `{{query …}}` as text, an Obsidian callout as a quote. Wiki links are links. The plugin's layer, which draws a note as Logseq or Obsidian draws it (below), and a few other parts wait for Kalem's next release, from its branch `graph-mode` (plugin API 0.2.10): the outliner's keys inside notes (the commands are in the Graph menu and the palette meanwhile), a query's line in its note, Search the Graph leaving out `logseq/` and `.obsidian/` (0.6.8 searches the whole folder), a whiteboard or canvas shown in the file manager (0.6.8 names the file in a notice), the clock (0.6.8 asks today's date once a session), and `kalem run`. The sections below say which is which.
+
+## Moving over
+
+- **From Logseq (the file version, "OG").** Add the graph's folder as a project of Kalem's and open any page: nothing is converted, and `logseq/` is never written. Keep Logseq installed for as long as you like: both read and write the same files, and each reads again a file the other saved (save in one before editing the same page in the other). Sync stays as it was: Syncthing, git or iCloud on the folder.
+- **From Logseq's database version.** Its SQLite database does not open in Kalem. Its Markdown Mirror does: turn it on in Logseq's settings (the desktop app), and the folder `mirror/markdown/` in the graph's folder opens as a graph, read only: pages, journals, links, tags, tasks, properties (written there as `* key:: value`), queries and search. Logseq writes the mirror from its database and writes over any change, so Kalem never writes it and its editing commands say so.
+- **From Obsidian.** Add the vault's folder as a project and open a note. Of `.obsidian/`, only `daily-notes.json`, `app.json` and `templates.json` are read, for the daily notes, where new notes go, how links are written and the templates' folder; nothing under it is written.
 
 ## What it needs
 
 - **The graph's folder is one of Kalem's projects** (Projects: Add Project). Kalem lets a plugin read only its projects' folders (`fs:read:workspace`); a note opened from a folder that is no project is not seen as a graph's.
-- A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, from the folder of any note opened in it upwards. A folder without either is a graph when the setting `graphs` names it.
-- A Kalem with plugin API 0.2.8 (checked with Kalem 0.6.6).
+- A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, a Logseq database graph's mirror by its `mirror/markdown/.index.edn`, from the folder of any note opened in it upwards. A folder without any is a graph when the setting `graphs` names it.
+- Kalem 0.6.8 or later (plugin API 0.2.9); the layer and the parts above need Kalem's next release.
+- Room to index a large graph: the plugin asks Kalem for 1 GB and 10 s a call (see Speed and size).
 
 ## Commands and keys
 
@@ -32,8 +41,8 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r q` | Run Query | A Logseq simple query typed, its results as a document |
 | `SPC n r l` | Recent Pages | The graph's pages opened last in this session |
 | `SPC n r a` | Random Page | A page of the graph at random |
-| `SPC n s` (in a graph) | Search the Graph | Kalem's search over the graph's folder, without `logseq/`, `.obsidian/`, `.trash/` and the hidden folders; elsewhere `SPC n s` searches Kalem's notes folder |
-| `SPC n S` (in a graph) | Find Heading | The graph's headings, and the top-level blocks of its pages (not its journals'), each with its page |
+| `SPC n s` (in a graph, Kalem's next release) | Search the Graph | Kalem's search over the graph's folder, without `logseq/`, `.obsidian/`, `.trash/` and the hidden folders; elsewhere `SPC n s` searches Kalem's notes folder |
+| `SPC n S` (in a graph, Kalem's next release) | Find Heading | The graph's headings, and the top-level blocks of its pages (not its journals'), each with its page |
 | `SPC n r g` | Graph | The pages as a tree of namespaces with their links in and out, then the pages named without a link and how often, then the orphans |
 | `SPC n r s` | Index Again | Reads the graph again |
 
@@ -53,7 +62,7 @@ kalem run graph graph.pages ~/notes
 
 ## Editing as an outliner
 
-In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`):
+In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`, from Kalem's next release; with Kalem 0.6.8 the commands run from the Graph menu and the palette):
 
 | Keys | Command | What it does |
 |---|---|---|
@@ -78,7 +87,7 @@ Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq a
 | Styled | task keywords and priorities as Org's, dates, `#tags`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
 | Folded | `:LOGBOOK:` to its first line; the blocks under a block with `collapsed:: true` hidden | a callout with `-` to its first line |
 
-The layer is built only against a Kalem whose plugin API has it (0.2.10): `RUSTFLAGS="--cfg kalem_layer"` and a `kalem-plugin` with the feature `layer`. Built against Kalem's `main` today, the plugin has no layer and draws nothing differently; the editing commands work, their keys in notes need the same Kalem (`editorLayer`).
+The layer comes with Kalem's next release (plugin API 0.2.10's `layer`) and this plugin's 0.2.0. Until then it is built only by hand against Kalem's branch `graph-mode`: `RUSTFLAGS="--cfg kalem_layer"` and a `kalem-plugin` with the feature `layer`.
 
 ## Queries
 
@@ -96,6 +105,8 @@ The results are grouped by page, journals newest first, with each block's first 
 | Blocks | Every `- ` bullet (every headline in Org) with its depth, `id::`, `collapsed::`, task keyword, priority, `SCHEDULED:` and `DEADLINE:`, properties | Paragraphs, list items and headings; `^id` at a line's end; check boxes as tasks; Dataview's `key:: value` |
 | References | `[[page]]`, `[label]([[page]])`, `#tag`, `#[[two words]]`, `((uuid))`, `{{embed …}}`, page properties' values (`alias::`, `tags::`, `:property/separated-by-commas`), `[[file:…][…]]` in Org | `[[note]]`, `[[note\|text]]`, `[[note#Heading]]`, `[[note#^id]]`, `![[note]]`, Markdown links to `.md` files, `#tag` and `#nested/tag` (not `#2026`) |
 | Not references | Code spans and code blocks, `#+BEGIN_SRC` in Org, a block of a template (`template::`) as a task | Code, `%%comments%%`, embeds of pictures |
+
+A Logseq database graph's Markdown Mirror is read as a Logseq graph with Logseq's defaults, as Logseq's own description of it writes it (its ADR 0016 and `docs/logseq-markdown-syntax.md`): each file's first line, the page's `id::`, hidden; properties as `* key:: value` items, an open property's values as the items under it; a page's title as its file's name (a title's `:` or `/` written as `_` there stays so).
 
 ## Settings
 
@@ -115,11 +126,24 @@ With `fs:write:workspace`: a new journal made from a template, and only when no 
 
 ## Known differences
 
-- Without layers (a Kalem before them) the notes are drawn by Kalem's Markdown and Org alone: Logseq's property lines and block ids show, embeds show their source, callouts are quotes. With them, embeds show one line, not the block or page in full, and callouts are quotes with their title.
+From Logseq:
+
+- Whiteboards are listed with the pages and their links resolve, but Kalem does not draw them; following one shows the file to open in Logseq. Flashcards, Logseq's plugins and their syntax, and PDF highlights drawn over the PDF are not there; a PDF's highlights page (`hls__…`) is a page like another.
 - Advanced queries (`#+BEGIN_QUERY`, Datalog) are not run. Of the simple ones, `(sample n)` takes the first n, not n at random; `created-at` and `updated-at` sort by a journal's day only, which file graphs keep; a clause Kalem does not read finds nothing and says so.
-- Whiteboards, canvases, flashcards, PDF highlights and the database version's SQLite graphs are out of scope.
-- The index follows saves and changes on disk, not unsaved typing.
-- Recent Pages remembers the pages of this session only; Logseq keeps its list across sessions.
+- An embed shows one line, not the block or page in full; a query shows one line in its note and its results as a document (Kalem's layers add no lines yet).
+- No real-time sync: Syncthing or git on the folder, as Logseq's file version is used.
+- The database version's graph itself does not open; its Markdown Mirror does, read only.
+- The index follows saves and changes on disk, not unsaved typing. Recent Pages remembers this session's pages only.
+
+From Obsidian:
+
+- Canvases are listed with the notes and their links resolve; following one shows the file to open in Obsidian.
+- Community plugins' syntax is not read, but Dataview's inline fields (`key:: value`), whose keys are dimmed.
+- `.obsidian/` is read for three files only (above), never written.
+- A note is not renamed with its file yet: Kalem gives plugins no way to rename a file.
+
+Both:
+
 - The graph's folder must be a project of Kalem's (see above).
 
 ## Speed and size

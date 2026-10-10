@@ -98,6 +98,9 @@ impl App {
         let Some(index) = self.indexes.get(&root) else {
             return none();
         };
+        if index.graph.read_only {
+            return vec![Effect::Notify(super::READ_ONLY.into(), Level::Info)];
+        }
         let Some(rel) = files::relative(&index.graph.root, &path).map(str::to_string) else {
             return none();
         };
