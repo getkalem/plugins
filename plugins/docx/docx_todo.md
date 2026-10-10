@@ -773,7 +773,11 @@ order they are done, the spike first.
   comments resolved and deleted; `docx-v0.0.4` the next day: a
   comment's text edited, and formatting, WP9; `docx-v0.0.5`: paragraphs
   and lists (plugin API 0.2.8, so `"api": "^0.2.8"`, a Kalem of 0.6.5 or
-  later), lines drawn as shapes shown as lines.)
+  later), lines drawn as shapes shown as lines; `docx-v0.0.6`: a long
+  document edited at a keystroke's pace, WP14a, telling Kalem what
+  changed (plugin API 0.2.9's `flow-3`, which a Kalem of 0.6.8 or later
+  asks; an older one reads the flow whole, so the manifest still asks
+  `^0.2.8`), and pictures drawn, WP7f.)
 
 ## Open for the owner
 

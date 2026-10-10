@@ -4,13 +4,13 @@
     {
       "id": "org.kalem.docx",
       "name": "Word documents",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "description": "Opens Word documents (.docx, .docm, .dotx, .dotm) as themselves, laid out by Kalem: styles, lists, tables, pictures, notes, comments and tracked changes read; text edited and formatted (marks, typefaces, sizes, colors, paragraph styles, alignment, indents, spacing, lists), tracked changes accepted and rejected, comments added, answered, edited, resolved and deleted, every other part kept byte for byte",
       "api": "^0.2.8",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/docx",
-      "download": "https://github.com/getkalem/plugins/releases/download/docx-v0.0.5/docx.wasm",
-      "sha256": "cae247e02be824cb39dd8499144fa5424bee140ff70d83294bdcd7f2643e6126",
+      "download": null,
+      "sha256": null,
       "opens": [
         ".docx",
         ".docm",
