@@ -86,7 +86,7 @@
       "name": "Note graphs",
       "version": "0.1.0",
       "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags, tasks and queries, edited as an outliner, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
-      "api": "^0.2.9",
+      "api": "^0.2.10",
       "permissions": [
         "fs:read:workspace",
         "fs:write:workspace"
