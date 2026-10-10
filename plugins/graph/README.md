@@ -2,7 +2,7 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: early** (GR1 to GR3 of the list). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes themselves still open in Kalem's own Markdown and Org modes: wiki links show as links, but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible, and blocks do not fold as Logseq folds them. Drawing a note as Logseq and Obsidian draw it needs a mode from a plugin, which Kalem's plugin API does not have yet (GR4).
+**Status: early** (GR1 to GR3 of the list, GR5 to GR7 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.9's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
 
 ## What it needs
 
@@ -36,6 +36,19 @@ The status bar shows the graph of the current note and its pages (`⌬ notes · 
 
 **Today's date.** Kalem gives a plugin no clock yet, so the first journal command of a session asks for today's date (the newest journal's date offered) and keeps it until Kalem quits. Asked once; the list's K9 removes the question.
 
+## How notes are drawn (layers)
+
+Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq and Obsidian show differently, away from the cursor (the cursor's line shows the source, as Kalem's markers do; Show Source shows the file as it is):
+
+| | Logseq | Obsidian |
+|---|---|---|
+| Hidden | a block's `id::`, `collapsed::`, `heading::` and the other properties Logseq hides | a `^id` at a line's end, `%%comments%%` |
+| Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
+| Styled | task keywords and priorities as Org's, dates, `#tags`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
+| Folded | `:LOGBOOK:` to its first line | a callout with `-` to its first line |
+
+The layer is built only against a Kalem whose plugin API has it: `RUSTFLAGS="--cfg kalem_layer"` and a `kalem-plugin` with the feature `layer`. Built against Kalem's `main` today, the plugin has no layer and draws nothing differently.
+
 ## What is read
 
 | | Logseq | Obsidian |
@@ -65,7 +78,7 @@ Only a new journal made from a template, and only when no file is there (`fs:wri
 
 ## Known differences
 
-- The notes are drawn by Kalem's Markdown and Org modes until the plugin's mode (GR4 to GR8): Logseq's property lines and block ids show, embeds show their source, callouts are quotes.
+- Without layers (a Kalem before them) the notes are drawn by Kalem's Markdown and Org alone: Logseq's property lines and block ids show, embeds show their source, callouts are quotes. With them, embeds show one line, not the block or page in full, and callouts are quotes with their title.
 - Logseq's queries are not run yet (GR9); whiteboards, canvases, flashcards, PDF highlights, Datalog queries and the database version's SQLite graphs are out of scope.
 - The index follows saves and changes on disk, not unsaved typing.
 - The graph's folder must be a project of Kalem's (see above).

@@ -24,6 +24,7 @@ pub mod date;
 pub mod edn;
 pub mod files;
 pub mod index;
+pub mod layer;
 pub mod names;
 pub mod scan;
 pub mod template;

@@ -182,6 +182,26 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_through_a_link_keeps_the_path_asked() {
+        // Kalem's `fs.list` answers with real paths; the index joins the
+        // names to the folder it asked for.
+        assert_eq!(
+            join(
+                "/tmp/vault",
+                file_name(&normalize("/private/tmp/vault/Home.md"))
+            ),
+            "/tmp/vault/Home.md"
+        );
+        assert_eq!(
+            join(
+                "/tmp/vault",
+                file_name(&normalize("/private/tmp/vault/Daily/"))
+            ),
+            "/tmp/vault/Daily"
+        );
+    }
+
+    #[test]
     fn memory_lists_folders() {
         let m = Memory::new(&[("/g/a.md", ""), ("/g/p/b.md", ""), ("/g/p/q/c.md", "")]);
         assert_eq!(m.list("/g").unwrap(), ["/g/a.md", "/g/p/"]);

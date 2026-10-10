@@ -7,6 +7,10 @@
   "api": "^0.2.8",
   "activation": ["onStartup"],
   "permissions": ["fs:read:workspace", "fs:write:workspace"],
+  "layers": [
+    { "id": "logseq", "markers": ["logseq/config.edn"], "modes": ["markdown", "org"] },
+    { "id": "obsidian", "markers": [".obsidian"], "modes": ["markdown"] }
+  ],
   "menus": [
     {
       "title": "Graph",

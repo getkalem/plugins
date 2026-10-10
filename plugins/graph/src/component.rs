@@ -180,6 +180,10 @@ fn apply(effect: Effect) {
             }
         }
         Effect::Insert(text) => editor::insert(None, &text),
+        #[cfg(kalem_layer)]
+        Effect::RefreshLayers => kalem_plugin::layer::refresh(),
+        #[cfg(not(kalem_layer))]
+        Effect::RefreshLayers => {}
     }
 }
 
@@ -318,6 +322,71 @@ impl Plugin for Graph {
         }
         apply(Effect::Panel(Vec::new()));
         Ok(())
+    }
+
+    /// The layer's overlays (plugin API 0.2.9).
+    #[cfg(kalem_layer)]
+    fn overlays(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet {
+        use crate::layer::{Effect as E, LineEffect as L};
+        use kalem_plugin::layer as api;
+        let o = APP
+            .with(|a| {
+                a.borrow()
+                    .as_ref()
+                    .map(|app| app.overlays(layer, path, text))
+            })
+            .unwrap_or_default();
+        let look = |l: crate::layer::Look| {
+            let mut f = api::SpanStyle::empty();
+            for (on, flag) in [
+                (l.bold, api::SpanStyle::BOLD),
+                (l.italic, api::SpanStyle::ITALIC),
+                (l.strike, api::SpanStyle::STRIKE),
+                (l.code, api::SpanStyle::CODE),
+                (l.link, api::SpanStyle::LINK),
+                (l.dim, api::SpanStyle::DIM),
+                (l.tag, api::SpanStyle::TAG),
+                (l.todo, api::SpanStyle::TODO),
+                (l.done, api::SpanStyle::DONE),
+                (l.timestamp, api::SpanStyle::TIMESTAMP),
+                (l.priority, api::SpanStyle::PRIORITY),
+            ] {
+                if on {
+                    f |= flag;
+                }
+            }
+            f
+        };
+        api::OverlaySet {
+            spans: o
+                .spans
+                .into_iter()
+                .map(|s| api::Span {
+                    start: s.start as u64,
+                    end: s.end as u64,
+                    effect: match s.effect {
+                        E::Hide => api::SpanEffect::Hide,
+                        E::Replace(text, l) => api::SpanEffect::Replace(api::Replacement {
+                            text,
+                            style: look(l),
+                        }),
+                        E::Style(l) => api::SpanEffect::Style(look(l)),
+                    },
+                })
+                .collect(),
+            lines: o
+                .lines
+                .into_iter()
+                .map(|l| api::Lines {
+                    start: l.start as u64,
+                    end: l.end as u64,
+                    effect: match l.effect {
+                        L::Hidden => api::LineEffect::Hidden,
+                        L::Folded => api::LineEffect::Folded,
+                    },
+                })
+                .collect(),
+        }
     }
 }
 

@@ -133,7 +133,11 @@ impl Index {
                     continue;
                 };
                 for e in entries {
-                    let path = files::normalize(&e);
+                    // The entry under the folder asked for: Kalem lists a
+                    // folder by its real path (`/private/tmp` for `/tmp`
+                    // on macOS, a link's target), and the graph's files
+                    // keep its root's.
+                    let path = files::join(&dir, files::file_name(&files::normalize(&e)));
                     let Some(rel) = files::relative(&index.graph.root, &path).map(str::to_string)
                     else {
                         continue;

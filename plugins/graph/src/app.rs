@@ -279,6 +279,9 @@ pub enum Effect {
     },
     /// Inserts text at the cursor of the document the command runs in.
     Insert(String),
+    /// What the layers show changed: Kalem asks the documents' overlays
+    /// again (plugin API 0.2.9).
+    RefreshLayers,
 }
 
 /// What an answer is for.
@@ -546,7 +549,34 @@ impl App {
             out.extend(self.panel_effects());
         }
         out.push(self.status());
+        // A block reference elsewhere may show this graph's text.
+        out.push(Effect::RefreshLayers);
         out
+    }
+
+    /// The overlays of layer `layer` (`logseq` or `obsidian`, the
+    /// manifest's `layers`) for the note at `path` with `text`: from the
+    /// graph's index when it is built, from the text alone else. Asked
+    /// while Kalem draws, so it reads no file.
+    pub fn overlays(&self, layer: &str, path: Option<&str>, text: &str) -> crate::layer::Overlays {
+        let kind = match layer {
+            "obsidian" => Kind::Obsidian,
+            _ => Kind::Logseq,
+        };
+        let path = path.map(files::normalize);
+        let found = path.as_deref().and_then(|p| {
+            self.indexes
+                .iter()
+                .filter(|(r, _)| files::relative(r, p).is_some())
+                .max_by_key(|(r, _)| r.len())
+                .map(|(r, i)| (i, files::relative(r, p).unwrap_or("").to_string()))
+        });
+        match found {
+            Some((index, rel)) => {
+                crate::layer::overlays(index.graph.kind, text, Some(index), Some(&rel))
+            }
+            None => crate::layer::overlays(kind, text, None, path.as_deref().map(files::file_name)),
+        }
     }
 
     /// Document `id` of `key` written, as an effect; kept for Enter.

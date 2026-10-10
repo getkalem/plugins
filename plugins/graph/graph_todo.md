@@ -440,182 +440,156 @@ profile gets a **Graph** menu with the same commands.
   sort of All pages, "PageDown loads thirty more", and the dates of
   tasks before today's date is known.)
 
-## GR4. Kalem's core: a plugin mode (T3.1.9g), layered on a core mode
+## GR4. Kalem's core: layers over a core mode's view
 
 Kalem's side, in a sibling worktree on a branch from `main`
-(`org-graph`), written for every later mode plugin and reviewed as an
-API change (the rule of `kalem-api-general`): nothing of it names this
-plugin. It is the gate of GR5 to GR8 and of R5.10, Typst, which
-follows this plugin (owner, 2026-10-10): the binding is written once
-for both cases, a mode layered on a core mode (this plugin) and a mode
-with a parser of its own (Typst), the test mode plugin covering both,
-and this plugin's mode is the first released against it.
+(`org-graph`, branch `graph-mode`), written for every later plugin and
+reviewed as an API change (the rule of `kalem-api-general`): nothing of
+it names this plugin.
 
-- [ ] GR4a `modes.wit`: the `extension` world gains the export `mode`,
-  bound when a component has it, as the viewer worlds gained `flow-2`
-  (worlds grow, released interfaces never change). `mode-spec`: `id`,
-  `title`, `detect` (`extensions`, `filenames`, `sniff: bool` for a
-  `sniff(head)` export, and `root-markers`: a file or folder name
-  found in an ancestor of the file's path, as a server's
-  `rootMarkers`, so that `.md` files under a folder holding
-  `logseq/config.edn` are this mode's while `.md` files elsewhere stay
-  the core's; the core's `Detect` and `Registry::detect` gain the path
-  for the ancestor walk, and a plugin mode with a marker wins over a
-  core mode for the files under it, as a plugin's syntax wins for its
-  extensions), `base: option<string>` (the core mode this mode layers
-  on, GR4b). Exports: `parse(text, edit: option<text-edit>, previous:
-  option<tree>) -> tree`, the tree as flat arrays (`kinds` as a
-  variant mirroring `kalem_core::modes::Kind` with its fields, `starts`,
-  `ends`, `parents`), `edit(text, at, key) -> option<list<edit>>`
-  (Enter, Tab, BackTab as the core's `EditKey`), `outline(text, tree)
-  -> list<outline-item>`, `format(text) -> option<string>`,
-  `diagnostics(text) -> list<diagnostic>`, `complete(ctx) ->
-  list<completion-item>` (the completer contract of §11.12 bound here
-  once, T3.1.9c: `ctx` is the prefix, the line before the cursor, the
-  node at the cursor, the path), `to-html(text) -> option<string>`,
-  and `embed-text(target: string) -> option<string>` (GR4c). The host
-  side (`kalem-script`, `kalem-cli`'s bridge): a `ComponentMode:
-  ModeSpec` wrapping the component and registered in
-  `kalem_core::modes`' registry when the plugin activates, removed
-  when it deactivates (documents open in it fall back to the base
-  mode or plain text with a notice); each call under the fuel and
-  memory budget of §11.6 (a parse must fit a keystroke: 100 ms; a
-  mode over budget drops the document to its base mode with a notice
-  and is disabled after three failures in a row; the process log says
-  so); `kalem check`, `kalem fmt` and `kalem export` reach it through
-  the registry as they reach every mode. `modes::check` runs on the
-  component in `kalem-script`'s tests with a test mode plugin
-  (`tests/plugins/mode`) that layers on Markdown and turns every
-  `TODO` into a hidden marker, and a second test mode with a parser of
-  its own and no base. API 0.2.9, one release holding the binding and
-  the kinds of GR4c (owner, 2026-10-10): the Book's rule loads a plugin
-  only on the same 0.MINOR, so 0.3.0 would refuse every plugin built
-  against `^0.2.x` until each was re-tagged, for a change that alters
-  no released interface; an export added to a world, bound when the
-  component has it, is how every version since 0.2.1 came. The Book's
-  Part III page "Writing a mode" and the template's `mode` feature.
-- [ ] GR4b Layering: the import `modes.base-parse(mode-id, text, edit,
-  previous) -> tree`. A plugin mode whose spec names a `base` gets the
-  core mode's tree for the same text and returns its own, usually
-  that tree with nodes added, re-kinded or removed; the host runs the
-  base parse first and hands it in, so the plugin never links a
-  Markdown parser and the CommonMark and GFM suites the core passes
-  stay true for every flavour. The base mode's `edit`, `outline`,
-  `format` and `to-html` are the defaults when the layer returns none.
-  The budget covers both parses; the base's is the core's own cost.
-  Tests: the test mode plugin's tree equals Markdown's but for the
-  markers it hides; an incremental parse equals a full one through the
-  layer (`modes::check`).
-- [ ] GR4c The kinds the graph needs, each general. `Embed { target,
-  inline }`: drawn as T2.7c.12 describes an Obsidian embed, the text
-  `embed-text(target)` returns shown read-only in a frame (a block) or
-  inline in the line (a block reference's text), the source hidden
-  away from the cursor and shown on it, Open Link following the
-  target; the host asks `embed-text` once per target per parse and
-  caches by target and the index's version. `Callout { kind, title,
-  folded }` (or `Quote` gaining the three): a quote block with a type
-  (`note`, `warning`, …) drawn with its icon and title and folded as
-  `folded` says, for Obsidian's `> [!NOTE]` and Logseq's
-  `#+BEGIN_NOTE`. `Highlight`: `==text==` and `^^text^^`. `Drawer`: a
-  block folded to its first line while the cursor is away, as Org's
-  property drawer and Markdown's front matter already are, so that
-  `:LOGBOOK:` and a block's property lines fold the same way; if
-  `mode_view` folds those two by name today, the kind replaces the
-  names. A `folded: option<bool>` on `ListItem` and `Heading`, honoured
-  when a document opens, so a block with `collapsed:: true` starts
-  folded as Logseq shows it. `HiddenMarker` already covers a hidden
-  property line, a `^block-id`, a `%%comment%%`. Both editors' snapshot
-  tests for each kind, light and dark, and the terminal's glyphs.
-- [ ] GR4d The leader table: the `SPC n r` rows become the graph
+**What the code says (read 2026-10-10), and why GR4 changed.** The
+editors do not draw a document from the mode contract's tree:
+`kalem_core::mode_view` picks, by `DocumentMode`, each mode's own
+drawing (`markdown::line_view`, `latex_view::line_view`, Org's syntax
+tree); the contract's `ModeSpec::parse` serves `modes::check` and the
+batch commands. A plugin mode returning a tree, even one layered on
+Markdown's, would need a generic drawer of trees, and would draw
+Markdown worse than Markdown's own (its tables, front matter, wiki
+links, formulas, pictures). So the graph does not become a mode: it
+becomes a **layer** over the core mode's view. The core draws the line
+as it does; the layer's overlays then change it, each by source range:
+hidden away from the cursor (a `^id`, an `id::` line's text, the
+brackets of `((uuid))`), shown as other text away from the cursor
+(`((uuid))` as its block's text), drawn in a style (a tag, a task's
+keyword, a highlight), and whole lines hidden or folded to their first
+line away from the cursor (a block's `id::` and `collapsed::` lines, a
+`:LOGBOOK:`). A line is made of runs mapped to source ranges, and
+hiding, replacing and styling are what Markdown's own drawing does to
+runs already, so a layer needs no new drawing in either editor; the
+lines it hides go through the blocks' visibility as drawers do. The
+same contract serves Obsidian's callouts and `%%comments%%`, Pandoc's
+and MyST's extensions, Hugo's shortcodes, Dataview's fields: every
+"Markdown plus" a plugin, without a second Markdown parser and without
+touching the suites the core passes. A standalone plugin mode with a
+parser of its own (Typst, R5.10) still needs the tree's binding and a
+drawer of trees, T3.1.9g proper; it is left to that item. The tasks
+below replace the earlier GR4a to GR4d.
+
+- [x] GR4a The core's contract, `kalem_core::layers`: `Overlays` (spans
+  with an effect: `Hide`, `Replace { text, style }`, `Style(style)`;
+  lines with an effect: `Hidden`, `Folded`), a registry of layers by
+  plugin (an ID, the root markers a document's folder or an ancestor
+  must hold, the modes it serves), the overlays of a document computed
+  by its layer's provider and kept by the document's version
+  (`DocumentState::overlays`), and `mode_view` applying them to the
+  base view's lines and blocks when the document is shown as it reads,
+  never in the source view. Spans of the cursor's line show as source,
+  as markers do; a replaced or hidden span never splits a run the base
+  already replaced (a wiki link), it is dropped there. `BlockKind::Hidden`
+  for lines hidden away from the cursor, handled by `view::visible`
+  beside drawers. Tests in the core with a layer written in Rust.
+  (Done 2026-10-10 in Kalem's worktree `org-graph`, branch `graph-mode`,
+  rebased on `origin/main`: `kalem_core::layers` (`Overlays`,
+  `LayerSpec`, the registry, markers looked for upwards and remembered,
+  the provider, `Outcome` with `Busy` asked again at the next drawing,
+  `apply_line` splitting verbatim runs and leaving a span that would cut
+  a replaced run, `apply_blocks` cutting the mode's blocks, or one block
+  of the whole text when the mode gives none, which Markdown does
+  without front matter or formulas), `BlockKind::Hidden` in
+  `view::visible`, `DocumentState::overlays` kept by the text's version,
+  the layers' generation and the path, `mode_view::view_key` so that
+  both editors keep their blocks by both. Six tests, one over a real
+  Markdown document with a layer written in Rust; Kalem's 566 core tests
+  pass.)
+
+- [x] GR4b The plugin API, 0.2.9: the interface `layer` exported (one
+  function, `overlays(layer, path, text)`), in a world `extension-layer`
+  (the `extension` world and that export) that `kalem-plugin`'s feature
+  `layer` builds, its `Plugin` trait gaining a default `overlays`; the
+  host binding `plugin` and, when the component exports it, `layer`,
+  so components of 0.2.8 load unchanged; the manifest's `layers`
+  (`[{"id", "markers", "modes"}]`) read when a plugin loads and
+  registered in the core, the bridge calling the plugin for a
+  document's overlays under the plugin's time and memory budget, a
+  failure leaving the document as the core draws it. The `clock`
+  interface in the `extension` world (K9) in the same release. The
+  Book's Part III gets "Layers over a mode" and the version's line.
+  (Done 2026-10-10, the same branch: `layer.wit` (the export `layer`
+  with `overlays(layer, path, text) -> overlay-set`, the import
+  `layers.refresh`), the `extension` world importing `clock` and
+  `layers`, the world `extension-layer`, `kalem-plugin`'s feature
+  `layer` and `clock` module, `Plugin::overlays`, the export macro; the
+  host binding `plugin` alone and `layer` when exported, `clock` and
+  `layers` linked without a permission; the manifest's `layers` read and
+  registered when the plugin runs, the bridge asking the plugin under
+  its budget with a lock it only tries, a trap stopping the plugin as
+  any call's does. Kalem's `origin/main` had already taken 0.2.9 for
+  `flow-3`, not yet in a release; the layers join it, or go to 0.2.10 if
+  Kalem is released with 0.2.9 first (the owner's call when merging). A
+  test plugin, `tests/plugins/layered`, and a host test of the overlays,
+  the refresh and the clock; an extension without the export loads with
+  no layer (tested, and checked in the terminal editor with this plugin
+  built against 0.2.8). The Book's Part III has "Layers over a mode" and
+  the version's line; CHANGELOG. The plugin builds its layer with
+  `RUSTFLAGS="--cfg kalem_layer"` against the branch's `kalem-plugin`
+  (feature `layer`) until Kalem's `main` has it; built against `main` it
+  has no layer, as before.)
+
+- [ ] GR4c The leader table: the `SPC n r` rows become the graph
   plugin's (their `reason` "Org Roam is not part of Kalem" replaced by
   the plugin's commands, as the `SPC g` rows were the git plugin's),
-  which-key naming `+roam` as Doom does; `view.setMode graph` as a
-  stopgap for detection if the `root-markers` of GR4a slip (a plugin
-  may run it on `document-open`; it is remembered by path in
-  `files.modes`, which is why the markers are the right way).
+  which-key naming `+roam` as Doom does.
 
-## GR5. The mode: a Logseq Markdown graph drawn as Logseq draws it
+## GR5. The layer: a Logseq Markdown graph drawn as Logseq draws it
 
-- [ ] GR5a The layer over Markdown's tree, construct by construct, each
-  with its test on the corpus and a snapshot in both editors:
+- [~] GR5 The layer `logseq` over Kalem's Markdown (`src/layer.rs`),
+  construct by construct, each with its test and checked in the
+  terminal editor of the branch:
 
   | In the file | Becomes |
   |---|---|
-  | `key:: value` lines after a block's first line | `Drawer` holding `HiddenMarker` lines for the properties Logseq hides (`id`, `collapsed`, `created-at`, `updated-at`, `heading`, `query-table`, `query-properties`, `query-sort-by`, `query-sort-desc`, `logseq.order-list-type`, `logseq.*`, and `:block-hidden-properties` of `config.edn`) and visible lines for the others, each a muted `key: value`; the pre-block's properties as the page's, folded like front matter |
-  | `((uuid))`, `[label](((uuid)))` | `Embed { inline: true }` whose text is the target block's first line (its own references resolved one level); a missing target shows the uuid in the error color |
-  | `{{embed ((uuid))}}`, `{{embed [[page]]}}` | `Embed { inline: false }`: the block with its children, or the page's blocks, read-only in a frame |
-  | `[[page]]`, `[label]([[page]])`, `[[Oct 3rd, 2026]]` | `Link` with the target resolved by GR2b (the core already hides the brackets) |
-  | `#tag`, `#[[two words]]` | `Link` to the tag's page, styled as a tag |
-  | `TODO`, `DOING`, `LATER`, `NOW`, `DONE`, `WAITING`, `CANCELED` at a block's start, `[#A]` | the keyword as Org colors it (done ones struck through when the setting says), the priority as Org's |
-  | `SCHEDULED: <…>`, `DEADLINE: <…>` | the planning line as Org draws it under a headline |
-  | `:LOGBOOK:` … `:END:` | `Drawer` |
-  | `#+BEGIN_QUOTE`, `_NOTE`, `_TIP`, `_IMPORTANT`, `_CAUTION`, `_WARNING`, `_PINNED`, `_EXAMPLE`, `_VERSE`, `_CENTER` … `#+END_*` | `Callout { kind }` (`QUOTE` a plain quote, `EXAMPLE` code without a language, the rest with their icon) |
-  | `logseq.order-list-type:: number` | the block's children as an ordered `List` |
-  | `- # Title`, `heading:: 2` | `Heading` inside the block |
-  | `^^text^^` | `Highlight` |
-  | `$$…$$`, `$…$` | Markdown's `Math` (already) |
-  | `![alt](../assets/x.png)` | Markdown's `Image` (already; the path relative to the page) |
-  | `{{query …}}` | `Embed { inline: false }` whose text GR9a computes; until then the source |
-  | `{{renderer …}}`, `{{video …}}`, `{{youtube …}}`, `{{tweet …}}`, `{{cloze …}}` | source, muted |
-  | `collapsed:: true` | the block folded on open (GR4c's `folded`) |
+  | A block's `key:: value` lines Logseq hides (`id`, `collapsed`, `heading`, `created-at`, `updated-at`, `query-*`, `card-*`, `logseq.*`, `:block-hidden-properties`) | lines hidden away from the cursor |
+  | Other properties, the page's properties | the key dimmed |
+  | `((uuid))` | the block's first line, as a link; dimmed when the block is not found or the graph not indexed |
+  | `{{embed ((uuid))}}`, `{{embed [[page]]}}` | `↳` and the block's first line, or the page's title |
+  | `TODO`, `DOING`, `LATER`, `NOW`, `DONE`, `WAITING`, `CANCELED` at a block's start, `[#A]` | the keyword and the priority as Org draws them |
+  | `SCHEDULED: <…>`, `DEADLINE: <…>` | a date, dimmed |
+  | `:LOGBOOK:` … `:END:` | folded to its first line |
+  | `#tag`, `#[[two words]]` | a tag |
+  | `#+BEGIN_NOTE` … `#+END_NOTE` and the others | their lines dimmed |
+  | `[[page]]`, `$$…$$`, pictures, tables | Kalem's Markdown, unchanged |
 
-  The outline is the page's headings and, under a setting, its
-  top-level blocks' first lines. `to-html` is the base's. `modes::check`
-  passes on every corpus file; every file saved unchanged after being
-  opened, scrolled, folded and unfolded.
-- [ ] GR5b Detection and the base: `root-markers` `["logseq/config.edn"]`,
-  `base` `markdown` for a `:markdown` graph and `org` for an `:org`
-  graph (GR7), `extensions` `md` and `org`; a `.md` file in a Logseq
-  graph that is not under the pages or journals folder (a README at
-  the root) stays the core's Markdown, by a check of the path in
-  `parse` returning the base tree untouched.
+  (Done 2026-10-10 but for what follows. Open: an embed's block or
+  page drawn in full under its line, which needs lines a layer adds
+  (virtual lines, K6's kin); an admonition drawn as a callout box;
+  `logseq.order-list-type:: number`'s numbers; `^^highlight^^`;
+  `collapsed:: true` folding the block on open, which needs a layer's
+  folds (a `folded` effect on lines); `{{query}}`'s results (GR9a).)
 
-## GR6. The mode: an Obsidian vault drawn as Obsidian draws it
+## GR6. The layer: an Obsidian vault drawn as Obsidian draws it
 
-- [ ] GR6 The layer for a vault (`root-markers` `[".obsidian"]`, `base`
-  `markdown`), T2.7c.12's Obsidian half, here by the owner's decision
-  of 2026-10-10: callouts `> [!TYPE]`, `> [!TYPE]+`
-  and `-` with a title after the type, every type Obsidian names
-  (`note`, `abstract` with `summary` and `tldr`, `info`, `todo`, `tip`
-  with `hint` and `important`, `success` with `check` and `done`,
-  `question` with `help` and `faq`, `warning` with `caution` and
-  `attention`, `failure` with `fail` and `missing`, `danger` with
-  `error`, `bug`, `example`, `quote` with `cite`) as `Callout`; embeds
-  `![[Page]]`, `![[Page#Heading]]`, `![[Page#^block]]` as block
-  `Embed`s and `![[pic.png|300]]` as `Image` at the width; links
-  `[[Page#Heading]]`, `[[Page#^block]]`, `[[Page|alias]]` resolved by
-  GR2b; a `^block-id` at a line's end as `HiddenMarker`; `#tag` and
-  `#nested/tag` in the text and the front matter's `tags:` as tag
-  links; `==text==` as `Highlight`; `%%…%%` as `HiddenMarker`;
-  Dataview's `key:: value` inline fields as visible property lines
-  (never hidden: Obsidian shows them); front matter as the core folds
-  it, its `aliases:` feeding GR2b; Mermaid fences and `.canvas` files
-  left as source and as a listing (the README says so); of
-  `.obsidian/` only the three files of GR2b read, read-only, nothing
-  else of it and nothing of `.trash/` read, nothing under either
-  written. Tests as GR5a's, on the
-  Obsidian corpus; the two same-named notes resolve by path; a vault
-  with no `.obsidian/` but the setting `graphs` naming it is a vault
-  too.
+- [~] GR6 The layer `obsidian` over Kalem's Markdown, T2.7c.12's
+  Obsidian half, here by the owner's decision of 2026-10-10: a callout's
+  `[!type]` shown as its icon and name (every type Obsidian names, an
+  unknown one by its own name), `-` folding it to its first line; a
+  `^id` at a line's end hidden; `%%comments%%` hidden, over lines too;
+  `==highlight==` bold, its markers hidden; tags styled; `![[note]]`,
+  `![[note#Heading]]` and `![[note#^id]]` shown as `↳` and the note's
+  title or the block's text; Dataview's `key:: value` key dimmed; front
+  matter as Kalem folds it. (Done 2026-10-10. Open: a callout drawn as a
+  box with its color; embeds drawn in full; `![[pic.png|300]]` at its
+  width, Kalem's Markdown drawing `![[…]]` pictures being the core's
+  T2.7c.12 part that stays there.)
 
-## GR7. The mode: a Logseq Org graph
+## GR7. The layer: a Logseq Org graph
 
-- [ ] GR7 The layer over Org's tree for `:preferred-format :org`: Org's
-  own headlines, drawers, keywords, priorities, planning lines and
-  `LOGBOOK` need nothing; the layer adds `((uuid))` as inline `Embed`
-  resolved through the index by `:id:` across files (the core's
-  `headline-by-id` knows only the open document), `{{embed}}` as block
-  `Embed`, `#+title:`, `#+alias:` and `#+tags:` first lines as the
-  page's properties (folded with the keywords), `[[page]]` resolved by
-  the graph's rules before Org's own (Org would take `[[page]]` as a
-  fuzzy link inside the file), `#tag` as a tag link, `[[file:./a.org]
-  [label]]` as a page link when `:org-mode/insert-file-link?` wrote
-  it, the TODO keywords of `:preferred-workflow` (`:now` gives LATER
-  and NOW, `:todo` gives TODO and DOING) added to the document's
-  keyword set so the cycle (GR8) and the colors know them. The
-  cheapest of the three layers, and the one the Org-file Logseq users,
-  who have nowhere else to go, need first; it follows GR5 only because
-  most Logseq graphs are Markdown.
+- [~] GR7 The layer `logseq` over Kalem's Org for `.org` files: Org's
+  own headlines, drawers, keywords, priorities and planning lines need
+  nothing; the layer shows `((uuid))` as its block's text and `{{embed}}`
+  as `↳` and the block's text, and styles `#tags`. (Done 2026-10-10.
+  Open: `[[page]]` resolved by the graph's rules before Org's own (Org
+  takes `[[page]]` as a fuzzy link inside the file), the TODO keywords
+  of `:preferred-workflow` added to the document's keyword set.)
 
 ## GR8. Editing as an outliner
 
@@ -775,16 +749,18 @@ and this plugin's mode is the first released against it.
 
 Each is the plugin's gate or its ask, written for every plugin.
 
-- K1 A mode from a plugin (T3.1.9g): the `mode` export of GR4a with
-  `root-markers` in `detect`, the host's `ComponentMode`, the budget
-  and the fallback, `modes::check` on components, the completer hook
-  bound in the same interface (T3.1.9c). Gates GR5 to GR8 and R5.10.
-- K2 `base-parse`: a plugin mode layered on a core mode's tree (GR4b).
-  Without it the plugin would carry comrak and re-derive the Markdown
-  mode's tree, 3,000 lines copied and the suites' guarantees lost.
-- K3 Kinds: `Embed` with `embed-text`, `Callout` (or `Quote` with a
-  type, title and fold), `Highlight`, `Drawer`, `folded` on block
-  kinds (GR4c). `Embed` is the one no other kind approximates.
+- K1 Layers over a mode's view (GR4a, GR4b): done on Kalem's branch
+  `graph-mode`, waiting to be merged. It replaces the earlier asks of a
+  plugin mode with a tree layered on a core mode's (`base-parse`) and
+  new kinds (`Embed`, `Callout`, `Highlight`, `Drawer`): the editors
+  draw from each mode's own code, not from the contract's tree, so a
+  layer over that drawing serves where a tree would not.
+- K2 Lines a layer adds under a line, drawn and not part of the text
+  (an embed's block in full, a query's results): the editors' virtual
+  lines, beside K6's virtual text. Not blocking.
+- K3 Folds a layer gives (a block with `collapsed:: true` folded on
+  open, a callout's `-`): a `folded` effect on lines that the editors'
+  folds start from. Not blocking.
 - K4 The `SPC n r` rows handed to the plugin, `+roam` in which-key
   (GR4d), as `SPC g` was handed to the git plugin.
 - K5 An edit to a named open document, or an event when a file the
@@ -801,10 +777,10 @@ Each is the plugin's gate or its ask, written for every plugin.
   from a plugin (GR10). Not blocking.
 
 - K9 The `clock` interface in the `extension` world (the viewers'
-  worlds import it already): today's date and the time for any
-  extension plugin. Without it this plugin asks the date once a session
-  (GR3b) and leaves Logseq's `<% time %>` empty. Small, general (the git
-  plugin's relative dates want it too); it can join API 0.2.9 with K1.
+  worlds import it already): done on Kalem's branch `graph-mode` with
+  K1. Until it is merged and the plugin built against it, this plugin
+  asks the date once a session (GR3b) and leaves Logseq's `<% time %>`
+  empty.
 - K10 A plugin learns the folders of Kalem's projects (an `editor` or
   `kalem` function, or an event when one is added), so that the graphs
   among them are found at start, and a notice can say which folder to
