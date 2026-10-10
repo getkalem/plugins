@@ -56,6 +56,22 @@ fn guid(seed: &str) -> String {
     )
 }
 
+/// Now as a threaded comment's `dT` (`2026-10-10T12:00:00.00`, UTC): for
+/// comments made through the annotations, which bring no time.
+pub fn now_dt() -> String {
+    let secs = crate::time::SystemTime::now()
+        .duration_since(crate::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let (y, m, d) = crate::numfmt::civil_from_days(secs.div_euclid(86_400));
+    let t = secs.rem_euclid(86_400);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.00",
+        t / 3600,
+        t % 3600 / 60,
+        t % 60
+    )
+}
+
 /// The persons of a `personList`: id → display name.
 fn parse_persons(text: &str) -> Vec<(String, String)> {
     let mut r = Reader::new(text);
@@ -388,6 +404,37 @@ impl Workbook {
         } else {
             threads[pos].comments.remove(index);
         }
+        self.in_one_step(|wb| {
+            wb.write_threads(idx, &threads, &[at])?;
+            wb.batch_changed = true;
+            Ok(())
+        })
+    }
+
+    /// Changes the text of comment `index` of cell `at`'s thread (and of
+    /// the note mirroring it for older readers). One undo step.
+    pub fn set_thread_comment_text(
+        &mut self,
+        idx: usize,
+        at: CellRef,
+        index: usize,
+        text: &str,
+    ) -> Result<()> {
+        if text.trim().is_empty() {
+            return Err(Error::Refused("A comment needs some text".into()));
+        }
+        let mut threads = self.threads(idx);
+        let Some(entry) = threads
+            .iter_mut()
+            .find(|t| t.cell == at)
+            .and_then(|t| t.comments.get_mut(index))
+        else {
+            return Err(Error::Refused(format!("{at} has no such comment")));
+        };
+        if entry.text == text {
+            return Ok(());
+        }
+        entry.text = text.to_owned();
         self.in_one_step(|wb| {
             wb.write_threads(idx, &threads, &[at])?;
             wb.batch_changed = true;

@@ -216,6 +216,7 @@ impl Viewer for XlsxViewer {
             fill_lists: Vec::new(),
             name: file.name().to_owned(),
             password,
+            author: String::new(),
         }))
     }
 
@@ -261,6 +262,8 @@ struct XlsxDoc {
     /// The password the workbook opened with, which it is saved
     /// encrypted with again.
     password: Option<String>,
+    /// Who the comments made through the annotations are by.
+    author: String,
 }
 
 fn units(names: impl Iterator<Item = (String, bool, bool)>) -> Structure {
@@ -343,6 +346,37 @@ impl crate::macros::MacroHost for Ui<'_> {
 }
 
 impl XlsxDoc {
+    /// Where comment `id` of a thread is: its sheet, its cell and its
+    /// place in the thread (0 the first).
+    fn find_comment(&mut self, id: &str) -> Option<(usize, CellRef, usize)> {
+        let n = self.locked().sheets().len();
+        let sheets: Vec<usize> = (0..n).filter(|u| self.worksheet(*u)).collect();
+        sheets.into_iter().find_map(|u| {
+            self.book().threads(u).into_iter().find_map(|t| {
+                t.comments
+                    .iter()
+                    .position(|c| c.id == id)
+                    .map(|i| (u, t.cell, i))
+            })
+        })
+    }
+
+    /// A comment on cell `at` of sheet `unit` by the annotations' author,
+    /// the first of a thread or an answer; its ID.
+    fn add_comment(&mut self, unit: usize, at: CellRef, text: &str) -> Result<String> {
+        let author = self.author.clone();
+        self.book()
+            .add_thread_comment(unit, at, &author, text, &crate::workbook::now_dt())
+            .map_err(err)?;
+        self.notes.remove(&unit);
+        self.book()
+            .threads(unit)
+            .into_iter()
+            .find(|t| t.cell == at)
+            .and_then(|t| t.comments.last().map(|c| c.id.clone()))
+            .ok_or_else(|| ViewerError("The comment was not written".into()))
+    }
+
     /// The workbook's package (the `.xlsx` zip), the workbook marked
     /// saved.
     fn save_package(&mut self) -> Result<Vec<u8>> {
@@ -1319,6 +1353,92 @@ impl ViewerDocument for XlsxDoc {
                     .collect(),
             })
             .collect()
+    }
+
+    /// The threaded comments as annotations on their cells: each comment
+    /// and answer by its ID, an answer naming the comment it answers, the
+    /// first resolved when its thread is. Notes are the grid's, not
+    /// annotations.
+    fn annotations(&mut self, unit: Option<usize>) -> Vec<kalem_viewer::Annotation> {
+        use kalem_viewer::{Anchor, Annotation, AnnotationKind};
+        let units: Vec<usize> = match unit {
+            Some(u) => vec![u],
+            None => (0..self.locked().sheets().len()).collect(),
+        };
+        let mut out = Vec::new();
+        let units: Vec<usize> = units.into_iter().filter(|u| self.worksheet(*u)).collect();
+        for u in units {
+            for t in self.book().threads(u) {
+                let first = t.comments.first().map(|c| c.id.clone());
+                for (i, c) in t.comments.into_iter().enumerate() {
+                    out.push(Annotation {
+                        id: c.id,
+                        kind: AnnotationKind::Comment,
+                        author: c.author,
+                        date: (!c.time.is_empty()).then_some(c.time),
+                        text: c.text,
+                        parent: if i == 0 { None } else { first.clone() },
+                        resolved: i == 0 && t.done,
+                        anchors: vec![Anchor::Cell {
+                            unit: u,
+                            row: t.cell.row,
+                            col: t.cell.col,
+                        }],
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    fn set_author(&mut self, name: &str) {
+        self.author = name.to_owned();
+    }
+
+    /// A comment on a cell; on a cell with a thread, an answer in it, as
+    /// Excel's New Comment there answers.
+    fn comment(&mut self, on: kalem_viewer::Anchor, text: &str) -> Result<String> {
+        let kalem_viewer::Anchor::Cell { unit, row, col } = on else {
+            return Err(ViewerError("A workbook's comments are on cells".into()));
+        };
+        self.add_comment(unit, CellRef::new(row, col), text)
+    }
+
+    fn reply(&mut self, parent: &str, text: &str) -> Result<String> {
+        let (unit, at, _) = self
+            .find_comment(parent)
+            .ok_or_else(|| ViewerError(format!("No comment {parent}")))?;
+        self.add_comment(unit, at, text)
+    }
+
+    fn set_comment_text(&mut self, id: &str, text: &str) -> Result<()> {
+        let (unit, at, i) = self
+            .find_comment(id)
+            .ok_or_else(|| ViewerError(format!("No comment {id}")))?;
+        self.book()
+            .set_thread_comment_text(unit, at, i, text)
+            .map_err(err)?;
+        self.notes.remove(&unit);
+        Ok(())
+    }
+
+    fn resolve(&mut self, id: &str, done: bool) -> Result<()> {
+        let (unit, at, _) = self
+            .find_comment(id)
+            .ok_or_else(|| ViewerError(format!("No comment {id}")))?;
+        self.book().resolve_thread(unit, at, done).map_err(err)
+    }
+
+    /// Takes a comment away; the first of a thread takes its answers.
+    fn remove_comment(&mut self, id: &str) -> Result<()> {
+        let (unit, at, i) = self
+            .find_comment(id)
+            .ok_or_else(|| ViewerError(format!("No comment {id}")))?;
+        self.book()
+            .delete_thread_comment(unit, at, i)
+            .map_err(err)?;
+        self.notes.remove(&unit);
+        Ok(())
     }
 
     fn add_thread_comment(
@@ -3154,6 +3274,48 @@ mod tests {
         assert!(d.undo().unwrap());
         assert_eq!(d.cell_input(0, 8, 0), "");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn threaded_comments_as_annotations() {
+        use kalem_viewer::{Anchor, Annotation};
+        let mut d = open("openpyxl-budget.xlsx");
+        d.set_author("Ayşe");
+        let b4 = Anchor::Cell {
+            unit: 0,
+            row: 3,
+            col: 1,
+        };
+        let first = d.comment(b4.clone(), "Check this").unwrap();
+        let answer = d.reply(&first, "Done").unwrap();
+        let notes = |d: &mut Box<dyn ViewerDocument>| -> Vec<Annotation> { d.annotations(Some(0)) };
+        let a = notes(&mut d);
+        assert_eq!(a.len(), 2);
+        assert_eq!(
+            (a[0].id.as_str(), a[0].author.as_str()),
+            (first.as_str(), "Ayşe")
+        );
+        assert_eq!(a[0].anchors, [b4]);
+        assert_eq!(a[1].parent.as_deref(), Some(first.as_str()));
+        // Its text changed, the thread resolved; the grid's thread agrees.
+        d.set_comment_text(&answer, "Fixed in B4").unwrap();
+        d.resolve(&first, true).unwrap();
+        let a = notes(&mut d);
+        assert_eq!(a[1].text, "Fixed in B4");
+        assert!(a[0].resolved);
+        let t = d.threads(0);
+        assert!(t[0].done);
+        assert_eq!(t[0].comments[1].text, "Fixed in B4");
+        // An answer taken away; then the thread with its first comment.
+        d.remove_comment(&answer).unwrap();
+        assert_eq!(notes(&mut d).len(), 1);
+        d.remove_comment(&first).unwrap();
+        assert!(notes(&mut d).is_empty());
+        // Each step undoes; a comment is on a cell, nowhere else.
+        assert!(d.undo().unwrap());
+        assert_eq!(notes(&mut d).len(), 1);
+        assert!(d.comment(Anchor::Unit(0), "Where?").is_err());
+        assert!(d.reply("{none}", "x").is_err());
     }
 
     #[test]

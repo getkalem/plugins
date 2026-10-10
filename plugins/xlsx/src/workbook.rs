@@ -8168,7 +8168,7 @@ mod tables;
 mod views;
 pub use views::{SplitRaw, ViewRaw};
 mod threads;
-pub use threads::{Thread, ThreadEntry};
+pub use threads::{Thread, ThreadEntry, now_dt};
 mod whatif;
 pub use tables::{TableDef, style_colors};
 pub use whatif::ScenarioDef;

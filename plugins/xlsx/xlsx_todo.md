@@ -197,7 +197,7 @@ measurements ignored.
 
 ### XL11. The generic halves of the contract
 
-- [ ] XL11 The `spreadsheet-viewer` world exports `annotations`, but
+- [~] XL11 The `spreadsheet-viewer` world exports `annotations`, but
   the plugin keeps the trait's defaults for it (`annotations`,
   `comment`, `reply`, `resolve`, `remove_comment`, `set_comment_text`,
   `set_author`) and offers threaded comments through the grid's
@@ -208,7 +208,14 @@ measurements ignored.
   next and previous), or the world stops exporting it. `search`,
   `links`, `text_at` and `text_rects` are defaults too: the grid has
   its own find and links, which is fine, and should be recorded as the
-  decision.
+  decision. (Done 2026-10-10: the plugin gives its threaded comments
+  as annotations, each comment and answer by its ID on its cell
+  (`Anchor::Cell`), and adds, answers, edits (the workbook's new
+  `set_thread_comment_text`), resolves and removes them through the
+  contract, by the author `set_author` gives; Kalem's branch
+  `xlsx-menus` edits a comment's text from the grid's Comments through
+  them. Open: the Review commands and their panel for workbooks in
+  Kalem, and the decision on `search` and `links`.)
 
 ## In the menus (Kalem's side)
 
