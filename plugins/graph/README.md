@@ -2,7 +2,7 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: early** (GR1 to GR3 of the list, GR5 to GR7 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.10's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
+**Status: early** (GR1 to GR4 and GR9 of the list, GR5 to GR8 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.10's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
 
 ## What it needs
 
@@ -18,7 +18,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 |---|---|---|
 | `SPC n r r` | Backlinks Panel | The side panel: the page's linked references grouped by page, then its unlinked mentions; a click opens the line |
 | `SPC n r R` | Backlinks | The same as a document, with the references to the page's blocks; Enter on a line opens it |
-| `SPC n r o` | Follow Reference | The `[[page]]`, `#tag`, `((uuid))`, `{{embed}}`, `[[note#Heading]]` or `[[note#^id]]` under the cursor; a page not written yet opens as a new file, written when saved |
+| `SPC n r o` | Follow Reference | The `[[page]]`, `#tag`, `((uuid))`, `{{embed}}`, `[[note#Heading]]` or `[[note#^id]]` under the cursor; a page not written yet opens as a new file, written when saved. On a `{{query …}}`'s line, its results (below) |
 | `SPC n r f` | Find Page | Every page by title, aliases in the detail; "Create a page…" first |
 | `SPC n r i` | Insert Link | A link to the chosen page, written as the graph writes links (Logseq's `[[Title]]`; Obsidian's shortest path, or as `.obsidian/app.json` says) |
 | `SPC n r b` | Insert Block Reference | `((uuid))` or `[[note#^id]]` of a block that has an id |
@@ -28,13 +28,14 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r p` | All Pages | Every page with its links and blocks, then the pages only referenced |
 | `SPC n r j` | Journals | The last thirty journals, newest first, with their blocks |
 | `SPC n r T` | Tags | Every tag with how often it is used |
-| `SPC n r t` | Tasks | NOW and DOING, then LATER and TODO by priority, then WAITING; what is scheduled or due within a week |
+| `SPC n r t` | Tasks | NOW and DOING, then LATER and TODO by priority, then WAITING; what is scheduled or due within a week. Enter opens the task, `t` cycles its keyword in its file |
+| `SPC n r q` | Run Query | A Logseq simple query typed, its results as a document |
 | `SPC n r g` | Graph | The pages as a tree of namespaces with their links in and out, then the orphans |
 | `SPC n r s` | Index Again | Reads the graph again |
 
 The status bar shows the graph of the current note and its pages (`⌬ notes · 1,240 pages`); a click lists them.
 
-**Today's date.** Kalem gives a plugin no clock yet, so the first journal command of a session asks for today's date (the newest journal's date offered) and keeps it until Kalem quits. Asked once; the list's K9 removes the question.
+**Today's date.** Kalem's plugin API 0.2.10 gives a plugin the time in UTC and the time zone's name, not its offset. The Tasks document and the queries count from the UTC day until the user gives the date. The first journal command of a session asks for today's date, offering the clock's day (the newest journal's without the clock), and keeps it until Kalem quits.
 
 ## Editing as an outliner
 
@@ -42,7 +43,7 @@ In a note of a graph (a document the plugin's layer serves, Kalem's when-clause 
 
 | Keys | Command | What it does |
 |---|---|---|
-| `SPC m t` | Cycle Task | The block's keyword: none, `LATER` (or `TODO` with `:preferred-workflow :todo`), `NOW` (`DOING`), `DONE`, none; in a vault the check box: none, `[ ]`, `[x]`, none |
+| `SPC m t` | Cycle Task | The block's keyword as Logseq cycles it: `TODO` to `DOING`, `LATER` to `NOW`, both to `DONE`, `DONE` to none, and none (or `WAITING`, `CANCELED`) to `LATER` (`TODO` with `:preferred-workflow :todo`); in a vault the check box: none, `[ ]`, `[x]`, none |
 | `SPC m p` | Set Priority | `[#A]`, `[#B]`, `[#C]` or none, after the keyword |
 | `SPC m d s`, `SPC m d d` | Schedule, Deadline | `SCHEDULED: <2026-10-12 Mon>` after the block's first line and properties (after an Org headline), replaced where it is, removed when the answer is empty |
 | `Alt+Shift+Up`, `Alt+Shift+Down` | Move Block Up, Down | The block with the blocks under it past its sibling |
@@ -59,11 +60,17 @@ Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq a
 | | Logseq | Obsidian |
 |---|---|---|
 | Hidden | a block's `id::`, `collapsed::`, `heading::` and the other properties Logseq hides | a `^id` at a line's end, `%%comments%%` |
-| Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
+| Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page; `{{query …}}` as `⌕`, how many blocks or pages it finds and the first two; `#+BEGIN_QUERY` marked as not run | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
 | Styled | task keywords and priorities as Org's, dates, `#tags`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
 | Folded | `:LOGBOOK:` to its first line; the blocks under a block with `collapsed:: true` hidden | a callout with `-` to its first line |
 
 The layer is built only against a Kalem whose plugin API has it (0.2.10): `RUSTFLAGS="--cfg kalem_layer"` and a `kalem-plugin` with the feature `layer`. Built against Kalem's `main` today, the plugin has no layer and draws nothing differently; the editing commands work, their keys in notes need the same Kalem (`editorLayer`).
+
+## Queries
+
+Logseq's simple queries run over the index: `[[page]]` and `#tag` (the page's blocks, the blocks referring to it and the blocks under them, as Logseq's path references count them), `"text"` and `(full-text-search "text")`, `(and …)`, `(or …)`, `(not …)`, `(task NOW DOING)`, `(priority A B)`, `(between -7d today)` (a journal's day, `SCHEDULED:` or `DEADLINE:`; `today`, `yesterday`, `tomorrow`, `±Nd`, `±Nw`, `±Nm`, `±Ny`, `[[Oct 3rd, 2026]]`, `2026-10-03`), `(property key value)`, `(page-property key value)`, `(page-tags tag)`, `(page name)`, `(namespace name)`, `(sort-by key desc)` and `(sample n)`. A query of page clauses only finds pages.
+
+The results are grouped by page, journals newest first, with each block's first line; with `query-table:: true` on the query's block they are a table of the columns `query-properties::` names (`[:block :page]` by default), sorted by `query-sort-by::` and `query-sort-desc::`. Enter opens a block, `t` cycles its keyword. The document and the line in the note are computed again when the graph changes.
 
 ## What is read
 
@@ -90,12 +97,13 @@ The layer is built only against a Kalem whose plugin API has it (0.2.10): `RUSTF
 
 ## What it writes
 
-With `fs:write:workspace`: a new journal made from a template, and only when no file is there; a block's `id::` when it is first referred to; the references to a page renamed. Each file is read again right before, only the lines touched change, and a file Kalem holds with unsaved changes is never written. Every other new page opens as an empty document and is written when the user saves it. Nothing under `logseq/` or `.obsidian/`.
+With `fs:write:workspace`: a new journal made from a template, and only when no file is there; a block's `id::` when it is first referred to; the references to a page renamed; a task's keyword cycled from the Tasks or a Query document. Each file is read again right before, only the lines touched change, and a file Kalem holds with unsaved changes is never written. Every other new page opens as an empty document and is written when the user saves it. Nothing under `logseq/` or `.obsidian/`.
 
 ## Known differences
 
 - Without layers (a Kalem before them) the notes are drawn by Kalem's Markdown and Org alone: Logseq's property lines and block ids show, embeds show their source, callouts are quotes. With them, embeds show one line, not the block or page in full, and callouts are quotes with their title.
-- Logseq's queries are not run yet (GR9); whiteboards, canvases, flashcards, PDF highlights, Datalog queries and the database version's SQLite graphs are out of scope.
+- Advanced queries (`#+BEGIN_QUERY`, Datalog) are not run. Of the simple ones, `(sample n)` takes the first n, not n at random; `created-at` and `updated-at` sort by a journal's day only, which file graphs keep; a clause Kalem does not read finds nothing and says so.
+- Whiteboards, canvases, flashcards, PDF highlights and the database version's SQLite graphs are out of scope.
 - The index follows saves and changes on disk, not unsaved typing.
 - The graph's folder must be a project of Kalem's (see above).
 

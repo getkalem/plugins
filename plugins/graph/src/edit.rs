@@ -131,15 +131,16 @@ fn content_start(text: &str, st: &[usize], b: &Block, flavor: Flavor) -> usize {
 /// second, done, none. Logseq's `:now` workflow is `["LATER", "NOW",
 /// "DONE"]`, `:todo` `["TODO", "DOING", "DONE"]`.
 fn next_marker(current: Option<&str>, cycle: [&str; 3]) -> Option<&'static str> {
-    let names: [&'static str; 3] = match cycle {
-        ["LATER", ..] => ["LATER", "NOW", "DONE"],
-        _ => ["TODO", "DOING", "DONE"],
-    };
+    // Logseq's cycle: each keyword to its own next, whatever the
+    // workflow; a block without one, or WAITING or CANCELED, to the
+    // workflow's first.
     match current {
-        None => Some(names[0]),
-        Some("LATER") | Some("TODO") | Some("WAITING") | Some("WAIT") => Some(names[1]),
-        Some("NOW") | Some("DOING") | Some("IN-PROGRESS") | Some("STARTED") => Some("DONE"),
-        Some(_) => None,
+        Some("TODO") => Some("DOING"),
+        Some("LATER") => Some("NOW"),
+        Some("NOW" | "DOING" | "IN-PROGRESS" | "STARTED") => Some("DONE"),
+        Some("DONE") => None,
+        _ if cycle[0] == "LATER" => Some("LATER"),
+        _ => Some("TODO"),
     }
 }
 
@@ -622,6 +623,11 @@ mod tests {
         let t = "- NOW [#A] go\n";
         assert_eq!(c(t, 0), "- DONE [#A] go\n");
         assert_eq!(c("- DONE go\n", 0), "- go\n");
+        // Each keyword to its own next whatever the workflow, as Logseq
+        // cycles them.
+        assert_eq!(c("- TODO go\n", 0), "- DOING go\n");
+        assert_eq!(c("- WAITING go\n", 0), "- LATER go\n");
+        assert_eq!(c("- CANCELED go\n", 0), "- LATER go\n");
         let t = "- go\n";
         assert_eq!(
             run(t, |c| cycle_todo(t, Flavor::LogseqMarkdown, TODO, c), 0),

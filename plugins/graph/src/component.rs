@@ -288,10 +288,12 @@ impl Plugin for Graph {
     fn activate() -> Result<(), String> {
         APP.with(|a| {
             *a.borrow_mut() = Some(App::new(read_settings()));
-            // Block IDs from the clock's random bits (API 0.2.10).
+            // Block IDs from the clock's random bits, the views' day from its
+            // time (API 0.2.10).
             #[cfg(kalem_layer)]
             if let Some(app) = a.borrow_mut().as_mut() {
                 app.random = Some(kalem_plugin::clock::random);
+                app.now = Some(kalem_plugin::clock::now);
             }
         });
         for c in app::COMMANDS {

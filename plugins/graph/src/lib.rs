@@ -11,7 +11,8 @@
 //! - [`date`]: dates and the patterns journals are named by;
 //! - [`edn`]: a reader of EDN, `config.edn`'s notation;
 //! - [`files`]: the files, through Kalem's `fs` or natively;
-//! - [`names`]: page names and Logseq's file names.
+//! - [`names`]: page names and Logseq's file names;
+//! - [`query`]: Logseq's simple queries over the index.
 //!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
@@ -27,6 +28,7 @@ pub mod files;
 pub mod index;
 pub mod layer;
 pub mod names;
+pub mod query;
 pub mod scan;
 pub mod template;
 pub mod views;

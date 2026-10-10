@@ -82,7 +82,12 @@ pub struct Index {
     tags: BTreeMap<String, (String, Vec<BackRef>)>,
     /// Files not read, and why.
     pub problems: Vec<String>,
+    /// Changed with every change of the index, across indexes.
+    version: u64,
 }
+
+/// The versions given out.
+static VERSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// The files the index reads, by extension.
 fn readable(kind: Kind, ext: &str) -> Option<Flavor> {
@@ -108,7 +113,14 @@ impl Index {
             block_incoming: HashMap::new(),
             tags: BTreeMap::new(),
             problems: Vec::new(),
+            version: VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
+    }
+
+    /// A number that changes whenever the index does, and no two indexes
+    /// share: what was computed from the index is good while it stays.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     /// The index of `graph`, its files read.
@@ -299,6 +311,7 @@ impl Index {
     /// The maps built from the files: names, block ids, the pages only
     /// referenced, what links where.
     fn derive(&mut self) {
+        self.version = VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.pages.retain(|_, p| p.path.is_some());
         self.names.clear();
         self.stems.clear();

@@ -29,9 +29,13 @@ pub const KINDS: &[&str] = &[
     "graph-tags",
     "graph-tasks",
     "graph-graph",
+    "graph-query",
 ];
 /// Where the documents' keys apply.
-pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph) && (vimCommand || !vimActive)";
+pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query) && (vimCommand || !vimActive)";
+/// Where `t` cycles a task's keyword: the documents listing tasks.
+pub const TASK_DOC_WHEN: &str =
+    "(textType == graph-tasks || textType == graph-query) && (vimCommand || !vimActive)";
 
 /// A command of the plugin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +119,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("graph.tags", "Tags", &["space n r shift+t"]),
     c("graph.tasks", "Tasks", &["space n r t"]),
     c("graph.graph", "Graph", &["space n r g"]),
+    c("graph.runQuery", "Run Query", &["space n r q"]),
     c("graph.reindex", "Index Again", &["space n r s"]),
     CommandInfo {
         id: "graph.open",
@@ -128,7 +133,11 @@ pub const COMMANDS: &[CommandInfo] = &[
     n(
         "graph.cycleTodo",
         "Cycle Task",
-        &[("space m t", in_note!(" && vimCommand"))],
+        &[
+            ("space m t", in_note!(" && vimCommand")),
+            // In the Tasks and Query documents: the task of the line.
+            ("t", TASK_DOC_WHEN),
+        ],
     ),
     n(
         "graph.setPriority",
@@ -438,6 +447,9 @@ enum Pending {
     JournalOn {
         root: String,
     },
+    Query {
+        root: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -477,6 +489,12 @@ pub struct App {
     made: u64,
     /// Random bits, when Kalem gives the plugin its clock (API 0.2.10).
     pub random: Option<fn() -> u64>,
+    /// Milliseconds since 1970 in UTC, when Kalem gives the plugin its
+    /// clock (API 0.2.10).
+    pub now: Option<fn() -> i64>,
+    /// What the `{{query …}}` of the notes show, by graph and query, with
+    /// the index's version they were computed from.
+    queries: std::cell::RefCell<BTreeMap<(String, String), (u64, String)>>,
 }
 
 impl App {
@@ -499,7 +517,19 @@ impl App {
             dirty: BTreeSet::new(),
             made: 0,
             random: None,
+            now: None,
+            queries: std::cell::RefCell::new(BTreeMap::new()),
         }
+    }
+
+    /// The day the views count from: the one the user gave, else the
+    /// clock's day in UTC (Kalem gives no time zone's offset, so the
+    /// journals' commands still ask), else none.
+    fn day(&self) -> Option<Date> {
+        self.today.or_else(|| {
+            self.now
+                .map(|now| Date::from_days(now().div_euclid(86_400_000)))
+        })
     }
 
     /// The day the plugin was told is today; Kalem gives plugins no clock
@@ -620,11 +650,16 @@ impl App {
         let mut out = Vec::new();
         let path = files::normalize(path);
         self.current = Some(path.clone());
+        let known = self.indexes.len();
         if let Some(root) = self.graph_of(files, &path, &mut out) {
             self.last = Some(root);
         }
         out.extend(self.panel_effects());
         out.push(self.status());
+        // A graph indexed just now: the note was drawn without it.
+        if self.indexes.len() > known {
+            out.push(Effect::RefreshLayers);
+        }
         out
     }
 
@@ -715,10 +750,37 @@ impl App {
         });
         match found {
             Some((index, rel)) => {
-                crate::layer::overlays(index.graph.kind, text, Some(index), Some(&rel))
+                let o = crate::layer::overlays(index.graph.kind, text, Some(index), Some(&rel));
+                if index.graph.kind == Kind::Obsidian {
+                    return o;
+                }
+                crate::layer::queries(o, text, &|q| self.query_summary(index, q))
             }
             None => crate::layer::overlays(kind, text, None, path.as_deref().map(files::file_name)),
         }
+    }
+
+    /// What `{{query q}}` shows in a note of the graph of `index`: kept
+    /// until the index changes.
+    fn query_summary(&self, index: &Index, q: &str) -> String {
+        let key = (index.graph.root.clone(), q.to_string());
+        if let Some((v, s)) = self.queries.borrow().get(&key)
+            && *v == index.version()
+        {
+            return s.clone();
+        }
+        let mark = if self.settings.glyphs == "ascii" {
+            "query:"
+        } else {
+            "⌕"
+        };
+        let s = crate::query::summary(index, q, self.day(), mark);
+        let mut cache = self.queries.borrow_mut();
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(key, (index.version(), s.clone()));
+        s
     }
 
     /// Document `id` of `key` written, as an effect; kept for Enter.
@@ -764,8 +826,19 @@ impl App {
             "graph.tasks" => (
                 format!("Tasks: {name}"),
                 "graph-tasks",
-                views::tasks(index, self.today),
+                views::tasks(index, self.day()),
             ),
+            "graph.query" => {
+                let text = page?;
+                let shape = crate::query::Shape::decode(parts.next().unwrap_or(""));
+                let short: String = text.chars().take(40).collect();
+                let more = if text.chars().count() > 40 { "…" } else { "" };
+                (
+                    format!("Query: {short}{more}"),
+                    "graph-query",
+                    views::query(index, text, &shape, self.day(), g),
+                )
+            }
             "graph.graph" => (format!("Graph: {name}"), "graph-graph", views::graph(index)),
             _ => return None,
         };
@@ -824,6 +897,9 @@ impl App {
         if id == "graph.open" || (id == "graph.follow" && ctx.doc.is_some()) {
             return self.open_line(ctx);
         }
+        if id == "graph.cycleTodo" && ctx.doc.is_some() {
+            return self.cycle_in_document(files, ctx);
+        }
         let Some(root) = self.root_for(files, ctx, &mut out) else {
             return out;
         };
@@ -850,6 +926,15 @@ impl App {
             }
             "graph.tasks" => {
                 out.extend(self.render(id, &root, true));
+            }
+            "graph.runQuery" => {
+                let t = self.token(Pending::Query { root });
+                out.push(Effect::Prompt {
+                    token: t,
+                    title: "Logseq's simple query".into(),
+                    value: None,
+                    placeholder: Some("(and [[page]] (task TODO DOING))".into()),
+                });
             }
             "graph.reindex" => {
                 let kind = self.indexes[&root].graph.kind;
@@ -995,10 +1080,11 @@ impl App {
             return self.then(files, today, then);
         }
         let Then::Journal { root, .. } = &then;
-        let guess = self
-            .indexes
-            .get(root)
-            .and_then(|i| i.journals().last().map(|(d, _)| d.iso()));
+        let guess = self.day().map(Date::iso).or_else(|| {
+            self.indexes
+                .get(root)
+                .and_then(|i| i.journals().last().map(|(d, _)| d.iso()))
+        });
         let t = self.token(Pending::Today(then));
         vec![Effect::Prompt {
             token: t,
@@ -1133,6 +1219,9 @@ impl App {
         let start = text[..cursor].rfind('\n').map_or(0, |p| p + 1);
         let end = text[cursor..].find('\n').map_or(text.len(), |p| cursor + p);
         let line = &text[start..end];
+        if let Some(e) = self.follow_query(root, rel, &text.clone(), start, cursor, false) {
+            return e;
+        }
         let index = &self.indexes[root];
         let flavor = index.file(rel).map(|d| d.flavor).unwrap_or(
             match (index.graph.kind, files::stem_ext(rel).1.as_str()) {
@@ -1142,10 +1231,15 @@ impl App {
             },
         );
         let Some(r) = scan::reference_at(line, cursor - start, flavor) else {
-            return vec![Effect::Notify(
-                "No reference at the cursor".into(),
-                Level::Info,
-            )];
+            let text = text.clone();
+            return self
+                .follow_query(root, rel, &text, start, cursor, true)
+                .unwrap_or_else(|| {
+                    vec![Effect::Notify(
+                        "No reference at the cursor".into(),
+                        Level::Info,
+                    )]
+                });
         };
         let kind = index.graph.kind;
         match (kind, r.kind) {
@@ -1203,10 +1297,12 @@ impl App {
             None => content.line_of(ctx.cursor),
         };
         match content.target(n).cloned() {
-            Some(Target::File { path, line }) => vec![Effect::Open {
-                path,
-                line: line + 1,
-            }],
+            Some(Target::File { path, line } | Target::Block { path, line }) => {
+                vec![Effect::Open {
+                    path,
+                    line: line + 1,
+                }]
+            }
             Some(Target::Page(page)) => {
                 let root = key.split(SEP).next().unwrap_or_default().to_string();
                 self.render("graph.backlinks", &format!("{root}{SEP}{page}"), true)
@@ -1220,10 +1316,12 @@ impl App {
     /// A click in the backlinks panel.
     pub fn panel_clicked(&mut self, key: &str) -> Vec<Effect> {
         match self.panel_targets.get(key).cloned() {
-            Some(Target::File { path, line }) => vec![Effect::Open {
-                path,
-                line: line + 1,
-            }],
+            Some(Target::File { path, line } | Target::Block { path, line }) => {
+                vec![Effect::Open {
+                    path,
+                    line: line + 1,
+                }]
+            }
             Some(Target::Page(page)) => match &self.panel {
                 Some((root, _)) => {
                     let k = format!("{root}{SEP}{page}");
@@ -1418,6 +1516,18 @@ impl App {
                     args: serde_json::json!({ "priority": p }).to_string(),
                 }]
             }
+            Pending::Query { root } => {
+                let Some(t) = text(&answer).filter(|t| !t.is_empty()) else {
+                    return Vec::new();
+                };
+                let t = t
+                    .strip_prefix("{{query")
+                    .and_then(|t| t.strip_suffix("}}"))
+                    .map_or(t.clone(), |t| t.trim().to_string());
+                self.render("graph.query", &format!("{root}{SEP}{t}{SEP}"), true)
+                    .into_iter()
+                    .collect()
+            }
             Pending::Rename { root, key } => {
                 let Some(t) = text(&answer).filter(|t| !t.is_empty()) else {
                     return Vec::new();
@@ -1455,6 +1565,7 @@ fn relative_path(from: &str, to: &str) -> String {
 }
 
 mod outline;
+mod queries;
 
 #[cfg(test)]
 mod tests;

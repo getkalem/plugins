@@ -99,6 +99,12 @@ impl Overlays {
         }
     }
 
+    /// A span over the ones it overlaps, which are left out.
+    fn put(&mut self, start: usize, end: usize, effect: Effect) {
+        self.spans.retain(|s| s.end <= start || s.start >= end);
+        self.span(start, end, effect);
+    }
+
     /// In order, the later of two overlapping ones left out.
     fn finish(mut self) -> Overlays {
         self.spans.sort_by_key(|s| (s.start, s.end));
@@ -760,6 +766,71 @@ pub fn overlays(kind: Kind, text: &str, index: Option<&Index>, rel: Option<&str>
         (Kind::Logseq, true) => logseq_org(text, index, rel),
         (Kind::Logseq, false) => logseq_markdown(text, index, rel),
     }
+}
+
+/// The `{{query …}}` macros of a Logseq note shown as what `summary`
+/// says of each (away from the cursor), and an advanced query's
+/// `#+BEGIN_QUERY` marked as one Kalem does not run; over what the
+/// note's layer gave.
+pub fn queries(mut o: Overlays, text: &str, summary: &dyn Fn(&str) -> String) -> Overlays {
+    let mut fence = false;
+    let mut src = false;
+    let mut added = false;
+    for (start, line) in lines(text) {
+        let trimmed = line.trim();
+        let upper = trimmed.to_uppercase();
+        if fence {
+            fence = !trimmed.starts_with("```");
+            continue;
+        }
+        if src {
+            src = !upper.starts_with("#+END_");
+            continue;
+        }
+        let body = trimmed.trim_start_matches(['-', '*', ' ', '\t']);
+        if body.starts_with("```") {
+            fence = true;
+            continue;
+        }
+        if upper.starts_with("#+BEGIN_SRC") || upper.starts_with("#+BEGIN_EXAMPLE") {
+            src = true;
+            continue;
+        }
+        if let Some(p) = line
+            .find("#+BEGIN_QUERY")
+            .or_else(|| line.find("#+begin_query"))
+        {
+            let end = start + p + "#+BEGIN_QUERY".len();
+            o.put(
+                start + p,
+                end,
+                Effect::Replace(
+                    "#+BEGIN_QUERY · an advanced query, not run by Kalem".into(),
+                    Look {
+                        dim: true,
+                        ..Look::default()
+                    },
+                ),
+            );
+            added = true;
+            continue;
+        }
+        for (s, e, inner) in crate::query::macros(line) {
+            o.put(
+                start + s,
+                start + e,
+                Effect::Replace(
+                    summary(inner),
+                    Look {
+                        link: true,
+                        ..Look::default()
+                    },
+                ),
+            );
+            added = true;
+        }
+    }
+    if added { o.finish() } else { o }
 }
 
 #[cfg(test)]

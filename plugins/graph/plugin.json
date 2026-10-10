@@ -14,7 +14,7 @@
   "menus": [
     {
       "title": "Graph",
-      "when": "textType == markdown || textType == org || textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph",
+      "when": "textType == markdown || textType == org || textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query",
       "items": [
         "graph.today", "graph.yesterday", "graph.tomorrow", "graph.journalOn",
         "graph.previousJournal", "graph.nextJournal",
@@ -26,7 +26,7 @@
         "-",
         "graph.backlinks", "graph.backlinksDocument",
         "-",
-        "graph.pages", "graph.journals", "graph.tags", "graph.tasks", "graph.graph",
+        "graph.pages", "graph.journals", "graph.tags", "graph.tasks", "graph.graph", "graph.runQuery",
         "-",
         "graph.reindex"
       ]

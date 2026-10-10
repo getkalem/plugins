@@ -49,6 +49,14 @@ pub enum Target {
     },
     /// The backlinks of the page with this key.
     Page(String),
+    /// A block, at its first line: opened as [`Target::File`] is, and
+    /// what `t` cycles the keyword of in the Tasks and Query documents.
+    Block {
+        /// Absolute.
+        path: String,
+        /// From 0.
+        line: u32,
+    },
 }
 
 /// A document's text.

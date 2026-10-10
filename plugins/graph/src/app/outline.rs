@@ -64,7 +64,7 @@ impl App {
     }
 
     /// How the file `rel` of graph `root` is read.
-    fn flavor_of(&self, root: &str, rel: &str) -> Flavor {
+    pub(super) fn flavor_in(&self, root: &str, rel: &str) -> Flavor {
         let kind = self
             .indexes
             .get(root)
@@ -269,7 +269,7 @@ impl App {
                 Level::Info,
             )];
         };
-        let flavor = self.flavor_of(root, rel);
+        let flavor = self.flavor_in(root, rel);
         let cycle = self
             .indexes
             .get(root)
@@ -503,7 +503,7 @@ impl App {
         let mut out = Vec::new();
         let mut written = Vec::new();
         for rel in &rels {
-            let flavor = self.flavor_of(root, rel);
+            let flavor = self.flavor_in(root, rel);
             let own = page.path.as_deref() == Some(rel.as_str());
             if Some(rel.as_str()) == current.as_deref() {
                 let Some(text) = ctx.text.as_deref() else {
@@ -549,7 +549,7 @@ impl App {
 /// The first line of the block that starts at `line` with `text`, or,
 /// the file having changed, the line of the block with that text nearest
 /// to it.
-fn find_block(note: &str, line: u32, text: &str) -> Option<u32> {
+pub(super) fn find_block(note: &str, line: u32, text: &str) -> Option<u32> {
     let s = scan::scan(note, Flavor::LogseqMarkdown, &scan::Options::default());
     if s.blocks.iter().any(|b| b.line == line && b.text == text) {
         return Some(line);

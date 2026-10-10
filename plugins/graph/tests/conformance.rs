@@ -374,3 +374,69 @@ fn the_documents_of_every_corpus() {
     );
     assert!(c.text.contains("Unlinked references (2)"), "{}", c.text);
 }
+
+#[test]
+fn queries_on_the_corpus() {
+    use kalem_plugin_graph::query::{self, Shape};
+    let i = load("logseq-md");
+    let today = Date::new(2026, 10, 10);
+    let found = |q: &str| -> Vec<String> {
+        let a = query::run(&query::parse(q).expect(q), &i, today);
+        a.hits.iter().map(|h| query::hit_text(&i, h)).collect()
+    };
+    // The page's open tasks, the corpus's own query, a block reference
+    // shown as its block's text.
+    assert_eq!(
+        found("(and [[Project/Plugins]] (task NOW LATER TODO DOING))"),
+        [
+            "TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]",
+            "DOING [#B] The plain-text accounting plugin",
+            "LATER The Typst mode, after the mode binding",
+            "NOW Review The core: Org, Markdown, CSV, LaTeX",
+        ]
+    );
+    // A journal's day and a SCHEDULED date within the coming week.
+    assert_eq!(
+        found("(and (task NOW LATER TODO DOING) (between today +7d))"),
+        [
+            "NOW Start [[Project/Plugins/Graph]]",
+            "TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]",
+        ]
+    );
+    assert_eq!(
+        found("(namespace [[Project]])"),
+        ["Project/Plugins", "Project/Plugins/Graph"]
+    );
+    // The table the corpus's block asks for, by its properties.
+    let q = i.file("pages/Queries.md").unwrap();
+    let holder = q
+        .scanned
+        .blocks
+        .iter()
+        .find(|b| b.text.contains("{{query (and [[Project/Plugins]]"))
+        .unwrap();
+    let shape = Shape::of(&holder.props);
+    assert_eq!(
+        shape.table.as_deref(),
+        Some(&["block".to_string(), "page".to_string()][..])
+    );
+    let c = views::query(
+        &i,
+        "(and [[Project/Plugins]] (task NOW LATER TODO DOING))",
+        &shape,
+        today,
+        views::Glyphs::new("unicode"),
+    );
+    let lines: Vec<&str> = c.text.lines().collect();
+    assert_eq!(lines[1], "4 blocks");
+    assert!(lines[3].starts_with("block ") && lines[3].ends_with("│ page"));
+    assert!(
+        lines[4].starts_with("TODO [#A] Write the graph plugin")
+            && lines[4].ends_with("│ Project/Plugins")
+    );
+    // Each row opens its block.
+    assert!(matches!(
+        c.target(4),
+        Some(kalem_plugin_graph::content::Target::Block { line: 1, .. })
+    ));
+}

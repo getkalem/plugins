@@ -650,7 +650,10 @@ below replace the earlier GR4a to GR4d.
   Logseq does (Markdown's own Enter continues the list); zoom, which
   needs narrowing a Markdown document to a range; the Word-like
   profile's `tab`, which its keymap gives to `view.fold`; a done task's
-  clock.)
+  clock. Corrected with GR9: the cycle is Logseq's own, each keyword to
+  its next whatever the workflow (`TODO → DOING`, `LATER → NOW`, both
+  `→ DONE`, `DONE →` none), and none, `WAITING` or `CANCELED` to the
+  workflow's first keyword.)
 
 - [ ] GR8b Completion, through GR4a's `complete` hook: `[[` offers the
   graph's pages and aliases by title (the core's wiki completer offers
@@ -707,7 +710,7 @@ below replace the earlier GR4a to GR4d.
 
 ## GR9. Queries and tasks
 
-- [ ] GR9a Logseq's simple queries over the index: `{{query (and [[page]]
+- [x] GR9a Logseq's simple queries over the index: `{{query (and [[page]]
   (task TODO DOING) (between -7d today) (property type book)
   (page-property type book) (page-tags tag) (namespace ns)
   (priority A B) (not …) (or …) (page [[x]]) (full-text-search "x")
@@ -720,7 +723,24 @@ below replace the earlier GR4a to GR4d.
   (`#+BEGIN_QUERY` with Datalog) are shown as source with a note that
   Kalem does not run them (a non-goal: no Datascript). Tests: each
   clause on the corpus; a table result's columns.
-- [ ] GR9b The **Tasks** document (`graph-tasks`, `SPC n r t`): NOW and
+  (Done 2026-10-10, `src/query.rs`: every clause listed, `[[page]]` and
+  `#tag` over Logseq's path references (the block's page, its own
+  references and those of the blocks it is under), a query of page
+  clauses finding pages, `(between …)` over `today`, `±Nd/w/m/y`, a
+  journal's title and ISO dates, results ordered as the backlinks are
+  unless sorted. As a layer has no virtual lines (K2), the block shows
+  `{{query …}}` as one line away from the cursor (`⌕ 4 blocks: …`, the
+  first two), kept by the index's version, and the results open as a
+  document (`graph-query`) by Follow Reference on the line or by the new
+  Run Query (`SPC n r q`): grouped by page, or the table that
+  `query-table::`, `query-properties::`, `query-sort-by::` and
+  `query-sort-desc::` on the query's block ask for, Enter opening the
+  block. `#+BEGIN_QUERY` is marked as not run, and Follow Reference
+  inside one says so. `(sample n)` takes the first n. The corpus's
+  queries moved to where Logseq writes the table's properties, on the
+  query's block. Checked in the terminal editor of the branch: the
+  lines, the table, Enter.)
+- [~] GR9b The **Tasks** document (`graph-tasks`, `SPC n r t`): NOW and
   DOING first, then LATER and TODO by priority, WAITING, then the
   scheduled and deadline items of the coming week with their dates
   (Logseq's "SCHEDULED AND DEADLINE" section of a journal), each
@@ -730,6 +750,14 @@ below replace the earlier GR4a to GR4d.
   through whatever interface R5.2 gives plugins, so one agenda shows
   Org files and the graph's blocks together; the shapes (a block with
   a keyword, a priority, dates and a page) are the same.
+  (Done 2026-10-10 but the agenda: `t` in the Tasks and Query documents
+  (`textType == graph-tasks || textType == graph-query`) cycles the
+  line's task in its file as GR8c writes one (read again, found again
+  by its line and text, refused when Kalem holds it with unsaved
+  changes); the documents and the notes' query lines follow. The day
+  the documents count from is the clock's in UTC until the user gives
+  the date (K9). Checked in the terminal editor of the branch. Open: the
+  agenda, with R5.2.)
 
 ## GR10. Search and views
 
@@ -826,7 +854,12 @@ Each is the plugin's gate or its ask, written for every plugin.
   worlds import it already): done on Kalem's branch `graph-mode` with
   K1. Until it is merged and the plugin built against it, this plugin
   asks the date once a session (GR3b) and leaves Logseq's `<% time %>`
-  empty.
+  empty. Built against it, the plugin takes block IDs from
+  `clock.random` and the Tasks and Query documents' day from
+  `clock.now` in UTC; the journals still ask, as `clock.timezone` names
+  the zone without its offset and the plugin carries no time zone
+  database. Open: the local date or the zone's offset from the clock
+  (a function added to `clock`, for every plugin that shows a date).
 - K11 Renaming (and deleting) a file through `fs`, under
   `fs:write:workspace`: a page renamed with its file as Logseq does, a
   vault's note renamed at all (GR8c). Not blocking.

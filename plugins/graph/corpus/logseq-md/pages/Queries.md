@@ -1,7 +1,13 @@
 - Open tasks of the plugins
-  query-table:: true
-  query-properties:: [:block :page]
 	- {{query (and [[Project/Plugins]] (task NOW LATER TODO DOING))}}
+	  query-table:: true
+	  query-properties:: [:block :page]
+- The coming week: {{query (and (task NOW LATER TODO DOING) (between today +7d))}}
+- The pages under Project: {{query (namespace [[Project]])}}
+- An advanced query
+	- #+BEGIN_QUERY
+	  {:title "Done" :query [:find (pull ?b [*]) :where [?b :block/marker "DONE"]]}
+	  #+END_QUERY
 - Steps
   logseq.order-list-type:: number
 	- One

@@ -476,7 +476,7 @@ pub fn tasks(index: &Index, today: Option<Date>) -> Content {
         let parts: Vec<(&str, Style)> = parts.iter().map(|(s, st)| (s.as_str(), *st)).collect();
         c.line(
             &parts,
-            Some(Target::File {
+            Some(Target::Block {
                 path: index.graph.path(&t.path),
                 line: b.line,
             }),
@@ -713,6 +713,244 @@ pub fn backlinks_panel(index: &Index, key: &str) -> Vec<PanelNode> {
         panel_section(index, 1, "Linked references", index.backlinks(key)),
         panel_section(index, 2, "Unlinked references", &index.unlinked(key)),
     ]
+}
+
+/// The value of column `column` of a query's table for `hit`: `block`
+/// (its first line), `page` (its page's title), a property of the block,
+/// else of its page.
+fn column_value(index: &Index, hit: &crate::query::Hit, column: &str) -> String {
+    use crate::query::Hit;
+    let (page, block) = match hit {
+        Hit::Page(k) => (index.page(k), None),
+        Hit::Block { rel, block } => (
+            index.page_of(rel),
+            index.file(rel).and_then(|d| d.scanned.blocks.get(*block)),
+        ),
+    };
+    match column {
+        "block" => crate::query::hit_text(index, hit),
+        "page" => page.map_or(String::new(), |p| p.title.clone()),
+        "created-at" | "updated-at" | "journal-day" => page
+            .and_then(|p| p.journal)
+            .map_or(String::new(), Date::iso),
+        "priority" => block
+            .and_then(|b| b.priority)
+            .map_or(String::new(), |p| p.to_string()),
+        "scheduled" => block
+            .and_then(|b| b.scheduled)
+            .map_or(String::new(), Date::iso),
+        "deadline" => block
+            .and_then(|b| b.deadline)
+            .map_or(String::new(), Date::iso),
+        other => block
+            .and_then(|b| b.props.iter().find(|(k, _)| k == other))
+            .or_else(|| page.and_then(|p| p.props.iter().find(|(k, _)| k == other)))
+            .map_or(String::new(), |(_, v)| v.clone()),
+    }
+}
+
+/// The line a hit's Enter opens.
+fn hit_target(index: &Index, hit: &crate::query::Hit) -> Option<Target> {
+    use crate::query::Hit;
+    match hit {
+        Hit::Page(k) => index
+            .page(k)
+            .and_then(|p| p.path.as_ref())
+            .map(|rel| Target::File {
+                path: index.graph.path(rel),
+                line: 0,
+            }),
+        Hit::Block { rel, block } => index
+            .file(rel)
+            .and_then(|d| d.scanned.blocks.get(*block))
+            .map(|b| Target::Block {
+                path: index.graph.path(rel),
+                line: b.line,
+            }),
+    }
+}
+
+/// `text` cut to `n` characters and padded to them.
+fn cell(text: &str, n: usize) -> String {
+    let t: String = if text.chars().count() > n {
+        let mut s: String = text.chars().take(n.saturating_sub(1)).collect();
+        s.push('…');
+        s
+    } else {
+        text.to_string()
+    };
+    let pad = n.saturating_sub(t.chars().count());
+    format!("{t}{}", " ".repeat(pad))
+}
+
+/// "Query: …": what Logseq's simple query `text` finds in the graph,
+/// the blocks grouped by page with their first lines, or the pages; a
+/// table when `shape` asks for one. `today` for relative days.
+pub fn query(
+    index: &Index,
+    text: &str,
+    shape: &crate::query::Shape,
+    today: Option<Date>,
+    g: Glyphs,
+) -> Content {
+    use crate::query::{self, Hit};
+    let mut c = Content::new();
+    c.line(&[("Query: ", Style::Heading), (text, Style::Heading)], None);
+    let mut q = match query::parse(text) {
+        Ok(q) => q,
+        Err(e) => {
+            c.line(&[(&format!("Not read: {e}."), Style::Error)], None);
+            c.line(
+                &[(
+                    "Kalem reads Logseq's simple queries: [[page]], #tag, \"text\", (and …), (or …), (not …), (task …), (priority …), (between …), (property …), (page-property …), (page-tags …), (page …), (namespace …), (sort-by …), (sample n).",
+                    Style::Muted,
+                )],
+                None,
+            );
+            return c;
+        }
+    };
+    if q.sort.is_none() {
+        q.sort = shape.sort.clone();
+    }
+    let a = query::run(&q, index, today);
+    let n = a.hits.len();
+    let what = match (a.pages, n) {
+        (true, 1) => "1 page".to_string(),
+        (true, _) => format!("{n} pages"),
+        (false, 1) => "1 block".to_string(),
+        (false, _) => format!("{n} blocks"),
+    };
+    c.line(&[(&what, Style::Muted)], None);
+    for note in &a.notes {
+        c.line(&[(&format!("{note}."), Style::Muted)], None);
+    }
+    c.blank();
+    if n == 0 {
+        c.line(&[("No result.", Style::Muted)], None);
+        return c;
+    }
+    if let Some(columns) = &shape.table {
+        let mut columns = columns.clone();
+        if columns.is_empty() {
+            columns = if a.pages {
+                let mut cols = vec!["page".to_string()];
+                for h in &a.hits {
+                    if let Hit::Page(k) = h
+                        && let Some(p) = index.page(k)
+                    {
+                        for (key, _) in &p.props {
+                            if key != "title" && !cols.contains(key) {
+                                cols.push(key.clone());
+                            }
+                        }
+                    }
+                }
+                cols
+            } else {
+                vec!["block".into(), "page".into()]
+            };
+        }
+        let rows: Vec<Vec<String>> = a
+            .hits
+            .iter()
+            .map(|h| {
+                columns
+                    .iter()
+                    .map(|col| column_value(index, h, col))
+                    .collect()
+            })
+            .collect();
+        let widths: Vec<usize> = columns
+            .iter()
+            .enumerate()
+            .map(|(i, col)| {
+                rows.iter()
+                    .map(|r| r[i].chars().count())
+                    .chain(std::iter::once(col.chars().count()))
+                    .max()
+                    .unwrap_or(0)
+                    .min(60)
+            })
+            .collect();
+        let sep = if g.bullet == "*" { " | " } else { " │ " };
+        let header: Vec<String> = columns
+            .iter()
+            .zip(&widths)
+            .map(|(col, w)| cell(col, *w))
+            .collect();
+        c.line(&[(header.join(sep).trim_end(), Style::Heading)], None);
+        for (h, row) in a.hits.iter().zip(&rows) {
+            let cells: Vec<String> = row.iter().zip(&widths).map(|(v, w)| cell(v, *w)).collect();
+            c.line(
+                &[(cells.join(sep).trim_end(), Style::Normal)],
+                hit_target(index, h),
+            );
+        }
+        return c;
+    }
+    if a.pages {
+        for h in &a.hits {
+            c.line(
+                &[
+                    (g.bullet, Style::Muted),
+                    (" ", Style::Normal),
+                    (&query::hit_text(index, h), Style::Link),
+                ],
+                hit_target(index, h),
+            );
+        }
+        return c;
+    }
+    // The blocks grouped by page, in the order found.
+    let mut groups: Vec<(String, Vec<&Hit>)> = Vec::new();
+    for h in &a.hits {
+        let Hit::Block { rel, .. } = h else { continue };
+        match groups.iter_mut().find(|(r, _)| r == rel) {
+            Some((_, v)) => v.push(h),
+            None => groups.push((rel.clone(), vec![h])),
+        }
+    }
+    for (rel, hits) in groups {
+        c.line(
+            &[
+                (g.open, Style::Muted),
+                (" ", Style::Normal),
+                (&title_of(index, &rel), Style::Link),
+                (&format!(" ({})", hits.len()), Style::Muted),
+            ],
+            Some(Target::File {
+                path: index.graph.path(&rel),
+                line: 0,
+            }),
+        );
+        for h in hits {
+            let t = cut(&query::hit_text(index, h));
+            let (marker, rest) = match t.split_once(' ') {
+                Some((m, r)) if scan::MARKERS.contains(&m) => (m, r),
+                _ => ("", t.as_str()),
+            };
+            let style = if marker.is_empty() {
+                Style::Normal
+            } else if scan::is_closed(marker) {
+                Style::Done
+            } else {
+                Style::Todo
+            };
+            let mut parts = vec![
+                ("    ", Style::Normal),
+                (g.bullet, Style::Muted),
+                (" ", Style::Normal),
+            ];
+            if !marker.is_empty() {
+                parts.push((marker, style));
+                parts.push((" ", Style::Normal));
+            }
+            parts.push((rest, Style::Normal));
+            c.line(&parts, hit_target(index, h));
+        }
+    }
+    c
 }
 
 #[cfg(test)]

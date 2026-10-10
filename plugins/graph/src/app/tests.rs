@@ -60,6 +60,12 @@ fn a_note_of_a_graph_opened() {
     let panel = panel.expect("the panel");
     assert_eq!(panel[0].label, "Kalem");
     assert_eq!(panel[1].detail.as_deref(), Some("2"), "{panel:?}");
+    // The graph indexed just now: its notes' layers asked again.
+    assert!(out.contains(&Effect::RefreshLayers), "{out:?}");
+    assert!(
+        !app.opened(&m, "/w/notes/pages/Other.md")
+            .contains(&Effect::RefreshLayers)
+    );
     // A file of no graph: no status.
     let out = app.opened(&m, "/w/other/readme.md");
     assert!(out.contains(&Effect::Status(None)), "{out:?}");
@@ -631,5 +637,165 @@ fn a_page_renamed_everywhere() {
     assert_eq!(
         m.get("/w/notes/journals/2026_10_03.md").unwrap(),
         "- met [[Editor]]\n"
+    );
+}
+
+/// The document an effect list shows or writes anew.
+fn document(out: &[Effect]) -> (String, String, String, Content) {
+    out.iter()
+        .find_map(|e| match e {
+            Effect::Document {
+                id,
+                key,
+                kind,
+                content,
+                ..
+            } => Some((id.clone(), key.clone(), kind.clone(), content.clone())),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no document in {out:?}"))
+}
+
+/// The byte where line `n` of `text` starts.
+fn line_start(text: &str, n: usize) -> usize {
+    text.lines().take(n).map(|l| l.len() + 1).sum()
+}
+
+#[test]
+fn queries_followed_run_and_shown() {
+    let m = logseq();
+    let note = "- Tasks\n\t- {{query (and [[Kalem]] (task TODO))}}\n\t  query-table:: true\n\t  query-properties:: [:block :page]\n- #+BEGIN_QUERY\n  {:query [:find ?b]}\n  #+END_QUERY\n";
+    m.write("/w/notes/pages/Plan.md", note).unwrap();
+    m.write(
+        "/w/notes/pages/Work.md",
+        "- TODO ship [[Kalem]]\n- DONE start [[Kalem]]\n",
+    )
+    .unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Plan.md");
+    // Followed anywhere on its line: the Query document, a table as the
+    // block's properties ask.
+    let out = app.command(&m, "graph.follow", &ctx("/w/notes/pages/Plan.md", note, 10));
+    let (id, key, kind, content) = document(&out);
+    assert_eq!((id.as_str(), kind.as_str()), ("graph.query", "graph-query"));
+    assert!(key.ends_with("table=block,page"), "{key:?}");
+    assert!(
+        content.text.contains("TODO ship [[Kalem]] │ Work"),
+        "{}",
+        content.text
+    );
+    // An advanced query is explained.
+    let at = line_start(note, 5) + 3;
+    let out = app.command(&m, "graph.follow", &ctx("/w/notes/pages/Plan.md", note, at));
+    assert!(
+        matches!(&out[0], Effect::Notify(t, _) if t.contains("not run by Kalem")),
+        "{out:?}"
+    );
+    // Run from the palette: a list.
+    let out = app.command(
+        &m,
+        "graph.runQuery",
+        &ctx("/w/notes/pages/Plan.md", note, 0),
+    );
+    let Effect::Prompt { token, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let out = app.answer(
+        &m,
+        *token,
+        Answer::Text(Some("{{query (task DONE)}}".into())),
+    );
+    let (_, _, _, content) = document(&out);
+    assert!(content.text.contains("1 block"), "{}", content.text);
+    assert!(content.text.contains("DONE start [[Kalem]]"));
+    // In the note, the summary in place of the macro.
+    let o = app.overlays("logseq", Some("/w/notes/pages/Plan.md"), note);
+    let shown: Vec<&str> = o
+        .spans
+        .iter()
+        .filter_map(|s| match &s.effect {
+            crate::layer::Effect::Replace(t, _) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        shown.contains(&"⌕ 1 block: TODO ship [[Kalem]]"),
+        "{shown:?}"
+    );
+    assert!(
+        shown.iter().any(|t| t.contains("advanced query")),
+        "{shown:?}"
+    );
+    // The summary follows the index.
+    m.write(
+        "/w/notes/pages/Work.md",
+        "- TODO ship [[Kalem]]\n- TODO test [[Kalem]]\n",
+    )
+    .unwrap();
+    let out = app.saved(&m, "/w/notes/pages/Work.md");
+    assert!(out.contains(&Effect::RefreshLayers));
+    let o = app.overlays("logseq", Some("/w/notes/pages/Plan.md"), note);
+    assert!(o.spans.iter().any(
+        |s| matches!(&s.effect, crate::layer::Effect::Replace(t, _) if t.starts_with("⌕ 2 blocks"))
+    ));
+}
+
+#[test]
+fn a_task_cycled_from_the_tasks_document() {
+    let m = logseq();
+    m.write(
+        "/w/notes/pages/Work.md",
+        "- TODO ship [[Kalem]]\n  SCHEDULED: <2026-10-12 Mon>\n- LATER test\n",
+    )
+    .unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Work.md");
+    let out = app.command(&m, "graph.tasks", &ctx("/w/notes/pages/Work.md", "", 0));
+    let (id, key, _, content) = document(&out);
+    let n = content
+        .text
+        .lines()
+        .position(|l| l.contains("ship"))
+        .unwrap();
+    let c = Ctx {
+        path: None,
+        text: Some(content.text.clone()),
+        cursor: line_start(&content.text, n) + 2,
+        doc: Some((id.clone(), key.clone())),
+        args: "null".into(),
+    };
+    // TODO, DOING, DONE: Markdown's TODO workflow.
+    let out = app.command(&m, "graph.cycleTodo", &c);
+    assert_eq!(
+        m.read("/w/notes/pages/Work.md").unwrap(),
+        "- DOING ship [[Kalem]]\n  SCHEDULED: <2026-10-12 Mon>\n- LATER test\n"
+    );
+    let (_, _, _, again) = document(&out);
+    assert!(again.text.contains("DOING ship"), "{}", again.text);
+    // A heading's line holds no task.
+    let c0 = Ctx {
+        cursor: 0,
+        ..c.clone()
+    };
+    let out = app.command(&m, "graph.cycleTodo", &c0);
+    assert!(matches!(&out[0], Effect::Notify(t, _) if t == "No block on this line"));
+    // A file Kalem holds with unsaved changes is not written.
+    app.track_open(7, "/w/notes/pages/Work.md");
+    app.track_changed(7);
+    let n = again.text.lines().position(|l| l.contains("ship")).unwrap();
+    let c = Ctx {
+        text: Some(again.text.clone()),
+        cursor: line_start(&again.text, n) + 2,
+        ..c
+    };
+    let out = app.command(&m, "graph.cycleTodo", &c);
+    assert!(
+        matches!(&out[0], Effect::Notify(t, Level::Warning) if t.contains("unsaved")),
+        "{out:?}"
+    );
+    assert!(
+        m.read("/w/notes/pages/Work.md")
+            .unwrap()
+            .starts_with("- DOING")
     );
 }
