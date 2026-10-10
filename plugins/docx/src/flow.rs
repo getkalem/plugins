@@ -279,7 +279,13 @@ pub enum VBlock {
     Frame(Vec<VBlock>),
     /// A construct between blocks shown by name.
     Placeholder(String),
+    /// A horizontal rule: a paragraph holding nothing but lines drawn as
+    /// shapes (a separator).
+    Rule,
 }
+
+/// How a shape that is a line shows among a paragraph's text.
+pub const LINE_SHAPE: &str = "──";
 
 /// A note of the view, in the order it is referred to.
 #[derive(Debug, Clone, PartialEq)]
@@ -837,6 +843,15 @@ impl<'a> Walker<'a> {
                 let (mut vp, frames) = self.paragraph(p, cell, editable, sibling);
                 if !self.layouts {
                     vp.layout = Layout::default();
+                }
+                // Nothing but lines drawn as shapes: a rule.
+                let line = |r: &VRun| matches!(&r.piece, Piece::Placeholder(t) if t == LINE_SHAPE);
+                if vp.runs.iter().any(line)
+                    && vp.runs.iter().all(|r| line(r) || r.text.trim().is_empty())
+                    && frames.is_empty()
+                {
+                    out.push(VBlock::Rule);
+                    return;
                 }
                 out.push(VBlock::Para(vp));
                 for f in frames {
@@ -1510,6 +1525,7 @@ impl<'a> Walker<'a> {
                             Piece::Placeholder("[Text box]".into())
                         }
                         Graphic::Shape => Piece::Placeholder("[Shape]".into()),
+                        Graphic::Line => Piece::Placeholder(LINE_SHAPE.into()),
                         Graphic::Group => Piece::Placeholder("[Group of shapes]".into()),
                         Graphic::Canvas => Piece::Placeholder("[Drawing canvas]".into()),
                         Graphic::Chart(_) => Piece::Placeholder("[Chart]".into()),
@@ -1639,6 +1655,7 @@ pub fn text(blocks: &[VBlock], out: &mut String) {
                 out.push_str(p);
                 out.push('\n');
             }
+            VBlock::Rule => out.push('\n'),
         }
     }
 }

@@ -398,6 +398,11 @@ order they are done, the spike first.
 
 ## WP8. Typing: text edited in runs
 
+  (2026-10-10: a shape that is a line, a DrawingML line or straight
+  connector, a bar at most 6 points thick and twenty times longer, VML's
+  line or horizontal line (`o:hr`), shows as a line: a paragraph of
+  nothing but such lines as a rule (Kalem draws it across), one among
+  text as `──`; other shapes stay `[Shape]`.)
 - [x] WP8 The editor half, in the format's own vocabulary and nothing
   else: a character typed goes into the run before the cursor (its
   `w:rPr` inherited, as Word does; at a paragraph's start, into its

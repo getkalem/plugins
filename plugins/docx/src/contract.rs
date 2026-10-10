@@ -285,6 +285,7 @@ impl Builder {
                 VBlock::Placeholder(p) => {
                     self.cache.items.push(kv::FlowItem::Placeholder(p.clone()))
                 }
+                VBlock::Rule => self.cache.items.push(kv::FlowItem::Rule("line".into())),
             }
         }
     }

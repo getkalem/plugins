@@ -216,6 +216,7 @@ fn count(blocks: &[VBlock], c: &mut Counts) {
             }
             VBlock::Frame(f) => count(f, c),
             VBlock::Placeholder(_) => c.placeholders += 1,
+            VBlock::Rule => {}
         }
     }
 }

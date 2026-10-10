@@ -205,7 +205,7 @@ fn collect_paras<'a>(blocks: &'a [VBlock], out: &mut Vec<&'a VPara>) {
                 }
             }
             VBlock::Frame(f) => collect_paras(f, out),
-            VBlock::Placeholder(_) => {}
+            VBlock::Placeholder(_) | VBlock::Rule => {}
         }
     }
 }

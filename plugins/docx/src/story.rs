@@ -386,6 +386,10 @@ pub enum Graphic {
     TextBox(Vec<Block>),
     /// A shape.
     Shape,
+    /// A shape that is a line: DrawingML's line or straight connector, a
+    /// bar far longer than it is thick (a separator), VML's line or
+    /// horizontal line (`o:hr`).
+    Line,
     /// A group of shapes.
     Group,
     /// A drawing canvas.
@@ -1012,10 +1016,14 @@ fn drawing<'a>(r: &mut Reader<'a>, tag: &Tag<'a>) -> (Drawing, usize) {
     let mut link = None;
     let mut chart = None;
     let mut sized = false;
+    let mut prst: Option<String> = None;
     while let Some(t) = r.next_token() {
         match t {
             Token::Start(c) => {
                 match c.name {
+                    "prstGeom" if prst.is_none() => {
+                        prst = c.attr("prst").map(|v| v.into_owned());
+                    }
                     "inline" => d.floating = false,
                     "anchor" => d.floating = true,
                     "extent" if !sized => {
@@ -1051,6 +1059,9 @@ fn drawing<'a>(r: &mut Reader<'a>, tag: &Tag<'a>) -> (Drawing, usize) {
             Token::End { span, .. } => {
                 if depth == 0 {
                     d.graphic = graphic(&uri, text_box, embed, link, chart);
+                    if d.graphic == Graphic::Shape && line_like(prst.as_deref(), d.size) {
+                        d.graphic = Graphic::Line;
+                    }
                     return (d, span.end);
                 }
                 depth -= 1;
@@ -1059,7 +1070,25 @@ fn drawing<'a>(r: &mut Reader<'a>, tag: &Tag<'a>) -> (Drawing, usize) {
         }
     }
     d.graphic = graphic(&uri, text_box, embed, link, chart);
+    if d.graphic == Graphic::Shape && line_like(prst.as_deref(), d.size) {
+        d.graphic = Graphic::Line;
+    }
     (d, r.pos())
+}
+
+/// Whether a shape is a line: a preset line or straight connector, or a
+/// rectangle (or a shape of no preset) at most 6 points thick, half an
+/// inch long at least and twenty times longer than thick, as a
+/// separator drawn as a bar is.
+fn line_like(prst: Option<&str>, size: (i64, i64)) -> bool {
+    match prst {
+        Some("line" | "straightConnector1") => return true,
+        Some(p) if p != "rect" => return false,
+        _ => {}
+    }
+    let (w, h) = (size.0.abs(), size.1.abs());
+    let (thin, long) = (w.min(h), w.max(h));
+    thin <= 76_200 && long >= 457_200 && long >= 20 * thin.max(1)
 }
 
 fn graphic(
@@ -1122,9 +1151,22 @@ fn vml<'a>(r: &mut Reader<'a>, tag: &Tag<'a>) -> (Drawing, usize) {
     let mut picture = None;
     let mut text_box = None;
     let mut prog = None;
+    let mut line = false;
     while let Some(t) = r.next_token() {
         match t {
             Token::Start(c) => {
+                match c.name {
+                    // A line, or Word's horizontal line (a rectangle
+                    // marked `o:hr`).
+                    "line" => line = true,
+                    "rect"
+                        if c.attr("hr")
+                            .is_some_and(|v| matches!(v.as_ref(), "t" | "true")) =>
+                    {
+                        line = true;
+                    }
+                    _ => {}
+                }
                 match c.name {
                     "shape" | "rect" | "roundrect" | "oval" if d.name.is_empty() => {
                         d.name = c.attr("id").unwrap_or_default().into_owned();
@@ -1159,7 +1201,7 @@ fn vml<'a>(r: &mut Reader<'a>, tag: &Tag<'a>) -> (Drawing, usize) {
             }
             Token::End { span, .. } => {
                 if depth == 0 {
-                    finish_vml(&mut d, picture, text_box, prog);
+                    finish_vml(&mut d, picture, text_box, prog, line);
                     return (d, span.end);
                 }
                 depth -= 1;
@@ -1167,7 +1209,7 @@ fn vml<'a>(r: &mut Reader<'a>, tag: &Tag<'a>) -> (Drawing, usize) {
             Token::Text { .. } => {}
         }
     }
-    finish_vml(&mut d, picture, text_box, prog);
+    finish_vml(&mut d, picture, text_box, prog, line);
     (d, r.pos())
 }
 
@@ -1176,7 +1218,11 @@ fn finish_vml(
     picture: Option<String>,
     text_box: Option<Vec<Block>>,
     prog: Option<String>,
+    line: bool,
 ) {
+    if line || (d.graphic == Graphic::Shape && line_like(None, d.size)) {
+        d.graphic = Graphic::Line;
+    }
     if let Some(b) = text_box {
         d.graphic = Graphic::TextBox(b);
     } else if picture.is_some() {

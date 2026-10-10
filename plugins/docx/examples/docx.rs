@@ -146,6 +146,7 @@ fn show_blocks(blocks: &[VBlock], indent: &str) {
                 println!("{indent}    └");
             }
             VBlock::Placeholder(p) => println!("{indent}    {p}"),
+            VBlock::Rule => println!("{indent}    ────────"),
         }
     }
 }
