@@ -761,10 +761,13 @@ spike first.
   refused with rust-analyzer's parse error; a project whose path
   dependency is missing says "cargo check failed to start: …". The
   corpus test asserts rust-analyzer's `onEnter` and `ssr` answers.
-  Open: the branch merged and released; the state asserted in the
-  corpus test once the pin of `kalem-lsp` moves past it (the
-  capability is `ServerConfig::capabilities`); the graphical editor by
-  hand.)
+  Merged as getkalem/kalem#28 (2026-10-10), in Kalem 0.6.10. Then the
+  pin of `kalem-highlight` and `kalem-lsp` moved to e24a9959 (#28's
+  merge) and the corpus test asserts rust-analyzer's state, started
+  with the manifest's `capabilities` and `status`: healthy and
+  quiescent once the corpus loaded; without the capability it tells
+  none (checked, the test failing after two minutes). Open: the
+  graphical editor by hand.)
 
 ## RS10. Speed, the big corpus and the tests
 
