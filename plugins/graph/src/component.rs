@@ -81,24 +81,15 @@ fn apply(effect: Effect) {
         }
         Effect::Reveal { path, app } => {
             let name = crate::files::file_name(&path).to_string();
-            // `file.reveal` takes a path from Kalem's plugin API 0.2.10;
-            // before, it would show the current document's file.
-            #[cfg(kalem_layer)]
-            {
-                let args = serde_json::json!({ "path": path }).to_string();
-                match kalem::run("file.reveal", &args) {
-                    Ok(()) => ui::notify(
-                        &format!("{app} draws {name}: shown in the file manager, to open it there"),
-                        ui::Level::Info,
-                    ),
-                    Err(e) => ui::notify(&e, ui::Level::Error),
-                }
+            // `file.reveal` takes a path (Kalem's plugin API 0.2.10).
+            let args = serde_json::json!({ "path": path }).to_string();
+            match kalem::run("file.reveal", &args) {
+                Ok(()) => ui::notify(
+                    &format!("{app} draws {name}: shown in the file manager, to open it there"),
+                    ui::Level::Info,
+                ),
+                Err(e) => ui::notify(&e, ui::Level::Error),
             }
-            #[cfg(not(kalem_layer))]
-            ui::notify(
-                &format!("{app} draws {name}: open it there ({path})"),
-                ui::Level::Info,
-            );
         }
         Effect::Open { path, line } => {
             let args = serde_json::json!({ "path": path, "line": line }).to_string();
@@ -226,10 +217,7 @@ fn apply(effect: Effect) {
                 let _ = kalem::run("edit.gotoLine", &format!("{{\"line\":{}}}", n + 1));
             }
         }
-        #[cfg(kalem_layer)]
         Effect::RefreshLayers => kalem_plugin::layer::refresh(),
-        #[cfg(not(kalem_layer))]
-        Effect::RefreshLayers => {}
     }
 }
 
@@ -311,7 +299,6 @@ impl Plugin for Graph {
             *a.borrow_mut() = Some(App::new(read_settings()));
             // Block IDs from the clock's random bits, the views' day from its
             // time (API 0.2.10).
-            #[cfg(kalem_layer)]
             if let Some(app) = a.borrow_mut().as_mut() {
                 app.random = Some(kalem_plugin::clock::random);
                 app.now = Some(kalem_plugin::clock::now);
@@ -413,7 +400,6 @@ impl Plugin for Graph {
     }
 
     /// The layer's overlays (plugin API 0.2.10).
-    #[cfg(kalem_layer)]
     fn overlays(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet {
         use crate::layer::{Effect as E, LineEffect as L};
         use kalem_plugin::layer as api;

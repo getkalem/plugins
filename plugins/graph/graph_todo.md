@@ -899,7 +899,16 @@ below replace the earlier GR4a to GR4d.
   this plugin's layer. Open: pushing main and the tag `graph-v0.1.0`,
   for the owner; 0.2.0 with the layer once Kalem releases API 0.2.10,
   the manifest then saying `^0.2.10` and the release built with the
-  feature `layer`.)
+  feature `layer`. 0.1.0 was published 2026-10-10. 0.2.0 prepared the
+  same day on the branch `graph-0.2`: the layer, the clock and the
+  reveal built always (`kalem-plugin`'s feature `layer`, the
+  `kalem_layer` cfg and `build.rs` gone), the manifest's API `^0.2.10`,
+  the README for 0.2.0; tested against Kalem's `graph-mode` rebased on
+  0.6.10 through a `[patch]` not committed. Kalem's `graph-mode` was merged
+  into its main and released as Kalem 0.6.11 (plugin API 0.2.10);
+  `kalem-plugin` pinned to it (5a85de4d) and the release commit made
+  for 0.2.0. Open: the tag `graph-v0.2.0`, once Kalem 0.6.11's release
+  is published.)
 
 ## What Kalem's core must gain
 

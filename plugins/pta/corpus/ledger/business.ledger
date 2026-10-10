@@ -1,0 +1,58 @@
+; A consultancy's journal in Ledger's own syntax: declared accounts and
+; commodities (ledger --pedantic), an alias, prices, a default
+; commodity, applied accounts and virtual postings.
+
+commodity $
+    format $1,000.00
+commodity EUR
+    format EUR 1,000.00
+
+account Assets:Checking
+    alias chk
+    check commodity == "$"
+account Assets:Receivable
+account Assets:Petty
+account Income:Consulting
+    assert commodity == "$"
+account Expenses:Software
+account Expenses:Travel
+account Liabilities:Tax
+account Equity:Opening
+account Budget:Travel
+
+tag tools
+
+D $1,000.00
+
+P 2026/01/01 EUR $1.10
+P 2026/02/01 EUR $1.12
+
+2026/01/01 * Opening balance
+    chk                             $10,000.00
+    Equity:Opening
+
+2026/01/05 * (INV-001) Client A | consulting, January
+    Assets:Receivable                $2,000.00
+    Income:Consulting
+    [Liabilities:Tax]                 $-400.00
+    [Assets:Petty]                     $400.00
+
+2026/01/09 ! Software subscription
+    Expenses:Software                   $49.00  ; :tools:
+    chk
+
+; The petty cash, kept under one parent.
+apply account Assets
+2026/01/12 * Petty cash from the bank
+    Petty                              $200.00
+    Checking
+end apply account
+
+2026/01/20 * Train to Brussels
+    Expenses:Travel                 EUR 120.00
+    chk                               $-132.00
+    (Budget:Travel)                  $-132.00
+
+2026/02/02 * Client A pays
+    chk                              $2,000.00
+    Assets:Receivable

@@ -2,9 +2,9 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: 0.1.0**, for Kalem 0.6.8 and later (0.6.7 runs it too). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph. Its list of tasks is [`graph_todo.md`](graph_todo.md).
+**Status: 0.2.0**, for Kalem 0.6.11 and later (plugin API 0.2.10). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; and its layer draws a note as Logseq or Obsidian draws it (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
 
-With Kalem 0.6.8 the notes open in Kalem's own Markdown and Org modes and show as they are written: Logseq's `id::` and `collapsed::` lines, a bare `((uuid))`, `{{embed …}}` and `{{query …}}` as text, an Obsidian callout as a quote. Wiki links are links. The plugin's layer, which draws a note as Logseq or Obsidian draws it (below), and a few other parts wait for Kalem's next release, from its branch `graph-mode` (plugin API 0.2.10): the outliner's keys inside notes (the commands are in the Graph menu and the palette meanwhile), a query's line in its note, Search the Graph leaving out `logseq/` and `.obsidian/` (0.6.8 searches the whole folder), a whiteboard or canvas shown in the file manager (0.6.8 names the file in a notice), the clock (0.6.8 asks today's date once a session), and `kalem run`. The sections below say which is which.
+0.1.0, for Kalem 0.6.8 to 0.6.10, has everything but what plugin API 0.2.10 brings: with 0.1.0 the notes show as they are written (Logseq's `id::` and `collapsed::` lines, a bare `((uuid))`, `{{embed …}}` and `{{query …}}` as text, an Obsidian callout as a quote), the outliner's commands run from the Graph menu and the palette rather than from keys in a note, Search the Graph searches `logseq/` and `.obsidian/` too, a whiteboard or canvas is named in a notice rather than shown in the file manager, and today's date is asked once a session.
 
 ## Moving over
 
@@ -16,7 +16,7 @@ With Kalem 0.6.8 the notes open in Kalem's own Markdown and Org modes and show a
 
 - **The graph's folder is one of Kalem's projects** (Projects: Add Project). Kalem lets a plugin read only its projects' folders (`fs:read:workspace`); a note opened from a folder that is no project is not seen as a graph's.
 - A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, a Logseq database graph's mirror by its `mirror/markdown/.index.edn`, from the folder of any note opened in it upwards. A folder without any is a graph when the setting `graphs` names it.
-- Kalem 0.6.8 or later (plugin API 0.2.9); the layer and the parts above need Kalem's next release.
+- Kalem 0.6.11 or later (plugin API 0.2.10); 0.1.0 runs on Kalem 0.6.8 to 0.6.10, without the layer.
 - Room to index a large graph: the plugin asks Kalem for 1 GB and 10 s a call (see Speed and size).
 
 ## Commands and keys
@@ -41,14 +41,14 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r q` | Run Query | A Logseq simple query typed, its results as a document |
 | `SPC n r l` | Recent Pages | The graph's pages opened last in this session |
 | `SPC n r a` | Random Page | A page of the graph at random |
-| `SPC n s` (in a graph, Kalem's next release) | Search the Graph | Kalem's search over the graph's folder, without `logseq/`, `.obsidian/`, `.trash/` and the hidden folders; elsewhere `SPC n s` searches Kalem's notes folder |
-| `SPC n S` (in a graph, Kalem's next release) | Find Heading | The graph's headings, and the top-level blocks of its pages (not its journals'), each with its page |
+| `SPC n s` (in a graph) | Search the Graph | Kalem's search over the graph's folder, without `logseq/`, `.obsidian/`, `.trash/` and the hidden folders; elsewhere `SPC n s` searches Kalem's notes folder |
+| `SPC n S` (in a graph) | Find Heading | The graph's headings, and the top-level blocks of its pages (not its journals'), each with its page |
 | `SPC n r g` | Graph | The pages as a tree of namespaces with their links in and out, then the pages named without a link and how often, then the orphans |
 | `SPC n r s` | Index Again | Reads the graph again |
 
 The status bar shows the graph of the current note and its pages (`⌬ notes · 1,240 pages`); a click lists them.
 
-**Whiteboards and canvases.** A Logseq whiteboard (`whiteboards/*.edn`) and an Obsidian canvas (`*.canvas`) are pages: links to them resolve, and they show in All pages with the application that draws them. Kalem does not draw them. Following one shows the file in the file manager, to be opened there (with a Kalem whose plugin API is 0.2.10; before, the notice names the file).
+**Whiteboards and canvases.** A Logseq whiteboard (`whiteboards/*.edn`) and an Obsidian canvas (`*.canvas`) are pages: links to them resolve, and they show in All pages with the application that draws them. Kalem does not draw them. Following one shows the file in the file manager, to be opened there.
 
 **From the command line.** With a Kalem that has batch mode, the documents print without a window:
 
@@ -62,7 +62,7 @@ kalem run graph graph.pages ~/notes
 
 ## Editing as an outliner
 
-In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`, from Kalem's next release; with Kalem 0.6.8 the commands run from the Graph menu and the palette):
+In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`):
 
 | Keys | Command | What it does |
 |---|---|---|
@@ -87,7 +87,7 @@ Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq a
 | Styled | task keywords and priorities as Org's, dates, `#tags`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
 | Folded | `:LOGBOOK:` to its first line; the blocks under a block with `collapsed:: true` hidden | a callout with `-` to its first line |
 
-The layer comes with Kalem's next release (plugin API 0.2.10's `layer`) and this plugin's 0.2.0. Until then it is built only by hand against Kalem's branch `graph-mode`: `RUSTFLAGS="--cfg kalem_layer"` and a `kalem-plugin` with the feature `layer`.
+The layer needs plugin API 0.2.10's `layer`, which the plugin is built with (`kalem-plugin`'s feature `layer`).
 
 ## Queries
 

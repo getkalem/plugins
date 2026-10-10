@@ -7,5 +7,6 @@
   "api": "^0.2.1",
   "activation": ["onDocument"],
   "permissions": [],
-  "opens": [".template"]
+  "opens": [".template"],
+  "applies": {"magic": ["44 4F 54 53 00"]}
 }

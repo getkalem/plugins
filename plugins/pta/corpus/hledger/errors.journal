@@ -1,0 +1,13 @@
+; One deliberate error for the diagnostics tests: a balance assertion
+; that does not hold (the account holds 50.000,00 TRY).
+decimal-mark ,
+
+include accounts.journal
+
+2026-02-01 * Opening balances
+    assets:bank:ziraat            50.000,00 TRY
+    equity:opening
+
+2026-02-02 * Market | an assertion off by one lira
+    expenses:food:market             100,00 TRY
+    assets:bank:ziraat              -100,00 TRY = 49.901,00 TRY

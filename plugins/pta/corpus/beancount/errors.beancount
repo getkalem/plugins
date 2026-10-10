@@ -1,0 +1,9 @@
+; One deliberate error for the diagnostics tests: a posting to an account
+; that was never opened.
+option "operating_currency" "TRY"
+
+2025-01-01 open Assets:Bank:Ziraat       TRY
+
+2026-01-15 * "Market" "Groceries, to an account not opened"
+  Expenses:Food:Market        842.35 TRY
+  Assets:Bank:Ziraat

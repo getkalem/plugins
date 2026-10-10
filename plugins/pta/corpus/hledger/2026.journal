@@ -1,0 +1,39 @@
+; The household's journal, the one LEDGER_FILE names: it includes the
+; accounts and the year before.
+decimal-mark ,
+
+include accounts.journal
+include 2025.journal
+
+; A monthly budget (hledger balance --budget).
+~ monthly from 2026-01
+    expenses:food                  6.000,00 TRY
+    assets:bank:ziraat
+
+; Every food posting also books to the budget (hledger --auto).
+= expenses:food
+    (budget:food)                        *-1
+
+2026-01-02 * (1001) Ziraat | salary  ; payroll:january
+    assets:bank:ziraat            45.000,00 TRY = 93.749,60 TRY
+    income:salary
+
+2026-01-03 ! Market | groceries  ; food:, shop:migros
+    expenses:food:market             842,35 TRY
+    assets:bank:ziraat
+
+2026-01-05 Restaurant | dinner with friends
+    expenses:food:restaurant       1.120,00 TRY  ; split with Ayşe
+    liabilities:card
+
+2026-01-10 * Exchange office | euros for the trip
+    assets:cash                      200,00 EUR @ 36,50 TRY
+    assets:bank:ziraat            -7.300,00 TRY
+
+2026-01-12 * Exchange office | dollars, the total cost given
+    assets:cash                      100,00 USD @@ 3.410,00 TRY
+    assets:bank:ziraat
+
+2026-01-31 * Rent
+    expenses:rent                 15.000,00 TRY
+    assets:bank:ziraat                      == 67.197,25 TRY
