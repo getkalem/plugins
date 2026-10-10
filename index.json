@@ -84,16 +84,16 @@
     {
       "id": "org.kalem.graph",
       "name": "Note graphs",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags, tasks and queries, edited as an outliner, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
-      "api": "^0.2.10",
+      "api": "^0.2.11",
       "permissions": [
         "fs:read:workspace",
         "fs:write:workspace"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
-      "download": "https://github.com/getkalem/plugins/releases/download/graph-v0.2.0/graph.wasm",
-      "sha256": "c6c9a1d8b1354140389ec8ca8127b9d48a817abbce6ce9d16d6043accb4a44ed",
+      "download": null,
+      "sha256": null,
       "layers": [
         {
           "id": "logseq",

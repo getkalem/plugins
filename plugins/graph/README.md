@@ -2,7 +2,9 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: 0.2.0**, for Kalem 0.6.11 and later (plugin API 0.2.10). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; and its layer draws a note as Logseq or Obsidian draws it (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+**Status: 0.3.0**, for Kalem 0.6.13 and later (plugin API 0.2.11). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; its layer draws a note as Logseq or Obsidian draws it, and its completer offers pages, tags and blocks as the user types (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+
+0.2.0, for Kalem 0.6.11 and 0.6.12, has everything but what 0.3.0 and plugin API 0.2.11 bring: completion, Enter making blocks as Logseq's, Open Link by the graph's rules, `Alt+]` and `Alt+[`, the keys in a note before the Vim profile's (`SPC m t`, `SPC m p p`, `SPC m d s`, `SPC m d d`, `SPC n s`), All pages sorted, Block References, highlights, numbered lists and admonitions drawn, Logseq's keywords styled in Org notes, the commands seeing unsaved typing; and today's date is asked once a session.
 
 0.1.0, for Kalem 0.6.8 to 0.6.10, has everything but what plugin API 0.2.10 brings: with 0.1.0 the notes show as they are written (Logseq's `id::` and `collapsed::` lines, a bare `((uuid))`, `{{embed …}}` and `{{query …}}` as text, an Obsidian callout as a quote), the outliner's commands run from the Graph menu and the palette rather than from keys in a note, Search the Graph searches `logseq/` and `.obsidian/` too, a whiteboard or canvas is named in a notice rather than shown in the file manager, and today's date is asked once a session.
 
@@ -16,7 +18,7 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 - **The graph's folder is one of Kalem's projects** (Projects: Add Project). Kalem lets a plugin read only its projects' folders (`fs:read:workspace`); a note opened from a folder that is no project is not seen as a graph's.
 - A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, a Logseq database graph's mirror by its `mirror/markdown/.index.edn`, from the folder of any note opened in it upwards. A folder without any is a graph when the setting `graphs` names it.
-- Kalem 0.6.11 or later (plugin API 0.2.10); 0.1.0 runs on Kalem 0.6.8 to 0.6.10, without the layer.
+- Kalem 0.6.13 or later (plugin API 0.2.11); 0.2.0 runs on Kalem 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
 - Room to index a large graph: the plugin asks Kalem for 1 GB and 10 s a call (see Speed and size).
 
 ## Commands and keys
@@ -64,11 +66,11 @@ kalem run graph graph.pages ~/notes
 
 ## Editing as an outliner
 
-In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`). With Kalem 0.6.12 the Vim profile's keys win over a plugin's: in an Org note `SPC m t`, `SPC m p p`, `SPC m d s` and `SPC m d d` run Kalem's Org commands, and `SPC n s` in any note searches Kalem's notes folder; a Kalem after 0.6.12, whose keymap puts a layer's keys before the profile's, runs the plugin's.
+In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`), whose keys come before the profile's (Kalem 0.6.13):
 
 | Keys | Command | What it does |
 |---|---|---|
-| Enter (typing, in a Logseq note in Markdown) | New Block | As Logseq's Enter: a new block after the block's properties and dates, the first child when its children are shown, the block split at the cursor (its properties staying with the first part), an empty child outdented; elsewhere Markdown's Enter. Needs a Kalem after 0.6.12, whose keymap puts a layer's keys before the profile's |
+| Enter (typing, in a Logseq note in Markdown) | New Block | As Logseq's Enter: a new block after the block's properties and dates, the first child when its children are shown, the block split at the cursor (its properties staying with the first part), an empty child outdented; elsewhere Markdown's Enter |
 | `SPC m t` in Org, `SPC m t t` in Markdown | Cycle Task | The block's keyword as Logseq cycles it: `TODO` to `DOING`, `LATER` to `NOW`, both to `DONE`, `DONE` to none, and none (or `WAITING`, `CANCELED`) to `LATER` (`TODO` with `:preferred-workflow :todo`); in a vault the check box: none, `[ ]`, `[x]`, none. In Markdown, `SPC m t` is Doom's toggles (`SPC m t x` the check box, `SPC m t m` the markup) |
 | `SPC m p p` | Set Priority | `[#A]`, `[#B]`, `[#C]` or none, after the keyword (Doom's Org key; `SPC m p u` and `SPC m p d` stay Org's) |
 | `SPC m d s`, `SPC m d d` | Schedule, Deadline | `SCHEDULED: <2026-10-12 Mon>` after the block's first line and properties (after an Org headline), replaced where it is, removed when the answer is empty |

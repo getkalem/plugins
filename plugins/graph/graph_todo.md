@@ -969,6 +969,15 @@ below replace the earlier GR4a to GR4d.
   `kalem-plugin` pinned to it (5a85de4d) and the release commit made
   for 0.2.0. Open: the tag `graph-v0.2.0`, once Kalem 0.6.11's release
   is published.)
+  0.3.0 (2026-10-10): what GR8, GR3d, GR7 and the layer gained that day
+  (Enter, Open Link, the journal keys, the sort, Block References,
+  highlights, numbered lists, admonitions, Org's keywords, unsaved
+  typing, the keys before the Vim profile's) and plugin API 0.2.11's
+  completion and local time; the manifest's API `^0.2.11`, for Kalem
+  0.6.13 and later. Built and tested against Kalem's branch
+  `plugin-completers` through a `[patch]` not committed. Open: the
+  `kalem-plugin` pin moved to Kalem's main once it is pushed with API
+  0.2.11, and the tag `graph-v0.3.0` after Kalem 0.6.13's release.
 
 ## What Kalem's core must gain
 

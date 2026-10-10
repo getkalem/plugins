@@ -50,8 +50,8 @@ fn the_manifest() {
     assert_eq!(m["id"], "org.kalem.graph");
     assert_eq!(m["main"], "dist/graph.wasm");
     // The release imports the plugin API of the kalem-plugin it is built
-    // with: 0.2.10, its layer and clock.
-    assert_eq!(m["api"], "^0.2.10");
+    // with: 0.2.11, its layer, completer and clocks.
+    assert_eq!(m["api"], "^0.2.11");
     assert_eq!(m["activation"], serde_json::json!(["onStartup"]));
     // A large graph is indexed in one call: a viewer's limits, not an
     // extension's 64 MB and 100 ms (GR11).
