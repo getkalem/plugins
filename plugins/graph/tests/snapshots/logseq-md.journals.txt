@@ -1,0 +1,38 @@
+Journals: logseq-md
+
+▾ Oct 10th, 2026
+    • Plan for [[Oct 10th, 2026]]
+      • NOW Start [[Project/Plugins/Graph]]
+    • Unlinked: the graph plugin and kalem
+
+▾ Oct 9th, 2026
+    • A day: notes of 2026-10-09
+
+▾ Oct 8th, 2026
+    • A day: notes of 2026-10-08
+
+▾ Oct 7th, 2026
+    • A day: notes of 2026-10-07
+
+▾ Oct 6th, 2026
+    • A day: notes of 2026-10-06
+
+▾ Oct 5th, 2026
+    • A day: notes of 2026-10-05
+
+▾ Oct 4th, 2026
+    • The day after [[Oct 3rd, 2026]]
+    • DONE Wrote graph_todo.md
+
+▾ Oct 3rd, 2026
+    • Met about [[Project/Plugins]] #meeting
+      • Decided: the graph plugin first
+        • see [[Oct 4th, 2026]]
+    • TODO Read [[Kalem]] docs
+
+▾ Oct 2nd, 2026
+    • A day: notes of 2026-10-02
+
+▾ Oct 1st, 2026
+    • A day: notes of 2026-10-01
+

@@ -481,7 +481,7 @@ impl App {
         let mut rels: Vec<String> = index
             .backlinks(key)
             .iter()
-            .map(|b| b.path.clone())
+            .map(|b| b.path.to_string())
             .collect();
         rels.extend(page.path.clone());
         rels.sort();

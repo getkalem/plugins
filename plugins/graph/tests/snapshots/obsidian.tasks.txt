@@ -1,0 +1,9 @@
+Tasks: obsidian
+
+Now (1)
+  DOING Half done  Home
+
+To do (1)
+  TODO Write the plugin [[Projects/Graph]] #task  Home
+
+Scheduled and due within a week (0)

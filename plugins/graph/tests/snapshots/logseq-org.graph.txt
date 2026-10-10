@@ -1,0 +1,10 @@
+Graph: logseq-org
+← links in · → links out
+
+Kalem  ←3 →4
+Project
+  Plugins  ←2 →2
+
+Unlinked mentions (0)  named without a link; Enter lists them
+
+Orphans (0)

@@ -36,7 +36,7 @@ fn titles(i: &Index, key: &str) -> Vec<String> {
         .iter()
         .map(|b| {
             i.page_of(&b.path)
-                .map_or(b.path.clone(), |p| p.title.clone())
+                .map_or(b.path.to_string(), |p| p.title.clone())
         })
         .collect();
     t.sort();
@@ -51,6 +51,12 @@ fn the_manifest() {
     assert_eq!(m["main"], "dist/graph.wasm");
     assert_eq!(m["api"], "^0.2.8");
     assert_eq!(m["activation"], serde_json::json!(["onStartup"]));
+    // A large graph is indexed in one call: a viewer's limits, not an
+    // extension's 64 MB and 100 ms (GR11).
+    assert_eq!(
+        m["limits"],
+        serde_json::json!({ "memory_mb": 1024, "time_ms": 10000 })
+    );
     assert_eq!(
         m["permissions"],
         serde_json::json!(["fs:read:workspace", "fs:write:workspace"])
@@ -187,7 +193,11 @@ fn a_logseq_graph_in_markdown() {
     assert_eq!(p.blocks[1].scheduled, Date::new(2026, 10, 12));
     assert_eq!(p.blocks[2].deadline, Date::new(2026, 10, 31));
     // Unlinked mentions.
-    let unlinked: Vec<String> = i.unlinked("kalem").iter().map(|b| b.path.clone()).collect();
+    let unlinked: Vec<String> = i
+        .unlinked("kalem")
+        .iter()
+        .map(|b| b.path.to_string())
+        .collect();
     assert_eq!(
         unlinked,
         ["journals/2026_10_10.md", "pages/Questions%3F.md"]
@@ -231,7 +241,7 @@ fn a_logseq_graph_in_org() {
         1
     );
     let k = &i.file("pages/Kalem.org").unwrap().scanned;
-    assert_eq!(k.blocks[3].marker.as_deref(), Some("TODO"));
+    assert_eq!(k.blocks[3].marker, Some("TODO"));
     assert_eq!(k.blocks[3].scheduled, Date::new(2026, 10, 12));
     assert_eq!(
         i.journal_path(Date::new(2026, 10, 11).unwrap()),
@@ -506,4 +516,114 @@ fn drawings_highlights_and_unlinked_mentions() {
     }
     let text = views::graph(&o).text;
     assert!(text.contains("Unlinked mentions ("), "{text}");
+}
+
+/// A save changes only the file's own entries; what the index holds after
+/// it is what an index built afresh holds, for every file of every corpus
+/// and edits that keep or change its names.
+#[test]
+fn a_save_keeps_the_index_as_a_build_would() {
+    use kalem_plugin_graph::files::Memory;
+    for name in ["logseq-md", "logseq-org", "obsidian"] {
+        let root = corpus(name);
+        let i = load(name);
+        let kind = i.graph.kind;
+        // The corpus as files in memory, the graph's settings with them.
+        let mut all: Vec<(String, String)> = Vec::new();
+        let mut todo = vec![root.clone()];
+        while let Some(dir) = todo.pop() {
+            for e in Native.list(&dir).unwrap() {
+                let path = files::join(&dir, files::file_name(&files::normalize(&e)));
+                if e.ends_with('/') {
+                    todo.push(path);
+                } else if let Ok(t) = Native.read(&path) {
+                    all.push((path, t));
+                }
+            }
+        }
+        let rels: Vec<String> = i.files().map(|(r, _)| r.clone()).collect();
+        let edits: [&dyn Fn(&str) -> String; 4] = [
+            // A block naming pages, a tag and a block.
+            &|t| {
+                format!(
+                    "{t}\n- added [[Kalem]] and [[A page only named here]] #newtag ((6512c0de-0001-4000-8000-000000000002))\n"
+                )
+            },
+            // The last line gone.
+            &|t| {
+                let t = t.trim_end_matches('\n');
+                t.rsplit_once('\n')
+                    .map_or(String::new(), |(a, _)| format!("{a}\n"))
+            },
+            // Every link gone.
+            &|t| t.replace("[[", "").replace("]]", ""),
+            // A new title.
+            &|t| format!("title:: Renamed\n{t}"),
+        ];
+        for rel in &rels {
+            for (n, edit) in edits.iter().enumerate() {
+                let pairs: Vec<(&str, &str)> =
+                    all.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+                let m = Memory::new(&pairs);
+                let mut kept =
+                    Index::build(&m, Graph::load(&m, &root, kind, &Fallbacks::default()));
+                let path = files::join(&root, rel);
+                let text = m.read(&path).unwrap();
+                m.write(&path, &edit(&text)).unwrap();
+                kept.update(&m, &path);
+                let fresh = Index::build(&m, Graph::load(&m, &root, kind, &Fallbacks::default()));
+                assert_eq!(kept.digest(), fresh.digest(), "{name}: {rel}, edit {n}");
+            }
+        }
+    }
+}
+
+/// Every block of the Logseq corpora folded and unfolded again (Fold
+/// Block writing `collapsed:: true` and taking it away) is saved as it
+/// was, byte for byte; a block folded in the file unfolded and folded
+/// again too. The layer's overlays keep to every file of every corpus.
+#[test]
+fn folds_round_trip_and_overlays_keep_to_the_text() {
+    use kalem_plugin_graph::edit;
+    use kalem_plugin_graph::layer;
+    let mut folded_blocks = 0;
+    for name in ["logseq-md", "logseq-org", "obsidian"] {
+        let i = load(name);
+        for (rel, d) in i.files() {
+            let text = Native.read(&i.graph.path(rel)).unwrap();
+            let o = layer::overlays(i.graph.kind, &text, Some(&i), Some(rel));
+            let mut end = 0;
+            for s in &o.spans {
+                assert!(
+                    s.start >= end && s.start < s.end && s.end <= text.len(),
+                    "{rel}: {s:?}"
+                );
+                assert!(text.is_char_boundary(s.start) && text.is_char_boundary(s.end));
+                end = s.end;
+            }
+            if i.graph.kind == Kind::Obsidian {
+                continue;
+            }
+            let starts: Vec<usize> = std::iter::once(0)
+                .chain(text.match_indices('\n').map(|(p, _)| p + 1))
+                .collect();
+            for b in &d.scanned.blocks {
+                let cursor = starts[b.line as usize];
+                let Ok(once) = edit::toggle_fold(&text, cursor) else {
+                    continue;
+                };
+                let folded = edit::apply(&text, &once.edits);
+                let twice = edit::toggle_fold(&folded, cursor)
+                    .unwrap_or_else(|e| panic!("{rel}: line {}: {e}", b.line));
+                let back = edit::apply(&folded, &twice.edits);
+                assert_eq!(
+                    back, text,
+                    "{rel}: the block of line {} folded and unfolded",
+                    b.line
+                );
+                folded_blocks += 1;
+            }
+        }
+    }
+    assert!(folded_blocks >= 10, "{folded_blocks} blocks folded");
 }

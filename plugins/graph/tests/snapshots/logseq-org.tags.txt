@@ -1,0 +1,4 @@
+Tags: logseq-org
+
+#software  2
+#meeting  1

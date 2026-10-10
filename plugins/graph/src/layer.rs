@@ -288,19 +288,7 @@ fn inline(
 
 /// The references of a line, as the scanner finds them.
 fn scan_refs(line: &str, flavor: Flavor) -> Vec<scan::Ref> {
-    let mut out = Vec::new();
-    let mut column = 0;
-    // `reference_at` finds the reference under a column: walk the line.
-    while column < line.len() {
-        match scan::reference_at(line, column, flavor) {
-            Some(r) => {
-                column = (r.end as usize).max(column + 1);
-                out.push(r);
-            }
-            None => column += line[column..].chars().next().map_or(1, char::len_utf8),
-        }
-    }
-    out
+    scan::references(line, flavor)
 }
 
 /// A line's `key:: value` property: the key's bytes (with `::`) and the

@@ -2,6 +2,15 @@
 //! in the component, the file system natively. Paths are absolute and
 //! written with `/`; a folder in a listing ends with `/`.
 
+/// The largest file Kalem's `fs.read` reads, 16 MB; the readers here
+/// keep to it, so that the tests see what Kalem gives.
+pub const MAX_BYTES: usize = 16 << 20;
+
+/// Why a file over [`MAX_BYTES`] is not read, as Kalem says it.
+fn too_large(path: &str) -> String {
+    format!("{path} is larger than {} MB", MAX_BYTES >> 20)
+}
+
 /// Reading files and folders.
 pub trait Files {
     /// A text file's text.
@@ -72,6 +81,12 @@ pub struct Native;
 #[cfg(not(target_arch = "wasm32"))]
 impl Files for Native {
     fn read(&self, path: &str) -> Result<String, String> {
+        let len = std::fs::metadata(path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .len();
+        if len > MAX_BYTES as u64 {
+            return Err(too_large(path));
+        }
         std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))
     }
 
@@ -132,8 +147,13 @@ impl Memory {
 
 impl Files for Memory {
     fn read(&self, path: &str) -> Result<String, String> {
-        self.get(path)
-            .ok_or_else(|| format!("{path}: no such file"))
+        let text = self
+            .get(path)
+            .ok_or_else(|| format!("{path}: no such file"))?;
+        if text.len() > MAX_BYTES {
+            return Err(too_large(path));
+        }
+        Ok(text)
     }
 
     fn list(&self, dir: &str) -> Result<Vec<String>, String> {

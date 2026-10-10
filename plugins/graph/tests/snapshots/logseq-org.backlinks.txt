@@ -1,0 +1,16 @@
+Backlinks: Kalem
+logseq-org · Logseq · pages/Kalem.org
+
+Linked references (3)
+▾ Oct 3rd, 2026 (1)
+    • TODO Write to [[Editor]]
+▾ Project/Plugins (2)
+    • The plugins of [[Kalem]]
+    • A file link: [[file:./kalem.org][Kalem]] and a web one [[https://example.com][site]]
+
+Its blocks referenced (1)
+▾ Project/Plugins (1)
+    • DOING The graph plugin, see ((6512c0de-0002-4000-8000-000000000001))
+
+Unlinked references (0)
+

@@ -81,7 +81,7 @@ pub struct Block {
     /// a heading's marks.
     pub text: String,
     /// `TODO`, `DOING`, `DONE`, `LATER`, `NOW`, `WAITING`, `CANCELED`…
-    pub marker: Option<String>,
+    pub marker: Option<&'static str>,
     /// `A`, `B`, `C`.
     pub priority: Option<char>,
     /// `SCHEDULED: <…>`.
@@ -169,6 +169,15 @@ pub fn scan(text: &str, flavor: Flavor, options: &Options) -> Scanned {
     };
     s.lines = lines.len() as u32;
     s.refs.sort_by_key(|r| (r.line, r.start));
+    // Kept in the index for every file of the graph: no room to spare (a
+    // quarter of a million blocks' worth in a graph of a million).
+    s.blocks.shrink_to_fit();
+    for b in &mut s.blocks {
+        b.props.shrink_to_fit();
+        b.text.shrink_to_fit();
+    }
+    s.refs.shrink_to_fit();
+    s.headings.shrink_to_fit();
     s
 }
 
@@ -499,6 +508,45 @@ fn inline(line: &str, flavor: Flavor) -> Vec<Raw> {
     out
 }
 
+/// The references of `line` from its start, each the one
+/// [`reference_at`] finds at its first byte, the next looked for after
+/// it: the line read once.
+pub fn references(line: &str, flavor: Flavor) -> Vec<Ref> {
+    let raws = inline(line, flavor);
+    let mut out = Vec::new();
+    let mut column = 0;
+    while column < line.len() {
+        let found = raws
+            .iter()
+            .find(|r| r.start <= column && column < r.end.max(r.start + 1));
+        match found {
+            Some(r) => {
+                column = r.end.max(column + 1);
+                out.push(Ref {
+                    kind: r.kind,
+                    target: r.target.clone(),
+                    anchor: r.anchor.clone(),
+                    block: None,
+                    line: 0,
+                    start: r.start as u32,
+                    end: r.end as u32,
+                });
+            }
+            None => match raws
+                .iter()
+                .filter(|r| r.start > column)
+                .map(|r| r.start)
+                .min()
+            {
+                // Straight to the next reference.
+                Some(next) => column = next,
+                None => break,
+            },
+        }
+    }
+    out
+}
+
 /// The reference under byte `column` of `line`, in `flavor`'s syntax.
 pub fn reference_at(line: &str, column: usize, flavor: Flavor) -> Option<Ref> {
     inline(line, flavor)
@@ -568,14 +616,14 @@ pub fn split_values(value: &str) -> Vec<String> {
 }
 
 /// A task keyword and a priority at the start of `text`, and the rest.
-fn task(text: &str) -> (Option<String>, Option<char>, &str) {
+fn task(text: &str) -> (Option<&'static str>, Option<char>, &str) {
     let mut rest = text;
     let mut marker = None;
     for m in MARKERS {
         if let Some(after) = rest.strip_prefix(m)
             && (after.is_empty() || after.starts_with(' '))
         {
-            marker = Some((*m).to_string());
+            marker = Some(*m);
             rest = after.trim_start();
             break;
         }
@@ -1280,7 +1328,7 @@ fn obsidian(lines: &[&str]) -> Scanned {
                     ("[-] ", "CANCELED"),
                 ] {
                     if let Some(after) = text.strip_prefix(mark) {
-                        block.marker = Some(kw.to_string());
+                        block.marker = Some(kw);
                         text = after.to_string();
                         break;
                     }
@@ -1393,7 +1441,7 @@ mod tests {
         assert_eq!(s.tags, ["kalem", "notes"]);
         assert_eq!(s.blocks.len(), 5);
         let b = &s.blocks[0];
-        assert_eq!(b.marker.as_deref(), Some("TODO"));
+        assert_eq!(b.marker, Some("TODO"));
         assert_eq!(b.priority, Some('A'));
         assert_eq!(b.text, "Write [[Kalem]] docs #writing");
         assert_eq!(
@@ -1409,7 +1457,7 @@ mod tests {
         assert_eq!(s.blocks[2].heading, Some(2));
         assert_eq!(s.headings[0].text, "A heading");
         assert_eq!(s.blocks[3].text, "");
-        assert_eq!(s.blocks[4].marker.as_deref(), Some("DONE"));
+        assert_eq!(s.blocks[4].marker, Some("DONE"));
         assert_eq!(
             targets(&s),
             [
@@ -1478,7 +1526,7 @@ mod tests {
         assert_eq!(s.blocks.len(), 3);
         let b = &s.blocks[0];
         assert_eq!(b.text, "Headline [[Link]]");
-        assert_eq!(b.marker.as_deref(), Some("TODO"));
+        assert_eq!(b.marker, Some("TODO"));
         assert_eq!(b.priority, Some('B'));
         assert_eq!(
             b.id.as_deref(),
@@ -1516,9 +1564,9 @@ mod tests {
         );
         assert_eq!((p.line, p.end), (8, 10));
         let task = &s.blocks[2];
-        assert_eq!(task.marker.as_deref(), Some("TODO"));
+        assert_eq!(task.marker, Some("TODO"));
         assert_eq!(task.text, "task [[T]]");
-        assert_eq!(s.blocks[3].marker.as_deref(), Some("DONE"));
+        assert_eq!(s.blocks[3].marker, Some("DONE"));
         assert_eq!(s.blocks[3].parent, Some(2));
         let got: Vec<(RefKind, &str, Option<&str>)> = s
             .refs

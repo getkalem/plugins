@@ -343,9 +343,14 @@ impl Plugin for Graph {
                 placement: ui::Placement::Side,
             },
             |key, event| {
-                if matches!(event, ui::PanelEvent::Clicked) {
-                    let key = key.to_string();
-                    with_app(|app| app.panel_clicked(&key));
+                let key = key.to_string();
+                match event {
+                    ui::PanelEvent::Clicked => with_app(|app| app.panel_clicked(&key)),
+                    ui::PanelEvent::Expanded(open) => {
+                        let open = *open;
+                        with_app(|app| app.panel_expanded(&key, open));
+                    }
+                    _ => {}
                 }
             },
         )?;

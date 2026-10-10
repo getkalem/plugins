@@ -1,0 +1,11 @@
+Tasks: logseq-org
+
+Now (1)
+  DOING [#B] The graph plugin, see ((6512c0de-0002-4000-8000-000000000001))  Project/Plugins
+
+To do (2)
+  TODO [#A] Read the Book  Kalem
+  TODO Write to [[Editor]]  Oct 3rd, 2026
+
+Scheduled and due within a week (1)
+  TODO [#A] Read the Book  scheduled 2026-10-12 · Kalem

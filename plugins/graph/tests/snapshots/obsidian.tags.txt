@@ -1,0 +1,6 @@
+Tags: obsidian
+
+#home  1
+#kalem/plugins  1
+#tag/nested  1
+#task  1

@@ -887,3 +887,33 @@ fn a_graphs_folder_is_its_root() {
     let out = app.command(&m, "graph.random", &ctx("/w/notes", "", 0));
     assert_eq!(opens(&out).len(), 1);
 }
+
+#[test]
+fn the_panels_unlinked_references_searched_when_opened() {
+    let m = logseq();
+    m.write("/w/notes/pages/Mention.md", "- kalem is named here\n")
+        .unwrap();
+    let mut app = App::new(Settings::default());
+    let panel = |out: &[Effect]| {
+        out.iter()
+            .find_map(|e| match e {
+                Effect::Panel(p) => Some(p.clone()),
+                _ => None,
+            })
+            .expect("the panel")
+    };
+    let p = panel(&app.opened(&m, "/w/notes/pages/Kalem.md"));
+    assert_eq!(p[2].expanded, Some(false));
+    // Opened by its arrow or its entry: searched.
+    let p = panel(&app.panel_expanded("2", true));
+    assert_eq!(p[2].detail.as_deref(), Some("1"));
+    assert_eq!(p[2].expanded, Some(true));
+    // Kept open on the same page, closed on another.
+    let p = panel(&app.saved(&m, "/w/notes/pages/Mention.md"));
+    assert_eq!(p[2].expanded, Some(true));
+    let p = panel(&app.opened(&m, "/w/notes/pages/Other.md"));
+    assert_eq!(p[2].expanded, Some(false));
+    let p = panel(&app.panel_clicked(views::UNLINKED_SEARCH));
+    assert_eq!(p[2].expanded, Some(true));
+    assert!(app.panel_expanded("1", false).is_empty());
+}

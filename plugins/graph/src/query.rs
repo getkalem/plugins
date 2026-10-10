@@ -11,7 +11,7 @@
 //! of page clauses only finds pages. Advanced queries (Datalog) are not
 //! run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::date::{self, Date};
 use crate::index::Index;
@@ -427,24 +427,33 @@ struct Ctx<'a> {
     index: &'a Index,
     rel: &'a str,
     block: Option<&'a scan::Block>,
+    /// The block's number in its file.
+    at: usize,
     page: &'a str,
-    refs: &'a BTreeSet<String>,
+    /// The page, read once for the file.
+    page_data: Option<&'a crate::index::Page>,
+    /// For each page the query names, which of the file's blocks refer
+    /// to it (none: no block does).
+    refs: &'a HashMap<&'a str, Vec<bool>>,
     today: Option<Date>,
 }
 
 fn eval(e: &Expr, c: &Ctx<'_>, notes: &mut BTreeSet<String>) -> bool {
-    let page = c.index.page(c.page);
+    let page = c.page_data;
     match e {
         Expr::And(v) => v.iter().all(|x| eval(x, c, notes)),
         Expr::Or(v) => v.iter().any(|x| eval(x, c, notes)),
         Expr::Not(x) => !eval(x, c, notes),
-        Expr::Ref(name) => c.refs.contains(&c.index.resolve(name, c.rel)),
+        Expr::Ref(name) => c
+            .refs
+            .get(name.as_str())
+            .is_some_and(|v| v.get(c.at).copied().unwrap_or(false)),
         Expr::Text(t) => c
             .block
             .is_some_and(|b| b.text.to_lowercase().contains(&t.to_lowercase())),
         Expr::Task(list) => c
             .block
-            .and_then(|b| b.marker.as_deref())
+            .and_then(|b| b.marker)
             .is_some_and(|m| list.iter().any(|x| x == m)),
         Expr::Priority(list) => c
             .block
@@ -490,47 +499,54 @@ fn eval(e: &Expr, c: &Ctx<'_>, notes: &mut BTreeSet<String>) -> bool {
     }
 }
 
-/// Whether `e` names a page a block must refer to.
-fn needs_refs(e: &Expr) -> bool {
+/// The pages `e` names, as written.
+fn ref_names<'e>(e: &'e Expr, out: &mut Vec<&'e str>) {
     match e {
-        Expr::And(v) | Expr::Or(v) => v.iter().any(needs_refs),
-        Expr::Not(x) => needs_refs(x),
-        Expr::Ref(_) => true,
-        _ => false,
+        Expr::And(v) | Expr::Or(v) => v.iter().for_each(|x| ref_names(x, out)),
+        Expr::Not(x) => ref_names(x, out),
+        Expr::Ref(n) if !out.contains(&n.as_str()) => out.push(n),
+        _ => {}
     }
 }
 
-/// The pages a block's references reach, as Logseq's path references
-/// count them: its page, its own references, and those of the blocks it
-/// is under.
-fn path_refs(index: &Index, rel: &str) -> Vec<BTreeSet<String>> {
-    let Some(d) = index.file(rel) else {
-        return Vec::new();
-    };
-    let blocks = &d.scanned.blocks;
-    let mut own: Vec<BTreeSet<String>> = vec![BTreeSet::new(); blocks.len()];
-    for r in &d.scanned.refs {
-        if r.kind.to_block() {
-            continue;
+/// The blocks of a page's references, by file: from the index's
+/// backlinks, block references left out, as Logseq's path references
+/// count pages.
+fn by_file(index: &Index, key: &str) -> HashMap<String, Vec<usize>> {
+    let mut out: HashMap<String, Vec<usize>> = HashMap::new();
+    for b in index.backlinks(key) {
+        if let (false, Some(block)) = (b.kind.to_block(), b.block) {
+            out.entry(b.path.to_string()).or_default().push(block);
         }
-        if let Some(b) = r.block
-            && b < own.len()
-        {
-            own[b].insert(index.resolve(&r.target, rel));
-        }
-    }
-    let mut out: Vec<BTreeSet<String>> = Vec::with_capacity(blocks.len());
-    for (i, b) in blocks.iter().enumerate() {
-        let mut set = std::mem::take(&mut own[i]);
-        match b.parent {
-            Some(p) if p < out.len() => set.extend(out[p].iter().cloned()),
-            _ => {
-                set.insert(d.key.clone());
-            }
-        }
-        out.push(set);
     }
     out
+}
+
+/// Which blocks of file `rel` refer to the page `key` as Logseq's path
+/// references count: on it, naming it, or under a block that names it;
+/// none when no block of the file does.
+fn file_refs(d: &crate::index::FileData, key: &str, own: Option<&Vec<usize>>) -> Option<Vec<bool>> {
+    let blocks = &d.scanned.blocks;
+    if d.key == key {
+        return Some(vec![true; blocks.len()]);
+    }
+    let own = own?;
+    let mut has = vec![false; blocks.len()];
+    for b in own {
+        if let Some(h) = has.get_mut(*b) {
+            *h = true;
+        }
+    }
+    // A block's parent comes before it.
+    for i in 0..blocks.len() {
+        if let Some(p) = blocks[i].parent
+            && p < i
+            && has[p]
+        {
+            has[i] = true;
+        }
+    }
+    Some(has)
 }
 
 /// The query run over the graph; `today` for relative days.
@@ -538,14 +554,16 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
     let mut notes = BTreeSet::new();
     let pages = pages_only(&q.expr);
     let mut hits: Vec<Hit> = Vec::new();
-    let empty = BTreeSet::new();
+    let empty = HashMap::new();
     if pages {
         for p in index.pages().filter(|p| p.path.is_some()) {
             let c = Ctx {
                 index,
                 rel: p.path.as_deref().unwrap_or(""),
                 block: None,
+                at: 0,
                 page: &p.key,
+                page_data: Some(p),
                 refs: &empty,
                 today,
             };
@@ -554,13 +572,22 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
             }
         }
     } else {
-        let refs_needed = needs_refs(&q.expr);
+        let mut names = Vec::new();
+        ref_names(&q.expr, &mut names);
+        // The files referring to each page named, read from the index once.
+        let mut keyed: HashMap<String, HashMap<String, Vec<usize>>> = HashMap::new();
         for (rel, d) in index.files() {
-            let refs = if refs_needed {
-                path_refs(index, rel)
-            } else {
-                Vec::new()
-            };
+            let mut refs: HashMap<&str, Vec<bool>> = HashMap::new();
+            for name in &names {
+                let key = index.resolve(name, rel);
+                let files = keyed
+                    .entry(key.clone())
+                    .or_insert_with(|| by_file(index, &key));
+                if let Some(has) = file_refs(d, &key, files.get(rel.as_str())) {
+                    refs.insert(name, has);
+                }
+            }
+            let page_data = index.page(&d.key);
             for (i, b) in d.scanned.blocks.iter().enumerate() {
                 // A query block's own text never answers it.
                 if b.text.contains("{{query") || b.props.iter().any(|(k, _)| k == "template") {
@@ -570,8 +597,10 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
                     index,
                     rel,
                     block: Some(b),
+                    at: i,
                     page: &d.key,
-                    refs: refs.get(i).unwrap_or(&empty),
+                    page_data,
+                    refs: &refs,
                     today,
                 };
                 if eval(&q.expr, &c, &mut notes) {

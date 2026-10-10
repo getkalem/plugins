@@ -318,9 +318,9 @@ profile gets a **Graph** menu with the same commands.
   kept by `document-after-save` and `workspace-file-changed`; the maps
   are derived again after each file, which is simple and enough for the
   corpus; a page only referenced is kept as one. Open: the unsaved text
-  of the current document (`Index::update_text` exists, not yet called);
-  the large graph's measurements (GR11); the problems go to one notice,
-  not yet to the process log.)
+  of the current document (`Index::update_text` exists, not yet called).
+  GR11 measured the large graph, made a save change only its file's
+  entries, and lists the problems beyond the one notice in All pages.)
 
 ## GR3. What works without the mode
 
@@ -801,7 +801,7 @@ below replace the earlier GR4a to GR4d.
 
 ## GR11. Speed, limits and the tests
 
-- [ ] GR11 A generated large graph in the tests (`tests/large.rs`,
+- [x] GR11 A generated large graph in the tests (`tests/large.rs`,
   ignored by default, run on demand and in CI's nightly): 10,000
   pages and 1,000,000 blocks (Logseq's own scale target for the
   database version), 50 references a page; the index built under 2 s
@@ -820,6 +820,39 @@ below replace the earlier GR4a to GR4d.
   notice), a circular embed (cut at depth 3 with a note) each give one
   notice and never a panic (the `diagnostics` interface's `panicked`
   checked in a test).
+  (Done 2026-10-10. `tests/large.rs` generates the graph in memory and
+  measures with a counting allocator; the README has the numbers. The
+  first run missed five budgets and led to: the scanner's vectors
+  trimmed and a task's keyword borrowed from the scanner's list
+  (362 to 287 MB), a backlink's path shared by its file's references; a
+  save that keeps the page's names withdrawing and adding again only
+  its file's entries (514 ms to 0.4 ms), checked against a fresh build
+  after four kinds of edit of every corpus file; the panel's unlinked
+  references searched for when opened, as Logseq does (286 to 2 ms);
+  the layer reading a line's references once instead of at each column
+  (58 to 8 ms); the Tasks document's sort without copies (697 to
+  350 ms); a query's `[[page]]` from the index's backlinks by file (496
+  to 20 ms). In Kalem itself the plugin was stopped at the first note
+  of the large graph: an extension's limits are 64 MB and 100 ms a
+  call, so the manifest asks for a viewer's, 1 GB and 10 s; Kalem's
+  release build indexes the graph in 1.9 s (`kalem run`), and the
+  editor shows its status within four seconds of the note opening.
+  The layers have no `Embed` nodes to cache: Kalem keeps a note's
+  overlays for each version of its text, and the queries' lines for each
+  version of the index. The conformance test folds and unfolds every
+  Logseq block with children back to the same bytes and checks the
+  overlays of every corpus file; `tests/snapshots.rs` holds the
+  documents, which `kalem run` prints byte for byte (ignored test,
+  `KALEM=`); `tests/robust.rs` covers the configuration that does not
+  parse, the file not in UTF-8 and the one over 16 MB (one notice; the
+  rest listed under "Not read" in All pages, since a plugin has no
+  process log), embeds of themselves (one line, never followed: the
+  depth-3 cut has nothing to cut), and every corpus note broken
+  thousands of ways through the scanner, the layer, the queries and the
+  editing commands, which found no panic. Found on the way: the Graph
+  document hung a namespace's pages under the line above when the
+  namespace itself had no file. Open: the first index of a large graph
+  holds Kalem's thread while it is built (K13).)
 
 ## GR12. Release, the README and the Book
 
@@ -895,6 +928,12 @@ Each is the plugin's gate or its ask, written for every plugin.
   for the owner to decide, with a confirmation or a permission. Until
   then the plugin shows the file in the file manager (`file.reveal`'s
   `path`). Not blocking.
+- K13 Work a plugin does without holding the editor: a call that may
+  take seconds (the first index of a graph of a million blocks, 1.9 s in
+  Kalem's release build) run off the editor's thread, or in slices with
+  the editor drawing between them, the plugin's other calls waiting.
+  Until then the first command or note of a large graph waits. Not
+  blocking.
 - K11 Renaming (and deleting) a file through `fs`, under
   `fs:write:workspace`: a page renamed with its file as Logseq does, a
   vault's note renamed at all (GR8c). Not blocking.

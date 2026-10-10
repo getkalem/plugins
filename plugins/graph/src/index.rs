@@ -4,6 +4,7 @@
 //! file; nothing is written.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use crate::config::{Graph, Kind, NewFile};
 use crate::date::Date;
@@ -43,8 +44,9 @@ pub struct FileData {
 /// A reference to a page or a block, where it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackRef {
-    /// The file it is in, relative to the root.
-    pub path: String,
+    /// The file it is in, relative to the root, shared by the file's
+    /// references.
+    pub path: Arc<str>,
     /// The block it is in.
     pub block: Option<usize>,
     /// Its line.
@@ -228,6 +230,9 @@ impl Index {
             && self.in_folders(&rel);
         let changed = match files.read(&path) {
             Ok(text) if ours => {
+                if self.replace_in_place(&rel, &text) {
+                    return true;
+                }
                 self.remove(&rel);
                 self.add(&rel, &text);
                 true
@@ -242,6 +247,9 @@ impl Index {
 
     /// The text of `path` (relative) as it is in the editor, unsaved.
     pub fn update_text(&mut self, rel: &str, text: &str) {
+        if self.replace_in_place(rel, text) {
+            return;
+        }
         self.remove(rel);
         self.add(rel, text);
         self.derive();
@@ -395,12 +403,22 @@ impl Index {
     fn derive(&mut self) {
         self.version = VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.pages.retain(|_, p| p.path.is_some());
-        self.names.clear();
-        self.stems.clear();
+        self.derive_names();
         self.blocks.clear();
         self.incoming.clear();
         self.block_incoming.clear();
         self.tags.clear();
+        let rels: Vec<String> = self.files.keys().cloned().collect();
+        for rel in rels {
+            self.contribute(&rel);
+        }
+    }
+
+    /// The names pages go by: Logseq's titles, file names and aliases,
+    /// Obsidian's file names.
+    fn derive_names(&mut self) {
+        self.names.clear();
+        self.stems.clear();
         for (key, p) in &self.pages {
             if self.graph.kind == Kind::Logseq {
                 self.names.insert(names::key(&p.title), key.clone());
@@ -431,80 +449,204 @@ impl Index {
                 }
             }
         }
-        for (rel, data) in &self.files {
-            for (i, b) in data.scanned.blocks.iter().enumerate() {
-                if let Some(id) = &b.id {
-                    let id = match self.graph.kind {
-                        Kind::Logseq => id.clone(),
-                        Kind::Obsidian => format!("{}#^{id}", data.key),
-                    };
-                    self.blocks.entry(id).or_insert_with(|| (rel.clone(), i));
-                }
-            }
-        }
-        let mut virtual_pages: BTreeMap<String, Page> = BTreeMap::new();
-        let files: Vec<(String, String, Vec<scan::Ref>)> = self
-            .files
-            .iter()
-            .map(|(rel, d)| (rel.clone(), d.key.clone(), d.scanned.refs.clone()))
-            .collect();
-        for (rel, own, refs) in files {
-            for r in refs {
-                let back = BackRef {
-                    path: rel.clone(),
-                    block: r.block,
-                    line: r.line,
-                    kind: r.kind,
+    }
+
+    /// The file `rel`'s block ids and references added to the maps, the
+    /// pages it names that have no file made.
+    fn contribute(&mut self, rel: &str) {
+        // Taken out while its references are added: the maps change, the
+        // file does not.
+        let Some(d) = self.files.remove(rel) else {
+            return;
+        };
+        for (i, b) in d.scanned.blocks.iter().enumerate() {
+            if let Some(id) = &b.id {
+                let id = match self.graph.kind {
+                    Kind::Logseq => id.clone(),
+                    Kind::Obsidian => format!("{}#^{id}", d.key),
                 };
-                if self.graph.kind == Kind::Obsidian && r.kind == RefKind::Tag {
-                    let k = r.target.to_lowercase();
-                    self.tags
-                        .entry(k)
-                        .or_insert_with(|| (r.target.clone(), Vec::new()))
-                        .1
-                        .push(back);
-                    continue;
-                }
-                if self.graph.kind == Kind::Logseq && r.kind.to_block() {
-                    self.block_incoming
-                        .entry(r.target.clone())
-                        .or_default()
-                        .push(back);
-                    continue;
-                }
-                let key = self.resolve(&r.target, &rel);
-                if r.kind == RefKind::Tag {
-                    self.tags
-                        .entry(key.clone())
-                        .or_insert_with(|| (r.target.clone(), Vec::new()))
-                        .1
-                        .push(back.clone());
-                }
-                if self.graph.kind == Kind::Obsidian
-                    && r.kind.to_block()
-                    && let Some(a) = &r.anchor
+                self.blocks
+                    .entry(id)
+                    .or_insert_with(|| (rel.to_string(), i));
+            }
+        }
+        // One path for all of the file's references.
+        let path: Arc<str> = Arc::from(rel);
+        for r in &d.scanned.refs {
+            let back = BackRef {
+                path: path.clone(),
+                block: r.block,
+                line: r.line,
+                kind: r.kind,
+            };
+            if self.graph.kind == Kind::Obsidian && r.kind == RefKind::Tag {
+                let k = r.target.to_lowercase();
+                self.tags
+                    .entry(k)
+                    .or_insert_with(|| (r.target.clone(), Vec::new()))
+                    .1
+                    .push(back);
+                continue;
+            }
+            if self.graph.kind == Kind::Logseq && r.kind.to_block() {
+                self.block_incoming
+                    .entry(r.target.clone())
+                    .or_default()
+                    .push(back);
+                continue;
+            }
+            let key = self.resolve(&r.target, rel);
+            if r.kind == RefKind::Tag {
+                self.tags
+                    .entry(key.clone())
+                    .or_insert_with(|| (r.target.clone(), Vec::new()))
+                    .1
+                    .push(back.clone());
+            }
+            if self.graph.kind == Kind::Obsidian
+                && r.kind.to_block()
+                && let Some(a) = &r.anchor
+            {
+                self.block_incoming
+                    .entry(format!("{key}#^{}", a.to_lowercase()))
+                    .or_default()
+                    .push(back.clone());
+            }
+            if !self.pages.contains_key(&key) {
+                let page = Page {
+                    key: key.clone(),
+                    title: r.target.clone(),
+                    path: None,
+                    aliases: Vec::new(),
+                    journal: self.graph.journal_title.parse(&r.target),
+                    props: Vec::new(),
+                };
+                self.pages.insert(key.clone(), page);
+            }
+            if key != d.key {
+                self.incoming.entry(key).or_default().push(back);
+            }
+        }
+        self.files.insert(rel.to_string(), d);
+    }
+
+    /// What [`Index::contribute`] added for file `rel` taken away again,
+    /// the names unchanged since: its block ids, its references, the pages
+    /// only it named.
+    fn withdraw(&mut self, rel: &str) {
+        let Some(d) = self.files.remove(rel) else {
+            return;
+        };
+        let mine = |b: &BackRef| &*b.path == rel;
+        for (i, b) in d.scanned.blocks.iter().enumerate() {
+            if let Some(id) = &b.id {
+                let id = match self.graph.kind {
+                    Kind::Logseq => id.clone(),
+                    Kind::Obsidian => format!("{}#^{id}", d.key),
+                };
+                if self
+                    .blocks
+                    .get(&id)
+                    .is_some_and(|(r, j)| r == rel && *j == i)
                 {
-                    self.block_incoming
-                        .entry(format!("{key}#^{}", a.to_lowercase()))
-                        .or_default()
-                        .push(back.clone());
-                }
-                if !self.pages.contains_key(&key) {
-                    virtual_pages.entry(key.clone()).or_insert_with(|| Page {
-                        key: key.clone(),
-                        title: r.target.clone(),
-                        path: None,
-                        aliases: Vec::new(),
-                        journal: self.graph.journal_title.parse(&r.target),
-                        props: Vec::new(),
-                    });
-                }
-                if key != own {
-                    self.incoming.entry(key).or_default().push(back);
+                    self.blocks.remove(&id);
                 }
             }
         }
-        self.pages.extend(virtual_pages);
+        let mut named = std::collections::BTreeSet::new();
+        let drop_mine = |list: &mut Vec<BackRef>| {
+            list.retain(|b| !mine(b));
+            list.is_empty()
+        };
+        for r in &d.scanned.refs {
+            if self.graph.kind == Kind::Obsidian && r.kind == RefKind::Tag {
+                let k = r.target.to_lowercase();
+                if self.tags.get_mut(&k).is_some_and(|t| drop_mine(&mut t.1)) {
+                    self.tags.remove(&k);
+                }
+                continue;
+            }
+            if self.graph.kind == Kind::Logseq && r.kind.to_block() {
+                if self
+                    .block_incoming
+                    .get_mut(&r.target)
+                    .is_some_and(drop_mine)
+                {
+                    self.block_incoming.remove(&r.target);
+                }
+                continue;
+            }
+            let key = self.resolve(&r.target, rel);
+            if r.kind == RefKind::Tag
+                && self.tags.get_mut(&key).is_some_and(|t| drop_mine(&mut t.1))
+            {
+                self.tags.remove(&key);
+            }
+            if self.graph.kind == Kind::Obsidian
+                && r.kind.to_block()
+                && let Some(a) = &r.anchor
+            {
+                let k = format!("{key}#^{}", a.to_lowercase());
+                if self.block_incoming.get_mut(&k).is_some_and(drop_mine) {
+                    self.block_incoming.remove(&k);
+                }
+            }
+            if self.incoming.get_mut(&key).is_some_and(drop_mine) {
+                self.incoming.remove(&key);
+            }
+            named.insert(key);
+        }
+        // A page without a file lives while something names it.
+        for key in named {
+            if self.pages.get(&key).is_some_and(|p| p.path.is_none())
+                && !self.incoming.contains_key(&key)
+            {
+                self.pages.remove(&key);
+            }
+        }
+        self.files.insert(rel.to_string(), d);
+    }
+
+    /// The file `rel` read again with `text` when its page keeps its
+    /// names (title, aliases, key) and is its own: only the file's entries
+    /// change. `false` when the whole index must be derived again.
+    fn replace_in_place(&mut self, rel: &str, text: &str) -> bool {
+        let Some(old) = self.files.get(rel) else {
+            return false;
+        };
+        let (_, ext) = files::stem_ext(rel);
+        let Some(flavor) = readable(self.graph.kind, &ext) else {
+            return false;
+        };
+        let options = scan::Options {
+            comma_properties: self.graph.comma_properties.clone(),
+        };
+        let scanned = scan::scan(text, flavor, &options);
+        let page = self.page_for(rel, &scanned);
+        let same = self.pages.get(&old.key).is_some_and(|p| {
+            p.key == page.key
+                && p.title == page.title
+                && p.aliases == page.aliases
+                && p.journal == page.journal
+                && p.path.as_deref() == Some(rel)
+        });
+        if !same {
+            return false;
+        }
+        self.withdraw(rel);
+        let key = page.key.clone();
+        self.pages.insert(key.clone(), page);
+        self.files.insert(
+            rel.to_string(),
+            FileData {
+                key,
+                flavor,
+                scanned,
+            },
+        );
+        self.contribute(rel);
+        self.version = VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        true
     }
 
     /// The key of the page `target` names from the file `from`
@@ -571,6 +713,58 @@ impl Index {
                 }
             }
         }
+    }
+
+    /// Everything the index derived, in a stable order, for tests: an
+    /// index kept by updates and one built afresh give the same.
+    #[doc(hidden)]
+    pub fn digest(&self) -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+        let backs = |list: &[BackRef]| {
+            let mut v: Vec<String> = list
+                .iter()
+                .map(|b| format!("{}:{}:{:?}:{:?}", b.path, b.line, b.block, b.kind))
+                .collect();
+            v.sort();
+            v.join(" ")
+        };
+        for (k, p) in &self.pages {
+            let _ = writeln!(
+                out,
+                "page {k} {:?} {:?} {:?} {:?} {:?}",
+                p.title, p.path, p.aliases, p.journal, p.props
+            );
+        }
+        let mut names: Vec<_> = self.names.iter().collect();
+        names.sort();
+        for (n, k) in names {
+            let _ = writeln!(out, "name {n} {k}");
+        }
+        let mut stems: Vec<_> = self.stems.iter().collect();
+        stems.sort();
+        for (n, k) in stems {
+            let _ = writeln!(out, "stem {n} {k:?}");
+        }
+        let mut blocks: Vec<_> = self.blocks.iter().collect();
+        blocks.sort();
+        for (id, (rel, i)) in blocks {
+            let _ = writeln!(out, "block {id} {rel} {i}");
+        }
+        let mut inc: Vec<_> = self.incoming.iter().collect();
+        inc.sort_by_key(|(k, _)| k.as_str());
+        for (k, l) in inc {
+            let _ = writeln!(out, "in {k} {}", backs(l));
+        }
+        let mut binc: Vec<_> = self.block_incoming.iter().collect();
+        binc.sort_by_key(|(k, _)| k.as_str());
+        for (k, l) in binc {
+            let _ = writeln!(out, "bin {k} {}", backs(l));
+        }
+        for (k, (_, l)) in &self.tags {
+            let _ = writeln!(out, "tag {k} {}", backs(l));
+        }
+        out
     }
 
     /// A page by its key.
@@ -717,7 +911,7 @@ impl Index {
                     out.push(Task {
                         path: rel.clone(),
                         block: i,
-                        marker: m.clone(),
+                        marker: m.to_string(),
                     });
                 }
             }
@@ -832,7 +1026,7 @@ impl Index {
                 }
                 if wanted.iter().any(|w| whole_word(&text, w)) {
                     out.push(BackRef {
-                        path: rel.clone(),
+                        path: Arc::from(rel.as_str()),
                         block: Some(i),
                         line: b.line,
                         kind: RefKind::Page,
@@ -943,14 +1137,17 @@ mod tests {
         // `[[kalem]]` and the alias `[[EDITOR]]` both reach Kalem.
         let back = i.backlinks("kalem");
         assert_eq!(back.len(), 2);
-        assert!(back.iter().all(|b| b.path == "pages/Project___Plugins.md"));
+        assert!(
+            back.iter()
+                .all(|b| &*b.path == "pages/Project___Plugins.md")
+        );
         // The journals and the reference to one by its title.
         let j = i.journals();
         assert_eq!(j.len(), 2);
         assert_eq!(j[0].1.title, "Oct 3rd, 2026");
         assert_eq!(i.backlinks("oct 4th, 2026").len(), 1);
         assert_eq!(
-            i.backlinks("project/plugins")[0].path,
+            &*i.backlinks("project/plugins")[0].path,
             "journals/2026_10_03.md"
         );
         // A page only referenced.
@@ -974,7 +1171,7 @@ mod tests {
         // Unlinked mentions.
         let u = i.unlinked("kalem");
         assert_eq!(u.len(), 1);
-        assert_eq!(u[0].path, "pages/Named.md");
+        assert_eq!(&*u[0].path, "pages/Named.md");
         // Tasks.
         assert_eq!(i.tasks().len(), 2);
         // New files.

@@ -1,0 +1,26 @@
+All pages: logseq-md
+Logseq · 19 pages, 10 of them journals · 63 blocks
+
+Pages (8)
+hls__paper_1700000000000_0     0 links      1 blocks  highlights of paper_1700000000000_0.pdf
+Kalem                          5 links      9 blocks
+Program                        1 links      1 blocks
+Project/Plugins                5 links      8 blocks
+Project/Plugins/Graph          3 links      5 blocks
+Queries                        0 links     14 blocks
+Questions?                     0 links      2 blocks
+Templates                      0 links      7 blocks
+
+Whiteboards (1)  drawn by Logseq: Enter shows the file, to open it there
+Design  1 links · opens in Logseq
+
+Not written yet (9)
+a [[nested]] link  1 links
+Markdown  2 links
+meeting  1 links
+nested  1 links
+note graphs  1 links
+Org  2 links
+Project  1 links
+software  2 links
+writing  1 links

@@ -1,0 +1,18 @@
+Graph: logseq-md
+← links in · → links out
+
+Design  ←1 →0
+Kalem  ←5 →11
+Program  ←1 →1
+Project
+  Plugins  ←5 →2
+    Graph  ←3 →3
+Queries  ←0 →6
+
+Unlinked mentions (1)  named without a link; Enter lists them
+Kalem  2
+
+Orphans (3)
+hls__paper_1700000000000_0
+Questions?
+Templates

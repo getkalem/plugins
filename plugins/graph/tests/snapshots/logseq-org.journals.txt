@@ -1,0 +1,10 @@
+Journals: logseq-org
+
+▾ Oct 4th, 2026
+    • DONE Wrote the list, the day after [[Oct 3rd, 2026]]
+
+▾ Oct 3rd, 2026
+    • Met about [[Project/Plugins]] #meeting
+      • Decided: the graph plugin first
+    • TODO Write to [[Editor]]
+

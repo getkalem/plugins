@@ -515,6 +515,8 @@ pub struct App {
     panel: Option<(String, String)>,
     /// Where a click on each of the panel's entries goes.
     panel_targets: BTreeMap<String, Target>,
+    /// The panel's unlinked references opened for its page: searched for.
+    panel_unlinked: bool,
     /// The documents open in Kalem, by number: their files.
     open: BTreeMap<u64, String>,
     /// The files open with changes not saved: never written by the
@@ -550,6 +552,7 @@ impl App {
             next: 1,
             panel: None,
             panel_targets: BTreeMap::new(),
+            panel_unlinked: false,
             open: BTreeMap::new(),
             dirty: BTreeSet::new(),
             made: 0,
@@ -624,7 +627,7 @@ impl App {
         problems.extend(index.problems.iter().cloned());
         if let Some(first) = problems.first() {
             let more = if problems.len() > 1 {
-                format!(" ({} more in the process log)", problems.len() - 1)
+                format!(" ({} more: All pages lists them)", problems.len() - 1)
             } else {
                 String::new()
             };
@@ -673,7 +676,11 @@ impl App {
         let page = self.current.as_deref().and_then(|p| self.page_of(p));
         match page {
             Some((root, key)) => {
-                let nodes = views::backlinks_panel(&self.indexes[&root], &key);
+                // Another page: its unlinked references closed again.
+                if self.panel.as_ref() != Some(&(root.clone(), key.clone())) {
+                    self.panel_unlinked = false;
+                }
+                let nodes = views::backlinks_panel(&self.indexes[&root], &key, self.panel_unlinked);
                 let mut targets = Vec::new();
                 for n in &nodes {
                     n.targets(&mut targets);
@@ -1356,8 +1363,21 @@ impl App {
         }
     }
 
+    /// An entry of the backlinks panel opened or closed: its unlinked
+    /// references searched for when they are opened.
+    pub fn panel_expanded(&mut self, key: &str, open: bool) -> Vec<Effect> {
+        if key != "2" || open == self.panel_unlinked {
+            return Vec::new();
+        }
+        self.panel_unlinked = open;
+        self.panel_effects()
+    }
+
     /// A click in the backlinks panel.
     pub fn panel_clicked(&mut self, key: &str) -> Vec<Effect> {
+        if key == views::UNLINKED_SEARCH || (key == "2" && !self.panel_unlinked) {
+            return self.panel_expanded("2", true);
+        }
         match self.panel_targets.get(key).cloned() {
             Some(Target::File { path, line } | Target::Block { path, line }) => {
                 self.open_or_reveal(path, line + 1)

@@ -181,7 +181,7 @@ pub fn cycle_todo(text: &str, flavor: Flavor, cycle: [&str; 3], cursor: usize) -
             line: None,
         });
     }
-    let current = b.marker.as_deref();
+    let current = b.marker;
     let len = current.map_or(0, |m| {
         let after = &rest[m.len()..];
         m.len() + usize::from(after.starts_with(' '))

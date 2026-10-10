@@ -1,0 +1,17 @@
+Graph: obsidian
+← links in · → links out
+
+Archive
+  Kalem  ←1 →0
+Board.canvas  ←1 →0
+Home  ←4 →7
+Kalem  ←5 →1
+Projects
+  Graph  ←4 →2
+
+Unlinked mentions (2)  named without a link; Enter lists them
+Graph  1
+Kalem  1
+
+Orphans (1)
+Daily

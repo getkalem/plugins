@@ -2,7 +2,7 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: early** (GR1 to GR4, GR9 and GR10 of the list, GR5 to GR8 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.10's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
+**Status: early** (GR1 to GR4 and GR9 to GR11 of the list, GR5 to GR8 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.10's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
 
 ## What it needs
 
@@ -122,6 +122,30 @@ With `fs:write:workspace`: a new journal made from a template, and only when no 
 - Recent Pages remembers the pages of this session only; Logseq keeps its list across sessions.
 - The graph's folder must be a project of Kalem's (see above).
 
+## Speed and size
+
+Measured on a graph generated at the scale Logseq aims at (`tests/large.rs`): 10,000 pages, 1,000,000 blocks, 579,000 references, 49 MB of text, one page referred to 1,000 times. Native numbers are from an optimized build on an Apple M1 Max; "in Kalem" is the plugin as WebAssembly in Kalem's release build, through `kalem run`.
+
+| | Native | Budget |
+|---|---|---|
+| The index built | 0.8 s | 2 s |
+| The memory it holds (64-bit; less in WebAssembly's 32 bits) | 287 MB | 300 MB |
+| A saved page indexed again | 0.4 ms | 10 ms |
+| The backlinks panel of the page with 1,000 references | 2 ms | 50 ms |
+| Its unlinked references, when opened | 280 ms | 500 ms |
+| The layer over a journal of 5,000 blocks, at each keystroke | 8 ms | 50 ms |
+| The Tasks document, 200,000 tasks | 350 ms | 500 ms |
+| A query over the graph | 20 ms | 500 ms |
+| In Kalem: the graph indexed and All pages printed | 1.9 s, 340 MB for the whole process | |
+
+The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `plugin.json`): an extension's own, 64 MB and 100 ms, stop it at the first note of a graph of some thousand pages. The first command or note of a large graph waits for its index while Kalem runs the call; a save then changes only the saved file's entries in the index (a page renamed, or a file added or removed, derives the names again, as fast as the first build's last step). The panel's unlinked references are searched for when they are opened, as Logseq does.
+
 ## Tests
 
-`cargo test -p kalem-plugin-graph`: the library's unit tests, and `tests/conformance.rs` over three corpus graphs written for this repository and licensed as it is (`corpus/logseq-md`, `corpus/logseq-org`, `corpus/obsidian`): settings, page names and every resolution rule, blocks, tasks, references, templates, the documents, and every corpus file scanned whole.
+`cargo test -p kalem-plugin-graph`:
+
+- the library's unit tests;
+- `tests/conformance.rs` over three corpus graphs written for this repository and licensed as it is (`corpus/logseq-md`, `corpus/logseq-org`, `corpus/obsidian`): settings, page names and every resolution rule, blocks, tasks, references, templates, queries, the documents, every corpus file scanned whole, every block folded and unfolded back to the same bytes, and an index kept by saves equal to one built afresh after every kind of edit of every file;
+- `tests/snapshots.rs`: each document of each corpus as written, against `tests/snapshots/` (`UPDATE_SNAPSHOTS=1` writes them anew); with `KALEM=path/to/kalem`, the ignored `kalem_run_prints_them` compares what `kalem run` prints;
+- `tests/robust.rs`: a configuration that does not parse, a file not in UTF-8 and one over 16 MB give one notice; embeds of themselves; every note of the corpora broken a few thousand ways through the scanner, the layer, the queries and every editing command without a panic (`ROBUST_ROUNDS` and `ROBUST_SEED` search longer);
+- `tests/large.rs`, ignored: the measurements above, `cargo test --release -p kalem-plugin-graph --test large -- --ignored --nocapture`; `GRAPH_DIR=DIR` with `write_the_large_graph` writes the graph for Kalem.

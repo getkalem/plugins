@@ -1,0 +1,17 @@
+Tasks: logseq-md
+
+Now (3)
+  DOING [#B] The plain-text accounting plugin  Project/Plugins
+  NOW Start [[Project/Plugins/Graph]]  Oct 10th, 2026
+  NOW Review ((6512c0de-0001-4000-8000-000000000002))  Project/Plugins
+
+To do (3)
+  TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]  Project/Plugins
+  TODO Read [[Kalem]] docs  Oct 3rd, 2026
+  LATER The Typst mode, after the mode binding  Project/Plugins
+
+Waiting (1)
+  WAITING The owner's decision on the API version  Project/Plugins
+
+Scheduled and due within a week (1)
+  TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]  scheduled 2026-10-12 · Project/Plugins

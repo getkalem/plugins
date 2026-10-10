@@ -6,6 +6,7 @@
   "main": "dist/graph.wasm",
   "api": "^0.2.8",
   "activation": ["onStartup"],
+  "limits": { "memory_mb": 1024, "time_ms": 10000 },
   "permissions": ["fs:read:workspace", "fs:write:workspace"],
   "layers": [
     { "id": "logseq", "markers": ["logseq/config.edn"], "modes": ["markdown", "org"] },

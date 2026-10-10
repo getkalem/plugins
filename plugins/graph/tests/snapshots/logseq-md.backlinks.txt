@@ -1,0 +1,27 @@
+Backlinks: Kalem
+logseq-md · Logseq · pages/Kalem.md
+
+Linked references (5)
+▾ Oct 3rd, 2026 (1)
+    • TODO Read [[Kalem]] docs
+▾ Program (1)
+    • A page named by a property: [[Kalem]] is one
+▾ Project/Plugins (1)
+    • The plugins of [[Kalem]], in getkalem/plugins
+▾ Project/Plugins/Graph (1)
+    • Logseq graphs and Obsidian vaults in [[Kalem]]
+▾ Queries (1)
+    • note: An admonition naming [[Kalem]]
+
+Its blocks referenced (2)
+▾ Project/Plugins (1)
+    • NOW Review ((6512c0de-0001-4000-8000-000000000002))
+▾ Project/Plugins/Graph (1)
+    • Embeds a block: {{embed ((6512c0de-0001-4000-8000-000000000001))}}
+
+Unlinked references (2)
+▾ Oct 10th, 2026 (1)
+    • Unlinked: the graph plugin and kalem
+▾ Questions? (1)
+    • It mentions kalem without a link
+

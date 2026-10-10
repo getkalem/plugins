@@ -75,7 +75,7 @@ fn title_of(index: &Index, rel: &str) -> String {
 fn grouped<'a>(index: &Index, refs: &'a [BackRef]) -> Vec<(String, Vec<&'a BackRef>)> {
     let mut by: BTreeMap<String, Vec<&BackRef>> = BTreeMap::new();
     for r in refs {
-        by.entry(r.path.clone()).or_default().push(r);
+        by.entry(r.path.to_string()).or_default().push(r);
     }
     let mut groups: Vec<(String, Vec<&BackRef>)> = by.into_iter().collect();
     groups.sort_by_key(|(rel, _)| {
@@ -94,6 +94,10 @@ fn grouped<'a>(index: &Index, refs: &'a [BackRef]) -> Vec<(String, Vec<&'a BackR
     }
     groups
 }
+
+/// The key of the backlinks panel's entry that searches for the unlinked
+/// references.
+pub const UNLINKED_SEARCH: &str = "2.search";
 
 /// The fold marks: `▾` and `▸`, or `v` and `>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +353,24 @@ pub fn pages(index: &Index) -> Content {
         }
         c.blank();
     }
+    // What could not be read, said once in a notice when the graph was
+    // indexed.
+    let problems: Vec<&String> = index
+        .graph
+        .problems
+        .iter()
+        .chain(index.problems.iter())
+        .collect();
+    if !problems.is_empty() {
+        c.line(
+            &[(&format!("Not read ({})", problems.len()), Style::Heading)],
+            None,
+        );
+        for p in problems {
+            c.line(&[(p, Style::Error)], None);
+        }
+        c.blank();
+    }
     let mut unwritten: Vec<_> = index.pages().filter(|p| p.path.is_none()).collect();
     unwritten.sort_by_key(|p| p.title.to_lowercase());
     c.line(
@@ -509,13 +531,13 @@ pub fn tasks(index: &Index, today: Option<Date>) -> Content {
         index
             .file(&t.path)
             .and_then(|d| d.scanned.blocks.get(t.block))
-            .cloned()
     };
-    open.sort_by_key(|(r, t)| {
+    // Each task's key once: a graph has tens of thousands.
+    open.sort_by_cached_key(|(r, t)| {
         let b = block(t);
         (
             *r,
-            b.as_ref().and_then(|b| b.priority).unwrap_or('Z'),
+            b.and_then(|b| b.priority).unwrap_or('Z'),
             title_of(index, &t.path).to_lowercase(),
             b.map_or(0, |b| b.line),
         )
@@ -641,6 +663,8 @@ pub fn graph(index: &Index) -> Content {
         Kind::Obsidian => p.key.clone(),
     });
     let mut orphans = Vec::new();
+    // The names of the lines above, by depth.
+    let mut shown_above: Vec<String> = Vec::new();
     for p in &pages {
         let incoming = index.backlinks(&p.key).len();
         let outgoing = out.get(&p.key).copied().unwrap_or(0);
@@ -657,8 +681,33 @@ pub fn graph(index: &Index) -> Content {
                 .trim_end_matches(".md")
                 .to_string(),
         };
-        let depth = shown.matches('/').count();
-        let leaf = shown.rsplit('/').next().unwrap_or(&shown).to_string();
+        let parts: Vec<&str> = shown.split('/').collect();
+        let depth = parts.len() - 1;
+        // The namespaces (folders) above it that have no line of their
+        // own: named, so that the page is not read as under the line
+        // before it.
+        for (d, part) in parts[..depth].iter().enumerate() {
+            if shown_above
+                .get(d)
+                .is_some_and(|p| p.eq_ignore_ascii_case(part))
+            {
+                continue;
+            }
+            shown_above.truncate(d);
+            shown_above.push(part.to_string());
+            let prefix = parts[..=d].join("/");
+            let key = match index.graph.kind {
+                Kind::Logseq => crate::names::key(&prefix),
+                Kind::Obsidian => prefix.to_lowercase(),
+            };
+            c.line(
+                &[(&"  ".repeat(d), Style::Normal), (part, Style::Muted)],
+                index.page(&key).map(|_| Target::Page(key.clone())),
+            );
+        }
+        shown_above.truncate(depth);
+        shown_above.push(parts[depth].to_string());
+        let leaf = parts[depth].to_string();
         c.line(
             &[
                 (&"  ".repeat(depth), Style::Normal),
@@ -783,7 +832,7 @@ fn panel_section(index: &Index, n: usize, title: &str, refs: &[BackRef]) -> Pane
 }
 
 /// The backlinks panel for the page `key`.
-pub fn backlinks_panel(index: &Index, key: &str) -> Vec<PanelNode> {
+pub fn backlinks_panel(index: &Index, key: &str, unlinked: bool) -> Vec<PanelNode> {
     let Some(page) = index.page(key) else {
         return Vec::new();
     };
@@ -797,7 +846,27 @@ pub fn backlinks_panel(index: &Index, key: &str) -> Vec<PanelNode> {
             children: Vec::new(),
         },
         panel_section(index, 1, "Linked references", index.backlinks(key)),
-        panel_section(index, 2, "Unlinked references", &index.unlinked(key)),
+        if unlinked {
+            panel_section(index, 2, "Unlinked references", &index.unlinked(key))
+        } else {
+            // Searched for when opened, as Logseq does: every block of the
+            // graph is read.
+            PanelNode {
+                key: "2".into(),
+                target: None,
+                label: "Unlinked references".into(),
+                detail: None,
+                expanded: Some(false),
+                children: vec![PanelNode {
+                    key: UNLINKED_SEARCH.into(),
+                    target: None,
+                    label: "Search the graph for them".into(),
+                    detail: None,
+                    expanded: None,
+                    children: Vec::new(),
+                }],
+            }
+        },
     ]
 }
 
@@ -1131,7 +1200,12 @@ mod tests {
             "{}",
             g.text
         );
-        let panel = backlinks_panel(&i, "kalem");
+        // The unlinked references searched for when opened.
+        let closed = backlinks_panel(&i, "kalem", false);
+        assert_eq!(closed[2].expanded, Some(false));
+        assert_eq!(closed[2].children[0].key, UNLINKED_SEARCH);
+        let panel = backlinks_panel(&i, "kalem", true);
+        assert_eq!(panel[2].detail.as_deref(), Some("1"));
         assert_eq!(panel.len(), 3);
         assert_eq!(panel[1].detail.as_deref(), Some("3"));
         assert_eq!(panel[1].children[0].key, "1.0");
