@@ -99,6 +99,24 @@ pub const COMMANDS: &[CommandInfo] = &[
         &["space n r shift+r"],
     ),
     c("graph.follow", "Follow Reference", &["space n r o"]),
+    // The mode's Open Link keys in a graph's notes (and Enter in Vim's
+    // command mode in Org, Doom's): the graph's references by its rules,
+    // anything else by the mode.
+    n(
+        "graph.openLink",
+        "Open Link",
+        &[
+            ("space o l", in_note!(" && vimCommand")),
+            (
+                "enter",
+                "editorLayer == graph.logseq && editorMode == org && vimCommand",
+            ),
+            (
+                "space m g x",
+                "editorLayer == graph.logseq && editorMode == org && vimCommand",
+            ),
+        ],
+    ),
     c("graph.findPage", "Find Page", &["space n r f"]),
     c("graph.insertLink", "Insert Link", &["space n r i"]),
     c(
@@ -536,6 +554,9 @@ const WRITES: &[&str] = &[
     "graph.renameNow",
     "graph.refBlockNow",
 ];
+
+/// What Follow Reference says off any reference.
+const NO_REFERENCE: &str = "No reference at the cursor";
 
 /// Why a mirror's notes are not written.
 const READ_ONLY: &str = "This is the Markdown Mirror of a Logseq database graph: Logseq writes it from its database and writes over any change, so change the page in Logseq";
@@ -1079,6 +1100,20 @@ impl App {
                 out.extend(self.refresh(&root));
             }
             "graph.follow" => out.extend(self.follow(files, &root, rel.as_deref(), ctx)),
+            "graph.openLink" => {
+                let e = self.follow(files, &root, rel.as_deref(), ctx);
+                if matches!(e.as_slice(), [Effect::Notify(m, _)] if m == NO_REFERENCE) {
+                    let org = rel
+                        .as_deref()
+                        .is_some_and(|r| r.to_lowercase().ends_with(".org"));
+                    out.push(Effect::Run {
+                        id: if org { "org.dwim" } else { "markdown.openLink" }.into(),
+                        args: "null".into(),
+                    });
+                } else {
+                    out.extend(e);
+                }
+            }
             "graph.today" | "graph.yesterday" | "graph.tomorrow" => {
                 let offset = match id {
                     "graph.yesterday" => -1,
@@ -1344,10 +1379,7 @@ impl App {
         ctx: &Ctx,
     ) -> Vec<Effect> {
         let (Some(text), Some(rel)) = (&ctx.text, rel) else {
-            return vec![Effect::Notify(
-                "No reference at the cursor".into(),
-                Level::Info,
-            )];
+            return vec![Effect::Notify(NO_REFERENCE.into(), Level::Info)];
         };
         let cursor = ctx.cursor.min(text.len());
         let start = text[..cursor].rfind('\n').map_or(0, |p| p + 1);
@@ -1368,12 +1400,7 @@ impl App {
             let text = text.clone();
             return self
                 .follow_query(root, rel, &text, start, cursor, true)
-                .unwrap_or_else(|| {
-                    vec![Effect::Notify(
-                        "No reference at the cursor".into(),
-                        Level::Info,
-                    )]
-                });
+                .unwrap_or_else(|| vec![Effect::Notify(NO_REFERENCE.into(), Level::Info)]);
         };
         let kind = index.graph.kind;
         match (kind, r.kind) {

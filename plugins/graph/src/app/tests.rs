@@ -106,6 +106,33 @@ fn following_references() {
     );
     let out = app.command(&m, "graph.follow", &ctx("/w/notes/pages/Other.md", text, 1));
     assert!(matches!(&out[0], Effect::Notify(t, Level::Info) if t.contains("No reference")));
+    // Open Link: the graph's references by its rules, anything else by
+    // the mode.
+    let out = app.command(
+        &m,
+        "graph.openLink",
+        &ctx("/w/notes/pages/Other.md", text, 10),
+    );
+    assert_eq!(opens(&out), [("/w/notes/pages/Kalem.md".to_string(), 1)]);
+    let out = app.command(
+        &m,
+        "graph.openLink",
+        &ctx("/w/notes/pages/Other.md", text, 1),
+    );
+    assert!(
+        matches!(&out[..], [Effect::Run { id, .. }] if id == "markdown.openLink"),
+        "{out:?}"
+    );
+    let org = "* see [[https://x.com][web]]\n";
+    let out = app.command(
+        &m,
+        "graph.openLink",
+        &ctx("/w/notes/pages/Web.org", org, 10),
+    );
+    assert!(
+        matches!(&out[..], [Effect::Run { id, .. }] if id == "org.dwim"),
+        "{out:?}"
+    );
 }
 
 #[test]

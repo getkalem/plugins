@@ -430,14 +430,16 @@ impl App {
                 "Outdent Block",
                 "The block is at the top level",
             ),
-            "graph.newBlock" => match edit::new_block(text, flavor, cursor) {
+            "graph.newBlock" => match edit::new_block(text, flavor, cursor)
+                .filter(|_| !self.indexes.get(root).is_some_and(|i| i.graph.read_only))
+            {
                 Some(c) => vec![Effect::Edits {
                     edits: c.edits,
                     label: "New Block".into(),
                     line: None,
                 }],
-                // Not on a block's first line: Enter as Markdown has it, a
-                // list's next item or a new line.
+                // Not on a block's first line, or in a mirror Logseq writes:
+                // Enter as Markdown has it, a list's next item or a new line.
                 None => {
                     let start = text[..cursor].rfind('\n').map_or(0, |p| p + 1);
                     let line = text[start..].trim_start_matches([' ', '\t']);

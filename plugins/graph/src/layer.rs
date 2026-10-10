@@ -903,8 +903,10 @@ fn inline_obsidian(
     }
 }
 
-/// A Logseq note in Org: Org's own drawing keeps its drawers and
-/// keywords; the layer adds block references and tags.
+/// A Logseq note in Org: Org's own drawing keeps its drawers, `TODO`
+/// and `DONE`; the layer styles Logseq's other task keywords (`LATER`,
+/// `NOW`, `DOING`, `WAITING`, `CANCELED`…), which Org does not know
+/// without a `#+TODO:` line, and adds block references and tags.
 pub fn logseq_org(text: &str, index: Option<&Index>, rel: Option<&str>) -> Overlays {
     let mut o = Overlays::default();
     let mut src = false;
@@ -919,6 +921,22 @@ pub fn logseq_org(text: &str, index: Option<&Index>, rel: Option<&str>) -> Overl
         if upper.starts_with("#+BEGIN_SRC") || upper.starts_with("#+BEGIN_EXAMPLE") {
             src = true;
             continue;
+        }
+        let stars = line.len() - line.trim_start_matches('*').len();
+        if stars > 0 && line[stars..].starts_with(' ') {
+            let at = stars + 1;
+            for m in MARKERS.iter().filter(|m| !matches!(**m, "TODO" | "DONE")) {
+                if let Some(after) = line[at..].strip_prefix(m)
+                    && (after.is_empty() || after.starts_with(' '))
+                {
+                    o.span(
+                        start + at,
+                        start + at + m.len(),
+                        Effect::Style(keyword_look(m)),
+                    );
+                    break;
+                }
+            }
         }
         inline(&mut o, line, start, Flavor::LogseqOrg, index, rel);
     }
@@ -1070,6 +1088,16 @@ mod tests {
         // Org's highlights too.
         let org = "* a ^^lit^^ word\n";
         assert_eq!(shown(org, &logseq_org(org, None, None)), "* a lit word\n");
+        // Logseq's keywords Org does not know, styled; Org's own left to it.
+        let org = "* LATER plan\n** NOW go\n* TODO org's\n* NOWHERE\n";
+        let o = logseq_org(org, None, None);
+        let styled: Vec<&str> = o
+            .spans
+            .iter()
+            .filter(|s| matches!(s.effect, Effect::Style(l) if l.todo))
+            .map(|s| &org[s.start..s.end])
+            .collect();
+        assert_eq!(styled, ["LATER", "NOW"]);
     }
 
     #[test]
