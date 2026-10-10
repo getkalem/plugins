@@ -4,6 +4,10 @@
 //! corpus; and the corpus is the Cargo workspace and the files the
 //! plugin's other tests rely on.
 
+// A comparison skipped (rust-analyzer not installed where the tests run)
+// is said on standard error.
+#![allow(clippy::print_stderr)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -121,6 +125,108 @@ fn manifest_is_complete() {
         );
         for s in list(&l["servers"]) {
             assert!(servers.contains_key(&s), "{id}: server {s} is described");
+        }
+    }
+}
+
+/// The settings Kalem's settings panel shows: rust-analyzer's, keyed as
+/// the section it asks for (`settings.rust-analyzer.check.command` is
+/// `{"rust-analyzer": {"check": {"command": …}}}`, nested as
+/// rust-analyzer reads it), typed as the panel knows (a union of types
+/// is edited as JSON), each with a default and a description; what the
+/// manifest sends has its value as default. Against rust-analyzer's own
+/// schema too when it runs here: each key one of its settings, with its
+/// default and its choices.
+#[test]
+fn settings_describe_what_rust_analyzer_reads() {
+    let m = manifest();
+    let sent = &m["servers"]["rust-analyzer"]["settings"];
+    let settings = m["settings"].as_object().expect("settings");
+    assert!(!settings.is_empty());
+    let types = ["boolean", "integer", "string", "array", "object"];
+    for (key, s) in settings {
+        let name = key
+            .strip_prefix("settings.rust-analyzer.")
+            .unwrap_or_else(|| panic!("`{key}` is rust-analyzer's"));
+        let union = list(&s["type"]);
+        match &s["type"] {
+            Value::String(t) => assert!(types.contains(&t.as_str()), "`{key}`: {t}"),
+            Value::Array(_) => assert!(
+                union.len() > 1
+                    && union
+                        .iter()
+                        .all(|t| t == "null" || types.contains(&t.as_str())),
+                "`{key}`: {union:?}"
+            ),
+            t => panic!("`{key}`: type {t}"),
+        }
+        let default = s
+            .get("default")
+            .unwrap_or_else(|| panic!("`{key}` has a default"));
+        assert!(
+            !default.is_null() || union.iter().any(|t| t == "null"),
+            "`{key}`: a null default is one of its types"
+        );
+        assert!(
+            s["description"]
+                .as_str()
+                .is_some_and(|d| d.starts_with("rust-analyzer: ")),
+            "`{key}` says it is rust-analyzer's"
+        );
+        if let Some(choices) = s["enum"].as_array() {
+            assert!(choices.contains(default), "`{key}`'s default is a choice");
+        }
+        let path: Vec<&str> = std::iter::once("rust-analyzer")
+            .chain(name.split('.'))
+            .collect();
+        let at = path.iter().try_fold(sent, |v, k| v.get(*k));
+        if let Some(v) = at {
+            assert_eq!(v, default, "`{key}`'s default is what is sent");
+        }
+    }
+    // What the manifest sends is described.
+    fn leaves(v: &Value, prefix: &str, out: &mut Vec<String>) {
+        match v {
+            Value::Object(o) if !o.is_empty() => {
+                for (k, x) in o {
+                    leaves(x, &format!("{prefix}.{k}"), out);
+                }
+            }
+            Value::Object(_) => {}
+            _ => out.push(prefix.to_string()),
+        }
+    }
+    let mut sent_keys = Vec::new();
+    leaves(sent, "settings", &mut sent_keys);
+    for k in sent_keys {
+        assert!(settings.contains_key(&k), "`{k}` is described");
+    }
+    // rust-analyzer's own word, when it runs here (CI has no component).
+    let schema = tool("rust-analyzer")
+        .arg("--print-config-schema")
+        .current_dir(dir())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok());
+    let Some(schema) = schema else {
+        eprintln!("rust-analyzer does not run here: its schema not compared");
+        return;
+    };
+    let mut props = serde_json::Map::new();
+    for group in schema.as_array().expect("groups") {
+        if let Some(o) = group["properties"].as_object() {
+            props.extend(o.clone());
+        }
+    }
+    for (key, s) in settings {
+        let name = key.replacen("settings.", "", 1);
+        let p = props
+            .get(&name)
+            .unwrap_or_else(|| panic!("`{name}` is a setting of this rust-analyzer"));
+        assert_eq!(s["default"], p["default"], "`{name}`'s default");
+        if s.get("enum").is_some() {
+            assert_eq!(s["enum"], p["enum"], "`{name}`'s choices");
         }
     }
 }

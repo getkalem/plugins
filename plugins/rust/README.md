@@ -37,6 +37,24 @@ The root is the nearest folder up from the file holding a `Cargo.lock`. Cargo wr
 
 A file of the standard library or of a dependency, reached by going to a definition, has a `Cargo.lock` of its own (a crate from crates.io ships one, and so does the standard library's folder). Up to Kalem 0.6.1 it becomes a root of its own, and a second rust-analyzer starts there; in the standard library's folder that one cannot load the workspace and answers nothing. Kalem's change for this (T3.8.1, not released yet) serves the file with the rust-analyzer that named it, which knows it: one server, and hover and definitions work inside the standard library.
 
+## Settings
+
+Kalem's settings panel (`SPC h v`, then **installed plugins**, then **Rust**) shows the rust-analyzer settings the plugin describes, with rust-analyzer's own defaults: the command run on save (`check`, or `clippy` for its lints too), the features turned on, a target folder of its own, build scripts and procedural macros, completion's automatic imports, diagnostics turned off, files left out, rustfmt's arguments or another formatter, and how the imports it adds are written. Or in Kalem's `settings.toml`, or a project's `.kalem/settings.toml`:
+
+```toml
+[plugins."org.kalem.rust".settings.rust-analyzer]
+check.command = "clippy"   # clippy's lints on save too; "check" by default
+cargo.features = "all"     # or a list of names
+cargo.targetDir = true     # a target folder of its own: a build in the terminal does not wait for it
+
+# Another rust-analyzer, and its environment.
+[plugins."org.kalem.rust".servers.rust-analyzer]
+command = ["/opt/rust-analyzer/rust-analyzer"]
+env = { RA_LOG = "info" }
+```
+
+A change reaches rust-analyzer without starting it again; a new check command runs at the next save. Any other setting of rust-analyzer's can be put under the same table, nested as its name is dotted. `completion.callable.snippets` makes no difference yet: Kalem takes no snippets, so rust-analyzer completes a function by its name alone.
+
 ## A file outside a project
 
 rust-analyzer serves only files of a Cargo project it has loaded. A `.rs` file with no `Cargo.toml` above it (a scratch file, a `rust-script`) gets a server that finds no project and answers nothing: no documentation, no completion, no diagnostics. Name the file in rust-analyzer's `linkedProjects` and it is served on its own, against the standard library: documentation, completion and definitions work. A `.kalem/settings.toml` in its folder does it, with paths relative to the folder:
@@ -74,7 +92,7 @@ kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already for
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; rust-analyzer's settings described for Kalem's settings panel; clippy on save; rustfmt when no server runs; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; rust-analyzer's own diagnostics, which it gives only to an editor that asks; rustfmt when no server runs; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
 
 ## Sources and licenses
 

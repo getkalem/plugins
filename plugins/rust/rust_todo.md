@@ -338,7 +338,7 @@ spike first.
   here; gopls, pyright, clangd and TypeScript's servers serve loose
   files on their own and would not use it). Open: that part, if the
   owner wants it.)
-- [ ] RS3d The settings, described for Kalem's settings panel as
+- [~] RS3d The settings, described for Kalem's settings panel as
   elixir's ElixirLS settings are (`settings.rust-analyzer.NAME` keys
   with `type`, `default`, `enum` or `examples`, and a description
   starting "rust-analyzer: "), the described default equal to what
@@ -362,6 +362,40 @@ spike first.
   answers by asking for the section again. Done when a setting
   changed in the panel reaches the server without a restart (`check`
   to `clippy`, and the next save shows clippy's warnings).
+  (Done 2026-10-10, but for the panel clicked by hand. Twenty-two
+  settings described, their defaults and choices those of
+  rust-analyzer 1.99's own schema (`rust-analyzer
+  --print-config-schema`), which corrected this list in two places:
+  `files.excludeDirs` is `files.exclude` now, and `imports.prefix`
+  defaults to `crate`. Also described: `cargo.noDefaultFeatures`.
+  Settings that take one of several types (`cargo.features`, `"all"`
+  or a list; `cargo.targetDir`, null, a boolean or a path;
+  `check.allTargets`, `check.features`, `rustfmt.overrideCommand`,
+  with null for "as the other setting says") have a VS Code style
+  list of types, which Kalem's panel edits as JSON;
+  `procMacro.ignored` is an object, also JSON. The manifest sends
+  nothing beyond rust-analyzer's defaults, `completion.callable.
+  snippets` included: probed with Kalem's capabilities (no
+  `snippetSupport`), rust-analyzer completes `scaled` as `scaled`,
+  with no parentheses or places, whatever the setting says, so
+  `add_parentheses` would change nothing until T3.8.3 and
+  `fill_arguments` is right after it. The conformance test, as
+  elixir's: each key rust-analyzer's, typed as the panel knows (a
+  union only of those types and null), a default (null only where
+  null is a type), a choice's default among its choices, the
+  description "rust-analyzer: …", what is sent described and equal
+  to its default; and, when rust-analyzer runs where the test does
+  (not in CI, which has no component), each key one of its settings
+  with its default and choices, which a wrong default for
+  `imports.prefix` fails. Read by Kalem's own `plugin_settings::read`:
+  22 fields, booleans, enums, texts with examples, lists, and the
+  unions as JSON. Through Kalem's service as the panel drives it (the
+  user's settings set, `settings_changed`), on a copy of the corpus
+  with a `v.len() == 0`: no restart (the same server, "ready, 1
+  documents"), and 0.4 s after the save clippy's `len_zero` warning.
+  The README's settings section, with the TOML. Open: the panel by
+  hand, which lists installed plugins only, not those of
+  `KALEM_PLUGIN_PATH`.)
 
 ## RS4. Diagnostics: `cargo check` on save, clippy by setting
 

@@ -29,5 +29,95 @@
       "settings": { "rust-analyzer": {} },
       "install": "rustup component add rust-analyzer; or brew install rust-analyzer; or a release from https://github.com/rust-lang/rust-analyzer/releases, renamed rust-analyzer and put on the PATH"
     }
+  },
+  "settings": {
+    "settings.rust-analyzer.checkOnSave": {
+      "type": "boolean", "default": true,
+      "description": "rust-analyzer: run the check command when a file is saved, its errors and warnings shown as diagnostics"
+    },
+    "settings.rust-analyzer.check.command": {
+      "type": "string", "examples": ["check", "clippy"], "default": "check",
+      "description": "rust-analyzer: the Cargo command run on save: check, or clippy for its lints too (slower)"
+    },
+    "settings.rust-analyzer.check.extraArgs": {
+      "type": "array", "default": [],
+      "description": "rust-analyzer: more arguments for the check command, such as --locked"
+    },
+    "settings.rust-analyzer.check.allTargets": {
+      "type": ["null", "boolean"], "default": null,
+      "description": "rust-analyzer: check tests, examples and benchmarks too (--all-targets); null for what cargo.allTargets says"
+    },
+    "settings.rust-analyzer.check.features": {
+      "type": ["null", "string", "array"], "default": null,
+      "description": "rust-analyzer: the features the check command turns on: \"all\", or a list of names; null for what cargo.features says"
+    },
+    "settings.rust-analyzer.check.workspace": {
+      "type": "boolean", "default": true,
+      "description": "rust-analyzer: check the whole workspace (--workspace), not only the package of the file saved"
+    },
+    "settings.rust-analyzer.cargo.features": {
+      "type": ["string", "array"], "default": [],
+      "description": "rust-analyzer: the features turned on when it reads the project: \"all\", or a list of names"
+    },
+    "settings.rust-analyzer.cargo.noDefaultFeatures": {
+      "type": "boolean", "default": false,
+      "description": "rust-analyzer: leave the packages' default features off (--no-default-features)"
+    },
+    "settings.rust-analyzer.cargo.allTargets": {
+      "type": "boolean", "default": true,
+      "description": "rust-analyzer: read tests, examples and benchmarks too (--all-targets)"
+    },
+    "settings.rust-analyzer.cargo.targetDir": {
+      "type": ["null", "boolean", "string"], "default": null,
+      "description": "rust-analyzer: its own target folder, so that its builds and a cargo build in the terminal do not wait for each other: true for one under target/, or a path; null for the project's"
+    },
+    "settings.rust-analyzer.cargo.buildScripts.enable": {
+      "type": "boolean", "default": true,
+      "description": "rust-analyzer: run the packages' build scripts (build.rs), for the code they generate"
+    },
+    "settings.rust-analyzer.procMacro.enable": {
+      "type": "boolean", "default": true,
+      "description": "rust-analyzer: expand procedural macros (derives and attributes), which needs the build scripts run"
+    },
+    "settings.rust-analyzer.procMacro.ignored": {
+      "type": "object", "default": {},
+      "description": "rust-analyzer: procedural macros not expanded, by crate: {\"crate\": [\"macro\"]}"
+    },
+    "settings.rust-analyzer.completion.autoimport.enable": {
+      "type": "boolean", "default": true,
+      "description": "rust-analyzer: offer items not imported yet, the use added when one is taken"
+    },
+    "settings.rust-analyzer.completion.callable.snippets": {
+      "type": "string", "enum": ["fill_arguments", "add_parentheses", "none"], "default": "fill_arguments",
+      "description": "rust-analyzer: what a completed function gets: its arguments as places to fill, its parentheses, or nothing (Kalem takes no snippets yet, so a function is completed by its name alone whatever this says)"
+    },
+    "settings.rust-analyzer.diagnostics.disabled": {
+      "type": "array", "default": [],
+      "description": "rust-analyzer: its own diagnostics not shown, by code, such as unlinked-file or inactive-code"
+    },
+    "settings.rust-analyzer.diagnostics.experimental.enable": {
+      "type": "boolean", "default": false,
+      "description": "rust-analyzer: its experimental diagnostics too, which may be wrong more often"
+    },
+    "settings.rust-analyzer.files.exclude": {
+      "type": "array", "default": [],
+      "description": "rust-analyzer: files and folders it does not read, relative to the project"
+    },
+    "settings.rust-analyzer.rustfmt.extraArgs": {
+      "type": "array", "default": [],
+      "description": "rust-analyzer: more arguments for rustfmt when it formats a file"
+    },
+    "settings.rust-analyzer.rustfmt.overrideCommand": {
+      "type": ["null", "array"], "default": null,
+      "description": "rust-analyzer: another formatter, as a program and its arguments that read the file on standard input (leptosfmt, a nightly rustfmt); null for rustfmt"
+    },
+    "settings.rust-analyzer.imports.granularity.group": {
+      "type": "string", "enum": ["crate", "module", "item", "one", "preserve"], "default": "crate",
+      "description": "rust-analyzer: how the imports it adds are grouped: one use per crate, per module, per item, one use for all, or as the file has them"
+    },
+    "settings.rust-analyzer.imports.prefix": {
+      "type": "string", "enum": ["plain", "self", "crate"], "default": "crate",
+      "description": "rust-analyzer: how the paths it adds start: plain, with self, or with crate"
+    }
   }
 }
