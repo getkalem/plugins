@@ -159,7 +159,9 @@ measurements ignored.
   slicers; form controls and the checkbox cells of Excel 2024 shown,
   if only as placeholders; pictures placed in cells and the `IMAGE`
   function; Min, Max and Numerical Count in the status line beside
-  Sum, Average and Count.
+  Sum, Average and Count (done 2026-10-10 in Kalem's branch
+  `xlsx-menus`: after Excel's three, so that eighty columns cut them
+  first).
 
 ### XL11. The generic halves of the contract
 
@@ -180,7 +182,7 @@ measurements ignored.
 
 ### XL12. The menu bar
 
-- [ ] XL12 No menu of the bar names a workbook: Kalem's ten menus
+- [~] XL12 No menu of the bar names a workbook: Kalem's ten menus
   (Kalem, File, Project, Edit, Format, Review, Insert, Table for CSV,
   BibTeX, View) carry none of the 278 `viewer.grid.*` commands, the
   plugin's manifest declares no `menus` (the git plugin's does), and
@@ -238,18 +240,35 @@ measurements ignored.
     Save and Apply Template; Delete Chart.
   - Macro: Run Macro.
 
+  (Done 2026-10-10 in Kalem's branch `xlsx-menus`: the workbook's
+  items in File, Edit, Format, Insert, Review and View, the new menus
+  Data, Formulas and Chart (`menu-data`, `menu-formulas`,
+  `menu-chart` in both locales), Run Macro in View; the document
+  context the menus are built from gains `viewerGrid` and
+  `hasComments`, so a PDF's or a picture's menus carry none of them,
+  and the text's Find, Find and Replace and Select All leave a grid
+  (`!viewerGrid`) for the grid's own; tests in `menus.rs` and both
+  editors' workbook tests. Open: the text commands without a
+  when-clause (the line commands, Go to Line, Source View, the
+  encodings, Paste as Plain Text) still show in a viewer's menus; they
+  need a scope that leaves viewers out, a change to Kalem's command
+  scopes for every viewer, not the workbook's alone.)
+
 ### XL13. The toolbar
 
-- [ ] XL13 The graphical editor's toolbar has buttons for Org, LaTeX,
+- [x] XL13 The graphical editor's toolbar has buttons for Org, LaTeX,
   CSV and the flow document (bold, italic, styles, typefaces, sizes),
   none for the grid: Bold, Italic, Underline; Borders; Fill Color, Font
   Color; Currency, Percent, Comma, Increase and Decrease Decimal; Merge
   and Center, Wrap Text, the alignments; Sort, Filter; AutoSum; Insert
-  Chart. The formula bar is there already.
+  Chart. The formula bar is there already. (Done 2026-10-10 in
+  Kalem's branch `xlsx-menus`: those twenty buttons, shown where the
+  document offers their commands, Currency, Percent and Comma Style
+  through Number Format's codes; tested in the graphical editor.)
 
 ### XL14. Right-click menus, the rest (E37's remainder)
 
-- [ ] XL14 The cells menu (`viewer.rs`, `context_menu`) lacks Format
+- [~] XL14 The cells menu (`viewer.rs`, `context_menu`) lacks Format
   Cells, Pick From Drop-down List, Filter by Selected Cell's Value and
   Color, Sort by Color and Custom Sort, Delete Note and the comment
   thread, Open Link and Remove Link, the table items (insert and
@@ -262,7 +281,17 @@ measurements ignored.
   chart, format, data labels, trendline, delete), a picture or shape,
   a pivot table, a slicer, a sparkline, the formula bar, the Name Box
   or the status line (which of Sum, Average, Count, Min and Max it
-  shows).
+  shows). (Done 2026-10-10 in Kalem's branch `xlsx-menus`: the cells
+  menu built from what is at the cursor: Format Cells, Filter by
+  Selected Cell's Color, Reapply, Sort by Color and Custom Sort always;
+  Edit and Delete Note on a note, New Note elsewhere; Open, Edit and
+  Remove Link on a link; Pick From Drop-down List on a list; a
+  table's Total Row and Convert to Range; a pivot table's Refresh and
+  Options; Show Comments on a thread; the rows' and columns' menus
+  with Paste Special, Format Cells and Ungroup; tested in the
+  terminal. Open: a height or width typed, Standard Width, View Code,
+  Select All Sheets, and the menus of charts, pictures, slicers,
+  sparklines, the formula bar, the Name Box and the status line.)
 
 ## Checks and documents
 
