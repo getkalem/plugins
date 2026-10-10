@@ -40,8 +40,21 @@ With rust-analyzer running, in either of Kalem's editors:
 | Restart rust-analyzer | | | `code.restartServer` |
 | What serves the file | | | `code.serverStatus` |
 
+And rust-analyzer's own requests, each through a command of Kalem's that any language server with such a request serves, in the command palette where the server has it (Kalem's change for this is not released yet):
+
+| Command | rust-analyzer's request |
+|---|---|
+| Expand Macro: the macro call at the cursor expanded, shown as Rust | `rust-analyzer/expandMacro` |
+| Open Documentation in the Browser: the item's page on doc.rust-lang.org or docs.rs | `experimental/externalDocs` |
+| Go to Parent Module: the `mod` line of the file's module | `experimental/parentModule` |
+| Go to Project File: the crate's `Cargo.toml` | `experimental/openCargoToml` |
+| Join Lines (Language Server), Move Item Up, Move Item Down | `experimental/joinLines`, `experimental/moveItem` |
+| Reload Project | `rust-analyzer/reloadWorkspace` |
+
 Known differences:
 
+- Open Documentation gives docs.rs's address for any crate, a workspace's own too, which docs.rs has only once the crate is published.
+- No syntax tree: rust-analyzer answers that request with a tree for VS Code's own view, not text.
 - A completion does not add its `use`: rust-analyzer offers an item or a trait's method not imported only to an editor that fetches the import when the item is taken (`completionItem/resolve` of `additionalTextEdits`), which Kalem does not do yet (T3.8.2's automatic imports). What is in scope is offered.
 - A rename is one undo step in each file it changes, not one for all of them.
 - The documentation of a standard library item is its whole rustdoc, long in the terminal editor's card.
@@ -147,7 +160,7 @@ kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already for
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; completion of `Cargo.toml`; rust-analyzer in source blocks; the project's run and test keys, and a test at the cursor; expand macro, open docs and rust-analyzer's other requests.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; completion of `Cargo.toml`; rust-analyzer in source blocks; the project's run and test keys, and a test at the cursor; structural search and replace, Enter continuing a `///` comment, and rust-analyzer's state in the status bar.
 
 ## Sources and licenses
 

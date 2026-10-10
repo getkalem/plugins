@@ -662,7 +662,7 @@ spike first.
 
 ## RS9. rust-analyzer's own requests, where Kalem can show them (later)
 
-- [ ] RS9 The server's extensions, each a general shape Kalem gains
+- [~] RS9 The server's extensions, each a general shape Kalem gains
   once and the plugin declares by name: *text at the cursor, shown in
   a read-only document* (`rust-analyzer/expandMacro`,
   `rust-analyzer/viewSyntaxTree` of the selection,
@@ -687,6 +687,42 @@ spike first.
   learns the shapes, not the methods. Proposed in the plugin's README
   under "not done" with this list until Kalem has the shapes; done
   when expand macro and open docs work on the corpus's macro call.
+  (Done 2026-10-10 on Kalem's branch `rust-server-start`, not merged,
+  and here, for the shapes of text, a page, a place, edits and none;
+  the server's state in the status bar, structural search and
+  replace and Enter's `onEnter` left. Kalem's part as made: the
+  manifest's `requests`, keyed by Kalem's command, each a `method`,
+  `params` (`position`, `document`, `range`, `ranges`, `none`, with
+  `extra` fields), a `shape` (`text` shown as documentation is, with
+  a `title` and a `language`; `url` opened in the browser, `http` and
+  `https` only, by the editors, not by the core; `location`;
+  `edits`, snippet markers taken out; `none`), `answer` pointers,
+  and a `server` when only one of the plugin's has it; Kalem's
+  commands `code.expandMacro`, `code.openDocs`, `code.parentModule`,
+  `code.openManifest`, `code.reloadProject`, `code.joinLines`,
+  `code.moveItemUp` and `code.moveItemDown`, each shown where the
+  document's server has the request (the when-clause
+  `server:code.expandMacro`), "does not provide" elsewhere; `kalem
+  lsp ask code.… FILE LINE:COL` asks one (an address printed, not
+  opened). Tested with the fake server's own requests, one per
+  shape, in the service test, and the reading in a unit test. With
+  rust-analyzer 1.99.0 through the branch's terminal build, on the
+  corpus: Expand Macro on `square!(3.0)` gives `square!` and
+  `shapes::Square { side: 3.0 }` as Rust; Open Documentation on
+  `println!` gives doc.rust-lang.org's page, on `square!` a docs.rs
+  address that exists only for a published crate; Go to Parent Module
+  from `messy.rs` lands on `pub mod messy;`, Go to Project File on
+  `app/Cargo.toml`; Move Item Down moves `fn new` with its comment
+  below `distance`; Join Lines and Reload Project do theirs. No
+  syntax tree: `rust-analyzer/viewSyntaxTree` answers a JSON tree for
+  VS Code's own view, on one line, so neither the manifest nor Kalem
+  has the command. The README's table of the
+  requests. Open: the branch merged and released; the three shapes
+  left (a notification as the server's state:
+  `experimental/serverStatus`'s health, which RS3c saw say "cargo
+  check failed to start"; a workspace edit from two fields for
+  `experimental/ssr`; Enter's `experimental/onEnter`); the editors
+  by hand.)
 
 ## RS10. Speed, the big corpus and the tests
 

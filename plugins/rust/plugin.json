@@ -30,6 +30,16 @@
       "install": "rustup component add rust-analyzer; or brew install rust-analyzer; or a release from https://github.com/rust-lang/rust-analyzer/releases, renamed rust-analyzer and put on the PATH"
     }
   },
+  "requests": {
+    "code.expandMacro": { "method": "rust-analyzer/expandMacro", "shape": "text", "answer": ["/expansion"], "title": "/name", "language": "rust" },
+    "code.openDocs": { "method": "experimental/externalDocs", "shape": "url", "answer": ["", "/web"] },
+    "code.parentModule": { "method": "experimental/parentModule", "shape": "location" },
+    "code.openManifest": { "method": "experimental/openCargoToml", "params": "document", "shape": "location" },
+    "code.reloadProject": { "method": "rust-analyzer/reloadWorkspace", "params": "none", "shape": "none" },
+    "code.joinLines": { "method": "experimental/joinLines", "params": "ranges", "shape": "edits" },
+    "code.moveItemUp": { "method": "experimental/moveItem", "params": "range", "extra": { "direction": "Up" }, "shape": "edits" },
+    "code.moveItemDown": { "method": "experimental/moveItem", "params": "range", "extra": { "direction": "Down" }, "shape": "edits" }
+  },
   "commands": {
     "format": ["rustfmt", "--edition", "2024"],
     "test": ["cargo", "test"],

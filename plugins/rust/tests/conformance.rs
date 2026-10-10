@@ -303,6 +303,55 @@ fn the_format_command_is_rustfmt_in_the_root() {
     }
 }
 
+/// rust-analyzer's own requests, each by the command of Kalem's that sends
+/// it (`code.expandMacro` for `rust-analyzer/expandMacro`), asked about
+/// and answered in the shapes Kalem knows.
+#[test]
+fn requests_are_rust_analyzers_for_kalems_commands() {
+    let m = manifest();
+    let requests = m["requests"].as_object().expect("requests");
+    let mut commands: Vec<&str> = requests.keys().map(String::as_str).collect();
+    commands.sort_unstable();
+    assert_eq!(
+        commands,
+        [
+            "code.expandMacro",
+            "code.joinLines",
+            "code.moveItemDown",
+            "code.moveItemUp",
+            "code.openDocs",
+            "code.openManifest",
+            "code.parentModule",
+            "code.reloadProject"
+        ]
+    );
+    for (command, r) in requests {
+        let method = r["method"].as_str().expect("method");
+        assert!(
+            method.starts_with("rust-analyzer/") || method.starts_with("experimental/"),
+            "{command}: {method}"
+        );
+        let shape = r["shape"].as_str().unwrap_or("text");
+        assert!(
+            ["text", "url", "location", "edits", "none"].contains(&shape),
+            "{command}: {shape}"
+        );
+        let params = r["params"].as_str().unwrap_or("position");
+        assert!(
+            ["position", "document", "range", "ranges", "none"].contains(&params),
+            "{command}: {params}"
+        );
+        if let Some(server) = r["server"].as_str() {
+            assert!(m["servers"].get(server).is_some(), "{command}: {server}");
+        }
+    }
+    // RS9's two: the expansion shown as Rust, the documentation's page.
+    let expand = &requests["code.expandMacro"];
+    assert_eq!(list(&expand["answer"]), ["/expansion"]);
+    assert_eq!(expand["language"], "rust");
+    assert_eq!(requests["code.openDocs"]["shape"], "url");
+}
+
 /// The project's run and test commands, for Kalem's `SPC p R` and
 /// `SPC p T`: Cargo's, in the root. No `testAtPoint`: a file and a line
 /// do not name a test, and rust-analyzer does (its runnables). On the
