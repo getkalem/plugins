@@ -2,8 +2,8 @@
 //! client as Kalem speaks to it: the server the manifest describes,
 //! started in the corpus's workspace with the manifest's settings, then
 //! what the plugin's README says it gives, asked and checked (RS4, RS5,
-//! RS6 of `rust_todo.md`). It runs where rust-analyzer runs and says it
-//! skipped otherwise (CI installs no component).
+//! RS6 of `rust_todo.md`). It runs where rust-analyzer runs, CI's test
+//! job installing it with rustfmt, and says it skipped otherwise.
 //!
 //! Not here, with its reason: a completion's automatic `use` (Kalem does
 //! not ask for it yet, RS6).

@@ -385,7 +385,7 @@ spike first.
   null is a type), a choice's default among its choices, the
   description "rust-analyzer: …", what is sent described and equal
   to its default; and, when rust-analyzer runs where the test does
-  (not in CI, which has no component), each key one of its settings
+  (CI too, since RS10b's component), each key one of its settings
   with its default and choices, which a wrong default for
   `imports.prefix` fails. Read by Kalem's own `plugin_settings::read`:
   22 fields, booleans, enums, texts with examples, lists, and the
@@ -799,9 +799,12 @@ spike first.
   opened with a `pub fn BadName() {}` added in memory, never on the
   disk, and its `non_snake_case` from rust-analyzer, which comes only
   by pull, found on that line (with the line moved, the test fails,
-  checked). Open: `rustup component add rust-analyzer` in `ci.yml`'s
-  test job, or the test run by hand; the automatic `use`, once Kalem
-  asks for it.)
+  checked). Then CI: the test job's toolchain with the
+  `rust-analyzer` and `rustfmt` components (the minimal profile has
+  neither, and rust-analyzer's formatting runs rustfmt), and a step
+  running `rust-analyzer --version` before the tests, since the test
+  skips and passes when it finds none that runs. Open: the automatic
+  `use`, once Kalem asks for it.)
 
 ## RS11. Release and the Book
 
@@ -868,8 +871,5 @@ spike first.
   and its others are of the same snapshot), after which this plugin's
   copy could go; and the scope names of RS2's note mapped to kinds in
   Kalem's highlighter.
-- The corpus test against a real rust-analyzer in CI (RS10b, the
-  component installed in `ci.yml`), or by hand as the elixir plugin
-  was checked.
 - The first version: the manifest says `0.1.0`, as elixir's line;
   `0.0.1`, as the components', if the owner prefers it.

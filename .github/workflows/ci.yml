@@ -41,7 +41,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The rust plugin's corpus test (plugins/rust/tests/server.rs)
+          # speaks to rust-analyzer, whose formatting runs rustfmt and is
+          # compared with rustfmt's own.
+          components: rust-analyzer, rustfmt
       - uses: Swatinem/rust-cache@v2
+      # rustup puts a rust-analyzer on the PATH with or without the
+      # component, and only running it tells; the corpus test, finding none
+      # that runs, skips and passes, so a missing one fails here instead.
+      - name: rust-analyzer runs
+        run: rust-analyzer --version
       - run: cargo test --workspace
 
   components:
