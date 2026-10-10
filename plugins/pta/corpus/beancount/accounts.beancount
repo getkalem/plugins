@@ -1,0 +1,13 @@
+; The household's accounts, opened before they are used.
+2025-01-01 open Assets:Bank:Ziraat       TRY
+2025-01-01 open Assets:Cash              TRY,EUR
+2025-01-01 open Assets:Broker:Cash       TRY
+2025-01-01 open Assets:Broker:FUND       FUND
+2025-01-01 open Liabilities:Card         TRY
+2025-01-01 open Liabilities:OldCard      TRY
+2025-01-01 open Equity:Opening-Balances
+2025-01-01 open Income:Salary            TRY
+2025-01-01 open Income:Gains             TRY
+2025-01-01 open Expenses:Food:Market     TRY
+2025-01-01 open Expenses:Food:Restaurant TRY
+2025-01-01 open Expenses:Rent            TRY

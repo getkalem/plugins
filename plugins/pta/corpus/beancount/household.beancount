@@ -1,0 +1,63 @@
+; The household's journal in Beancount: options, a plugin, an include,
+; the directives Beancount knows, lots and prices, tags, links and
+; metadata.
+option "title" "Household"
+option "operating_currency" "TRY"
+
+plugin "beancount.plugins.implicit_prices"
+
+include "accounts.beancount"
+
+2025-01-01 commodity FUND
+  name: "An index fund"
+
+2025-12-31 pad Assets:Bank:Ziraat Equity:Opening-Balances
+
+2026-01-01 balance Assets:Bank:Ziraat     50000.00 TRY
+
+2026-01-01 event "location" "Istanbul"
+
+2026-01-01 custom "budget" Expenses:Food:Market "monthly" 6000.00 TRY
+
+2026-01-02 * "Ziraat" "Salary, January" #payroll ^payslip-2026-01
+  receipt: "P-0001"
+  Assets:Bank:Ziraat        45000.00 TRY
+  Income:Salary            -45000.00 TRY
+
+pushtag #trip
+2026-01-10 * "Exchange office" "Euros for the trip"
+  Assets:Cash                 200.00 EUR @ 36.50 TRY
+  Assets:Bank:Ziraat        -7300.00 TRY
+
+2026-01-11 ! "Restaurant" "Dinner, card to be checked"
+  Expenses:Food:Restaurant   1120.00 TRY
+    shared-with: "Ayşe"
+  Liabilities:Card
+poptag #trip
+
+2026-01-15 txn "Market" "Groceries"
+  Expenses:Food:Market        842.35 TRY
+  Assets:Bank:Ziraat
+
+2026-01-20 * "Broker" "Buy the index fund" ^trade-001
+  Assets:Broker:Cash        10000.00 TRY
+  Assets:Bank:Ziraat       -10000.00 TRY
+
+2026-01-20 * "Broker" "Buy the index fund" ^trade-001
+  Assets:Broker:FUND              10 FUND {350.00 TRY}
+  Assets:Broker:Cash        -3500.00 TRY
+
+2026-01-31 note Assets:Bank:Ziraat "Called the bank about the card's fee"
+
+2026-01-31 document Assets:Bank:Ziraat "statement-2026-01.txt"
+
+2026-02-01 price FUND                 365.00 TRY
+
+2026-02-01 balance Assets:Bank:Ziraat     76857.65 TRY
+
+2026-02-20 * "Broker" "Sell part of the fund" ^trade-002
+  Assets:Broker:FUND              -4 FUND {350.00 TRY} @ 380.00 TRY
+  Assets:Broker:Cash         1520.00 TRY
+  Income:Gains               -120.00 TRY
+
+2026-03-01 close Liabilities:OldCard

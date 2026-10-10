@@ -162,6 +162,56 @@
       ]
     },
     {
+      "id": "org.kalem.pta",
+      "name": "Plain text accounting",
+      "version": "0.0.1",
+      "description": "hledger, Ledger and Beancount journals in Kalem: completed and checked by their language servers, and run through the tool you already have",
+      "api": "^0.2.9",
+      "permissions": [
+        "subprocess",
+        "subprocess:hledger",
+        "subprocess:ledger",
+        "subprocess:bean-check",
+        "subprocess:bean-query"
+      ],
+      "source": "https://github.com/getkalem/plugins/tree/main/plugins/pta",
+      "download": null,
+      "sha256": null,
+      "languages": [
+        {
+          "id": "hledger",
+          "extensions": [
+            "journal",
+            "hledger",
+            "j"
+          ],
+          "filenames": [
+            ".hledger.journal"
+          ]
+        },
+        {
+          "id": "ledger",
+          "extensions": [
+            "ledger",
+            "ldg"
+          ]
+        },
+        {
+          "id": "beancount",
+          "extensions": [
+            "beancount",
+            "bean"
+          ]
+        },
+        {
+          "id": "hledger-rules",
+          "extensions": [
+            "rules"
+          ]
+        }
+      ]
+    },
+    {
       "id": "org.kalem.rust",
       "name": "Rust",
       "version": "0.1.1",

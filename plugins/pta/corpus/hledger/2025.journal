@@ -1,0 +1,11 @@
+; The year before: the opening balances and December.
+decimal-mark ,
+
+2025-12-01 * Opening balances
+    assets:bank:ziraat            50.000,00 TRY
+    assets:cash                    1.500,00 TRY
+    equity:opening
+
+2025-12-15 * Market | weekly shopping  ; food:
+    expenses:food:market           1.250,40 TRY
+    assets:bank:ziraat
