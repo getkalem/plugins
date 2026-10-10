@@ -188,14 +188,22 @@ impl App {
         });
         found.truncate(MOST);
         let start = cursor - typed.len() - 2;
-        found
+        let mut out: Vec<(u8, bool, Suggestion)> = found
             .into_iter()
-            .filter_map(|(_, _, label, detail, key)| {
+            .filter_map(|(m, journal, label, detail, key)| {
                 let link = if detail.is_empty() {
                     self.link_text(&index.graph.root, key, Some(rel))?
                 } else {
                     // An alias is written as typed: Logseq resolves it.
                     format!("[[{label}]]")
+                };
+                // A vault's notes of one name told apart by the path
+                // their link names (`Deep/Note`).
+                let label = match link.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
+                    Some(target) if index.graph.kind == Kind::Obsidian && detail.is_empty() => {
+                        target.to_string()
+                    }
+                    _ => label,
                 };
                 let insert = match link.strip_suffix("]]") {
                     Some(open) if closed => open.to_string(),
@@ -209,16 +217,22 @@ impl App {
                 } else {
                     detail
                 };
-                Some(Suggestion {
-                    label,
-                    insert,
-                    start,
-                    cursor: None,
-                    what: What::Link,
-                    detail,
-                })
+                Some((
+                    m,
+                    journal,
+                    Suggestion {
+                        label,
+                        insert,
+                        start,
+                        cursor: None,
+                        what: What::Link,
+                        detail,
+                    },
+                ))
             })
-            .collect()
+            .collect();
+        out.sort_by_key(|(m, journal, s)| (*m, *journal, s.label.len()));
+        out.into_iter().map(|(_, _, s)| s).collect()
     }
 }
 

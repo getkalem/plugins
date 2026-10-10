@@ -1308,3 +1308,24 @@ fn today_from_the_local_clock() {
         Some("- TODO plan [[Oct 10th, 2026]]\n")
     );
 }
+
+#[test]
+fn completion_names_notes_of_the_same_name_by_their_link() {
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", r#"{"newLinkFormat":"shortest"}"#),
+        ("/v/Home.md", "x\n"),
+        ("/v/Note.md", "x"),
+        ("/v/Deep/Note.md", "y"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Home.md");
+    let found = app.complete("refs", Some("/v/Home.md"), "x [[No", 0, 6);
+    let shown: Vec<(&str, &str)> = found
+        .iter()
+        .map(|s| (s.label.as_str(), s.insert.as_str()))
+        .collect();
+    assert_eq!(
+        shown,
+        [("Note", "[[Note]]"), ("Deep/Note", "[[Deep/Note]]")]
+    );
+}
