@@ -523,7 +523,7 @@ spike first.
 
 ## RS6. What the client already has, checked and written down
 
-- [ ] RS6 Each feature the client implements, exercised on the corpus
+- [~] RS6 Each feature the client implements, exercised on the corpus
   in both editors and recorded in the README's table as elixir's
   (feature, Vim keys, Word-like keys, command): completion as you
   type and on the server's trigger characters (`.`, `:`, `'`, `(`),
@@ -545,6 +545,39 @@ spike first.
   the simpler one; hover on a `std` item carries the whole rustdoc
   page, long in the terminal editor's card; a workspace symbol search
   (`SPC s I`, `SPC c J`) waits for T3.8.2.
+  (Done 2026-10-10 through Kalem's service, on a copy of the corpus
+  with rust-analyzer 1.99.0 and the branch, but for the editors by
+  hand and RS10b's assertions. Loaded in 11.5 s. Completion after
+  `circle.`: `scaled` and `radius` first, each with its rustdoc given
+  with the item (no `resolveSupport` declared, so rust-analyzer sends
+  it at once; `completionItem/resolve` is not needed); trigger
+  characters `:`, `.`, `'`, `(`. Signature after `Circle::new(`: `fn
+  new(radius: f64) -> Circle` and its rustdoc. Hover on `Circle`: the
+  crate, the declaration as Rust, the rustdoc. Definition and
+  declaration of `scaled` into `shapes`; type definition of `circle`
+  at `pub struct Circle`; implementations of `Area`, its two `impl`s;
+  references of `Area` across the crates (RS1, `kalem lsp ask`); the
+  file's symbols nested. Hover on `len` after an emoji on the line:
+  right (UTF-8 positions). Rename of `scaled` to `grown`: "2 changes
+  in 2 files", applied to both open documents, one undo step in each;
+  of the field `radius` to `r`: 6 changes, `Self { radius }` became
+  `Self { r }` with the parameter renamed too (rust-analyzer keeps the
+  shorthand). A crate added on the disk, with the workspace's and
+  `app`'s `Cargo.toml` changed: its function completed 4 s later,
+  without a restart (rust-analyzer's watcher and Kalem's
+  `didChangeWatchedFiles`). Not as expected: no automatic import.
+  Probed directly: rust-analyzer offers an item not in scope (`area
+  (use shapes::Area)`) only to an editor that declares
+  `completionItem.resolveSupport` for `additionalTextEdits`, and gives
+  the `use` when the item is resolved (`Area, ` into the use list);
+  Kalem declares none, so the item is not offered at all. Kalem's
+  part, T3.8.2's automatic imports, for every server that adds
+  imports so (rust-analyzer, typescript-language-server, basedpyright,
+  gopls): that property declared, and an item taken that came with
+  `data` and no edits resolved before it is applied (a short wait) and
+  its `additionalTextEdits` put in the same change. The README's table
+  of features and its known differences. Open: that part; the editors
+  by hand; RS10b.)
 
 ## RS7. Cargo.toml, and Rust in Org and Markdown source blocks
 

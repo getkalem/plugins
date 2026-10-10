@@ -19,6 +19,36 @@ Known differences, each from Kalem's highlighter or the syntax, not from Rust:
 - `safe` in an `unsafe extern` block and `raw` in `&raw const` are plain.
 - It is about 40% slower than the built-in one: Kalem's 558 Rust files of 380,000 lines take 40 s to highlight whole rather than 28 s, its largest, 17,897 lines, 1.9 s. Kalem colors the lines on the screen first, so this shows only when a long file is colored to its end.
 
+## What it gives
+
+With rust-analyzer running, in either of Kalem's editors:
+
+| Feature | Vim profile | Word-like profile | Command |
+|---|---|---|---|
+| Completion, with each item's documentation beside the list | as you type, `.`, `:`, `'` and `(` | as you type | |
+| A call's signature while typing its arguments | after `(` and `,` | after `(` and `,` | |
+| Documentation at the cursor, rustdoc's Markdown with its code highlighted | `K`, `SPC c k` | | `code.documentation` |
+| Go to definition, into the standard library too | `gd`, `SPC c d` | F12 | `code.definition` |
+| Declaration, type definition | `SPC c t` (type) | | `code.declaration`, `code.typeDefinition` |
+| A trait's implementations | `SPC c i` | | `code.implementation` |
+| References, across the workspace's crates | `gD`, `SPC c D` | Shift+F12 | `code.references` |
+| Rename across the crates, with a preview of the changes | `SPC c r` | F2 | `code.rename` |
+| Code actions: rust-analyzer's fixes and refactorings | `SPC c a` | Ctrl+. | `code.actions` |
+| The file's symbols, nested | | | `code.symbols` |
+| Problems of the file, of the workspace | `SPC c x`, `SPC c X` | | `code.problems`, `code.allProblems` |
+| Format the document | `SPC c f` | | `edit.formatDocument` |
+| Restart rust-analyzer | | | `code.restartServer` |
+| What serves the file | | | `code.serverStatus` |
+
+Known differences:
+
+- A completion does not add its `use`: rust-analyzer offers an item or a trait's method not imported only to an editor that fetches the import when the item is taken (`completionItem/resolve` of `additionalTextEdits`), which Kalem does not do yet (T3.8.2's automatic imports). What is in scope is offered.
+- A rename is one undo step in each file it changes, not one for all of them.
+- The documentation of a standard library item is its whole rustdoc, long in the terminal editor's card.
+- A search of the workspace's symbols (`SPC s I`) waits for Kalem (T3.8.2).
+- Positions go to rust-analyzer as UTF-8, which it offers: a line with an emoji is placed right.
+- A crate added to the workspace, or a `Cargo.toml` changed, is seen without a restart (rust-analyzer watches them); Restart rust-analyzer is there for when it is not.
+
 ## The server
 
 rust-analyzer, found as `rust-analyzer` on the `PATH` or in `~/.cargo/bin`. Install it with one of:
