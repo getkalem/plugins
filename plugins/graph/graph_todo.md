@@ -856,7 +856,7 @@ below replace the earlier GR4a to GR4d.
 
 ## GR12. Release, the README and the Book
 
-- [ ] GR12 Two releases. `graph-v0.1.0` after GR3: "your Logseq graph
+- [~] GR12 Two releases. `graph-v0.1.0` after GR3: "your Logseq graph
   or Obsidian vault in Kalem: backlinks, journals, find and insert,
   the pages and tasks as documents; nothing converted, `logseq/` and
   `.obsidian/` untouched", with the README saying plainly that the
@@ -876,6 +876,30 @@ below replace the earlier GR4a to GR4d.
   true in a test; the database itself does not open); `index.json`,
   `CODEOWNERS`; the Book's Part III page for the plugin and, with
   GR4, "Writing a mode"; R5.5's text in the roadmap re-pointed here.
+  (Done 2026-10-10 but the releases themselves. 0.1.0 is everything to
+  GR11 without the layer, built as the release workflow builds it: it
+  imports plugin API 0.2.9, so the manifest says `^0.2.9` (it said
+  `^0.2.8`, which the build had outgrown); checked on Kalem 0.6.8 built
+  from its tag, and on 0.6.7, which runs it too. The README says what
+  0.1.0 does on Kalem 0.6.8 and what waits for Kalem's next release
+  (the layer, the outliner's keys in notes, a query's line, the search
+  leaving out `logseq/`, the reveal, the clock, `kalem run`), how to
+  move over from Logseq's file version, its database version and
+  Obsidian, and the differences from each. The database version: its
+  Markdown Mirror (Logseq's ADR 0016, `docs/logseq-markdown-syntax.md`)
+  writes no block-id comments, contrary to what this item supposed, but
+  Logseq Markdown with a page `id::` line and properties as `* key::`
+  items; the plugin finds it by `mirror/markdown/.index.edn`, reads it
+  as a Logseq graph with the items as properties, never writes it, and
+  `corpus/logseq-db-mirror` tests it as Logseq's own tests write it.
+  `index.json` regenerated (its layers' markers), CODEOWNERS as it was.
+  On Kalem's branch `graph-mode`: the Book's Part III page "Logseq
+  graphs and Obsidian vaults"; "Layers over a mode" was written with
+  GR4; R5.5 re-pointed here and T2.7c.12's Obsidian half recorded as
+  this plugin's layer. Open: pushing main and the tag `graph-v0.1.0`,
+  for the owner; 0.2.0 with the layer once Kalem releases API 0.2.10,
+  the manifest then saying `^0.2.10` and the release built with the
+  feature `layer`.)
 
 ## What Kalem's core must gain
 
