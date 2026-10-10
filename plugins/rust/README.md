@@ -100,6 +100,10 @@ Format Document (`SPC c f`) formats through rust-analyzer, which runs the toolch
 
 rust-analyzer answers with no edits both when the file is formatted and when rustfmt fails: not installed for the project's toolchain (`rustup component add rustfmt`), or a syntax error in the file. Kalem 0.6.1 and earlier say "Already formatted" either way; Kalem's change for this (not released yet) says that rust-analyzer changed nothing. Why it changed nothing is in its log: `kalem lsp check --log FILE`.
 
+## Run and test
+
+The manifest names `cargo run` and `cargo test`, run in the project's root, for Kalem's project keys to run the project and its tests (`SPC p R`, `SPC p T`), which Kalem does not have yet. The test at the cursor needs more than a file and a line: rust-analyzer knows it, and gives the command to run it (`cargo test --package app --bin app -- tests::total_adds_the_areas --exact` on the corpus) and Run and Run Test above each `main` and test. Kalem does not show those yet either: they wait on its code lenses (T3.8.2), and rust-analyzer offers them only to an editor that says it can run them. There is no Debug: Kalem has no debugger.
+
 ## Cargo.toml, and Rust in Org and Markdown
 
 `Cargo.toml` stays Kalem's: TOML, highlighted by its own syntax; the plugin claims no TOML file. Completion of its keys and of crate versions would come from a second server for the same file (taplo with Cargo's schema, crates-lsp), which Kalem does not run yet.
@@ -143,7 +147,7 @@ kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already for
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; completion of `Cargo.toml`; rust-analyzer in source blocks; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; automatic imports with a completion; completion of `Cargo.toml`; rust-analyzer in source blocks; the project's run and test keys, and a test at the cursor; expand macro, open docs and rust-analyzer's other requests.
 
 ## Sources and licenses
 

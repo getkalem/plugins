@@ -618,7 +618,7 @@ spike first.
 
 ## RS8. Run and test: `cargo run`, `cargo test`, and the lenses
 
-- [ ] RS8 `commands` `test` `["cargo", "test"]` and `run` `["cargo",
+- [~] RS8 `commands` `test` `["cargo", "test"]` and `run` `["cargo",
   "run"]` in the manifest now (read, not used until the project's run
   and test keys, T2.7i.8, `SPC p R` and `SPC p T`); `testAtPoint`
   left out with its reason: `{file}` and `{line}` cannot name the
@@ -635,6 +635,30 @@ spike first.
   named only inside this plugin; waits on T3.8.2's lenses. The
   `Debug` lens is omitted with its reason: Kalem has no debugger
   (design document, §1.4).
+  (Done 2026-10-10 for the plugin's part. `commands.test` and
+  `commands.run` in the manifest, no `testAtPoint`; the conformance
+  test checks them and runs the run command on the corpus (`21.57`).
+  Kalem reads them and uses only `format` so far: T2.7i.8 lists `p R`
+  and `p T` as not done. On the corpus `cargo test` fails, on purpose
+  (`app/tests/borrow.rs`, RS4's error). Probed with rust-analyzer
+  1.99.0: `experimental/runnables` at the unit test gives five, the
+  test's `cargo test --package app --bin app --
+  tests::total_adds_the_areas --exact --nocapture --include-ignored`
+  in the workspace's root (it passes, `--bin app` not building the
+  file with the error), the module's, `cargo check -p app
+  --all-targets`, `cargo run -p app` and `cargo test -p app
+  --all-targets`. `textDocument/codeLens` gives nothing to a client
+  that does not list `rust-analyzer.runSingle` in
+  `experimental.commands`; with it, "Run" over `main`, "Run Tests"
+  over the module and "Run Test" over the test, each that command with
+  the runnable as its argument (`cargoArgs`, `executableArgs`,
+  `workspaceRoot`). Kalem's part as this item says, with that: the
+  manifest names the client command a server's lens or runnable
+  carries and how its argument makes a program, its arguments and a
+  folder, and Kalem declares the command to the server, shows the
+  lens, and runs it as `SPC p T` runs the project's tests; gopls and
+  ElixirLS name theirs. Open: that part, and T2.7i.8's `p R` and
+  `p T`.)
 
 ## RS9. rust-analyzer's own requests, where Kalem can show them (later)
 

@@ -31,7 +31,9 @@
     }
   },
   "commands": {
-    "format": ["rustfmt", "--edition", "2024"]
+    "format": ["rustfmt", "--edition", "2024"],
+    "test": ["cargo", "test"],
+    "run": ["cargo", "run"]
   },
   "settings": {
     "settings.rust-analyzer.checkOnSave": {

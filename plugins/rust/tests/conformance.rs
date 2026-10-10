@@ -303,6 +303,35 @@ fn the_format_command_is_rustfmt_in_the_root() {
     }
 }
 
+/// The project's run and test commands, for Kalem's `SPC p R` and
+/// `SPC p T`: Cargo's, in the root. No `testAtPoint`: a file and a line
+/// do not name a test, and rust-analyzer does (its runnables). On the
+/// corpus the run command runs `app`.
+#[test]
+fn the_run_and_test_commands_are_cargos() {
+    let m = manifest();
+    let commands = &m["commands"];
+    assert_eq!(list(&commands["test"]), ["cargo", "test"]);
+    assert_eq!(list(&commands["run"]), ["cargo", "run"]);
+    assert!(commands.get("testAtPoint").is_none());
+    let target = std::env::temp_dir().join(format!("kalem-rust-run-{}", std::process::id()));
+    let run = list(&commands["run"]);
+    let out = tool(&run[0])
+        .args(&run[1..])
+        .args(["--quiet", "--offline"])
+        .env("CARGO_TARGET_DIR", &target)
+        .current_dir(workspace())
+        .output()
+        .expect("cargo runs");
+    let _ = std::fs::remove_dir_all(&target);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "21.57\n");
+}
+
 /// The root is the nearest folder holding a `Cargo.lock`: Cargo writes
 /// it where it puts the workspace's root, so a workspace is one root and
 /// one server, and a workspace inside another (this corpus inside the
