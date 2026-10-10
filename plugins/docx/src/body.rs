@@ -157,7 +157,10 @@ fn walk(
                     break End::Met(m);
                 }
                 let (paragraphs, containers) = w.counted();
-                let state = tops.len().is_multiple_of(EVERY).then(|| Box::new(w.state()));
+                let state = tops
+                    .len()
+                    .is_multiple_of(EVERY)
+                    .then(|| Box::new(w.state()));
                 let first = block + blocks.len();
                 let b = crate::story::block(&mut r, tag);
                 tops.push(Top {
