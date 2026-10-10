@@ -139,7 +139,11 @@ measurements ignored.
   border and font constants; `Worksheet.Name` and `Visible` set; one
   undo step for the run as before; tests in `tests/macros.rs`. Open:
   sheets added, deleted, copied and moved (their indexes shift under
-  the macro's variables), and the rest of the list above.)
+  the macro's variables), and the rest of the list above.) (Done
+  2026-10-10 too: `Resume` and `Resume Next` in handlers, the handler
+  run where the error was so that a loop goes on, `Resume without
+  error` (20) outside one; `Empty = ""` true, as VBA compares Empty
+  with a string.)
 
 ### XL9. Memory and speed (`publish_todo.md`, E38's last part)
 

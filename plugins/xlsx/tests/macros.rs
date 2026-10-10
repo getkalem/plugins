@@ -324,6 +324,66 @@ End Sub
 }
 
 #[test]
+fn error_handlers_resume() {
+    let mut wb = book();
+    let src = r#"
+Function SafeDiv(a, b)
+    On Error GoTo Fail
+    SafeDiv = a / b
+    Exit Function
+Fail:
+    SafeDiv = -1
+    Resume Next
+End Function
+
+Function Retry(ByVal n As Long)
+    On Error GoTo Again
+    Retry = 12 / (2 - n)
+    Exit Function
+Again:
+    n = n + 1
+    Resume
+End Function
+
+Sub Sweep()
+    Dim r As Long, bad As Long
+    On Error GoTo Oops
+    For r = 1 To 4
+        Cells(r, 8).Value = 10 / (r - 2)
+    Next r
+    Debug.Print bad, Range("H1").Value, Range("H2").Value = "", Range("H4").Value, _
+        SafeDiv(1, 0), SafeDiv(6, 3), Retry(2)
+    Exit Sub
+Oops:
+    bad = bad + 1
+    Resume Next
+End Sub
+
+Sub Falls()
+    On Error GoTo H
+    x = 1 / 0
+    Range("H9").Value = "not reached"
+H:
+    Range("H8").Value = "handled " & Err.Number
+End Sub
+
+Sub Stray()
+    Resume Next
+End Sub
+"#;
+    // The loop goes on after the cell that failed; Resume tries again.
+    let report = run(&mut wb, src, "Sweep").unwrap();
+    assert_eq!(report.output, ["1 -10 True 5 -1 2 -12"]);
+    // A handler that reaches End Sub ends the procedure.
+    run(&mut wb, src, "Falls").unwrap();
+    assert_eq!(wb.display(0, at("H8")).unwrap(), "handled 11");
+    assert_eq!(wb.display(0, at("H9")).unwrap(), "");
+    // Resume where no error was taken.
+    let e = run(&mut wb, src, "Stray").unwrap_err();
+    assert!(e.message.contains("Resume without error"), "{e}");
+}
+
+#[test]
 fn listing_macros() {
     let p = Project {
         name: "VBAProject".into(),

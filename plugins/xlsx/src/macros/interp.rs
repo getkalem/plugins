@@ -16,8 +16,13 @@ pub(crate) enum Flow {
     Next,
     /// `Exit Sub`, `Exit For`… with the keyword.
     Exit(String),
-    /// `GoTo label`, also an `On Error GoTo` taken.
+    /// `GoTo label`, also `Resume label`.
     GoTo(String),
+    /// `Resume Next` in an error handler: on after the statement that
+    /// failed.
+    ResumeNext,
+    /// `Resume` in an error handler: the statement that failed again.
+    Resume,
     /// `End`.
     End,
 }
@@ -39,6 +44,9 @@ pub(crate) struct Frame {
     result: Option<(String, Slot)>,
     /// The module the procedure is in.
     pub(crate) module: usize,
+    /// The procedure (its module and index), whose labels an error
+    /// handler starts at.
+    proc: Option<(Rc<Module>, usize)>,
 }
 
 /// A procedure's place: module and index.
@@ -168,6 +176,7 @@ impl<'a> Interp<'a> {
             in_handler: false,
             result,
             module,
+            proc: None,
         }
     }
 
@@ -244,6 +253,7 @@ impl<'a> Interp<'a> {
             .function
             .then(|| (proc.name.to_ascii_lowercase(), slot(V::Empty)));
         let mut f = self.frame(mi, result.clone());
+        f.proc = Some((module.clone(), pi));
         let mut args = args.into_iter();
         for p in &proc.params {
             if p.param_array {
@@ -314,7 +324,8 @@ impl<'a> Interp<'a> {
     }
 
     fn block(&mut self, f: &mut Frame, body: &[Stmt]) -> R<Flow> {
-        for s in body {
+        let mut i = 0;
+        while let Some(s) = body.get(i) {
             self.tick()?;
             self.line = s.line;
             match self.stmt(f, s) {
@@ -334,14 +345,44 @@ impl<'a> Interp<'a> {
                         OnErr::GoTo(l) if !f.in_handler => {
                             self.err = (e.number, e.description, "VBAProject".into());
                             f.in_handler = true;
-                            return Ok(Flow::GoTo(l));
+                            match self.handle(f, &l)? {
+                                Flow::ResumeNext => {}
+                                // The failed statement again.
+                                Flow::Resume => continue,
+                                // The handler ran to `End Sub`: the
+                                // procedure ends.
+                                Flow::Next => return Ok(Flow::Exit("sub".into())),
+                                flow => return Ok(flow),
+                            }
                         }
                         _ => return Err(e),
                     }
                 }
             }
+            i += 1;
         }
         Ok(Flow::Next)
+    }
+
+    /// An error taken by `On Error GoTo label`: the handler runs where the
+    /// error was, from its label on, so that `Resume Next` goes on after
+    /// the statement that failed and `Resume` runs it again, inside the
+    /// loops it was in; `Resume label`, `GoTo` and `Exit` leave as they
+    /// would from the handler.
+    fn handle(&mut self, f: &mut Frame, label: &str) -> R<Flow> {
+        let Some((module, pi)) = f.proc.clone() else {
+            return Ok(Flow::GoTo(label.to_owned()));
+        };
+        let body = &module.procs[pi].body;
+        let at = body
+            .iter()
+            .position(|s| matches!(&s.kind, StmtKind::Label(l) if l == label))
+            .ok_or_else(|| {
+                RtError::fatal(format!(
+                    "label {label} not found (labels inside blocks are not supported)"
+                ))
+            })?;
+        self.block(f, &body[at + 1..])
     }
 
     fn stmt(&mut self, f: &mut Frame, s: &Stmt) -> R<Flow> {
@@ -521,18 +562,18 @@ impl<'a> Interp<'a> {
             }
             StmtKind::GoTo(l) => return Ok(Flow::GoTo(l.clone())),
             StmtKind::Label(_) | StmtKind::Nothing => {}
-            StmtKind::Resume(target) => match target.as_deref() {
-                Some("next") | None => {
-                    return Err(RtError::fatal(
-                        "`Resume` and `Resume Next` in an error handler are not supported yet; use `Resume label`",
-                    ));
-                }
-                Some(l) => {
-                    f.in_handler = false;
-                    self.err = (0, String::new(), String::new());
-                    return Ok(Flow::GoTo(l.to_owned()));
-                }
-            },
+            StmtKind::Resume(_) if !f.in_handler => {
+                return Err(RtError::new(20, "Resume without error"));
+            }
+            StmtKind::Resume(target) => {
+                f.in_handler = false;
+                self.err = (0, String::new(), String::new());
+                return Ok(match target.as_deref() {
+                    Some("next") => Flow::ResumeNext,
+                    None => Flow::Resume,
+                    Some(l) => Flow::GoTo(l.to_owned()),
+                });
+            }
             StmtKind::End => return Ok(Flow::End),
         }
         Ok(Flow::Next)
@@ -1049,6 +1090,10 @@ pub(crate) fn compare(a: &V, b: &V) -> R<Option<std::cmp::Ordering>> {
     };
     match (a, b) {
         (V::Str(x), V::Str(y)) => Ok(Some(x.cmp(y))),
+        // Empty is the empty string beside a string (`cell.Value = ""`),
+        // zero beside a number.
+        (V::Empty, V::Str(y)) => Ok(Some("".cmp(y.as_str()))),
+        (V::Str(x), V::Empty) => Ok(Some(x.as_str().cmp(""))),
         (V::Str(s), n) | (n, V::Str(s)) if numeric(n) => {
             let flip = matches!(a, V::Str(_));
             match parse_number(s) {
