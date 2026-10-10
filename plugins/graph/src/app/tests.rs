@@ -499,6 +499,23 @@ fn outliner_commands_edit_the_note() {
         crate::edit::apply(text, &edits_of(&app.command(&m, "graph.toggleFold", &c))),
         "- write\n  collapsed:: true\n\t- child\n- read\n"
     );
+    // Enter makes a block as Logseq does; off a block's first line it is
+    // Markdown's own Enter.
+    let c4 = ctx("/w/notes/pages/Other.md", text, 7);
+    assert_eq!(
+        crate::edit::apply(text, &edits_of(&app.command(&m, "graph.newBlock", &c4))),
+        "- write\n\t- \n\t- child\n- read\n"
+    );
+    let prose = "- write\n  more\n";
+    let out = app.command(
+        &m,
+        "graph.newBlock",
+        &ctx("/w/notes/pages/Other.md", prose, 14),
+    );
+    assert!(
+        matches!(&out[0], Effect::Run { id, .. } if id == "edit.newline"),
+        "{out:?}"
+    );
 }
 
 #[test]
@@ -962,4 +979,47 @@ fn a_mirror_is_never_written() {
     // Reading works: the pages.
     let out = app.command(&m, "graph.pages", &c);
     assert!(matches!(&out[0], Effect::Document { .. }));
+}
+
+#[test]
+fn unsaved_typing_is_seen_by_commands() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Other.md");
+    app.track_open(3, "/w/notes/pages/Other.md");
+    app.track_changed(3);
+    // A link typed, not saved: the next command in the note sees it.
+    let typed = "- uses [[Kalem]] and ((11111111-2222-3333-4444-555555555555)) #idea\n- typed now: [[Kalem]] again\n";
+    let out = app.command(
+        &m,
+        "graph.backlinksDocument",
+        &ctx("/w/notes/pages/Kalem.md", "", 0),
+    );
+    let (_, _, _, before) = document(&out);
+    assert!(!before.text.contains("typed now"));
+    app.command(&m, "graph.tasks", &ctx("/w/notes/pages/Other.md", typed, 0));
+    let out = app.command(
+        &m,
+        "graph.backlinksDocument",
+        &ctx("/w/notes/pages/Kalem.md", "", 0),
+    );
+    let (_, _, _, after) = document(&out);
+    assert!(
+        after.text.contains("typed now: [[Kalem]] again"),
+        "{}",
+        after.text
+    );
+    // Closed without saving: the file's text again.
+    let out = app.closed_document(&m, 3);
+    assert!(out.contains(&Effect::RefreshLayers));
+    let out = app.command(
+        &m,
+        "graph.backlinksDocument",
+        &ctx("/w/notes/pages/Kalem.md", "", 0),
+    );
+    let (_, _, _, closed) = document(&out);
+    assert!(!closed.text.contains("typed now"), "{}", closed.text);
+    // A file not of the graph's folders is not taken.
+    let mut i = app.index("/w/notes").unwrap().clone();
+    assert!(!i.update_unsaved("readme.md", "- [[Kalem]]"));
 }

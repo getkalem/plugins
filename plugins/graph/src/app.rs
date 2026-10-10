@@ -220,6 +220,15 @@ pub const COMMANDS: &[CommandInfo] = &[
             ("space m z", in_note!(" && vimCommand")),
         ],
     ),
+    // Enter while typing in a Logseq note in Markdown, as Logseq's Enter.
+    n(
+        "graph.newBlock",
+        "New Block",
+        &[(
+            "enter",
+            "editorLayer == graph.logseq && editorMode == markdown && !hasSelection && (!vimActive || vimMode == insert)",
+        )],
+    ),
     n("graph.renamePage", "Rename Page", &[]),
     // Run by the plugin after an answer, in the document it was asked in.
     n("graph.setDateNow", "Set Date (after a question)", &[]),
@@ -963,6 +972,7 @@ impl App {
         if let Some(p) = &ctx.path {
             self.current = Some(files::normalize(p));
         }
+        self.take_unsaved(ctx);
         if id == "graph.insertText" {
             if let Some(t) = serde_json::from_str::<serde_json::Value>(&ctx.args)
                 .ok()
@@ -1147,6 +1157,7 @@ impl App {
             | "graph.indent"
             | "graph.outdent"
             | "graph.toggleFold"
+            | "graph.newBlock"
             | "graph.renamePage"
             | "graph.setDateNow"
             | "graph.setPriorityNow"

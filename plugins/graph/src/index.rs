@@ -245,6 +245,21 @@ impl Index {
         changed
     }
 
+    /// The text of the note `rel` as the editor holds it, unsaved,
+    /// indexed as a save of it would be: only a note of the graph's (its
+    /// folders, not hidden). Whether it was taken.
+    pub fn update_unsaved(&mut self, rel: &str, text: &str) -> bool {
+        let (_, ext) = files::stem_ext(rel);
+        if readable(self.graph.kind, &ext).is_none()
+            || self.graph.is_hidden(rel)
+            || !self.in_folders(rel)
+        {
+            return false;
+        }
+        self.update_text(rel, text);
+        true
+    }
+
     /// The text of `path` (relative) as it is in the editor, unsaved.
     pub fn update_text(&mut self, rel: &str, text: &str) {
         if self.replace_in_place(rel, text) {

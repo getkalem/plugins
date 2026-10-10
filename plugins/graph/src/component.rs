@@ -368,10 +368,7 @@ impl Plugin for Graph {
         kalem::on(EventKind::DocumentClose, |e| {
             if let Event::DocumentClose(n) = e {
                 let n = *n;
-                with_app(|app| {
-                    app.track_closed(n);
-                    Vec::new()
-                });
+                with_app(|app| app.closed_document(&Fs, n));
             }
             Reply::Proceed
         })?;

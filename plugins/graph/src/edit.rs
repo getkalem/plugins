@@ -144,6 +144,131 @@ fn next_marker(current: Option<&str>, cycle: [&str; 3]) -> Option<&'static str> 
     }
 }
 
+/// One level of a note's indentation: the tab Logseq writes, or the
+/// spaces its children are indented by when it uses spaces.
+fn indent_unit(s: &Scanned, text: &str, st: &[usize]) -> String {
+    for b in &s.blocks {
+        if b.depth == 1 {
+            let start = line_start(st, text, b.line);
+            let line = &text[start..];
+            let ws: String = line
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            if ws.starts_with('\t') {
+                return "\t".into();
+            }
+            if !ws.is_empty() {
+                return ws;
+            }
+        }
+    }
+    "\t".into()
+}
+
+/// Enter in a Logseq note, as Logseq does it on a block's first line: at
+/// its end a new block (its first child when it has children shown, else
+/// its sibling after it and its children), in the middle the block split
+/// there (the rest of the line the new block's), at its start an empty
+/// block above it, and in an empty child block the block outdented. The
+/// block's own lines (its properties, dates and drawers, and its children
+/// when folded) stay its own: they go before the new block, written at
+/// the cursor so that the cursor is in the new block. `None` elsewhere
+/// (a property line, a code block, an Obsidian or Org note): Enter as
+/// the mode has it.
+pub fn new_block(text: &str, flavor: Flavor, cursor: usize) -> Option<Change> {
+    if flavor != Flavor::LogseqMarkdown {
+        return None;
+    }
+    let (s, st, i) = at(text, flavor, cursor)?;
+    let b = &s.blocks[i];
+    let first_start = line_start(&st, text, b.line);
+    let first_end = text[first_start..]
+        .find('\n')
+        .map_or(text.len(), |p| first_start + p);
+    if cursor < first_start || cursor > first_end {
+        return None;
+    }
+    let ws = text[first_start..first_end]
+        .bytes()
+        .take_while(|c| *c == b' ' || *c == b'\t')
+        .count();
+    let indent = &text[first_start..first_start + ws];
+    let c = content_start(text, &st, b, flavor);
+    if c == first_start + ws {
+        // No bullet: a page's text before its first block.
+        return None;
+    }
+    let content = &text[c..first_end];
+    // Inside a code block opened on the line.
+    if content.trim_start().starts_with("```") {
+        return None;
+    }
+    let cur = cursor.max(c);
+    let before = &text[c..cur];
+    let after = &text[cur..first_end];
+    let children = s.blocks.get(i + 1).is_some_and(|n| n.parent == Some(i));
+    if before.trim().is_empty() && !after.trim().is_empty() {
+        return Some(Change {
+            edits: vec![Edit {
+                start: first_start,
+                end: first_start,
+                text: format!("{indent}- \n"),
+            }],
+            line: None,
+        });
+    }
+    if content.trim().is_empty() && b.depth > 0 && b.end <= b.line + 1 && !children {
+        return shift_block(text, flavor, cursor, false);
+    }
+    let (last, new_indent) = if children && !b.collapsed {
+        (b.end, format!("{indent}{}", indent_unit(&s, text, &st)))
+    } else if children {
+        (subtree(&s.blocks, i).1, indent.to_string())
+    } else {
+        (b.end, indent.to_string())
+    };
+    // The lines that stay before the new block, without their last line
+    // feed.
+    let stop = line_start(&st, text, last.max(b.line + 1))
+        .saturating_sub(1)
+        .max(first_end)
+        .min(text.len());
+    let moved = &text[first_end..stop];
+    // A split leaves no space at the end of the first part or at the
+    // start of the second, as Logseq trims a block's text.
+    let trail = before.len() - before.trim_end().len();
+    let lead = after.len() - after.trim_start().len();
+    let mut edits = Vec::new();
+    if trail > 0 && !after.trim().is_empty() {
+        edits.push(Edit {
+            start: cur - trail,
+            end: cur,
+            text: String::new(),
+        });
+    }
+    edits.push(Edit {
+        start: cur,
+        end: cur,
+        text: format!("{moved}\n{new_indent}- "),
+    });
+    if lead > 0 && !after.trim().is_empty() {
+        edits.push(Edit {
+            start: cur,
+            end: cur + lead,
+            text: String::new(),
+        });
+    }
+    if !moved.is_empty() {
+        edits.push(Edit {
+            start: first_end,
+            end: stop,
+            text: String::new(),
+        });
+    }
+    Some(Change { edits, line: None })
+}
+
 /// The task keyword of the block at `cursor` cycled. In an Obsidian note,
 /// its check box: none, `[ ]`, `[x]`, none.
 pub fn cycle_todo(text: &str, flavor: Flavor, cycle: [&str; 3], cursor: usize) -> Option<Change> {
@@ -612,6 +737,54 @@ mod tests {
 
     fn run(text: &str, f: impl Fn(usize) -> Option<Change>, cursor: usize) -> String {
         apply(text, &f(cursor).expect("a change").edits)
+    }
+
+    #[test]
+    fn enter_makes_blocks_as_logseq() {
+        let md = Flavor::LogseqMarkdown;
+        let enter = |t: &str, at: usize| apply(t, &new_block(t, md, at).expect("a change").edits);
+        // At the end of a block: a sibling after it.
+        let t = "- one\n- two\n";
+        assert_eq!(enter(t, 5), "- one\n- \n- two\n");
+        // Its properties and dates stay its own, before the new block.
+        let t = "- one\n  id:: 6512c0de-0000-4000-8000-000000000001\n  SCHEDULED: <2026-10-12 Mon>\n- two\n";
+        assert_eq!(
+            enter(t, 5),
+            "- one\n  id:: 6512c0de-0000-4000-8000-000000000001\n  SCHEDULED: <2026-10-12 Mon>\n- \n- two\n"
+        );
+        // In the middle: split, the rest the new block's, the properties
+        // the first's.
+        let t = "- one two\n  id:: x\n";
+        assert_eq!(enter(t, 5), "- one\n  id:: x\n- two\n");
+        assert_eq!(enter(t, 6), "- one\n  id:: x\n- two\n");
+        // With children shown: its first child, indented as the note is.
+        let t = "- parent\n\t- child\n";
+        assert_eq!(enter(t, 8), "- parent\n\t- \n\t- child\n");
+        let t = "- parent\n  - child\n";
+        assert_eq!(enter(t, 8), "- parent\n  - \n  - child\n");
+        // With children folded: a sibling after them.
+        let t = "- parent\n  collapsed:: true\n\t- child\n- next\n";
+        assert_eq!(
+            enter(t, 8),
+            "- parent\n  collapsed:: true\n\t- child\n- \n- next\n"
+        );
+        // At its start: an empty block above.
+        let t = "\t- item\n";
+        assert_eq!(enter(t, 3), "\t- \n\t- item\n");
+        // An empty child block: outdented.
+        let t = "- a\n\t- \n";
+        assert_eq!(enter(t, 7), "- a\n- \n");
+        // Elsewhere, the mode's Enter.
+        let t = "- one\n  id:: x\n";
+        assert!(new_block(t, md, 12).is_none(), "a property line");
+        assert!(new_block("Text\n", md, 4).is_none(), "no bullet");
+        assert!(new_block("- one\n", Flavor::Obsidian, 5).is_none());
+        // The cursor lands in the new block: the insertion is at it.
+        let t = "- one\n  id:: x\n";
+        let c = new_block(t, md, 5).unwrap();
+        let insert = c.edits.iter().find(|e| e.start == e.end).unwrap();
+        assert_eq!(insert.start, 5);
+        assert!(insert.text.ends_with("- "));
     }
 
     #[test]

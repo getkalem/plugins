@@ -49,6 +49,64 @@ impl App {
         }
     }
 
+    /// The note a command runs in, with changes not saved: its text as the
+    /// editor holds it goes into the index first, so that the command
+    /// sees what the user typed.
+    pub(super) fn take_unsaved(&mut self, ctx: &Ctx) {
+        let (None, Some(path), Some(text)) = (&ctx.doc, &ctx.path, &ctx.text) else {
+            return;
+        };
+        let path = files::normalize(path);
+        if !self.dirty.contains(&path) {
+            return;
+        }
+        let Some(root) = self
+            .indexes
+            .keys()
+            .filter(|r| files::relative(r, &path).is_some())
+            .max_by_key(|r| r.len())
+            .cloned()
+        else {
+            return;
+        };
+        let rel = files::relative(&root, &path)
+            .unwrap_or_default()
+            .to_string();
+        if let Some(index) = self.indexes.get_mut(&root) {
+            index.update_unsaved(&rel, text);
+        }
+    }
+
+    /// A document closed: one closed with changes not saved is read again
+    /// from its file, the index having taken its unsaved text.
+    pub fn closed_document(&mut self, files: &dyn Files, number: u64) -> Vec<Effect> {
+        let Some(path) = self.open.get(&number).cloned() else {
+            return Vec::new();
+        };
+        let was_unsaved = self.dirty.contains(&path);
+        self.track_closed(number);
+        if !was_unsaved || self.dirty.contains(&path) {
+            return Vec::new();
+        }
+        let roots: Vec<String> = self
+            .indexes
+            .keys()
+            .filter(|r| files::relative(r, &path).is_some())
+            .cloned()
+            .collect();
+        let mut out = Vec::new();
+        for root in roots {
+            if self
+                .indexes
+                .get_mut(&root)
+                .is_some_and(|i| i.update(files, &path))
+            {
+                out.extend(self.refresh(&root));
+            }
+        }
+        out
+    }
+
     /// A document closed.
     pub fn track_closed(&mut self, number: u64) {
         if let Some(p) = self.open.remove(&number)
@@ -372,6 +430,29 @@ impl App {
                 "Outdent Block",
                 "The block is at the top level",
             ),
+            "graph.newBlock" => match edit::new_block(text, flavor, cursor) {
+                Some(c) => vec![Effect::Edits {
+                    edits: c.edits,
+                    label: "New Block".into(),
+                    line: None,
+                }],
+                // Not on a block's first line: Enter as Markdown has it, a
+                // list's next item or a new line.
+                None => {
+                    let start = text[..cursor].rfind('\n').map_or(0, |p| p + 1);
+                    let line = text[start..].trim_start_matches([' ', '\t']);
+                    let item = line.starts_with("- ") || line.starts_with("* ") || line == "-";
+                    vec![Effect::Run {
+                        id: if item {
+                            "markdown.newline"
+                        } else {
+                            "edit.newline"
+                        }
+                        .into(),
+                        args: "null".into(),
+                    }]
+                }
+            },
             "graph.toggleFold" => {
                 if flavor != Flavor::LogseqMarkdown {
                     return vec![Effect::Run {
