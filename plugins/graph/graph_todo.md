@@ -978,6 +978,11 @@ below replace the earlier GR4a to GR4d.
   `plugin-completers` through a `[patch]` not committed. Open: the
   `kalem-plugin` pin moved to Kalem's main once it is pushed with API
   0.2.11, and the tag `graph-v0.3.0` after Kalem 0.6.13's release.
+  (Released with Kalem 0.6.13; tried as released in a Logseq graph, a
+  Logseq graph in Org and an Obsidian vault, in both profiles.) 0.3.1:
+  completion in a vault named two notes of one name alike (`Kalem` and
+  `Kalem` for `Kalem.md` and `Archive/Kalem.md`); each is shown as the
+  link Obsidian writes for it.
 
 ## What Kalem's core must gain
 
