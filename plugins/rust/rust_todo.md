@@ -479,7 +479,7 @@ spike first.
 
 ## RS5. Formatting: rustfmt through the server
 
-- [ ] RS5 Format Document (`SPC c f`) formats through rust-analyzer,
+- [~] RS5 Format Document (`SPC c f`) formats through rust-analyzer,
   which runs the toolchain's rustfmt with the crate's edition and the
   root's `rustfmt.toml`; `rustfmt.extraArgs` and
   `rustfmt.overrideCommand` described (`leptosfmt`, a nightly rustfmt
@@ -493,6 +493,33 @@ spike first.
   rustfmt equality: `kalem lsp ask format` on an unformatted file
   equals `rustfmt --edition 2021` of it. Formatting on save and of a
   selection are T3.8.2's.
+  (Done 2026-10-10, but for the editors by hand. The corpus gained
+  `shapes/src/messy.rs`, unformatted on purpose (`pub mod messy;` in
+  `shapes`, no warning), and `corpus/ws/rustfmt.toml` with
+  `use_field_init_shorthand = true`, whose effect shows (`Point { x,
+  y }`) and which changes no other corpus file. Through rust-analyzer
+  1.99.0, Kalem 0.6.0 and the branch alike: `kalem lsp ask format` on
+  `messy.rs` equals rustfmt's output for the 2024 edition, the
+  configuration read (rust-analyzer runs rustfmt on standard input in
+  the file's folder). `commands.format` is `["rustfmt", "--edition",
+  "2024"]`: 2021 would reject let chains; run in the root as Kalem
+  runs it, so the project's `rustfmt.toml` is read. Through Kalem's
+  service with the server off, Format Document's command formats
+  `messy.rs` as rustfmt does. The conformance test runs the command
+  as Kalem does: the module formatted, the configuration applied, a
+  second run changing nothing, equal to rustfmt's output for the file
+  by its path, and every other corpus file (but `script.rs`, whose
+  frontmatter is nightly's) left as it is. Not as this item expected:
+  rustfmt missing from the toolchain is no `showMessage`. rustup's
+  proxy exits 1 ("'rustfmt' is not installed for the … toolchain"),
+  rust-analyzer takes that for a syntax error, logs "rustfmt failed"
+  and answers `null`, which is also its answer for a formatted file,
+  and Kalem said "Already formatted". Kalem's part, on its branch: a
+  `null` answer said as "rust-analyzer changed nothing", an empty list
+  still as formatted; the fake server's `null` for a text it cannot
+  read, in the service test. The README's formatting section says
+  where the reason is (`kalem lsp check --log`). Open: the branch
+  merged and released; the editors by hand.)
 
 ## RS6. What the client already has, checked and written down
 

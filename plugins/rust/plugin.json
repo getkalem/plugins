@@ -30,6 +30,9 @@
       "install": "rustup component add rust-analyzer; or brew install rust-analyzer; or a release from https://github.com/rust-lang/rust-analyzer/releases, renamed rust-analyzer and put on the PATH"
     }
   },
+  "commands": {
+    "format": ["rustfmt", "--edition", "2024"]
+  },
   "settings": {
     "settings.rust-analyzer.checkOnSave": {
       "type": "boolean", "default": true,

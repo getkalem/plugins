@@ -231,6 +231,69 @@ fn settings_describe_what_rust_analyzer_reads() {
     }
 }
 
+/// The formatter for a file no server formats: rustfmt on standard input,
+/// run in the root as Kalem runs it, so the project's `rustfmt.toml` is
+/// read; the 2024 edition, since a file alone names none and rustfmt's
+/// own default, 2015, rejects `async` (and 2021 rejects let chains).
+/// On the corpus: the unformatted module formatted as rustfmt formats
+/// the file itself, the workspace's `use_field_init_shorthand` applied,
+/// a second run changing nothing; every other file left as it is.
+#[test]
+fn the_format_command_is_rustfmt_in_the_root() {
+    let m = manifest();
+    let cmd = list(&m["commands"]["format"]);
+    assert_eq!(cmd, ["rustfmt", "--edition", "2024"]);
+    let run = |text: &str| {
+        use std::io::Write;
+        let mut child = tool(&cmd[0])
+            .args(&cmd[1..])
+            .current_dir(workspace())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("rustfmt runs");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(text.as_bytes())
+            .expect("written");
+        let out = child.wait_with_output().expect("rustfmt ends");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).expect("UTF-8")
+    };
+    let messy = read("corpus/ws/shapes/src/messy.rs");
+    let formatted = run(&messy);
+    assert_ne!(formatted, messy);
+    assert!(formatted.contains("Point { x, y }"), "{formatted}");
+    assert_eq!(run(&formatted), formatted, "a second run changes nothing");
+    // As rustfmt formats the file itself (which finds the configuration
+    // from the file's folder), its output after the path's line.
+    let file = workspace().join("shapes/src/messy.rs");
+    let out = tool("rustfmt")
+        .args(["--edition", "2024", "--emit", "stdout"])
+        .arg(&file)
+        .output()
+        .expect("rustfmt runs");
+    let by_path = String::from_utf8(out.stdout).expect("UTF-8");
+    let by_path = by_path
+        .strip_prefix(&format!("{}:\n\n", file.display()))
+        .unwrap_or_else(|| panic!("{by_path}"));
+    assert_eq!(formatted, by_path);
+    for f in rs_files(&dir().join("corpus")) {
+        if f.ends_with("messy.rs") || f.ends_with("script.rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&f).expect("corpus");
+        assert_eq!(run(&text), text, "{} is formatted", f.display());
+    }
+}
+
 /// The root is the nearest folder holding a `Cargo.lock`: Cargo writes
 /// it where it puts the workspace's root, so a workspace is one root and
 /// one server, and a workspace inside another (this corpus inside the
@@ -443,7 +506,7 @@ fn the_syntax_parses_every_corpus_file() {
         .find(|s| s.name == "Rust")
         .expect("Rust");
     let files = rs_files(&dir().join("corpus"));
-    assert_eq!(files.len(), 5, "{files:?}");
+    assert_eq!(files.len(), 6, "{files:?}");
     for f in files {
         let text = std::fs::read_to_string(&f).expect("corpus");
         let mut state = ParseState::new(syntax);

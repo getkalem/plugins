@@ -52,3 +52,6 @@ macro_rules! square {
         $crate::Square { side: $side }
     };
 }
+
+/// A module left unformatted, for the formatting tests.
+pub mod messy;

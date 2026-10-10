@@ -1,0 +1,4 @@
+# The corpus's formatting: rustfmt's defaults, and one option that shows
+# whether the project's rustfmt.toml was read (`Point { x: x }` written
+# `Point { x }`).
+use_field_init_shorthand = true

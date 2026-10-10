@@ -64,6 +64,12 @@ Two kinds, as in VS Code:
 
 An error both find, a type mismatch, is listed twice, once from `rustc` and once from rust-analyzer, as VS Code lists it. While rust-analyzer loads the project (half a minute the first time, the standard library indexed) it may answer "content modified" to what it is asked; the same Kalem change asks again rather than showing that.
 
+## Formatting
+
+Format Document (`SPC c f`) formats through rust-analyzer, which runs the toolchain's rustfmt with the crate's edition and the project's `rustfmt.toml` (from the file's folder up). `rustfmt.extraArgs` and `rustfmt.overrideCommand` (a nightly rustfmt, `leptosfmt`) are among the settings. When no server formats (servers turned off, rust-analyzer not installed), the plugin's command does: `rustfmt --edition 2024` on the text, run in the project's root so that its `rustfmt.toml` is read; a file alone names no edition, and 2024 reads the older ones.
+
+rust-analyzer answers with no edits both when the file is formatted and when rustfmt fails: not installed for the project's toolchain (`rustup component add rustfmt`), or a syntax error in the file. Kalem 0.6.1 and earlier say "Already formatted" either way; Kalem's change for this (not released yet) says that rust-analyzer changed nothing. Why it changed nothing is in its log: `kalem lsp check --log FILE`.
+
 ## A file outside a project
 
 rust-analyzer serves only files of a Cargo project it has loaded. A `.rs` file with no `Cargo.toml` above it (a scratch file, a `rust-script`) gets a server that finds no project and answers nothing: no documentation, no completion, no diagnostics. Name the file in rust-analyzer's `linkedProjects` and it is served on its own, against the standard library: documentation, completion and definitions work. A `.kalem/settings.toml` in its folder does it, with paths relative to the folder:
@@ -101,7 +107,7 @@ kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already for
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; rustfmt when no server runs; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
 
 ## Sources and licenses
 
