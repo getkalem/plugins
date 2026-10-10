@@ -26,6 +26,9 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 # Kalem's highlighter, to check the syntax as Kalem loads it: registered
 # over the built-in Rust, and the colors it gives the corpus.
 kalem-highlight = { git = "https://github.com/getkalem/kalem", rev = "dfd6c1d11a61eb76e1e11d2dbe196cbb8c32e1dd" }
+# Kalem's language server client, at the same revision, for the corpus
+# test through rust-analyzer (`tests/server.rs`).
+kalem-lsp = { git = "https://github.com/getkalem/kalem", rev = "dfd6c1d11a61eb76e1e11d2dbe196cbb8c32e1dd" }
 
 [lints]
 workspace = true

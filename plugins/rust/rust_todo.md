@@ -726,7 +726,7 @@ spike first.
 
 ## RS10. Speed, the big corpus and the tests
 
-- [ ] RS10a Kalem's own repository as the corpus by hand: opened in
+- [~] RS10a Kalem's own repository as the corpus by hand: opened in
   the GUI and the TUI, rust-analyzer's indexing (minutes, gigabytes)
   shown as progress, no keystroke delayed meanwhile, completion
   within the indexing time once it ends (the `lsp` completer's 1.5 s
@@ -735,7 +735,28 @@ spike first.
   lock on `target/`, the `cargo.targetDir` setting's case), a
   `Cargo.toml` edit reloading the workspace through the server's own
   watcher; memory and time recorded in the README.
-- [ ] RS10b The crate's tests: `tests/conformance.rs` (the manifest
+  (Done 2026-10-10 through Kalem's service, not in the editors by
+  hand: a throwaway example on Kalem's branch opened its own
+  `crates/kalem-core/src/lsp.rs` with this plugin, three runs. The
+  release run, edits in the first minute only: ready at 0.1 s; the
+  indexing to 67 s; the first hover at 78 s (116 ms); completion after
+  `spec.` 24 items in 90 ms, then 7 ms, inside the `lsp` completer's
+  1.5 s; 263 edits while it indexed, `lsp::sync` median 0.09 ms, p99
+  0.46 ms, slowest 1.26 ms, `lsp::tick` slowest 0.56 ms, so no
+  keystroke waits; memory 3.2 GB loaded, 4.4 GB at its peak (2.3 and
+  3.1 GB in the other runs); a save's check 2 s, its progress in the
+  status bar; `cargo build -p org-syntax` meanwhile 1.1 s, "Blocking
+  waiting for file lock on package cache" for a moment; a
+  `Cargo.toml` touched, reloaded at 0.2 s and done at 1.2 s. The
+  debug run, with an edit every 200 ms throughout: the indexing
+  restarted by each one, ending at 285 s, the first check 97 s, the
+  slowest sync 212 ms (a debug build). A run that took a pause in the
+  progress for the end asked completion too early: nothing within the
+  1.5 s budget and hover unanswered for 30 s, which is what a user
+  gets until the indexing ends. The README's table. Open: the editors
+  by hand; the build-folder lock during a long check, not measured,
+  for the owner's `cargo.targetDir` question.)
+- [~] RS10b The crate's tests: `tests/conformance.rs` (the manifest
   complete and consistent, every described setting of RS3d, the
   syntax of RS2 through Kalem's highlighter) runs everywhere (RS1
   made it, with the root and the corpus checked through Cargo); a
@@ -750,6 +771,25 @@ spike first.
   toolchain being there already (or by hand, the open question
   below). The version checked named in the README: rust-analyzer's
   date version and the Rust it ran with.
+  (Done 2026-10-10 but for CI, the owner's question. `tests/server.rs`
+  with `kalem-lsp` at the revision `kalem-highlight` is pinned to: the
+  manifest's server and settings, a temporary `cargo.targetDir` so
+  that nothing is written into the corpus, the three files opened,
+  then documentation on `Circle`, completion after `.` (`scaled` and
+  the trait's `area`: before a call's parentheses rust-analyzer offers
+  methods only, no field), definition of `scaled` into `shapes`,
+  references of `Area` into `app`, its two implementations, rename of
+  `scaled` with one edit in each file, formatting of `messy.rs` equal
+  to rustfmt's with the `rustfmt.toml` read, and cargo's E0502 in the
+  unopened `borrow.rs`; each asked again while rust-analyzer loads.
+  13 s with rust-analyzer 1.99.0 (b940084d 2026-09-28) on Rust
+  1.99.0. Without rust-analyzer on the `PATH` it says it skipped
+  (checked). Not asserted, with their reasons in the file: the
+  automatic `use` (RS6) and rust-analyzer's own diagnostics, which
+  the client of that revision does not ask for (RS4); both once the
+  pin moves past Kalem's branch. The README names the versions.
+  Open: `rustup component add rust-analyzer` in `ci.yml`'s test job,
+  or the test run by hand.)
 
 ## RS11. Release and the Book
 

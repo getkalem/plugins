@@ -150,7 +150,24 @@ kalem lsp check plugins/rust/corpus/ws/app/tests/borrow.rs         # the borrow 
 kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already formatted
 ```
 
-`cargo test -p kalem-plugin-rust` runs the conformance tests: the manifest; the root against the one `cargo metadata` gives; the corpus built with its one deliberate error and `edition.rs` compiled without a warning; the syntax registered as Kalem registers it, found for `.rs` and `rust`, parsing every corpus file to its end, and coloring what the built-in one does not.
+`cargo test -p kalem-plugin-rust` runs the conformance tests: the manifest; the root against the one `cargo metadata` gives; the corpus built with its one deliberate error and `edition.rs` compiled without a warning; the syntax registered as Kalem registers it, found for `.rs` and `rust`, parsing every corpus file to its end, and coloring what the built-in one does not. Where rust-analyzer runs, `tests/server.rs` also speaks to it through Kalem's language server client (`kalem-lsp`, pinned as `kalem-highlight` is) on the corpus: documentation, completion, definition, references, implementations and rename across the crates, formatting equal to rustfmt's, and cargo's borrow error; about 13 s. Without rust-analyzer it says it skipped.
+
+## A large workspace
+
+Kalem's own repository (24 crates, 786 source roots with their dependencies), opened through Kalem's language server service with rust-analyzer 1.99.0 on an Apple M1 Max, a release build:
+
+| | |
+|---|---|
+| The server ready to be asked | 0.1 s |
+| The first documentation and completion answered (loaded, indexed) | 78 s |
+| Completion after a `.`, then | 90 ms, then 7 ms (the completer waits 1.5 s at most) |
+| Documentation at the cursor | 120 ms |
+| An edit sent to the server while it indexes (263 edits) | median 0.09 ms, slowest 1.3 ms |
+| rust-analyzer's memory | 3.2 GB once loaded, 4.4 GB at its peak |
+| `cargo check` after a save | 2 s, its progress in the status bar |
+| A `Cargo.toml` changed | reloaded 1.2 s later, without a restart |
+
+While edits keep coming, rust-analyzer starts its indexing over: typing without a pause, it took 285 s in a debug build rather than 67 s. Until the first answers, documentation and completion give nothing (completion's items come from Kalem's other completers). A `cargo build` in a terminal during a check waits a moment for Cargo's package cache; a long check, as the first one after a change of dependencies, holds the target folder too, which `cargo.targetDir` (a folder of rust-analyzer's own) avoids, at the cost of a second one.
 
 ## The corpus
 
