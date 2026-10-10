@@ -2,7 +2,7 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: 0.2.0** (to be released with the first Kalem whose plugin API is 0.2.10, the release after 0.6.10). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; and its layer draws a note as Logseq or Obsidian draws it (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+**Status: 0.2.0**, for Kalem 0.6.11 and later (plugin API 0.2.10). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; and its layer draws a note as Logseq or Obsidian draws it (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
 
 0.1.0, for Kalem 0.6.8 to 0.6.10, has everything but what plugin API 0.2.10 brings: with 0.1.0 the notes show as they are written (Logseq's `id::` and `collapsed::` lines, a bare `((uuid))`, `{{embed …}}` and `{{query …}}` as text, an Obsidian callout as a quote), the outliner's commands run from the Graph menu and the palette rather than from keys in a note, Search the Graph searches `logseq/` and `.obsidian/` too, a whiteboard or canvas is named in a notice rather than shown in the file manager, and today's date is asked once a session.
 
@@ -16,7 +16,7 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 - **The graph's folder is one of Kalem's projects** (Projects: Add Project). Kalem lets a plugin read only its projects' folders (`fs:read:workspace`); a note opened from a folder that is no project is not seen as a graph's.
 - A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, a Logseq database graph's mirror by its `mirror/markdown/.index.edn`, from the folder of any note opened in it upwards. A folder without any is a graph when the setting `graphs` names it.
-- A Kalem with plugin API 0.2.10 (0.1.0 runs on Kalem 0.6.8 to 0.6.10, without the layer).
+- Kalem 0.6.11 or later (plugin API 0.2.10); 0.1.0 runs on Kalem 0.6.8 to 0.6.10, without the layer.
 - Room to index a large graph: the plugin asks Kalem for 1 GB and 10 s a call (see Speed and size).
 
 ## Commands and keys

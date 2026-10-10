@@ -904,9 +904,11 @@ below replace the earlier GR4a to GR4d.
   reveal built always (`kalem-plugin`'s feature `layer`, the
   `kalem_layer` cfg and `build.rs` gone), the manifest's API `^0.2.10`,
   the README for 0.2.0; tested against Kalem's `graph-mode` rebased on
-  0.6.10 through a `[patch]` not committed. Open: the branch merged only
-  after Kalem's main, pushed, has the layer, its `kalem-plugin` pin
-  updated then; the version and the release after Kalem's.)
+  0.6.10 through a `[patch]` not committed. Kalem's `graph-mode` was merged
+  into its main and released as Kalem 0.6.11 (plugin API 0.2.10);
+  `kalem-plugin` pinned to it (5a85de4d) and the release commit made
+  for 0.2.0. Open: the tag `graph-v0.2.0`, once Kalem 0.6.11's release
+  is published.)
 
 ## What Kalem's core must gain
 
