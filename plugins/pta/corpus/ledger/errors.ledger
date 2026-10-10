@@ -1,0 +1,9 @@
+; One deliberate error for the diagnostics tests: a transaction that does
+; not balance.
+commodity $
+account Assets:Checking
+account Expenses:Software
+
+2026/03/01 * Software, the amounts mistyped
+    Expenses:Software                   $49.00
+    Assets:Checking                    $-48.00

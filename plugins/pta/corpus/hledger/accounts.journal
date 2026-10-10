@@ -1,0 +1,20 @@
+; The household's accounts and commodities, declared for
+; hledger check --strict.
+decimal-mark ,
+
+account assets                        ; type: A
+account assets:bank:ziraat            ; type: C
+account assets:cash                   ; type: C
+account liabilities:card              ; type: L
+account equity:opening                ; type: E
+account income:salary                 ; type: R
+account expenses:food                 ; type: X
+account expenses:food:market          ; type: X
+account expenses:food:restaurant      ; type: X
+account expenses:rent                 ; type: X
+account expenses:unknown              ; type: X
+account budget:food
+
+commodity 1.000,00 TRY
+commodity 1.000,00 EUR
+commodity 1.000,00 USD

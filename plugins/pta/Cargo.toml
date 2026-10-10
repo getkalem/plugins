@@ -1,0 +1,34 @@
+[package]
+name = "kalem-plugin-pta"
+description = "Plain text accounting for Kalem: hledger, Ledger and Beancount journals written, checked, imported, reconciled and reported"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# One plugin with two halves in one manifest (pta_todo.md): the
+# declarative half names the three languages and their servers, which
+# Kalem's core runs; the component (`src/component.rs`) runs the user's
+# own tool, hledger, Ledger or Beancount, through `process`, and writes
+# documents. The library is the component's logic, tested natively.
+
+[lib]
+# cdylib is the component; rlib lets the tests link the crate.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+[dev-dependencies]
+# The manifest, read by the conformance test.
+serde_json = "1"
+
+# The component: Kalem's `extension` world with its `process` interface
+# (plugin API 0.2.9).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main" }
+
+[lints]
+workspace = true
