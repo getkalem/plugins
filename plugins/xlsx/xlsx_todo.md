@@ -104,13 +104,18 @@ measurements ignored.
 
 ### XL7. Other formats (Kalem's E50)
 
-- [ ] XL7 Number formats and cell styles into and out of `.ods` (the
+- [~] XL7 Number formats and cell styles into and out of `.ods` (the
   Book says number formats are lost on conversion); a `.xls` file's
   formulas kept (only their results today, and calamine 0.36 misreads
   some BIFF8 formulas, which are then not shown) and `.xlsb` read the
   same way; workbooks encrypted with RC4 (Excel 97–2003, and 2007's
   CryptoAPI RC4) not read; Save as CSV with a chosen delimiter and
   encoding, a sheet or each sheet to its own file; export as HTML.
+  (Done 2026-10-10 in Kalem's branch `xlsx-menus`: Export as CSV or
+  Text, CSV UTF-8 with commas or semicolons, Text with tabs, CSV in
+  Windows-1254 or Windows-1252 with `?` for what the code page lacks,
+  the sheet shown or every visible worksheet to its own file. Open:
+  the rest.)
 
 ### XL8. Macros, the rest (Kalem's T3.7.4b)
 
@@ -168,7 +173,7 @@ measurements ignored.
 
 ### XL10. Edits the interface allows and Excel has, not yet made
 
-- [ ] XL10 Insert Cells and Delete Cells with a shift as the plugin's
+- [~] XL10 Insert Cells and Delete Cells with a shift as the plugin's
   own edit: Kalem emulates them by moving the block below or right
   (`move_cells`, a cut and paste), which is what the README's "Not yet"
   names and what macros' `Range.Insert Shift:=xlDown` needs; a row
@@ -185,7 +190,10 @@ measurements ignored.
   function; Min, Max and Numerical Count in the status line beside
   Sum, Average and Count (done 2026-10-10 in Kalem's branch
   `xlsx-menus`: after Excel's three, so that eighty columns cut them
-  first).
+  first). (Done 2026-10-10 in the same branch too: Row Height and
+  Column Width typed, every row or column selected in one undo step;
+  Create from Selection, Ctrl+Shift+F3, names made as Excel makes
+  them.)
 
 ### XL11. The generic halves of the contract
 
@@ -312,8 +320,8 @@ measurements ignored.
   Remove Link on a link; Pick From Drop-down List on a list; a
   table's Total Row and Convert to Range; a pivot table's Refresh and
   Options; Show Comments on a thread; the rows' and columns' menus
-  with Paste Special, Format Cells and Ungroup; tested in the
-  terminal. Open: a height or width typed, Standard Width, View Code,
+  with Paste Special, Format Cells and Ungroup, Row Height and Column
+  Width typed; tested in the terminal. Open: Standard Width, View Code,
   Select All Sheets, and the menus of charts, pictures, slicers,
   sparklines, the formula bar, the Name Box and the status line.)
 
