@@ -249,8 +249,8 @@ spike first.
   binary …" with the install text for the 1.88 project; `ask hover`
   there says "rust-analyzer did not start: error: Unknown binary …
   (rustup component add rust-analyzer; …)" in 3.4 s rather than 36.
-  Merged as getkalem/kalem#27 (2026-10-10). Open: a Kalem release
-  with it; the status bar seen in the two editors by hand.)
+  Merged as getkalem/kalem#27 (2026-10-10), released in Kalem 0.6.7
+  (2026-10-10). Open: the status bar seen in the two editors by hand.)
 - [~] RS3b The root. Decided in RS1: the nearest `Cargo.lock`, the
   root Cargo chose; a workspace's members are one root and one
   server; `rust-toolchain.toml` is honored by the proxy because the
@@ -294,8 +294,8 @@ spike first.
   2 documents"), and hover there gave `core::slice::Iter`'s
   declaration, 8 s from start. The Book's "Language plugins", T3.8.1,
   T3.8.6d and the changelog with it; here, the README's project
-  section. (2) stays recorded. Merged as getkalem/kalem#27. Open: a
-  Kalem release with it; the editors by hand; a crates.io dependency
+  section. (2) stays recorded. Merged as getkalem/kalem#27, released
+  in Kalem 0.6.7. Open: the editors by hand; a crates.io dependency
   in the corpus, which needs its tests to fetch it.)
 - [~] RS3c A `.rs` outside any Cargo project (a `rust-script`, a
   scratch file, the file an Org block will export in RS7b): no
@@ -472,11 +472,10 @@ spike first.
   load of the corpus, the standard library indexed, took 27 s. Known
   differences, in the README: an error both find is listed twice
   (`rustc` and rust-analyzer), as VS Code lists it; cargo's after the
-  save only. Merged as getkalem/kalem#27. Open: a Kalem release with
-  it; the editors by hand (underlines and gutter marks are T3.8.2's
-  open part); the borrow error asserted through the client (RS10b);
-  Kalem's own
-  workspace (RS10a).)
+  save only. Merged as getkalem/kalem#27, released in Kalem 0.6.7;
+  the borrow error asserted through the client (RS10b); Kalem's own
+  workspace (RS10a). Open: the editors by hand (underlines and gutter
+  marks are T3.8.2's open part).)
 
 ## RS5. Formatting: rustfmt through the server
 
@@ -520,7 +519,7 @@ spike first.
   still as formatted; the fake server's `null` for a text it cannot
   read, in the service test. The README's formatting section says
   where the reason is (`kalem lsp check --log`). Merged as
-  getkalem/kalem#27. Open: a Kalem release with it; the editors by
+  getkalem/kalem#27, released in Kalem 0.6.7. Open: the editors by
   hand.)
 
 ## RS6. What the client already has, checked and written down
@@ -718,9 +717,8 @@ spike first.
   below `distance`; Join Lines and Reload Project do theirs. No
   syntax tree: `rust-analyzer/viewSyntaxTree` answers a JSON tree for
   VS Code's own view, on one line, so neither the manifest nor Kalem
-  has the command. The README's table of the
-  requests. Merged as getkalem/kalem#27. Open: a Kalem release with
-  it; the three shapes
+  has the command. The README's table of the requests. Merged as
+  getkalem/kalem#27, released in Kalem 0.6.7. Open: the three shapes
   left (a notification as the server's state:
   `experimental/serverStatus`'s health, which RS3c saw say "cargo
   check failed to start"; a workspace edit from two fields for
