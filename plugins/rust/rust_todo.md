@@ -249,8 +249,8 @@ spike first.
   binary …" with the install text for the 1.88 project; `ask hover`
   there says "rust-analyzer did not start: error: Unknown binary …
   (rustup component add rust-analyzer; …)" in 3.4 s rather than 36.
-  Open: the branch reviewed and merged, and a Kalem released with it;
-  the status bar seen in the two editors by hand.)
+  Merged as getkalem/kalem#27 (2026-10-10). Open: a Kalem release
+  with it; the status bar seen in the two editors by hand.)
 - [~] RS3b The root. Decided in RS1: the nearest `Cargo.lock`, the
   root Cargo chose; a workspace's members are one root and one
   server; `rust-toolchain.toml` is honored by the proxy because the
@@ -294,9 +294,9 @@ spike first.
   2 documents"), and hover there gave `core::slice::Iter`'s
   declaration, 8 s from start. The Book's "Language plugins", T3.8.1,
   T3.8.6d and the changelog with it; here, the README's project
-  section. (2) stays recorded. Open: the branch merged and released;
-  the editors by hand; a crates.io dependency in the corpus, which
-  needs its tests to fetch it.)
+  section. (2) stays recorded. Merged as getkalem/kalem#27. Open: a
+  Kalem release with it; the editors by hand; a crates.io dependency
+  in the corpus, which needs its tests to fetch it.)
 - [~] RS3c A `.rs` outside any Cargo project (a `rust-script`, a
   scratch file, the file an Org block will export in RS7b): no
   `requireRoot`, the file's folder as the root, and what rust-analyzer
@@ -472,9 +472,10 @@ spike first.
   load of the corpus, the standard library indexed, took 27 s. Known
   differences, in the README: an error both find is listed twice
   (`rustc` and rust-analyzer), as VS Code lists it; cargo's after the
-  save only. Open: the branch merged and released; the editors by
-  hand (underlines and gutter marks are T3.8.2's open part); the
-  borrow error asserted through the client (RS10b); Kalem's own
+  save only. Merged as getkalem/kalem#27. Open: a Kalem release with
+  it; the editors by hand (underlines and gutter marks are T3.8.2's
+  open part); the borrow error asserted through the client (RS10b);
+  Kalem's own
   workspace (RS10a).)
 
 ## RS5. Formatting: rustfmt through the server
@@ -518,8 +519,9 @@ spike first.
   `null` answer said as "rust-analyzer changed nothing", an empty list
   still as formatted; the fake server's `null` for a text it cannot
   read, in the service test. The README's formatting section says
-  where the reason is (`kalem lsp check --log`). Open: the branch
-  merged and released; the editors by hand.)
+  where the reason is (`kalem lsp check --log`). Merged as
+  getkalem/kalem#27. Open: a Kalem release with it; the editors by
+  hand.)
 
 ## RS6. What the client already has, checked and written down
 
@@ -717,7 +719,8 @@ spike first.
   syntax tree: `rust-analyzer/viewSyntaxTree` answers a JSON tree for
   VS Code's own view, on one line, so neither the manifest nor Kalem
   has the command. The README's table of the
-  requests. Open: the branch merged and released; the three shapes
+  requests. Merged as getkalem/kalem#27. Open: a Kalem release with
+  it; the three shapes
   left (a notification as the server's state:
   `experimental/serverStatus`'s health, which RS3c saw say "cargo
   check failed to start"; a workspace edit from two fields for
@@ -788,8 +791,17 @@ spike first.
   automatic `use` (RS6) and rust-analyzer's own diagnostics, which
   the client of that revision does not ask for (RS4); both once the
   pin moves past Kalem's branch. The README names the versions.
-  Open: `rustup component add rust-analyzer` in `ci.yml`'s test job,
-  or the test run by hand.)
+  Then, the branch merged: the pin of `kalem-highlight` and `kalem-lsp`
+  moved to b0b87650 (Kalem's `main` with getkalem/kalem#27, 0.6.6 and
+  after; only these two packages changed in the lock, the old
+  `kalem-highlight` kept for elixir), `completion_items` taking its
+  new `keep_raw`; and rust-analyzer's own diagnostics asserted: `lib.rs`
+  opened with a `pub fn BadName() {}` added in memory, never on the
+  disk, and its `non_snake_case` from rust-analyzer, which comes only
+  by pull, found on that line (with the line moved, the test fails,
+  checked). Open: `rustup component add rust-analyzer` in `ci.yml`'s
+  test job, or the test run by hand; the automatic `use`, once Kalem
+  asks for it.)
 
 ## RS11. Release and the Book
 
@@ -841,11 +853,9 @@ spike first.
 
 ## Open for the owner
 
-- Kalem's branch `rust-server-start` (the worktree `org-rust` beside
-  Kalem's checkout): reviewed and merged, with the Book's chapter
-  "Rust"; then the pin of `kalem-highlight` and `kalem-lsp` in this
-  crate moved past it, and the corpus test given rust-analyzer's own
-  diagnostics (RS4, RS10b).
+- A Kalem release with getkalem/kalem#27 (merged 2026-10-10, with the
+  Book's chapter "Rust"): then the README's "not released yet" made
+  that version, and `rust-v0.1.1`.
 - Kalem's part of RS3c (root markers in groups, `${looseFiles}`) and
   of RS6 (automatic imports): wanted or not.
 

@@ -25,10 +25,10 @@ serde_json = "1"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy", "yaml-load"] }
 # Kalem's highlighter, to check the syntax as Kalem loads it: registered
 # over the built-in Rust, and the colors it gives the corpus.
-kalem-highlight = { git = "https://github.com/getkalem/kalem", rev = "dfd6c1d11a61eb76e1e11d2dbe196cbb8c32e1dd" }
+kalem-highlight = { git = "https://github.com/getkalem/kalem", rev = "b0b8765074cbe70b237804ef80c13e262dfc2b38" }
 # Kalem's language server client, at the same revision, for the corpus
 # test through rust-analyzer (`tests/server.rs`).
-kalem-lsp = { git = "https://github.com/getkalem/kalem", rev = "dfd6c1d11a61eb76e1e11d2dbe196cbb8c32e1dd" }
+kalem-lsp = { git = "https://github.com/getkalem/kalem", rev = "b0b8765074cbe70b237804ef80c13e262dfc2b38" }
 
 [lints]
 workspace = true

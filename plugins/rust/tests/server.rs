@@ -5,9 +5,8 @@
 //! RS6 of `rust_todo.md`). It runs where rust-analyzer runs and says it
 //! skipped otherwise (CI installs no component).
 //!
-//! Not here, with their reasons: a completion's automatic `use` (Kalem
-//! does not ask for it yet, RS6), rust-analyzer's own diagnostics (given
-//! only when asked, which the client pinned here does not do, RS4).
+//! Not here, with its reason: a completion's automatic `use` (Kalem does
+//! not ask for it yet, RS6).
 
 // A test skipped is said on standard error.
 #![allow(clippy::print_stderr)]
@@ -66,6 +65,11 @@ fn uri(f: &str) -> String {
 fn text(f: &str) -> String {
     std::fs::read_to_string(workspace().join(f)).unwrap_or_else(|e| panic!("{f}: {e}"))
 }
+
+/// What `lib.rs` is opened with: the file and a function named against
+/// Rust's custom, which rust-analyzer itself flags (`non_snake_case`), and
+/// cargo never sees (it is not on the disk).
+const BAD_NAME: &str = "\n/// Named against the custom.\npub fn BadName() {}\n";
 
 /// The position of `word` in `line` (the first line holding it) of `f`,
 /// `offset` bytes into the word.
@@ -126,7 +130,11 @@ fn start(program: String, m: &Value) -> Server {
         "shapes/src/lib.rs",
         "shapes/src/messy.rs",
     ] {
-        client.did_open(&uri(f), "rust", &text(f));
+        let mut t = text(f);
+        if f == "shapes/src/lib.rs" {
+            t.push_str(BAD_NAME);
+        }
+        client.did_open(&uri(f), "rust", &t);
     }
     let enc = client.encoding();
     Server {
@@ -166,9 +174,9 @@ fn the_corpus_through_rust_analyzer() {
         "textDocument/completion",
         json!({ "textDocument": doc(main), "position": at(&s, main, "Circle::new(1.0).scaled", ".scaled", 1) }),
         60,
-        |v| !features::completion_items(v).0.is_empty(),
+        |v| !features::completion_items(v, false).0.is_empty(),
     );
-    let (items, _) = features::completion_items(&completion);
+    let (items, _) = features::completion_items(&completion, false);
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     for want in ["scaled", "area"] {
         assert!(
@@ -282,6 +290,35 @@ fn the_corpus_through_rust_analyzer() {
         assert!(
             t.elapsed() < Duration::from_secs(180),
             "no borrow error: {codes:?}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // rust-analyzer's own diagnostics, which it gives only when asked
+    // (the pull model): the function named against the custom, on the
+    // line it has in the text the editor sent.
+    let lib_uri = uri(lib);
+    let bad_line = text(lib).lines().count() + 2;
+    let t = Instant::now();
+    loop {
+        let own: Vec<(String, u64)> = s
+            .client
+            .diagnostics(&lib_uri)
+            .iter()
+            .filter(|d| d["source"] == "rust-analyzer")
+            .filter_map(|d| {
+                Some((
+                    d["code"].as_str()?.to_string(),
+                    d["range"]["start"]["line"].as_u64()?,
+                ))
+            })
+            .collect();
+        if own.contains(&("non_snake_case".to_string(), bad_line as u64)) {
+            break;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(120),
+            "no non_snake_case at line {bad_line}: {own:?}"
         );
         std::thread::sleep(Duration::from_millis(200));
     }
