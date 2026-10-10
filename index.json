@@ -16,7 +16,16 @@
         ".docm",
         ".dotx",
         ".dotm"
-      ]
+      ],
+      "applies": {
+        "extensions": [
+          ".docx",
+          ".docm",
+          ".dotx",
+          ".dotm"
+        ],
+        "markers": []
+      }
     },
     {
       "id": "org.kalem.elixir",
@@ -55,7 +64,20 @@
             "html.heex"
           ]
         }
-      ]
+      ],
+      "applies": {
+        "extensions": [
+          ".ex",
+          ".exs",
+          ".eex",
+          ".html.eex",
+          ".leex",
+          ".html.leex",
+          ".heex",
+          ".html.heex"
+        ],
+        "markers": []
+      }
     },
     {
       "id": "org.kalem.git",
@@ -105,7 +127,36 @@
         ".exr",
         ".hdr",
         ".svg"
-      ]
+      ],
+      "applies": {
+        "extensions": [
+          ".png",
+          ".apng",
+          ".jpg",
+          ".jpeg",
+          ".jpe",
+          ".jfif",
+          ".gif",
+          ".webp",
+          ".bmp",
+          ".dib",
+          ".tif",
+          ".tiff",
+          ".ico",
+          ".qoi",
+          ".tga",
+          ".pbm",
+          ".pgm",
+          ".ppm",
+          ".pnm",
+          ".pam",
+          ".dds",
+          ".exr",
+          ".hdr",
+          ".svg"
+        ],
+        "markers": []
+      }
     },
     {
       "id": "org.kalem.pdf-viewer",
@@ -119,7 +170,13 @@
       "sha256": "c29dbee56cf1bd28620840fd1b8bca5a590d04eb8ea8a2acdd6a72ad89b6cd1f",
       "opens": [
         ".pdf"
-      ]
+      ],
+      "applies": {
+        "extensions": [
+          ".pdf"
+        ],
+        "markers": []
+      }
     },
     {
       "id": "org.kalem.rust",
@@ -141,7 +198,13 @@
             "rs"
           ]
         }
-      ]
+      ],
+      "applies": {
+        "extensions": [
+          ".rs"
+        ],
+        "markers": []
+      }
     },
     {
       "id": "org.kalem.xlsx",
@@ -161,7 +224,19 @@
         ".xls",
         ".xlsb",
         ".ods"
-      ]
+      ],
+      "applies": {
+        "extensions": [
+          ".xlsx",
+          ".xlsm",
+          ".xltx",
+          ".xltm",
+          ".xls",
+          ".xlsb",
+          ".ods"
+        ],
+        "markers": []
+      }
     }
   ]
 }
