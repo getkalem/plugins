@@ -1,7 +1,7 @@
 All pages: logseq-md
 Logseq · 19 pages, 10 of them journals · 63 blocks
 
-Pages (8)
+Pages (8)  by title; s sorts by links
 hls__paper_1700000000000_0     0 links      1 blocks  highlights of paper_1700000000000_0.pdf
 Kalem                          5 links      9 blocks
 Program                        1 links      1 blocks

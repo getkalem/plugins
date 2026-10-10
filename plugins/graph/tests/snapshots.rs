@@ -35,7 +35,7 @@ fn documents(name: &str) -> Vec<(&'static str, String)> {
     let i = load(name);
     let g = views::Glyphs::new("unicode");
     let mut docs = vec![
-        ("pages", views::pages(&i).text),
+        ("pages", views::pages(&i, views::PageSort::Title).text),
         ("journals", views::journals(&i, 30, g).text),
         ("tags", views::tags(&i).text),
         ("tasks", views::tasks(&i, Date::new(2026, 10, 10)).text),

@@ -151,6 +151,13 @@ pub const COMMANDS: &[CommandInfo] = &[
         ],
     ),
     c("graph.reindex", "Index Again", &["space n r s"]),
+    // `s` in All pages: by title, links, blocks.
+    n(
+        "graph.sortPages",
+        "Sort Pages",
+        &[("s", "textType == graph-pages && (vimCommand || !vimActive)")],
+    ),
+    n("graph.blockReferences", "Block References", &[]),
     CommandInfo {
         id: "graph.open",
         title: "Open the Line's Page",
@@ -550,6 +557,8 @@ pub struct App {
     today: Option<Date>,
     /// The documents open, with what they show.
     docs: BTreeMap<(String, String), Content>,
+    /// How each graph's "All pages" is sorted.
+    page_sort: BTreeMap<String, views::PageSort>,
     pending: BTreeMap<u64, Pending>,
     next: u64,
     /// The page the panel shows: `(root, key)`.
@@ -589,6 +598,7 @@ impl App {
             last: None,
             today: None,
             docs: BTreeMap::new(),
+            page_sort: BTreeMap::new(),
             pending: BTreeMap::new(),
             next: 1,
             panel: None,
@@ -910,8 +920,19 @@ impl App {
             "graph.pages" => (
                 format!("All pages: {name}"),
                 "graph-pages",
-                views::pages(index),
+                views::pages(index, self.page_sort.get(root).copied().unwrap_or_default()),
             ),
+            "graph.blockReferences" => {
+                let id = page?;
+                let text = index.block(id).map_or("", |(_, b)| b.text.as_str());
+                let short: String = text.chars().take(40).collect();
+                let more = if text.chars().count() > 40 { "…" } else { "" };
+                (
+                    format!("References: {short}{more}"),
+                    "graph-backlinks",
+                    views::block_references(index, id, g),
+                )
+            }
             "graph.journals" => (
                 format!("Journals: {name}"),
                 "graph-journals",
@@ -1023,6 +1044,14 @@ impl App {
             },
             "graph.pages" | "graph.journals" | "graph.tags" | "graph.graph" => {
                 out.extend(self.render(id, &root, true));
+            }
+            "graph.sortPages" => {
+                let sort = self.page_sort.entry(root.clone()).or_default();
+                *sort = sort.next();
+                out.extend(self.render("graph.pages", &root, true));
+            }
+            "graph.blockReferences" => {
+                out.extend(self.block_references(&root, rel.as_deref(), ctx))
             }
             "graph.tasks" => {
                 out.extend(self.render(id, &root, true));

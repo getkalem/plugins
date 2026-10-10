@@ -1023,3 +1023,61 @@ fn unsaved_typing_is_seen_by_commands() {
     let mut i = app.index("/w/notes").unwrap().clone();
     assert!(!i.update_unsaved("readme.md", "- [[Kalem]]"));
 }
+
+#[test]
+fn pages_sorted_and_a_blocks_references() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let c = ctx("/w/notes/pages/Kalem.md", "", 0);
+    let (_, key, _, content) = document(&app.command(&m, "graph.pages", &c));
+    let order = |content: &Content| -> Vec<String> {
+        content
+            .text
+            .lines()
+            .skip_while(|l| !l.starts_with("Pages ("))
+            .skip(1)
+            .take_while(|l| !l.is_empty())
+            .map(|l| l.split_whitespace().next().unwrap_or("").to_string())
+            .collect()
+    };
+    assert_eq!(order(&content), ["Kalem", "Other", "Templates"]);
+    assert!(content.text.contains("by title; s sorts by links"));
+    // `s` in the document: by links, then by blocks.
+    let mut d = c.clone();
+    d.doc = Some(("graph.pages".into(), key.clone()));
+    let (_, _, _, content) = document(&app.command(&m, "graph.sortPages", &d));
+    assert_eq!(order(&content), ["Kalem", "Other", "Templates"]);
+    assert!(content.text.contains("by links; s sorts by blocks"));
+    let (_, _, _, content) = document(&app.command(&m, "graph.sortPages", &d));
+    assert_eq!(order(&content), ["Templates", "Kalem", "Other"]);
+    // A block's references: from the block at the cursor.
+    let text = m.get("/w/notes/pages/Kalem.md").unwrap();
+    let at = text.find("An editor").unwrap();
+    let out = app.command(
+        &m,
+        "graph.blockReferences",
+        &ctx("/w/notes/pages/Kalem.md", &text, at),
+    );
+    let (id, _, kind, content) = document(&out);
+    assert_eq!(
+        (id.as_str(), kind.as_str()),
+        ("graph.blockReferences", "graph-backlinks")
+    );
+    assert!(
+        matches!(&out[0], Effect::Document { title, .. } if title == "References: An editor of [[Org]] files"),
+        "{out:?}"
+    );
+    assert!(content.text.contains("uses [[Kalem]]"), "{}", content.text);
+    // A block nothing refers to.
+    let other = m.get("/w/notes/pages/Other.md").unwrap();
+    let out = app.command(
+        &m,
+        "graph.blockReferences",
+        &ctx("/w/notes/pages/Other.md", &other, 4),
+    );
+    assert!(
+        matches!(&out[0], Effect::Notify(m, _) if m == "Nothing refers to this block"),
+        "{out:?}"
+    );
+}

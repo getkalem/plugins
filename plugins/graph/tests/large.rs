@@ -311,7 +311,7 @@ fn a_million_blocks() {
         views::tasks(&index, kalem_plugin_graph::date::Date::new(2026, 10, 10))
     });
     time("the All pages document", Duration::from_millis(500), || {
-        views::pages(&index)
+        views::pages(&index, views::PageSort::Title)
     });
     time("the Graph document", Duration::from_secs(2), || {
         views::graph(&index)

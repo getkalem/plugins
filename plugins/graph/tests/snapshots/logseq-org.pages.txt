@@ -1,7 +1,7 @@
 All pages: logseq-org
 Logseq · 4 pages, 2 of them journals · 12 blocks
 
-Pages (2)
+Pages (2)  by title; s sorts by links
 Kalem               3 links      5 blocks
 Project/Plugins     2 links      3 blocks
 

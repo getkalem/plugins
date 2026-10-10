@@ -178,6 +178,46 @@ impl App {
             None => Vec::new(),
         }
     }
+
+    /// The references to the block at the cursor of the note `rel`, as a
+    /// document; the reason there is none else.
+    pub(super) fn block_references(
+        &mut self,
+        root: &str,
+        rel: Option<&str>,
+        ctx: &Ctx,
+    ) -> Vec<Effect> {
+        let say = |why: &str| vec![Effect::Notify(why.to_string(), Level::Info)];
+        let (Some(rel), Some(text)) = (rel, ctx.text.as_deref()) else {
+            return say("This document is no note of a graph");
+        };
+        let s = crate::scan::scan(
+            text,
+            self.flavor_in(root, rel),
+            &crate::scan::Options::default(),
+        );
+        let line = text[..ctx.cursor.min(text.len())].matches('\n').count() as u32;
+        let Some(b) = crate::edit::block_at(&s, line).map(|i| &s.blocks[i]) else {
+            return say("No block here");
+        };
+        let index = &self.indexes[root];
+        let id = match (&b.id, index.graph.kind) {
+            (None, _) => None,
+            (Some(id), Kind::Logseq) => Some(id.clone()),
+            (Some(id), Kind::Obsidian) => index.page_of(rel).map(|p| format!("{}#^{id}", p.key)),
+        };
+        match id {
+            Some(id) if !index.block_backlinks(&id).is_empty() => self
+                .render(
+                    "graph.blockReferences",
+                    &format!("{root}{}{id}", super::SEP),
+                    true,
+                )
+                .into_iter()
+                .collect(),
+            _ => say("Nothing refers to this block"),
+        }
+    }
 }
 
 /// The headings of the graph and the top-level blocks of its pages (not

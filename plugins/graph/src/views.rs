@@ -225,6 +225,39 @@ pub fn backlinks(index: &Index, key: &str, g: Glyphs) -> Content {
     c
 }
 
+/// "References: BLOCK": what refers to block `id` (Logseq's UUID, or
+/// Obsidian's `page#^id`), as Logseq lists a block's references.
+pub fn block_references(index: &Index, id: &str, g: Glyphs) -> Content {
+    let mut c = Content::new();
+    let Some((rel, b)) = index.block(id) else {
+        c.line(&[("No such block.", Style::Error)], None);
+        return c;
+    };
+    c.line(
+        &[("References: ", Style::Heading), (&b.text, Style::Heading)],
+        None,
+    );
+    c.line(
+        &[(
+            &format!("{} · {}", title_of(index, rel), index.graph.name()),
+            Style::Muted,
+        )],
+        Some(Target::File {
+            path: index.graph.path(rel),
+            line: b.line,
+        }),
+    );
+    c.blank();
+    section(
+        &mut c,
+        index,
+        "Linked references",
+        index.block_backlinks(id),
+        g,
+    );
+    c
+}
+
 /// "Tag: NAME": where a tag is used (Obsidian's tags are not pages).
 pub fn tag(index: &Index, key: &str, g: Glyphs) -> Content {
     let mut c = Content::new();
@@ -240,9 +273,40 @@ pub fn tag(index: &Index, key: &str, g: Glyphs) -> Content {
     c
 }
 
-/// "All pages": every page with its links and blocks, then the pages only
-/// referenced.
-pub fn pages(index: &Index) -> Content {
+/// How "All pages" lists the pages.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PageSort {
+    /// By title.
+    #[default]
+    Title,
+    /// The most linked to first.
+    Links,
+    /// The most blocks first.
+    Blocks,
+}
+
+impl PageSort {
+    /// The order after this one.
+    pub fn next(self) -> PageSort {
+        match self {
+            PageSort::Title => PageSort::Links,
+            PageSort::Links => PageSort::Blocks,
+            PageSort::Blocks => PageSort::Title,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            PageSort::Title => "title",
+            PageSort::Links => "links",
+            PageSort::Blocks => "blocks",
+        }
+    }
+}
+
+/// "All pages": every page with its links and blocks, sorted by `sort`,
+/// then the pages only referenced.
+pub fn pages(index: &Index, sort: PageSort) -> Content {
     let mut c = Content::new();
     let (files, journals, blocks, _) = index.counts();
     c.line(
@@ -273,7 +337,19 @@ pub fn pages(index: &Index) -> Content {
         .pages()
         .filter(|p| p.path.is_some() && p.journal.is_none() && !drawn(p))
         .collect();
+    let links = |p: &crate::index::Page| index.backlinks(&p.key).len();
+    let blocks = |p: &crate::index::Page| {
+        p.path
+            .as_ref()
+            .and_then(|r| index.file(r))
+            .map_or(0, |d| d.scanned.blocks.len())
+    };
     written.sort_by_key(|p| p.title.to_lowercase());
+    match sort {
+        PageSort::Title => {}
+        PageSort::Links => written.sort_by_key(|p| std::cmp::Reverse(links(p))),
+        PageSort::Blocks => written.sort_by_key(|p| std::cmp::Reverse(blocks(p))),
+    }
     let width = written
         .iter()
         .map(|p| p.title.chars().count())
@@ -281,16 +357,17 @@ pub fn pages(index: &Index) -> Content {
         .unwrap_or(0)
         .min(48);
     c.line(
-        &[(&format!("Pages ({})", written.len()), Style::Heading)],
+        &[
+            (&format!("Pages ({})", written.len()), Style::Heading),
+            (
+                &format!("  by {}; s sorts by {}", sort.name(), sort.next().name()),
+                Style::Muted,
+            ),
+        ],
         None,
     );
     for p in &written {
-        let links = index.backlinks(&p.key).len();
-        let n = p
-            .path
-            .as_ref()
-            .and_then(|r| index.file(r))
-            .map_or(0, |d| d.scanned.blocks.len());
+        let (links, n) = (links(p), blocks(p));
         let pad = width.saturating_sub(p.title.chars().count());
         // Logseq's PDF highlights: a page per PDF, its blocks the
         // highlights (drawn by Logseq over the PDF).
@@ -1169,8 +1246,12 @@ mod tests {
     #[test]
     fn the_other_documents() {
         let i = index();
-        let p = pages(&i);
-        assert!(p.text.contains("Pages (4)\n"), "{}", p.text);
+        let p = pages(&i, PageSort::Title);
+        assert!(
+            p.text.contains("Pages (4)  by title; s sorts by links\n"),
+            "{}",
+            p.text
+        );
         assert!(p.text.contains("Kalem  "), "{}", p.text);
         let j = journals(&i, 30, Glyphs::new("ascii"));
         assert!(

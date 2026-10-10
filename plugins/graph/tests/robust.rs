@@ -67,7 +67,7 @@ fn what_cannot_be_read_is_one_notice() {
     // The defaults used, the readable page indexed, the others named.
     let index = app.index(&root).expect("indexed");
     assert!(index.page("good").is_some_and(|p| p.path.is_some()));
-    let pages = views::pages(index).text;
+    let pages = views::pages(index, views::PageSort::Title).text;
     assert!(pages.contains("Not read (3)"), "{pages}");
     assert!(pages.contains("Huge.md is larger than 16 MB"), "{pages}");
     assert!(pages.contains("Bad.md"), "{pages}");

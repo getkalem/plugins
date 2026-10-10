@@ -361,7 +361,7 @@ fn the_documents_of_every_corpus() {
     for name in ["logseq-md", "logseq-org", "obsidian"] {
         let i = load(name);
         let docs = [
-            views::pages(&i),
+            views::pages(&i, views::PageSort::Title),
             views::journals(&i, 30, g),
             views::tags(&i),
             views::tasks(&i, Date::new(2026, 10, 10)),
@@ -481,10 +481,10 @@ fn drawings_highlights_and_unlinked_mentions() {
     );
     assert_eq!(titles(&o, "board.canvas"), ["Graph"]);
     // All pages lists them apart, with the application that draws them.
-    let text = views::pages(&l).text;
+    let text = views::pages(&l, views::PageSort::Title).text;
     assert!(text.contains("Whiteboards (1)"), "{text}");
     assert!(text.contains("Design  1 links · opens in Logseq"), "{text}");
-    let text = views::pages(&o).text;
+    let text = views::pages(&o, views::PageSort::Title).text;
     assert!(text.contains("Canvases (1)"), "{text}");
     // A PDF's highlights are a page of blocks, named for the PDF.
     let hls = l
@@ -495,7 +495,7 @@ fn drawings_highlights_and_unlinked_mentions() {
         Some("pages/hls__paper_1700000000000_0.md")
     );
     assert!(
-        views::pages(&l)
+        views::pages(&l, views::PageSort::Title)
             .text
             .lines()
             .any(|line| line.starts_with("hls__paper")

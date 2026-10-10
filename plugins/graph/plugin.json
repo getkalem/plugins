@@ -26,7 +26,7 @@
         "graph.cycleTodo", "graph.setPriority", "graph.schedule", "graph.deadline",
         "graph.moveBlockUp", "graph.moveBlockDown", "graph.indent", "graph.outdent", "graph.toggleFold",
         "-",
-        "graph.backlinks", "graph.backlinksDocument",
+        "graph.backlinks", "graph.backlinksDocument", "graph.blockReferences",
         "-",
         "graph.pages", "graph.journals", "graph.tags", "graph.tasks", "graph.graph", "graph.runQuery",
         "-",
