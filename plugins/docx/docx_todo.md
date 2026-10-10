@@ -484,10 +484,23 @@ order they are done, the spike first.
   and toolbar (Bold, Italic, Underline, Strike Through, Superscript,
   Subscript, Font, Font Size, Text Color, Highlight Color, Paragraph
   Style, Clear Formatting) send them. LibreOffice 7.3 reads the result.
-  Open: caps and small caps, sizes up and down, alignment, indents,
-  spacing, borders and shading of paragraphs (the `flow` interface has
-  no function for them: a `flow-2` in a later API), a built-in style
-  the document lacks added, lists, and Word's keys for headings.)
+  Paragraphs and lists done 2026-10-10 through plugin API 0.2.8's
+  `flow-2` (`set-paragraphs`, proposed and added for every format of
+  flowing text: alignment, indents, spacing, line spacing, a list of
+  bullets or of numbers in a CSS numbering style, its level, cleared),
+  `lists.rs`, `Document::set_paragraph_format`: `w:jc`, `w:ind` and
+  `w:spacing` attributes, `w:numPr`, each child of `w:pPr` where
+  `CT_PPr`'s sequence puts it, an alignment a style overrides written
+  explicitly; a list continuing the one before it when it is of the
+  kind, else a new instance (counting from 1) of the document's
+  definition of the kind or of Word's own nine-level bullet or numbered
+  definition, the definitions before the instances; the List Paragraph
+  style given as Word gives it, and taken away with the list; a list a
+  style makes ended by `w:numId` 0; `w:pPrChange` while tracking.
+  LibreOffice 7.3 reads the lists, the alignment and the spacing.
+  Open: caps and small caps, sizes up and down, borders, shading and
+  tabs of paragraphs, a built-in style the document lacks added, and
+  Word's keys for headings.)
 
 ## WP10. Comments and tracked changes edited
 

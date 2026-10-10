@@ -203,6 +203,16 @@ impl Numbering {
         n
     }
 
+    /// The abstract definitions.
+    pub fn abstracts(&self) -> impl Iterator<Item = &AbstractList> {
+        self.abstracts.values()
+    }
+
+    /// The instances, by `w:numId`.
+    pub fn instances(&self) -> impl Iterator<Item = (&String, &ListInstance)> {
+        self.instances.iter()
+    }
+
     /// Whether the document has no lists.
     pub fn is_empty(&self) -> bool {
         self.instances.is_empty()

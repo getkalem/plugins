@@ -427,6 +427,195 @@ pub fn edit_ppr(
     Some(format!("<{p}pPr>{new}</{p}pPr>"))
 }
 
+/// The children of `w:pPr` in the schema's order (`CT_PPr`).
+const PPR_ORDER: &[&str] = &[
+    "pStyle",
+    "keepNext",
+    "keepLines",
+    "pageBreakBefore",
+    "framePr",
+    "widowControl",
+    "numPr",
+    "suppressLineNumbers",
+    "pBdr",
+    "shd",
+    "tabs",
+    "suppressAutoHyphens",
+    "kinsoku",
+    "wordWrap",
+    "overflowPunct",
+    "topLinePunct",
+    "autoSpaceDE",
+    "autoSpaceDN",
+    "bidi",
+    "adjustRightInd",
+    "snapToGrid",
+    "spacing",
+    "ind",
+    "contextualSpacing",
+    "mirrorIndents",
+    "suppressOverlap",
+    "jc",
+    "textDirection",
+    "textAlignment",
+    "textboxTightWrap",
+    "outlineLvl",
+    "divId",
+    "cnfStyle",
+    "rPr",
+    "sectPr",
+    "pPrChange",
+];
+
+/// What Clear Paragraph Formatting takes away: the look given directly,
+/// the style, the list and the section kept.
+pub const PARAGRAPH_CLEARED: &[&str] = &[
+    "jc",
+    "ind",
+    "spacing",
+    "contextualSpacing",
+    "pBdr",
+    "shd",
+    "tabs",
+];
+
+/// A change of one of a paragraph's properties.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum POp {
+    /// The property (by its local name) as this element.
+    Set(&'static str, String),
+    /// The property gone.
+    Remove(&'static str),
+    /// Attributes of the property's element set (`Some`) or taken away
+    /// (`None`), by their local names; the element made when it is not
+    /// there, and gone when no attribute is left.
+    Attrs(&'static str, Vec<(&'static str, Option<String>)>),
+}
+
+/// `name` set to `xml` among a paragraph's properties, where the schema
+/// puts it.
+fn set_para_child(kids: &mut Vec<(String, String)>, name: &str, xml: String) {
+    if let Some(k) = kids.iter_mut().find(|(n, _)| n == name) {
+        k.1 = xml;
+        return;
+    }
+    let pos = |n: &str| PPR_ORDER.iter().position(|o| *o == n);
+    let mine = pos(name).unwrap_or(usize::MAX);
+    let at = kids
+        .iter()
+        .rposition(|(n, _)| pos(n).is_some_and(|o| o < mine))
+        .map_or(0, |i| i + 1);
+    kids.insert(at, (name.to_owned(), xml));
+}
+
+/// A paragraph's `w:pPr` (its text, or `None`) with `ops` made: the new
+/// element, empty when nothing is left; `None` when nothing changes. With
+/// `track`, the old properties are kept in a `w:pPrChange` (unless one
+/// keeps them already).
+pub fn edit_ppr_ops(
+    ppr: Option<&str>,
+    p: &str,
+    ops: &[POp],
+    track: Option<&mut Tracking>,
+) -> Option<String> {
+    let text = ppr.map_or_else(|| format!("<{p}pPr/>"), str::to_owned);
+    let c = children(&text)?;
+    let content = &text[c.content.clone()];
+    let items: Vec<(String, Span)> = c
+        .items
+        .iter()
+        .map(|(n, s)| {
+            (
+                n.clone(),
+                s.start - c.content.start..s.end - c.content.start,
+            )
+        })
+        .collect();
+    let mut kids: Vec<(String, String)> = items
+        .iter()
+        .map(|(n, s)| (n.clone(), content[s.clone()].to_owned()))
+        .collect();
+    for op in ops {
+        match op {
+            POp::Remove(name) => kids.retain(|(n, _)| n != name),
+            POp::Set(name, xml) => set_para_child(&mut kids, name, xml.clone()),
+            POp::Attrs(name, attrs) => {
+                let mut tag = kids
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map_or_else(|| format!("<{p}{name}/>"), |(_, x)| x.clone());
+                for (a, v) in attrs {
+                    let q = format!("{p}{a}");
+                    tag = match v {
+                        Some(v) => xml::set_attr(&tag, &q, v),
+                        None => xml::remove_attr(&tag, &q),
+                    };
+                }
+                if tag.trim_end_matches("/>").trim_end() == format!("<{p}{name}") {
+                    kids.retain(|(n, _)| n != name);
+                } else {
+                    set_para_child(&mut kids, name, tag);
+                }
+            }
+        }
+    }
+    let mut new: String = kids.into_iter().map(|(_, x)| x).collect();
+    if new == content {
+        return None;
+    }
+    if let Some(t) = track
+        && !items.iter().any(|(n, _)| n == "pPrChange")
+    {
+        let old: String = items
+            .iter()
+            .filter(|(n, _)| !matches!(n.as_str(), "rPr" | "sectPr" | "pPrChange"))
+            .map(|(_, s)| &content[s.clone()])
+            .collect();
+        new.push_str(&format!(
+            "<{p}pPrChange {p}id=\"{}\" {p}author=\"{}\" {p}date=\"{}\"><{p}pPr>{old}</{p}pPr></{p}pPrChange>",
+            t.next_id,
+            xml::escape(&t.author),
+            xml::escape(&t.date)
+        ));
+        t.next_id += 1;
+    }
+    if new.is_empty() {
+        return Some(String::new());
+    }
+    Some(format!("<{p}pPr>{new}</{p}pPr>"))
+}
+
+/// A paragraph's own list: its `w:ilvl` and `w:numId`, from its `w:pPr`.
+pub fn num_pr(ppr: &str) -> (Option<u8>, Option<String>) {
+    let mut r = Reader::new(ppr);
+    let (mut ilvl, mut num) = (None, None);
+    let mut inside = false;
+    while let Some(t) = r.next_token() {
+        match t {
+            Token::Start(tag) if tag.name == "numPr" => inside = !tag.empty,
+            Token::Start(tag) if inside && tag.name == "ilvl" => {
+                ilvl = tag.attr("val").and_then(|v| v.trim().parse().ok());
+            }
+            Token::Start(tag) if inside && tag.name == "numId" => {
+                num = tag.attr("val").map(|v| v.trim().to_owned());
+            }
+            Token::End { .. } if inside => {
+                // The end of `w:numPr` (its children close themselves).
+                inside = false;
+            }
+            _ => {}
+        }
+    }
+    (ilvl, num)
+}
+
+/// A paragraph's `w:numPr` with prefix `p`.
+pub fn num_pr_xml(p: &str, ilvl: Option<u8>, num_id: Option<&str>) -> String {
+    let ilvl = ilvl.map_or(String::new(), |l| format!("<{p}ilvl {p}val=\"{l}\"/>"));
+    let num = num_id.map_or(String::new(), |n| format!("<{p}numId {p}val=\"{n}\"/>"));
+    format!("<{p}numPr>{ilvl}{num}</{p}numPr>")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

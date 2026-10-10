@@ -445,6 +445,21 @@ impl ViewerDocument for DocxDoc {
         self.changed(r)
     }
 
+    fn flow_set_paragraphs(
+        &mut self,
+        _unit: usize,
+        from: u32,
+        to: u32,
+        changes: &[kalem_viewer::ParagraphChange],
+    ) -> Result<()> {
+        let mut paras = Vec::new();
+        for i in from.min(to)..=from.max(to) {
+            paras.push(self.para(i)?);
+        }
+        let r = self.doc.set_paragraph_format(&paras, changes);
+        self.changed(r)
+    }
+
     fn flow_set_style(&mut self, _unit: usize, from: u32, to: u32, style: &str) -> Result<()> {
         let mut paras = Vec::new();
         for i in from.min(to)..=from.max(to) {

@@ -532,3 +532,36 @@ fn formatting_and_styles_through_the_interface() {
     let ps = paras(&is);
     assert!(!find(&ps, "Plain, bold").runs[0].marks.bold);
 }
+
+#[test]
+fn paragraphs_and_lists_through_the_interface() {
+    let mut d = open("handmade-features.docx");
+    let is = items(&mut d);
+    let ps = paras(&is);
+    let p = find(&ps, "Plain, bold").index.unwrap();
+    d.flow_set_paragraphs(
+        0,
+        p,
+        p + 1,
+        &[
+            kalem_viewer::ParagraphChange::Align(kalem_viewer::FlowAlign::Center),
+            kalem_viewer::ParagraphChange::List(Some(kalem_viewer::ListKind::Numbered(
+                "decimal".into(),
+            ))),
+        ],
+    )
+    .unwrap();
+    let is = items(&mut d);
+    let ps = paras(&is);
+    let first = ps.iter().find(|q| q.index == Some(p)).unwrap();
+    let second = ps.iter().find(|q| q.index == Some(p + 1)).unwrap();
+    assert_eq!(first.role, FlowRole::ListItem);
+    assert_eq!(first.align, kalem_viewer::FlowAlign::Center);
+    assert_eq!(first.label.as_ref().unwrap().0, "1.");
+    assert_eq!(second.label.as_ref().unwrap().0, "2.");
+    // One step.
+    assert!(d.undo().unwrap());
+    let is = items(&mut d);
+    let ps = paras(&is);
+    assert_eq!(find(&ps, "Plain, bold").role, FlowRole::Body);
+}

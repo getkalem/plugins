@@ -14,6 +14,7 @@ use crate::comments;
 use crate::edit::{self, Splice};
 use crate::flow::{self, Env, Layout, ParaAt, StoryId, VBlock, VComment, VNote, VPara, Walker};
 use crate::format;
+use crate::lists;
 use crate::numbering::Numbering;
 use crate::props::{Span, children};
 use crate::story::PartTree;
@@ -1278,6 +1279,21 @@ impl Document {
         {
             self.rels.insert(self.main.clone(), rels::parse(t));
         }
+        // The lists, read again when their part changed.
+        if let Some(part) = self.related("numbering")
+            && step.splices.iter().any(|(s, _)| s.part == part)
+        {
+            self.refresh_numbering();
+        }
+    }
+
+    /// The lists read again from the numbering part's text.
+    fn refresh_numbering(&mut self) {
+        let text = self
+            .related("numbering")
+            .and_then(|p| self.texts.get(&p).cloned())
+            .unwrap_or_default();
+        self.numbering = Numbering::parse(&text);
     }
 
     /// A part's text made editable: read from the package when it is
@@ -1951,6 +1967,323 @@ impl Document {
         let Some(new) = format::edit_ppr(old, &p, style, track.as_mut()) else {
             return Ok(());
         };
+        let (range, text) = match &l.ppr {
+            Some(s) => (s.clone(), new),
+            None if new.is_empty() => return Ok(()),
+            None if l.empty => {
+                let tag = &src[l.start_tag.clone()];
+                let open = tag.trim_end_matches("/>").trim_end().to_owned() + ">";
+                (l.span.clone(), format!("{open}{new}</{p}p>"))
+            }
+            None => (l.start_tag.end..l.start_tag.end, new),
+        };
+        self.apply(Splice {
+            part: l.part.clone(),
+            range,
+            text,
+        })
+    }
+
+    /// Changes the look of paragraphs `paras` as Word does (API 0.2.8,
+    /// `flow-2`): alignment (`w:jc`), indents (`w:ind`, in twentieths of
+    /// a point), spacing and line spacing (`w:spacing`), a list
+    /// (`w:numPr`, the list before them continued when it is of the kind,
+    /// else a new one of Word's own definitions, the numbering part made
+    /// when there is none), a list level, or the look given directly
+    /// taken away; each property where the schema puts it; a value a style
+    /// still overrides written explicitly; while the document tracks
+    /// changes, the old properties kept in a `w:pPrChange`. One step.
+    pub fn set_paragraph_format(
+        &mut self,
+        paras: &[ParaAt],
+        changes: &[kalem_viewer::ParagraphChange],
+    ) -> Result<()> {
+        self.check_editable()?;
+        self.begin_batch();
+        let r = self.paragraph_format_steps(paras, changes);
+        self.finish_batch(r)
+    }
+
+    fn paragraph_format_steps(
+        &mut self,
+        paras: &[ParaAt],
+        changes: &[kalem_viewer::ParagraphChange],
+    ) -> Result<()> {
+        use kalem_viewer::ParagraphChange;
+        // The list the paragraphs join, found or made once.
+        let num_id = match (
+            changes.iter().find_map(|c| match c {
+                ParagraphChange::List(Some(k)) => Some(k.clone()),
+                _ => None,
+            }),
+            paras.first(),
+        ) {
+            (Some(kind), Some(first)) => Some(self.list_for(first, &kind)?),
+            _ => None,
+        };
+        for at in paras {
+            self.format_paragraph(at, changes, num_id.as_deref())?;
+        }
+        Ok(())
+    }
+
+    /// The instance (`w:numId`) paragraphs from `first` on join for a list
+    /// of `kind`: the list of the paragraph before, when it is one of the
+    /// kind; else a new one, of a definition of the kind (Word's own,
+    /// added when the document has none).
+    fn list_for(&mut self, first: &ParaAt, kind: &kalem_viewer::ListKind) -> Result<String> {
+        let format = lists::format_of(kind)
+            .ok_or_else(|| Error::Refused(format!("Word has no numbering written as {kind:?}")))?;
+        let format_of_num = |doc: &Document, num: &str| {
+            doc.numbering
+                .abstract_of(num, &doc.styles)
+                .and_then(|a| a.levels.first().cloned().flatten())
+                .map(|l| l.format)
+        };
+        if first.index > 0 {
+            let before = ParaAt {
+                story: first.story.clone(),
+                index: first.index - 1,
+            };
+            if let Ok(l) = self.layout(&before) {
+                let ppr = l
+                    .ppr
+                    .as_ref()
+                    .map(|s| self.texts[&l.part][s.clone()].to_owned());
+                if let Some(num) = ppr.as_deref().and_then(|p| format::num_pr(p).1)
+                    && num != "0"
+                    && format_of_num(self, &num).as_deref() == Some(format)
+                {
+                    return Ok(num);
+                }
+            }
+        }
+        if self.strict() && self.related("numbering").is_none() {
+            return Err(Error::Refused(
+                "Kalem does not add lists to a document in the strict namespace yet".into(),
+            ));
+        }
+        let part = self.related_or_new(
+            "numbering",
+            lists::REL_NUMBERING,
+            lists::CT_NUMBERING,
+            "numbering.xml",
+            lists::new_numbering_part(),
+        )?;
+        self.refresh_numbering();
+        let (end, p) = self.root_content_end(&part)?;
+        let found = self
+            .numbering
+            .abstracts()
+            .filter(|a| a.num_style_link.is_none() && a.style_link.is_none())
+            .filter(|a| {
+                a.levels
+                    .first()
+                    .and_then(|l| l.as_ref())
+                    .is_some_and(|l| l.format == format)
+            })
+            .map(|a| a.id.clone())
+            .min_by_key(|id| id.parse::<u32>().unwrap_or(u32::MAX));
+        let places = lists::places(&self.texts[&part], end);
+        let abstract_id = match found {
+            Some(id) => id,
+            None => {
+                // Word counts its definitions from 0.
+                let id = if self.numbering.abstracts().next().is_none() {
+                    0
+                } else {
+                    places.max_abstract + 1
+                };
+                self.apply(Splice {
+                    part: part.clone(),
+                    range: places.abstract_at..places.abstract_at,
+                    text: lists::abstract_xml(&p, id, format),
+                })?;
+                id.to_string()
+            }
+        };
+        // Bullets: an instance of the definition as it is, when there is
+        // one; numbers: a new instance, counting from 1 again.
+        if format == "bullet"
+            && let Some((num, _)) = places.nums.iter().find(|(n, a)| {
+                *a == abstract_id
+                    && self
+                        .numbering
+                        .instance(n)
+                        .is_some_and(|i| i.overrides.is_empty())
+            })
+        {
+            return Ok(num.clone());
+        }
+        let end = self.root_content_end(&part)?.0;
+        let places = lists::places(&self.texts[&part], end);
+        let num = places.max_num + 1;
+        let restart = places.nums.iter().any(|(_, a)| *a == abstract_id);
+        self.apply(Splice {
+            part,
+            range: places.num_at..places.num_at,
+            text: lists::num_xml(&p, num, &abstract_id, restart),
+        })?;
+        self.refresh_numbering();
+        Ok(num.to_string())
+    }
+
+    fn format_paragraph(
+        &mut self,
+        at: &ParaAt,
+        changes: &[kalem_viewer::ParagraphChange],
+        num_id: Option<&str>,
+    ) -> Result<()> {
+        use format::POp;
+        use kalem_viewer::{FlowAlign, LineSpacing, ParagraphChange};
+        let twips = |pt: f32| ((pt * 20.0).round() as i64).to_string();
+        let l = self.layout(at)?;
+        let src = &self.texts[&l.part];
+        let p = edit::prefix_of(src, l.start_tag.start);
+        let old = l.ppr.as_ref().map(|s| src[s.clone()].to_owned());
+        let (own_ilvl, own_num) = old.as_deref().map(format::num_pr).unwrap_or_default();
+        let strict = self.strict();
+        let (start, end) = if strict {
+            ("start", "end")
+        } else {
+            ("left", "right")
+        };
+        let jc = |a: &FlowAlign| match (a, strict) {
+            (FlowAlign::Start, false) => "left",
+            (FlowAlign::Start, true) => "start",
+            (FlowAlign::Center, _) => "center",
+            (FlowAlign::End, false) => "right",
+            (FlowAlign::End, true) => "end",
+            (FlowAlign::Justify, _) => "both",
+        };
+        let list_paragraph = self.styles.get("ListParagraph").is_some();
+        let mut ops: Vec<POp> = Vec::new();
+        let mut want_align: Option<FlowAlign> = None;
+        let mut no_list = false;
+        for c in changes {
+            match c {
+                ParagraphChange::Align(a) => {
+                    ops.push(POp::Remove("jc"));
+                    want_align = Some(*a);
+                }
+                ParagraphChange::IndentStart(v) => {
+                    ops.push(POp::Attrs("ind", vec![(start, Some(twips(*v)))]));
+                }
+                ParagraphChange::IndentEnd(v) => {
+                    ops.push(POp::Attrs("ind", vec![(end, Some(twips(*v)))]));
+                }
+                ParagraphChange::FirstLine(v) if *v >= 0.0 => ops.push(POp::Attrs(
+                    "ind",
+                    vec![("firstLine", Some(twips(*v))), ("hanging", None)],
+                )),
+                ParagraphChange::FirstLine(v) => ops.push(POp::Attrs(
+                    "ind",
+                    vec![("hanging", Some(twips(-*v))), ("firstLine", None)],
+                )),
+                ParagraphChange::SpaceBefore(v) => ops.push(POp::Attrs(
+                    "spacing",
+                    vec![("before", Some(twips(*v))), ("beforeAutospacing", None)],
+                )),
+                ParagraphChange::SpaceAfter(v) => ops.push(POp::Attrs(
+                    "spacing",
+                    vec![("after", Some(twips(*v))), ("afterAutospacing", None)],
+                )),
+                ParagraphChange::LineSpacing(ls) => {
+                    let (line, rule) = match ls {
+                        LineSpacing::Multiple(m) => {
+                            (((m * 240.0).round() as i64).to_string(), "auto")
+                        }
+                        LineSpacing::AtLeast(pt) => (twips(*pt), "atLeast"),
+                        LineSpacing::Exactly(pt) => (twips(*pt), "exact"),
+                    };
+                    ops.push(POp::Attrs(
+                        "spacing",
+                        vec![("line", Some(line)), ("lineRule", Some(rule.to_string()))],
+                    ));
+                }
+                ParagraphChange::List(Some(_)) => {
+                    let ilvl = own_ilvl.unwrap_or(0);
+                    ops.push(POp::Set(
+                        "numPr",
+                        format::num_pr_xml(&p, Some(ilvl), num_id),
+                    ));
+                    // Word gives a list item the List Paragraph style.
+                    if l.style.is_none() && list_paragraph {
+                        ops.push(POp::Set(
+                            "pStyle",
+                            format!("<{p}pStyle {p}val=\"ListParagraph\"/>"),
+                        ));
+                    }
+                }
+                ParagraphChange::List(None) => {
+                    ops.push(POp::Remove("numPr"));
+                    if l.style.as_deref() == Some("ListParagraph") {
+                        ops.push(POp::Remove("pStyle"));
+                    }
+                    no_list = true;
+                }
+                ParagraphChange::ListLevel(level) => {
+                    let level = (*level).min(8);
+                    ops.push(POp::Set(
+                        "numPr",
+                        format::num_pr_xml(&p, Some(level), own_num.as_deref()),
+                    ));
+                }
+                ParagraphChange::Clear => {
+                    for n in format::PARAGRAPH_CLEARED {
+                        ops.push(POp::Remove(n));
+                    }
+                }
+            }
+        }
+        self.write_ppr(&l, &p, old.as_deref(), &ops)?;
+        if want_align.is_none() && !no_list {
+            return Ok(());
+        }
+        // What a style still overrides: written explicitly.
+        let blocks = self.story_view(&at.story);
+        let Some(vp) = find_para(&blocks, at) else {
+            return Ok(());
+        };
+        let mut more: Vec<POp> = Vec::new();
+        if let Some(a) = want_align
+            && vp.align
+                != match a {
+                    FlowAlign::Start => flow::Align::Start,
+                    FlowAlign::Center => flow::Align::Center,
+                    FlowAlign::End => flow::Align::End,
+                    FlowAlign::Justify => flow::Align::Justify,
+                }
+        {
+            more.push(POp::Set("jc", format!("<{p}jc {p}val=\"{}\"/>", jc(&a))));
+        }
+        if no_list && vp.label.is_some() {
+            more.push(POp::Set("numPr", format::num_pr_xml(&p, None, Some("0"))));
+        }
+        if more.is_empty() {
+            return Ok(());
+        }
+        let l = self.layout(at)?;
+        let old = l
+            .ppr
+            .as_ref()
+            .map(|s| self.texts[&l.part][s.clone()].to_owned());
+        self.write_ppr(&l, &p, old.as_deref(), &more)
+    }
+
+    /// A paragraph's properties with `ops` made.
+    fn write_ppr(
+        &mut self,
+        l: &Layout,
+        p: &str,
+        old: Option<&str>,
+        ops: &[format::POp],
+    ) -> Result<()> {
+        let mut track = self.format_tracking();
+        let Some(new) = format::edit_ppr_ops(old, p, ops, track.as_mut()) else {
+            return Ok(());
+        };
+        let src = &self.texts[&l.part];
         let (range, text) = match &l.ppr {
             Some(s) => (s.clone(), new),
             None if new.is_empty() => return Ok(()),
