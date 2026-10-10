@@ -10,7 +10,13 @@
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/docx",
       "download": "https://github.com/getkalem/plugins/releases/download/docx-v0.0.5/docx.wasm",
-      "sha256": "cae247e02be824cb39dd8499144fa5424bee140ff70d83294bdcd7f2643e6126"
+      "sha256": "cae247e02be824cb39dd8499144fa5424bee140ff70d83294bdcd7f2643e6126",
+      "opens": [
+        ".docx",
+        ".docm",
+        ".dotx",
+        ".dotm"
+      ]
     },
     {
       "id": "org.kalem.elixir",
@@ -73,7 +79,33 @@
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/image-viewer",
       "download": "https://github.com/getkalem/plugins/releases/download/image-viewer-v0.0.2/image-viewer.wasm",
-      "sha256": "e1f98b84cd8d84ddb62ff750450fb9bbfb7ebb4fd5e7444b6e6a931281109c8c"
+      "sha256": "e1f98b84cd8d84ddb62ff750450fb9bbfb7ebb4fd5e7444b6e6a931281109c8c",
+      "opens": [
+        ".png",
+        ".apng",
+        ".jpg",
+        ".jpeg",
+        ".jpe",
+        ".jfif",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".dib",
+        ".tif",
+        ".tiff",
+        ".ico",
+        ".qoi",
+        ".tga",
+        ".pbm",
+        ".pgm",
+        ".ppm",
+        ".pnm",
+        ".pam",
+        ".dds",
+        ".exr",
+        ".hdr",
+        ".svg"
+      ]
     },
     {
       "id": "org.kalem.pdf-viewer",
@@ -84,7 +116,10 @@
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pdf-viewer",
       "download": "https://github.com/getkalem/plugins/releases/download/pdf-viewer-v0.0.2/pdf-viewer.wasm",
-      "sha256": "c29dbee56cf1bd28620840fd1b8bca5a590d04eb8ea8a2acdd6a72ad89b6cd1f"
+      "sha256": "c29dbee56cf1bd28620840fd1b8bca5a590d04eb8ea8a2acdd6a72ad89b6cd1f",
+      "opens": [
+        ".pdf"
+      ]
     },
     {
       "id": "org.kalem.rust",
@@ -117,7 +152,16 @@
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/xlsx",
       "download": "https://github.com/getkalem/plugins/releases/download/xlsx-v0.0.10/xlsx.wasm",
-      "sha256": "57b379ae6c66986a597fcdb437b757433c6637ad4e9750b9ad20082bef97c2b7"
+      "sha256": "57b379ae6c66986a597fcdb437b757433c6637ad4e9750b9ad20082bef97c2b7",
+      "opens": [
+        ".xlsx",
+        ".xlsm",
+        ".xltx",
+        ".xltm",
+        ".xls",
+        ".xlsb",
+        ".ods"
+      ]
     }
   ]
 }

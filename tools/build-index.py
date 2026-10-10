@@ -2,9 +2,10 @@
 """Build index.json from the manifests under plugins/.
 
 For every plugins/NAME/plugin.json the entry carries the manifest's id, name,
-version, description, api and permissions, the download URL of the component
-of that version, and its SHA-256 when releases/NAME-vVERSION.sha256 exists
-(the release workflow writes that file). A declarative plugin (a language
+version, description, api and permissions, the extensions a viewer opens
+(`opens`), the download URL of the component of that version, and its
+SHA-256 when releases/NAME-vVERSION.sha256 exists (the release workflow
+writes that file). A declarative plugin (a language
 plugin: a manifest and syntax files, no `main`) is published as an archive of
 its folder, NAME-vVERSION.tar.gz, and its entry lists its languages. `--check` fails when index.json is
 not what this script would write, so CI keeps the index current.
@@ -43,6 +44,10 @@ def build():
             "download": f"{REPO}/releases/download/{tag}/{asset}" if sha else None,
             "sha256": sha,
         }
+        # The extensions a viewer opens, so that Kalem can name the plugin
+        # for a file it cannot open yet, without downloading it.
+        if m.get("opens"):
+            entry["opens"] = list(m["opens"])
         if declarative:
             entry["kind"] = "declarative"
             entry["languages"] = [
