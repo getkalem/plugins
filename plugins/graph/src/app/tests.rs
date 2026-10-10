@@ -426,3 +426,210 @@ fn settings_and_paths() {
     );
     assert_eq!(relative_path("Home.md", "Deep/Note"), "./Deep/Note");
 }
+
+fn edits_of(out: &[Effect]) -> Vec<crate::edit::Edit> {
+    out.iter()
+        .find_map(|e| match e {
+            Effect::Edits { edits, .. } => Some(edits.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no edits: {out:?}"))
+}
+
+#[test]
+fn outliner_commands_edit_the_note() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Other.md");
+    let text = "- write\n\t- child\n- read\n";
+    let c = ctx("/w/notes/pages/Other.md", text, 2);
+    let e = edits_of(&app.command(&m, "graph.cycleTodo", &c));
+    assert_eq!(
+        crate::edit::apply(text, &e),
+        "- LATER write\n\t- child\n- read\n"
+    );
+    let out = app.command(&m, "graph.moveBlockDown", &c);
+    assert_eq!(
+        crate::edit::apply(text, &edits_of(&out)),
+        "- read\n- write\n\t- child\n"
+    );
+    assert!(matches!(&out[0], Effect::Edits { line: Some(1), .. }));
+    let c2 = ctx("/w/notes/pages/Other.md", text, 18);
+    assert_eq!(
+        crate::edit::apply(text, &edits_of(&app.command(&m, "graph.indent", &c2))),
+        "- write\n\t- child\n\t- read\n"
+    );
+    // A priority and a date go through a question, then a command run in
+    // the same document.
+    let out = app.command(&m, "graph.setPriority", &c);
+    let Effect::Pick { token, .. } = &out[0] else {
+        panic!()
+    };
+    let out = app.answer(&m, *token, Answer::Picked(Some(vec![0])));
+    let Effect::Run { id, args } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let mut c3 = c.clone();
+    c3.args = args.clone();
+    assert_eq!(
+        crate::edit::apply(text, &edits_of(&app.command(&m, id, &c3))),
+        "- [#A] write\n\t- child\n- read\n"
+    );
+    let out = app.command(&m, "graph.schedule", &c);
+    let Effect::Prompt { token, .. } = &out[0] else {
+        panic!()
+    };
+    let out = app.answer(&m, *token, Answer::Text(Some("2026-10-12".into())));
+    let Effect::Run { id, args } = &out[0] else {
+        panic!("{out:?}")
+    };
+    c3.args = args.clone();
+    assert_eq!(
+        crate::edit::apply(text, &edits_of(&app.command(&m, id, &c3))),
+        "- write\n  SCHEDULED: <2026-10-12 Mon>\n\t- child\n- read\n"
+    );
+    // Folding writes collapsed:: true.
+    assert_eq!(
+        crate::edit::apply(text, &edits_of(&app.command(&m, "graph.toggleFold", &c))),
+        "- write\n  collapsed:: true\n\t- child\n- read\n"
+    );
+}
+
+#[test]
+fn a_block_gets_its_id_when_first_referred_to() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Other.md");
+    let out = app.command(
+        &m,
+        "graph.insertBlockRef",
+        &ctx("/w/notes/pages/Other.md", "", 0),
+    );
+    let Effect::Pick { token, items, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    // The block with an id first, then the others.
+    assert_eq!(items[0].0, "An editor of [[Org]] files");
+    let i = items
+        .iter()
+        .position(|(l, _)| l == "met [[Editor]]")
+        .unwrap();
+    let out = app.answer(&m, *token, Answer::Picked(Some(vec![i as u32])));
+    let inserted = out
+        .iter()
+        .find_map(|e| match e {
+            Effect::Run { id, args } if id == "graph.insertText" => Some(args.clone()),
+            _ => None,
+        })
+        .expect("the reference inserted");
+    let journal = m.get("/w/notes/journals/2026_10_03.md").unwrap();
+    let id = journal.split("id:: ").nth(1).unwrap().trim().to_string();
+    assert!(crate::scan::is_uuid(&id), "{journal}");
+    assert_eq!(journal, format!("- met [[Editor]]\n  id:: {id}\n"));
+    assert!(inserted.contains(&format!("(({id}))")));
+    // The index knows the new id.
+    assert!(app.index("/w/notes").unwrap().block(&id).is_some());
+    // A block of the current document: the editor writes both.
+    let out = app.command(
+        &m,
+        "graph.insertBlockRef",
+        &ctx("/w/notes/pages/Other.md", "", 0),
+    );
+    let Effect::Pick { token, items, .. } = &out[0] else {
+        panic!()
+    };
+    let i = items
+        .iter()
+        .position(|(l, _)| l.starts_with("uses [[Kalem]]"))
+        .unwrap();
+    let out = app.answer(&m, *token, Answer::Picked(Some(vec![i as u32])));
+    let Effect::Run { id, args } = &out[0] else {
+        panic!("{out:?}")
+    };
+    assert_eq!(id, "graph.refBlockNow");
+    let text = m.get("/w/notes/pages/Other.md").unwrap();
+    let mut c = ctx("/w/notes/pages/Other.md", &text, text.len());
+    c.args = args.clone();
+    let after = crate::edit::apply(&text, &edits_of(&app.command(&m, id, &c)));
+    assert!(
+        after.starts_with(
+            "- uses [[Kalem]] and ((11111111-2222-3333-4444-555555555555)) #idea\n  id:: "
+        ),
+        "{after}"
+    );
+    assert!(after.trim_end().ends_with("))"), "{after}");
+    // A file open with unsaved changes is not written.
+    m.write("/w/notes/pages/Third.md", "- third block\n")
+        .unwrap();
+    app.saved(&m, "/w/notes/pages/Third.md");
+    app.track_open(7, "/w/notes/pages/Third.md");
+    app.track_changed(7);
+    let pick = |app: &mut App| {
+        let out = app.command(
+            &m,
+            "graph.insertBlockRef",
+            &ctx("/w/notes/pages/Other.md", "", 0),
+        );
+        let Effect::Pick { token, items, .. } = &out[0] else {
+            panic!()
+        };
+        let i = items.iter().position(|(l, _)| l == "third block").unwrap();
+        (*token, i as u32)
+    };
+    let (token, i) = pick(&mut app);
+    let out = app.answer(&m, token, Answer::Picked(Some(vec![i])));
+    assert!(
+        matches!(&out[0], Effect::Notify(t, Level::Warning) if t.contains("unsaved")),
+        "{out:?}"
+    );
+    assert_eq!(
+        m.get("/w/notes/pages/Third.md").as_deref(),
+        Some("- third block\n")
+    );
+    app.saved(&m, "/w/notes/pages/Third.md");
+    let (token, i) = pick(&mut app);
+    app.answer(&m, token, Answer::Picked(Some(vec![i])));
+    assert!(
+        m.get("/w/notes/pages/Third.md")
+            .unwrap()
+            .starts_with("- third block\n  id:: ")
+    );
+}
+
+#[test]
+fn a_page_renamed_everywhere() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let text = m.get("/w/notes/pages/Kalem.md").unwrap();
+    let out = app.command(
+        &m,
+        "graph.renamePage",
+        &ctx("/w/notes/pages/Kalem.md", &text, 0),
+    );
+    let Effect::Prompt { token, value, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    assert_eq!(value.as_deref(), Some("Kalem"));
+    let out = app.answer(&m, *token, Answer::Text(Some("Kalem Editor".into())));
+    let Effect::Run { id, args } = &out[0] else {
+        panic!()
+    };
+    let mut c = ctx("/w/notes/pages/Kalem.md", &text, 0);
+    c.args = args.clone();
+    let out = app.command(&m, id, &c);
+    // The current document by the editor: its title written.
+    assert_eq!(
+        crate::edit::apply(&text, &edits_of(&out)),
+        format!("title:: Kalem Editor\n{text}")
+    );
+    // The other file by the plugin; the alias left as it was.
+    assert_eq!(
+        m.get("/w/notes/pages/Other.md").unwrap(),
+        "- uses [[Kalem Editor]] and ((11111111-2222-3333-4444-555555555555)) #idea\n"
+    );
+    assert_eq!(
+        m.get("/w/notes/journals/2026_10_03.md").unwrap(),
+        "- met [[Editor]]\n"
+    );
+}

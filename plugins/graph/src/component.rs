@@ -180,6 +180,31 @@ fn apply(effect: Effect) {
             }
         }
         Effect::Insert(text) => editor::insert(None, &text),
+        Effect::Edits { edits, label, line } => {
+            // Places of the text as the command found it; Kalem applies
+            // the edits in order when the command returns, as one undo step.
+            for e in edits {
+                let done = if e.start == e.end {
+                    editor::insert(Some(e.start as u64), &e.text);
+                    Ok(())
+                } else {
+                    editor::replace(
+                        editor::Range {
+                            start: e.start as u64,
+                            end: e.end as u64,
+                        },
+                        &e.text,
+                    )
+                };
+                if let Err(why) = done {
+                    ui::notify(&why, ui::Level::Warning);
+                }
+            }
+            editor::transact(&label);
+            if let Some(n) = line {
+                let _ = kalem::run("edit.gotoLine", &format!("{{\"line\":{}}}", n + 1));
+            }
+        }
         #[cfg(kalem_layer)]
         Effect::RefreshLayers => kalem_plugin::layer::refresh(),
         #[cfg(not(kalem_layer))]
@@ -261,7 +286,14 @@ struct Graph;
 
 impl Plugin for Graph {
     fn activate() -> Result<(), String> {
-        APP.with(|a| *a.borrow_mut() = Some(App::new(read_settings())));
+        APP.with(|a| {
+            *a.borrow_mut() = Some(App::new(read_settings()));
+            // Block IDs from the clock's random bits (API 0.2.10).
+            #[cfg(kalem_layer)]
+            if let Some(app) = a.borrow_mut().as_mut() {
+                app.random = Some(kalem_plugin::clock::random);
+            }
+        });
         for c in app::COMMANDS {
             let mut spec = kalem::spec(c.id, c.title, Scope::all());
             spec.category = "Graph".into();
@@ -276,6 +308,9 @@ impl Plugin for Graph {
             }
             for k in c.doc_keys {
                 kalem::keymap(k, c.id, Some(app::DOC_WHEN))?;
+            }
+            for (k, when) in c.note_keys {
+                kalem::keymap(k, c.id, Some(when))?;
             }
         }
         ui::panel(
@@ -295,8 +330,33 @@ impl Plugin for Graph {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
             {
-                let p = p.clone();
-                with_app(|app| app.opened(&Fs, &p));
+                let (n, p) = (d.document, p.clone());
+                with_app(|app| {
+                    app.track_open(n, &p);
+                    app.opened(&Fs, &p)
+                });
+            }
+            Reply::Proceed
+        })?;
+        // Which files Kalem holds with unsaved changes: never written by
+        // the plugin.
+        kalem::on(EventKind::DocumentChanged, |e| {
+            if let Event::DocumentChanged(d) = e {
+                let n = d.document;
+                with_app(|app| {
+                    app.track_changed(n);
+                    Vec::new()
+                });
+            }
+            Reply::Proceed
+        })?;
+        kalem::on(EventKind::DocumentClose, |e| {
+            if let Event::DocumentClose(n) = e {
+                let n = *n;
+                with_app(|app| {
+                    app.track_closed(n);
+                    Vec::new()
+                });
             }
             Reply::Proceed
         })?;
@@ -324,7 +384,7 @@ impl Plugin for Graph {
         Ok(())
     }
 
-    /// The layer's overlays (plugin API 0.2.9).
+    /// The layer's overlays (plugin API 0.2.10).
     #[cfg(kalem_layer)]
     fn overlays(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet {
         use crate::layer::{Effect as E, LineEffect as L};

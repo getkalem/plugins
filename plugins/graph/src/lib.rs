@@ -21,6 +21,7 @@ mod component;
 pub mod config;
 pub mod content;
 pub mod date;
+pub mod edit;
 pub mod edn;
 pub mod files;
 pub mod index;

@@ -1,4 +1,4 @@
-//! The layer over Kalem's Markdown and Org (Kalem's plugin API 0.2.9,
+//! The layer over Kalem's Markdown and Org (Kalem's plugin API 0.2.10,
 //! `graph_todo.md` GR4 to GR7): what a note shows as Logseq and Obsidian
 //! show it, as overlays by byte range that Kalem applies to its own
 //! drawing of the note. Kalem's Markdown draws the Markdown (emphasis,
@@ -469,6 +469,25 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
             rel,
         );
     }
+    // A block with `collapsed:: true` shows its first lines only: the
+    // blocks under it hidden away from the cursor, as Logseq folds it.
+    let s = scan::scan(text, Flavor::LogseqMarkdown, &scan::Options::default());
+    let starts: Vec<usize> = ls.iter().map(|(s, _)| *s).collect();
+    let at = |n: u32| starts.get(n as usize).copied().unwrap_or(text.len());
+    for (i, b) in s.blocks.iter().enumerate() {
+        if b.collapsed && s.blocks.get(i + 1).is_some_and(|c| c.parent == Some(i)) {
+            let (_, end) = crate::edit::subtree(&s.blocks, i);
+            let from = at(s.blocks[i + 1].line);
+            let to = at(end);
+            if from < to {
+                o.lines.push(Lines {
+                    start: from,
+                    end: to,
+                    effect: LineEffect::Hidden,
+                });
+            }
+        }
+    }
     o.finish()
 }
 
@@ -800,8 +819,18 @@ mod tests {
         let o = logseq_markdown(text, Some(&i), Some("pages/B.md"));
         assert_eq!(
             shown(text, &o),
-            "alias:: X\n\n- TODO [#A] see The core #tag\n  type:: book\n  SCHEDULED: <2026-10-12 Mon>\n  :LOGBOOK:\n  CLOCK: [2026-10-10 Sat 09:00]\n  :END:\n\t- ↳ The core\n- ```\n  ((6512c0de-0001-4000-8000-000000000001))\n  ```\n"
+            "alias:: X\n\n- TODO [#A] see The core #tag\n  type:: book\n  SCHEDULED: <2026-10-12 Mon>\n  :LOGBOOK:\n  CLOCK: [2026-10-10 Sat 09:00]\n  :END:\n- ```\n  ((6512c0de-0001-4000-8000-000000000001))\n  ```\n"
         );
+        // The block is collapsed: its child, an embed, is hidden, and
+        // shown as its block's text where it shows.
+        assert!(o.spans.iter().any(|s| s.effect
+            == Effect::Replace(
+                "↳ The core".into(),
+                Look {
+                    link: true,
+                    ..Look::default()
+                }
+            )));
         let looks: Vec<(&str, Look)> = o
             .spans
             .iter()
@@ -876,6 +905,21 @@ mod tests {
             start: fold,
             end,
             effect: LineEffect::Folded
+        }));
+    }
+
+    #[test]
+    fn a_collapsed_block_hides_its_children() {
+        let text = "- a\n  collapsed:: true\n\t- a1\n\t  id:: x\n\t\t- a2\n- b\n";
+        let o = logseq_markdown(text, None, None);
+        assert_eq!(shown(text, &o), "- a\n- b\n");
+        // One hidden range, from the first child to the end of the last.
+        let first = text.find("\t- a1").unwrap();
+        let end = text.find("- b").unwrap();
+        assert!(o.lines.contains(&Lines {
+            start: first,
+            end,
+            effect: LineEffect::Hidden
         }));
     }
 

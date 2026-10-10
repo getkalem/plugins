@@ -44,6 +44,33 @@ pub struct CommandInfo {
     pub keys: &'static [&'static str],
     /// Its keys in the plugin's documents.
     pub doc_keys: &'static [&'static str],
+    /// Its keys in a graph's notes, each with its when-clause.
+    pub note_keys: &'static [(&'static str, &'static str)],
+}
+
+/// The when-clause of a graph's notes: a document the plugin's layer
+/// serves (`editorLayer`, Kalem's plugin API 0.2.10).
+macro_rules! in_note {
+    ($rest:literal) => {
+        concat!(
+            "(editorLayer == graph.logseq || editorLayer == graph.obsidian)",
+            $rest
+        )
+    };
+}
+
+const fn n(
+    id: &'static str,
+    title: &'static str,
+    note_keys: &'static [(&'static str, &'static str)],
+) -> CommandInfo {
+    CommandInfo {
+        id,
+        title,
+        keys: &[],
+        doc_keys: &[],
+        note_keys,
+    }
 }
 
 const fn c(id: &'static str, title: &'static str, keys: &'static [&'static str]) -> CommandInfo {
@@ -52,6 +79,7 @@ const fn c(id: &'static str, title: &'static str, keys: &'static [&'static str])
         title,
         keys,
         doc_keys: &[],
+        note_keys: &[],
     }
 }
 
@@ -76,11 +104,11 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("graph.yesterday", "Yesterday's Journal", &["space n r d y"]),
     c("graph.tomorrow", "Tomorrow's Journal", &["space n r d m"]),
     c("graph.journalOn", "Journal of a Date", &["space n r d d"]),
-    c("graph.nextJournal", "Next Journal", &["space n r d n"]),
+    c("graph.nextJournal", "Next Journal", &["space n r d f"]),
     c(
         "graph.previousJournal",
         "Previous Journal",
-        &["space n r d p"],
+        &["space n r d b"],
     ),
     c("graph.pages", "All Pages", &["space n r p"]),
     c("graph.journals", "Journals", &["space n r j"]),
@@ -93,7 +121,88 @@ pub const COMMANDS: &[CommandInfo] = &[
         title: "Open the Line's Page",
         keys: &[],
         doc_keys: &["enter"],
+        note_keys: &[],
     },
+    // Editing as an outliner (GR8): in a graph's notes only, Doom's Org
+    // keys under `SPC m` and Logseq's elsewhere.
+    n(
+        "graph.cycleTodo",
+        "Cycle Task",
+        &[("space m t", in_note!(" && vimCommand"))],
+    ),
+    n(
+        "graph.setPriority",
+        "Set Priority",
+        &[("space m p", in_note!(" && vimCommand"))],
+    ),
+    n(
+        "graph.schedule",
+        "Schedule",
+        &[("space m d s", in_note!(" && vimCommand"))],
+    ),
+    n(
+        "graph.deadline",
+        "Deadline",
+        &[("space m d d", in_note!(" && vimCommand"))],
+    ),
+    n(
+        "graph.moveBlockUp",
+        "Move Block Up",
+        &[("alt+shift+up", in_note!(""))],
+    ),
+    n(
+        "graph.moveBlockDown",
+        "Move Block Down",
+        &[("alt+shift+down", in_note!(""))],
+    ),
+    n(
+        "graph.indent",
+        "Indent Block",
+        &[
+            ("alt+shift+right", in_note!("")),
+            (
+                "tab",
+                in_note!(
+                    " && textType == markdown && inMarkdownItem && !vimCommand && !hasSelection"
+                ),
+            ),
+        ],
+    ),
+    n(
+        "graph.outdent",
+        "Outdent Block",
+        &[
+            ("alt+shift+left", in_note!("")),
+            (
+                "shift+tab",
+                in_note!(
+                    " && textType == markdown && inMarkdownItem && !vimCommand && !hasSelection"
+                ),
+            ),
+        ],
+    ),
+    n(
+        "graph.toggleFold",
+        "Fold Block",
+        &[
+            ("tab", in_note!(" && textType == markdown && vimCommand")),
+            ("space m z", in_note!(" && vimCommand")),
+        ],
+    ),
+    n("graph.renamePage", "Rename Page", &[]),
+    // Run by the plugin after an answer, in the document it was asked in.
+    n("graph.setDateNow", "Set Date (after a question)", &[]),
+    n(
+        "graph.setPriorityNow",
+        "Set Priority (after a question)",
+        &[],
+    ),
+    n("graph.renameNow", "Rename Page (after a question)", &[]),
+    n(
+        "graph.refBlockNow",
+        "Insert Block Reference (after a question)",
+        &[],
+    ),
     c("graph.insertText", "Insert Text", &[]),
 ];
 
@@ -280,8 +389,18 @@ pub enum Effect {
     /// Inserts text at the cursor of the document the command runs in.
     Insert(String),
     /// What the layers show changed: Kalem asks the documents' overlays
-    /// again (plugin API 0.2.9).
+    /// again (plugin API 0.2.10).
     RefreshLayers,
+    /// Replacements in the document the command runs in, one undo step
+    /// named `label`, and the line (from 0) the cursor goes to after.
+    Edits {
+        /// The replacements, by bytes of the text as the command found it.
+        edits: Vec<crate::edit::Edit>,
+        /// The undo step's name.
+        label: String,
+        /// The cursor's line afterwards.
+        line: Option<u32>,
+    },
 }
 
 /// What an answer is for.
@@ -305,7 +424,16 @@ enum Pending {
     },
     InsertBlockRef {
         root: String,
-        ids: Vec<String>,
+        choices: Vec<outline::Choice>,
+        from: Option<String>,
+    },
+    Date {
+        key: &'static str,
+    },
+    Priority,
+    Rename {
+        root: String,
+        key: String,
     },
     JournalOn {
         root: String,
@@ -340,6 +468,15 @@ pub struct App {
     panel: Option<(String, String)>,
     /// Where a click on each of the panel's entries goes.
     panel_targets: BTreeMap<String, Target>,
+    /// The documents open in Kalem, by number: their files.
+    open: BTreeMap<u64, String>,
+    /// The files open with changes not saved: never written by the
+    /// plugin, which would make Kalem ask which copy to keep.
+    dirty: BTreeSet<String>,
+    /// A counter mixed into new block IDs.
+    made: u64,
+    /// Random bits, when Kalem gives the plugin its clock (API 0.2.10).
+    pub random: Option<fn() -> u64>,
 }
 
 impl App {
@@ -358,6 +495,10 @@ impl App {
             next: 1,
             panel: None,
             panel_targets: BTreeMap::new(),
+            open: BTreeMap::new(),
+            dirty: BTreeSet::new(),
+            made: 0,
+            random: None,
         }
     }
 
@@ -490,6 +631,7 @@ impl App {
     /// A file saved, or changed on disk.
     pub fn saved(&mut self, files: &dyn Files, path: &str) -> Vec<Effect> {
         let path = files::normalize(path);
+        self.track_saved(&path);
         let roots: Vec<String> = self
             .indexes
             .keys()
@@ -825,36 +967,22 @@ impl App {
                     items,
                 });
             }
-            "graph.insertBlockRef" => {
-                let index = &self.indexes[&root];
-                let mut blocks: Vec<(String, String, String)> = index
-                    .blocks_with_ids()
-                    .map(|(id, rel, b)| {
-                        let title = index
-                            .page_of(rel)
-                            .map_or(rel.to_string(), |p| p.title.clone());
-                        (id.to_string(), b.text.clone(), title)
-                    })
-                    .collect();
-                blocks.sort_by(|a, b| (a.2.to_lowercase(), &a.1).cmp(&(b.2.to_lowercase(), &b.1)));
-                if blocks.is_empty() {
-                    out.push(Effect::Notify(
-                        "No block has an id yet: a block gets one when it is first referenced, which this version of the plugin does not write yet".into(),
-                        Level::Info,
-                    ));
-                    return out;
-                }
-                let items = blocks
-                    .iter()
-                    .map(|(_, text, title)| (text.clone(), Some(title.clone())))
-                    .collect();
-                let ids = blocks.into_iter().map(|(id, ..)| id).collect();
-                let t = self.token(Pending::InsertBlockRef { root, ids });
-                out.push(Effect::Pick {
-                    token: t,
-                    title: "Insert a reference to the block".into(),
-                    items,
-                });
+            "graph.insertBlockRef" => out.extend(self.block_ref_pick(&root, rel)),
+            "graph.cycleTodo"
+            | "graph.setPriority"
+            | "graph.schedule"
+            | "graph.deadline"
+            | "graph.moveBlockUp"
+            | "graph.moveBlockDown"
+            | "graph.indent"
+            | "graph.outdent"
+            | "graph.toggleFold"
+            | "graph.renamePage"
+            | "graph.setDateNow"
+            | "graph.setPriorityNow"
+            | "graph.renameNow"
+            | "graph.refBlockNow" => {
+                out.extend(self.outline_command(files, id, &root, rel.as_deref(), ctx));
             }
             _ => {}
         }
@@ -1240,27 +1368,63 @@ impl App {
                     None => Vec::new(),
                 }
             }
-            Pending::InsertBlockRef { root, ids } => {
-                let Some(id) = picked(&answer).and_then(|i| ids.get(i).cloned()) else {
+            Pending::InsertBlockRef {
+                root,
+                choices,
+                from,
+            } => {
+                let Some(choice) = picked(&answer).and_then(|i| choices.get(i).cloned()) else {
                     return Vec::new();
                 };
-                let Some(index) = self.indexes.get(&root) else {
+                self.block_ref_answer(files, &root, choice, from)
+            }
+            Pending::Date { key } => {
+                let Some(t) = text(&answer) else {
                     return Vec::new();
                 };
-                let text = match index.graph.kind {
-                    Kind::Logseq => format!("(({id}))"),
-                    Kind::Obsidian => {
-                        let (key, block) = id.split_once("#^").unwrap_or((&id, ""));
-                        let name = index
-                            .page(key)
-                            .and_then(|p| p.path.as_deref())
-                            .map_or(key.to_string(), |p| files::stem_ext(p).0.to_string());
-                        format!("[[{name}#^{block}]]")
+                let date = if t.is_empty() || t == "-" {
+                    None
+                } else {
+                    match Date::parse_iso(&t)
+                        .or_else(|| self.today.and_then(|d| date::parse_input(&t, d)))
+                    {
+                        Some(d) => Some(d),
+                        None => {
+                            return vec![Effect::Notify(
+                                format!(
+                                    "{t} is no date: write it as 2026-10-12 (today is not known until a journal command is told it)"
+                                ),
+                                Level::Warning,
+                            )];
+                        }
                     }
                 };
                 vec![Effect::Run {
-                    id: "graph.insertText".into(),
-                    args: serde_json::json!({ "text": text }).to_string(),
+                    id: "graph.setDateNow".into(),
+                    args: serde_json::json!({ "key": key, "date": date.map(Date::iso) })
+                        .to_string(),
+                }]
+            }
+            Pending::Priority => {
+                let p = match picked(&answer) {
+                    Some(0) => Some("A"),
+                    Some(1) => Some("B"),
+                    Some(2) => Some("C"),
+                    Some(3) => None,
+                    _ => return Vec::new(),
+                };
+                vec![Effect::Run {
+                    id: "graph.setPriorityNow".into(),
+                    args: serde_json::json!({ "priority": p }).to_string(),
+                }]
+            }
+            Pending::Rename { root, key } => {
+                let Some(t) = text(&answer).filter(|t| !t.is_empty()) else {
+                    return Vec::new();
+                };
+                vec![Effect::Run {
+                    id: "graph.renameNow".into(),
+                    args: serde_json::json!({ "root": root, "key": key, "title": t }).to_string(),
                 }]
             }
         }
@@ -1289,6 +1453,8 @@ fn relative_path(from: &str, to: &str) -> String {
         format!("./{joined}")
     }
 }
+
+mod outline;
 
 #[cfg(test)]
 mod tests;

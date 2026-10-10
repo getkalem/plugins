@@ -766,6 +766,9 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             if trimmed.starts_with("```") {
                 fence = false;
             }
+            if let Some(c) = current {
+                s.blocks[c].end = n as u32 + 1;
+            }
             continue;
         }
         let bullet = trimmed == "-" || rest.starts_with("- ") || rest.starts_with("* ");
@@ -837,6 +840,13 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             }
             continue;
         }
+        // A block's lines are its own up to its last line that is not
+        // blank: a code block's and a drawer's included.
+        if let Some(c) = current
+            && !trimmed.is_empty()
+        {
+            s.blocks[c].end = n as u32 + 1;
+        }
         if trimmed.starts_with("```") {
             fence = true;
             in_props = false;
@@ -887,7 +897,6 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             }
             continue;
         };
-        s.blocks[c].end = n as u32 + 1;
         if in_props && let Some((k, v)) = property(rest) {
             if pre_block {
                 value_refs(
@@ -1004,6 +1013,9 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
             if upper.starts_with("#+END_") {
                 src = false;
             }
+            if let Some(c) = current {
+                s.blocks[c].end = n as u32 + 1;
+            }
             continue;
         }
         let stars = line.bytes().take_while(|b| *b == b'*').count();
@@ -1052,7 +1064,9 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
             current = Some(index);
             continue;
         }
-        if let Some(c) = current {
+        if let Some(c) = current
+            && !trimmed.is_empty()
+        {
             s.blocks[c].end = n as u32 + 1;
         }
         if let Some(d) = drawer {

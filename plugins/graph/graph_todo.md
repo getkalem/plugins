@@ -119,7 +119,7 @@ leader table lists as "Org Roam is not part of Kalem": the plugin takes
 it as org-roam has it (`r` the backlinks panel, org-roam's buffer
 toggle, `R` the backlinks as a document, `f` find a page, `i` insert a
 link, `s` index again, org-roam's sync, `g` the graph, `d t` today's
-journal, `d y` yesterday, `d m` tomorrow, `d d` a date, `d n` and `d p`
+journal, `d y` yesterday, `d m` tomorrow, `d d` a date, `d f` and `d b`
 the next and previous journal) with the plugin's own beside them (`o`
 follow the reference at the cursor, `b` insert a block reference, `p`
 all pages, `j` journals, `t` tasks, `T` tags), and in a graph's
@@ -502,7 +502,7 @@ below replace the earlier GR4a to GR4d.
   Markdown document with a layer written in Rust; Kalem's 566 core tests
   pass.)
 
-- [x] GR4b The plugin API, 0.2.9: the interface `layer` exported (one
+- [x] GR4b The plugin API, 0.2.10: the interface `layer` exported (one
   function, `overlays(layer, path, text)`), in a world `extension-layer`
   (the `extension` world and that export) that `kalem-plugin`'s feature
   `layer` builds, its `Plugin` trait gaining a default `overlays`; the
@@ -523,9 +523,9 @@ below replace the earlier GR4a to GR4d.
   `layers` linked without a permission; the manifest's `layers` read and
   registered when the plugin runs, the bridge asking the plugin under
   its budget with a lock it only tries, a trap stopping the plugin as
-  any call's does. Kalem's `origin/main` had already taken 0.2.9 for
-  `flow-3`, not yet in a release; the layers join it, or go to 0.2.10 if
-  Kalem is released with 0.2.9 first (the owner's call when merging). A
+  any call's does. Kalem 0.6.8 was released with 0.2.9 (`flow-3`), so
+  the layers are 0.2.10 (the owner's decision of 2026-10-10), and
+  `flow-3.wit` of 0.2.9 is frozen with them. A
   test plugin, `tests/plugins/layered`, and a host test of the overlays,
   the refresh and the clock; an extension without the export loads with
   no layer (tested, and checked in the terminal editor with this plugin
@@ -535,10 +535,20 @@ below replace the earlier GR4a to GR4d.
   (feature `layer`) until Kalem's `main` has it; built against `main` it
   has no layer, as before.)
 
-- [ ] GR4c The leader table: the `SPC n r` rows become the graph
+- [x] GR4c The leader table: the `SPC n r` rows become the graph
   plugin's (their `reason` "Org Roam is not part of Kalem" replaced by
   the plugin's commands, as the `SPC g` rows were the git plugin's),
   which-key naming `+roam` as Doom does.
+  (Done 2026-10-10 on the branch `graph-mode`: the one row became Doom's
+  roam map, `a`, `f`, `F`, `g`, `i`, `n`, `r`, `R`, `s` and the `d`
+  group's `b`, `d`, `D`, `f`, `m`, `M`, `n`, `t`, `T`, `y`, `Y`, `-`,
+  those the plugin serves marked "Needs the graph plugin", the capture
+  keys "Planned" with R5.2, random and references "Not yet"; which-key
+  names nested groups by their path (`+roam`, `+by date`), tested. The
+  plugin's keys follow Doom's: the previous and next journal are `d b`
+  and `d f`. Beside it, the when-clause key `editorLayer` (the layer
+  serving the document, `graph.logseq`), so that a plugin binds keys in
+  its layer's documents only.)
 
 ## GR5. The layer: a Logseq Markdown graph drawn as Logseq draws it
 
@@ -593,7 +603,7 @@ below replace the earlier GR4a to GR4d.
 
 ## GR8. Editing as an outliner
 
-- [ ] GR8a Blocks. In a graph's Markdown, the mode's `edit` hook: Enter
+- [~] GR8a Blocks. In a graph's Markdown, the mode's `edit` hook: Enter
   at a block's end makes a sibling block at the same depth (Markdown's
   list Enter does this; checked, and the keyword, priority and
   properties of the block not copied), Enter in the middle splits the
@@ -624,6 +634,24 @@ below replace the earlier GR4a to GR4d.
   line written in Org's form under the first line), `graph.toggleCheckbox`
   for `- [ ]` items (Markdown's own). Byte-exact tests: each command on
   a corpus block, the rest of the file identical.
+  (Done 2026-10-10, `src/edit.rs` and `src/app/outline.rs`, as plugin
+  commands since a layer has no `edit` hook: Cycle Task, Set Priority,
+  Schedule, Deadline, Move Block Up and Down with the blocks under it,
+  Indent and Outdent, Fold Block writing `collapsed:: true` with the
+  layer hiding the folded block's children; Logseq's Markdown and Org,
+  and Obsidian's lists (check boxes for tasks). Keys in notes through
+  `editorLayer`: `SPC m t`, `SPC m p`, `SPC m d s`, `SPC m d d`, `SPC m
+  z`, `Alt+Shift+Up`/`Down`/`Right`/`Left`, and `Tab`, `Shift+Tab`
+  (indent while typing, fold in Vim's normal mode). Each one undo step,
+  the cursor taken to a moved block by `edit.gotoLine`. Checked in the
+  terminal editor of the branch: fold, cycle, move, save. The scanner
+  learned that a block's lines end at its last line that is not blank
+  and include its code and drawers. Open: Enter splitting a block as
+  Logseq does (Markdown's own Enter continues the list); zoom, which
+  needs narrowing a Markdown document to a range; the Word-like
+  profile's `tab`, which its keymap gives to `view.fold`; a done task's
+  clock.)
+
 - [ ] GR8b Completion, through GR4a's `complete` hook: `[[` offers the
   graph's pages and aliases by title (the core's wiki completer offers
   file names; the layer's items replace them in a graph), closing
@@ -636,7 +664,11 @@ below replace the earlier GR4a to GR4d.
   page, Query, Template, A, B, C) when the setting `slash_commands` is
   on; `<` offers the `#+BEGIN_*` blocks. Each item tested through
   `kalem complete FILE:LINE:COL`.
-- [ ] GR8c Writing into another file: a block referenced for the first
+  (Open: a plugin cannot give completions yet (T3.1.9c). Insert Link and
+  Insert Block Reference cover `[[` and `((` from the palette and `SPC n
+  r i`, `SPC n r b` meanwhile.)
+
+- [~] GR8c Writing into another file: a block referenced for the first
   time gets its `id:: uuid` (a v4 UUID from `clock.random`) written
   into its file after its first line and other properties, as Logseq
   does; a page renamed (`graph.renamePage`, `SPC n r R`) rewrites
@@ -658,6 +690,20 @@ below replace the earlier GR4a to GR4d.
   written where
   Logseq writes it; a rename across three files; a modified open file
   refused.
+  (Done 2026-10-10 in part. Insert Block Reference offers every block;
+  one without an id gets a UUID (the clock's random bits with API
+  0.2.10, else a hash and a counter) written as `id::` where Logseq
+  writes it: in its file with `fs.write`, the file read again first, or
+  by the editor with the reference itself when the block is in the
+  document being edited. Rename Page sets `title::` (`#+title:` in Org)
+  and rewrites every reference by the page's title, `[[…]]`, `#tag`,
+  `#[[…]]`, embeds and comma properties, in every file, aliases kept; a
+  page whose new name another page has is refused. The plugin follows
+  which files Kalem holds with unsaved changes (`document-open`,
+  `document-changed`, `document-close`, saves) and writes none of them;
+  Kalem reloads an open file that has none. Open: the file renamed with
+  the page, and a vault's note renamed at all, which need a way to
+  rename a file (K11); a block moved to another page.)
 
 ## GR9. Queries and tasks
 
@@ -781,6 +827,9 @@ Each is the plugin's gate or its ask, written for every plugin.
   K1. Until it is merged and the plugin built against it, this plugin
   asks the date once a session (GR3b) and leaves Logseq's `<% time %>`
   empty.
+- K11 Renaming (and deleting) a file through `fs`, under
+  `fs:write:workspace`: a page renamed with its file as Logseq does, a
+  vault's note renamed at all (GR8c). Not blocking.
 - K10 A plugin learns the folders of Kalem's projects (an `editor` or
   `kalem` function, or an event when one is added), so that the graphs
   among them are found at start, and a notice can say which folder to
@@ -820,8 +869,8 @@ Each is the plugin's gate or its ask, written for every plugin.
 - Decided (owner, 2026-10-10): this plugin's mode is the first released
   against the mode binding, ahead of Typst (R5.10); the binding is
   written once for both the layered and the standalone case (GR4).
-- Decided (owner, 2026-10-10): API 0.2.9, one release holding the
-  binding and the kinds (GR4a).
+- Decided (owner, 2026-10-10): API 0.2.10 for layers and the clock,
+  one release (GR4a, GR4b); 0.2.9 went to `flow-3` with Kalem 0.6.8.
 - Confirmed out of scope: Logseq's database graphs (SQLite),
   whiteboards and canvases, advanced Datalog queries, flashcards, PDF
   highlights, real-time sync, Logseq plugins' and Obsidian community

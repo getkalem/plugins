@@ -2,7 +2,7 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: early** (GR1 to GR3 of the list, GR5 to GR7 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.9's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
+**Status: early** (GR1 to GR3 of the list, GR5 to GR7 in part). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below. The notes open in Kalem's own Markdown and Org modes; with a Kalem that has layers (plugin API 0.2.10's `layer`, on Kalem's branch `graph-mode` until it is merged) the plugin's layer draws them as Logseq and Obsidian do, below. Without it, wiki links show as links but Logseq's `id::` and `collapsed::` lines and a bare `((uuid))` stay visible.
 
 ## What it needs
 
@@ -24,7 +24,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r b` | Insert Block Reference | `((uuid))` or `[[note#^id]]` of a block that has an id |
 | `SPC n r d t`, `d y`, `d m` | Today's, Yesterday's, Tomorrow's Journal | Opens the journal; one not written yet is made from the graph's journal template (Logseq's `:default-templates {:journals …}`, Obsidian's daily notes template) |
 | `SPC n r d d` | Journal of a Date | `2026-10-03`, `oct 3`, `yesterday`, `-3`, `monday` |
-| `SPC n r d n`, `d p` | Next, Previous Journal | The next and previous journal that exists |
+| `SPC n r d f`, `d b` | Next, Previous Journal | The next and previous journal that exists |
 | `SPC n r p` | All Pages | Every page with its links and blocks, then the pages only referenced |
 | `SPC n r j` | Journals | The last thirty journals, newest first, with their blocks |
 | `SPC n r T` | Tags | Every tag with how often it is used |
@@ -36,6 +36,22 @@ The status bar shows the graph of the current note and its pages (`⌬ notes · 
 
 **Today's date.** Kalem gives a plugin no clock yet, so the first journal command of a session asks for today's date (the newest journal's date offered) and keeps it until Kalem quits. Asked once; the list's K9 removes the question.
 
+## Editing as an outliner
+
+In a note of a graph (a document the plugin's layer serves, Kalem's when-clause key `editorLayer`):
+
+| Keys | Command | What it does |
+|---|---|---|
+| `SPC m t` | Cycle Task | The block's keyword: none, `LATER` (or `TODO` with `:preferred-workflow :todo`), `NOW` (`DOING`), `DONE`, none; in a vault the check box: none, `[ ]`, `[x]`, none |
+| `SPC m p` | Set Priority | `[#A]`, `[#B]`, `[#C]` or none, after the keyword |
+| `SPC m d s`, `SPC m d d` | Schedule, Deadline | `SCHEDULED: <2026-10-12 Mon>` after the block's first line and properties (after an Org headline), replaced where it is, removed when the answer is empty |
+| `Alt+Shift+Up`, `Alt+Shift+Down` | Move Block Up, Down | The block with the blocks under it past its sibling |
+| `Tab`, `Shift+Tab` (typing, in the Vim profile), `Alt+Shift+Right`, `Alt+Shift+Left` | Indent, Outdent Block | The block with the blocks under it a level deeper (under its previous sibling) or out (the blocks after it at its level becoming its children, as Logseq outdents); a tab or the note's own spaces |
+| `Tab` (Vim's normal mode), `SPC m z` | Fold Block | `collapsed:: true` written or taken away, as Logseq folds; the layer hides the blocks under a folded block until the cursor goes into them |
+| | Rename Page | `title::` set and every reference to the page by its title rewritten in every file of the graph (aliases kept); a file Kalem holds with unsaved changes stops it before anything is written. A vault's note is renamed with its file, which plugins cannot do yet |
+
+Insert Block Reference offers every block: one without an id gets its `id::` written where Logseq writes it, in its file, or by the editor when it is in the document being edited; a file Kalem holds with unsaved changes is not written. Each command is one undo step.
+
 ## How notes are drawn (layers)
 
 Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq and Obsidian show differently, away from the cursor (the cursor's line shows the source, as Kalem's markers do; Show Source shows the file as it is):
@@ -45,9 +61,9 @@ Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq a
 | Hidden | a block's `id::`, `collapsed::`, `heading::` and the other properties Logseq hides | a `^id` at a line's end, `%%comments%%` |
 | Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
 | Styled | task keywords and priorities as Org's, dates, `#tags`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
-| Folded | `:LOGBOOK:` to its first line | a callout with `-` to its first line |
+| Folded | `:LOGBOOK:` to its first line; the blocks under a block with `collapsed:: true` hidden | a callout with `-` to its first line |
 
-The layer is built only against a Kalem whose plugin API has it: `RUSTFLAGS="--cfg kalem_layer"` and a `kalem-plugin` with the feature `layer`. Built against Kalem's `main` today, the plugin has no layer and draws nothing differently.
+The layer is built only against a Kalem whose plugin API has it (0.2.10): `RUSTFLAGS="--cfg kalem_layer"` and a `kalem-plugin` with the feature `layer`. Built against Kalem's `main` today, the plugin has no layer and draws nothing differently; the editing commands work, their keys in notes need the same Kalem (`editorLayer`).
 
 ## What is read
 
@@ -74,7 +90,7 @@ The layer is built only against a Kalem whose plugin API has it: `RUSTFLAGS="--c
 
 ## What it writes
 
-Only a new journal made from a template, and only when no file is there (`fs:write:workspace`); every other new page opens as an empty document and is written when the user saves it. Nothing under `logseq/` or `.obsidian/`.
+With `fs:write:workspace`: a new journal made from a template, and only when no file is there; a block's `id::` when it is first referred to; the references to a page renamed. Each file is read again right before, only the lines touched change, and a file Kalem holds with unsaved changes is never written. Every other new page opens as an empty document and is written when the user saves it. Nothing under `logseq/` or `.obsidian/`.
 
 ## Known differences
 
