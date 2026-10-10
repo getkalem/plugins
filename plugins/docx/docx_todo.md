@@ -755,7 +755,9 @@ order they are done, the spike first.
   later; an older Kalem refuses it. `docx-v0.0.2` the same day: comments
   added and answered, WP10a, and new documents, WP12a; `docx-v0.0.3`:
   comments resolved and deleted; `docx-v0.0.4` the next day: a
-  comment's text edited, and formatting, WP9.)
+  comment's text edited, and formatting, WP9; `docx-v0.0.5`: paragraphs
+  and lists (plugin API 0.2.8, so `"api": "^0.2.8"`, a Kalem of 0.6.5 or
+  later), lines drawn as shapes shown as lines.)
 
 ## Open for the owner
 
