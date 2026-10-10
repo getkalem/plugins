@@ -71,7 +71,7 @@ impl Workbook {
         let part = self.workbook_part.clone();
         self.pkg
             .set_part(&part, self.workbook_xml.clone().into_bytes());
-        self.undo.push(snapshot);
+        self.push_undo(snapshot);
         self.redo.clear();
         // Computed again under the new settings.
         self.recalculate()
@@ -149,7 +149,7 @@ impl Workbook {
     /// the workbook computes them automatically.
     pub(crate) fn after_change(&mut self) -> Result<()> {
         if self.calc_options().mode == CalcMode::Automatic
-            && self.loaded.values().any(|(_, m)| !m.data_tables.is_empty())
+            && self.loaded.values().any(|e| !e.1.data_tables.is_empty())
         {
             self.refill_data_tables()?;
         }

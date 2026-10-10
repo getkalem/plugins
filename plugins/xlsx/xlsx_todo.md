@@ -148,7 +148,7 @@ measurements ignored.
 
 ### XL9. Memory and speed (`publish_todo.md`, E38's last part)
 
-- [ ] XL9 Every edit pushes a snapshot of every loaded sheet's XML and
+- [~] XL9 Every edit pushes a snapshot of every loaded sheet's XML and
   cell model with no limit on the undo stack (`workbook.rs`, about
   150–200 MB per edit on a million-cell sheet); the first edit loads the
   whole workbook into IronCalc and each edit recalculates all of it
@@ -156,7 +156,15 @@ measurements ignored.
   41 s; a million-cell workbook opens and recalculates in about a second
   each, in the editor's thread. The undo depth capped by bytes, the
   snapshot the changed part only; the dependents recalculated, not the
-  workbook; the long work in the background with progress.
+  workbook; the long work in the background with progress. (Done
+  2026-10-10: the loaded sheets are shared between the states
+  (`Arc`), so a snapshot holds only the sheets an edit changed, cloned
+  when edited; the history keeps a hundred edits, as Excel, and no
+  more than a gigabyte of what the states do not share, the oldest let
+  go first (`set_undo_budget`); tested in `tests/workbook.rs`. Open:
+  the results and trust maps copied with each state,
+  the dependents recalculated instead of the workbook, and the work off
+  the editor's thread, which is Kalem's.)
 
 ### XL10. Edits the interface allows and Excel has, not yet made
 

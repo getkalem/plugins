@@ -198,6 +198,25 @@ fn formulas_reading_a_function_the_engine_lacks_compute() {
 }
 
 #[test]
+fn undo_keeps_a_hundred_edits_and_a_budget() {
+    let mut wb = Workbook::open(corpus("openpyxl-budget.xlsx")).unwrap();
+    for i in 0..105 {
+        wb.set_cell(0, at("F1"), &i.to_string()).unwrap();
+    }
+    // As many as Excel undoes; the last one undoes to the one before.
+    assert_eq!(wb.history_len(), 100);
+    assert!(wb.undo());
+    assert_eq!(wb.display(0, at("F1")).unwrap(), "103");
+    // A budget smaller than any state keeps the last edit only.
+    wb.set_undo_budget(1);
+    wb.set_cell(0, at("F2"), "x").unwrap();
+    assert_eq!(wb.history_len(), 1);
+    assert!(wb.undo());
+    assert_eq!(wb.display(0, at("F2")).unwrap(), "");
+    assert!(!wb.undo());
+}
+
+#[test]
 fn new_cells_rows_and_entries() {
     let bytes = corpus("libreoffice-budget.xlsx");
     let mut wb = Workbook::open(bytes.clone()).unwrap();

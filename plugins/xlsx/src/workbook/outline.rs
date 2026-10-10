@@ -48,7 +48,7 @@ impl Workbook {
     /// Rows' attributes set or taken away, rows made for those that need
     /// one.
     fn edit_rows(&mut self, idx: usize, edits: &BTreeMap<u32, Vec<RowEdit>>) -> Result<()> {
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let p = model.prefix.clone();
         let Some((sd_start, sd_end)) = model.sheet_data.clone() else {
             return Err(Error::Refused("the sheet part has no sheetData".into()));

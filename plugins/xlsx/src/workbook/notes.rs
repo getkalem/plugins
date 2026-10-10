@@ -89,7 +89,7 @@ impl Workbook {
         let result = self.set_comment_now(idx, at, text);
         match (result, snapshot) {
             (Ok(()), Some(s)) => {
-                self.undo.push(s);
+                self.push_undo(s);
                 self.redo.clear();
                 Ok(())
             }
@@ -322,7 +322,7 @@ impl Workbook {
             &el,
         );
         let model = sheet::parse(&new, &self.strings, self.date1904);
-        self.loaded.insert(idx, (new, model));
+        self.loaded.insert(idx, Arc::new((new, model)));
         self.generation += 1;
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);

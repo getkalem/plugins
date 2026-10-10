@@ -330,7 +330,7 @@ impl Workbook {
             written?;
             // The table's `<f>` on its first cell.
             let anchor = def.range.start;
-            let (text, model) = &wb.loaded[&idx];
+            let (text, model) = &*wb.loaded[&idx];
             let p = model.prefix.clone();
             let Some(c) = model.cells.get(&anchor) else {
                 return Err(Error::Refused(
@@ -437,7 +437,7 @@ impl Workbook {
         let tables: Vec<(usize, DataTableDef)> = self
             .loaded
             .iter()
-            .flat_map(|(i, (_, m))| m.data_tables.iter().map(|t| (*i, t.clone())))
+            .flat_map(|(i, e)| e.1.data_tables.iter().map(|t| (*i, t.clone())))
             .collect();
         if tables.is_empty() {
             return Ok(());
@@ -445,7 +445,7 @@ impl Workbook {
         let mut changed = Vec::new();
         for (idx, def) in tables {
             let values = self.data_table_values(idx, &def)?;
-            let (text, model) = &self.loaded[&idx];
+            let (text, model) = &*self.loaded[&idx];
             let p = model.prefix.clone();
             let mut splices = Vec::new();
             for (at, v) in &values {

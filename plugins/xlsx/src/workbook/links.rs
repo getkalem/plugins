@@ -149,7 +149,7 @@ impl Workbook {
             text = text.replace(&empty, "");
         }
         let model = sheet::parse(&text, &self.strings, self.date1904);
-        self.loaded.insert(idx, (text, model));
+        self.loaded.insert(idx, Arc::new((text, model)));
         self.generation += 1;
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);

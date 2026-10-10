@@ -357,7 +357,7 @@ impl Workbook {
             .set_part(&part, self.workbook_xml.clone().into_bytes());
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
+                self.push_undo(s);
                 self.redo.clear();
             }
             None => self.batch_changed = true,
@@ -367,7 +367,7 @@ impl Workbook {
 
     /// Refused when sheet `idx` is protected and cell `at` locked.
     pub(crate) fn check_cell_edit(&self, idx: usize, at: CellRef) -> Result<()> {
-        let Some((_, model)) = self.loaded.get(&idx) else {
+        let Some((_, model)) = self.loaded.get(&idx).map(|e| &**e) else {
             return Ok(());
         };
         if model.protection.is_none() {
@@ -385,7 +385,7 @@ impl Workbook {
     /// Refused when sheet `idx` is protected and does not allow `what`
     /// (its `<sheetProtection>` attribute).
     pub(crate) fn check_allowed(&self, idx: usize, what: &str) -> Result<()> {
-        let Some((_, model)) = self.loaded.get(&idx) else {
+        let Some((_, model)) = self.loaded.get(&idx).map(|e| &**e) else {
             return Ok(());
         };
         let Some(attrs) = &model.protection else {

@@ -382,7 +382,7 @@ impl Workbook {
                 let part = self.workbook_part.clone();
                 self.pkg
                     .set_part(&part, self.workbook_xml.clone().into_bytes());
-                self.undo.push(snapshot);
+                self.push_undo(snapshot);
                 self.redo.clear();
                 Ok(shown)
             }

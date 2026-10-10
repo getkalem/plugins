@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::ops::Range as Span;
+use std::sync::Arc;
 
 use crate::calc::{self, Engine};
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW, Range};
@@ -280,7 +281,7 @@ pub struct Workbook {
     date1904: bool,
     defined_names: Vec<DefinedName>,
     /// Sheet texts and models, read when first asked for.
-    loaded: HashMap<usize, (String, Sheet)>,
+    loaded: HashMap<usize, Arc<(String, Sheet)>>,
     /// Sheets whose text changed.
     dirty_sheets: Vec<usize>,
     /// Number formats already given an `<xf>` copy: (style, numFmtId) → new style.
@@ -296,6 +297,8 @@ pub struct Workbook {
     computed: HashMap<(usize, CellRef), Value>,
     /// States before each edit, for undo, and after each undone one, for redo.
     undo: Vec<Snapshot>,
+    /// The most bytes the undo history keeps ([`Workbook::push_undo`]).
+    undo_budget: usize,
     redo: Vec<Snapshot>,
     /// A batch of edits (a macro run): the state before it, one undo step.
     batch: Option<Snapshot>,
@@ -333,18 +336,29 @@ pub struct Workbook {
     scratch: HashMap<(usize, String), (u64, Option<Value>)>,
 }
 
-/// What an edit changes, kept whole for undo: the package's bytes are
-/// shared, so a snapshot costs the edited texts.
+/// How many edits undo, as in Excel.
+const UNDO_STEPS: usize = 100;
+
+/// The most bytes of earlier states the undo history keeps: about seven
+/// edits of a sheet of a million cells, hundreds of an everyday one.
+const UNDO_BYTES: usize = 1 << 30;
+
+/// What an edit changes, kept whole for undo: the package's bytes and
+/// the sheets an edit leaves alone are shared, so a snapshot costs the
+/// edited sheets, the results and a few parts' texts.
 #[derive(Clone)]
 struct Snapshot {
     /// The state's number ([`Workbook::state`]).
     state: u64,
+    /// About how many bytes it holds that the state after it does not
+    /// share: the sheets it has as they were, results, XML.
+    own: usize,
     pkg: Package,
     sheets: Vec<SheetInfo>,
     workbook_xml: String,
     workbook_rels: Vec<Rel>,
     defined_names: Vec<DefinedName>,
-    loaded: HashMap<usize, (String, Sheet)>,
+    loaded: HashMap<usize, Arc<(String, Sheet)>>,
     dirty_sheets: Vec<usize>,
     derived_styles: HashMap<(u32, u32), u32>,
     styles_xml: Option<String>,
@@ -443,6 +457,7 @@ impl Workbook {
             trusted: HashSet::new(),
             computed: HashMap::new(),
             undo: Vec::new(),
+            undo_budget: UNDO_BYTES,
             redo: Vec::new(),
             batch: None,
             batch_edited: Vec::new(),
@@ -589,7 +604,7 @@ impl Workbook {
         }
         let text = text_of(self.pkg.part(&info.part)?, &info.part)?;
         let model = sheet::parse(&text, &self.strings, self.date1904);
-        self.loaded.insert(idx, (text, model));
+        self.loaded.insert(idx, Arc::new((text, model)));
         Ok(())
     }
 
@@ -683,9 +698,10 @@ impl Workbook {
     /// Every formula cell of the workbook.
     fn formula_cells(&self) -> Vec<(usize, CellRef)> {
         let mut out = Vec::new();
-        for (i, (_, model)) in &self.loaded {
+        for (i, entry) in &self.loaded {
             out.extend(
-                model
+                entry
+                    .1
                     .cells
                     .iter()
                     .filter(|(_, c)| c.formula.is_some())
@@ -714,7 +730,7 @@ impl Workbook {
             .map(|i| {
                 (
                     self.sheets[i].name.clone(),
-                    self.loaded.get(&i).map(|(_, m)| m),
+                    self.loaded.get(&i).map(|e| &e.1),
                 )
             })
             .collect();
@@ -953,7 +969,7 @@ impl Workbook {
         }
         self.computed = after;
         for (sheet_idx, cells) in writes {
-            let (text, model) = &self.loaded[&sheet_idx];
+            let (text, model) = &*self.loaded[&sheet_idx];
             let prefix = model.prefix.clone();
             let splices: Vec<(Span<usize>, String)> = cells
                 .iter()
@@ -1267,7 +1283,7 @@ impl Workbook {
                 style = self.style_with_numfmt(style, fmt)?;
             }
         }
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let prefix = model.prefix.clone();
         let is_formula = matches!(input, Input::Formula(_));
         let removes_formula = old.as_ref().is_some_and(|c| c.formula.is_some()) && !is_formula;
@@ -1374,6 +1390,7 @@ impl Workbook {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             state: self.state,
+            own: 0,
             pkg: self.pkg.clone(),
             sheets: self.sheets.clone(),
             workbook_xml: self.workbook_xml.clone(),
@@ -1439,7 +1456,7 @@ impl Workbook {
         };
         let now = self.snapshot();
         self.restore(s);
-        self.undo.push(now);
+        self.push_undo(now);
         true
     }
 
@@ -1460,10 +1477,46 @@ impl Workbook {
     /// Keeps `before`, the state an edit started from, for undo: the
     /// edit's result is a new state, and what was undone cannot be redone.
     fn record(&mut self, before: Snapshot) {
-        self.undo.push(before);
+        self.push_undo(before);
         self.redo.clear();
         self.last_state += 1;
         self.state = self.last_state;
+    }
+
+    /// Keeps a state for undo: as many as Excel keeps ([`UNDO_STEPS`]) and
+    /// no more than [`Workbook::undo_budget`] bytes of what they do not
+    /// share with the states after them, the oldest let go first; the
+    /// last edit always undoes.
+    fn push_undo(&mut self, mut s: Snapshot) {
+        s.own = self.own_bytes(&s);
+        self.undo.push(s);
+        let mut total: usize = self.undo.iter().map(|s| s.own).sum();
+        while self.undo.len() > 1 && (self.undo.len() > UNDO_STEPS || total > self.undo_budget) {
+            total -= self.undo.remove(0).own;
+        }
+    }
+
+    /// About how many bytes snapshot `s` holds that the state now does not
+    /// share with it: its sheets that have changed since (their text and
+    /// cells), its results and its workbook and style sheet parts.
+    fn own_bytes(&self, s: &Snapshot) -> usize {
+        let sheets: usize = s
+            .loaded
+            .iter()
+            .filter(|(i, e)| self.loaded.get(i).is_none_or(|now| !Arc::ptr_eq(now, e)))
+            .map(|(_, e)| e.0.len() + e.1.cells.len() * 96)
+            .sum();
+        sheets
+            + s.computed.len() * 64
+            + s.trusted.len() * 24
+            + s.workbook_xml.len()
+            + s.styles_xml.as_ref().map_or(0, String::len)
+    }
+
+    /// Lets the undo history keep at most `bytes` of states (a gigabyte
+    /// unless set), the oldest let go first.
+    pub fn set_undo_budget(&mut self, bytes: usize) {
+        self.undo_budget = bytes;
     }
 
     /// Whether there is an edit to undo, and one to redo.
@@ -1482,7 +1535,7 @@ impl Workbook {
             return Err(Error::Refused("a row is 0 to 409 points high".into()));
         }
         let snapshot = (self.batch.is_none()).then(|| self.snapshot());
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let ht = format!("{}", (height * 100.0).round() / 100.0);
         let p = model.prefix.clone();
         let splices = match model.rows.get(&row) {
@@ -1516,7 +1569,7 @@ impl Workbook {
         };
         let new = splice(text, splices);
         let model = sheet::parse(&new, &self.strings, self.date1904);
-        self.loaded.insert(idx, (new, model));
+        self.loaded.insert(idx, Arc::new((new, model)));
         self.generation += 1;
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);
@@ -1548,7 +1601,7 @@ impl Workbook {
         let new = col_width_text(&text, col + 1, width);
         if new != text {
             let model = sheet::parse(&new, &self.strings, self.date1904);
-            self.loaded.insert(idx, (new, model));
+            self.loaded.insert(idx, Arc::new((new, model)));
             self.generation += 1;
             if !self.dirty_sheets.contains(&idx) {
                 self.dirty_sheets.push(idx);
@@ -1578,7 +1631,7 @@ impl Workbook {
         let new = frozen_text(&text, &self.loaded[&idx].1.prefix, rows, cols);
         if new != text {
             let model = sheet::parse(&new, &self.strings, self.date1904);
-            self.loaded.insert(idx, (new, model));
+            self.loaded.insert(idx, Arc::new((new, model)));
             self.generation += 1;
             if !self.dirty_sheets.contains(&idx) {
                 self.dirty_sheets.push(idx);
@@ -1645,7 +1698,7 @@ impl Workbook {
         };
         if new != text {
             let model = sheet::parse(&new, &self.strings, self.date1904);
-            self.loaded.insert(idx, (new, model));
+            self.loaded.insert(idx, Arc::new((new, model)));
             self.generation += 1;
             if !self.dirty_sheets.contains(&idx) {
                 self.dirty_sheets.push(idx);
@@ -1823,7 +1876,7 @@ impl Workbook {
         // The sheets' parts.
         let indices: Vec<usize> = self.loaded.keys().copied().collect();
         for i in indices {
-            let (text, model) = &self.loaded[&i];
+            let (text, model) = &*self.loaded[&i];
             let new = if i == idx {
                 structure::rewrite_sheet(text, op, &name, model)
             } else {
@@ -1831,7 +1884,7 @@ impl Workbook {
             };
             if new != *text {
                 let model = sheet::parse(&new, &self.strings, self.date1904);
-                self.loaded.insert(i, (new, model));
+                self.loaded.insert(i, Arc::new((new, model)));
                 self.generation += 1;
                 if !self.dirty_sheets.contains(&i) {
                     self.dirty_sheets.push(i);
@@ -2045,7 +2098,7 @@ impl Workbook {
     /// (`<row s customFormat>`), else its column's (`<col style>`), else
     /// the default.
     pub(crate) fn row_or_col_style(&self, idx: usize, at: CellRef) -> u32 {
-        let Some((_, sheet)) = self.loaded.get(&idx) else {
+        let Some((_, sheet)) = self.loaded.get(&idx).map(|e| &**e) else {
             return 0;
         };
         sheet
@@ -2659,7 +2712,7 @@ impl Workbook {
     /// Gives a cell the style `new_style`: its `s`, or a `<c>` made to
     /// carry it. No undo step of its own.
     fn apply_style(&mut self, idx: usize, at: CellRef, new_style: u32) -> Result<()> {
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let splices = match model.cells.get(&at) {
             Some(c) => {
                 let el = &text[c.span.clone()];
@@ -2727,7 +2780,7 @@ impl Workbook {
         } else {
             None
         };
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let p = model.prefix.clone();
         // Every rule already there moves one place down.
         let mut r = Reader::new(text);
@@ -3085,7 +3138,7 @@ impl Workbook {
             },
         };
         let snapshot = (self.batch.is_none()).then(|| self.snapshot());
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let p = model.prefix.clone();
         let mut splices = Vec::new();
         for dv in validation::parse(text) {
@@ -3547,7 +3600,7 @@ impl Workbook {
                     "application/vnd.openxmlformats-officedocument.drawing+xml",
                 )?;
                 let sheet_rid = self.add_rel(&sheet_part, "drawing", &drawing)?;
-                let (text, model) = &self.loaded[&idx];
+                let (text, model) = &*self.loaded[&idx];
                 let p = model.prefix.clone();
                 let head = &text[..text
                     .find("<sheetData")
@@ -5486,7 +5539,7 @@ impl Workbook {
         patches: Option<Vec<(Span<usize>, usize, sheet::Patch)>>,
     ) {
         let patched = patches.and_then(|p| {
-            let (_, mut model) = self.loaded.remove(&idx)?;
+            let (_, mut model) = Arc::unwrap_or_clone(self.loaded.remove(&idx)?);
             model
                 .patch(&new, &p, &self.strings, self.date1904)
                 .then_some(model)
@@ -5525,7 +5578,7 @@ impl Workbook {
                 read.auto_filter.as_ref().map(|f| f.span.clone())
             );
         }
-        self.loaded.insert(idx, (new, model));
+        self.loaded.insert(idx, Arc::new((new, model)));
         self.generation += 1;
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);
@@ -5534,7 +5587,7 @@ impl Workbook {
 
     fn replace_sheet_text(&mut self, idx: usize, new: String) {
         let model = sheet::parse(&new, &self.strings, self.date1904);
-        self.loaded.insert(idx, (new, model));
+        self.loaded.insert(idx, Arc::new((new, model)));
         self.generation += 1;
         if !self.dirty_sheets.contains(&idx) {
             self.dirty_sheets.push(idx);
@@ -6429,7 +6482,7 @@ impl Workbook {
     /// Hides or shows rows (`<row hidden>`), making a `<row>` to hide one
     /// that holds nothing.
     fn set_rows_hidden(&mut self, idx: usize, rows: &[(u32, bool)]) {
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let mut splices = Vec::new();
         let mut missing = Vec::new();
         for &(r, hide) in rows {
@@ -6453,7 +6506,7 @@ impl Workbook {
             self.replace_sheet_text(idx, new);
         }
         for r in missing {
-            let (text, model) = &self.loaded[&idx];
+            let (text, model) = &*self.loaded[&idx];
             let p = &model.prefix;
             let new_row = format!("<{p}row r=\"{}\" hidden=\"1\"/>", r + 1);
             let Some((sd_start, sd_end)) = &model.sheet_data else {
@@ -6964,7 +7017,7 @@ impl Workbook {
             }
         }
         for (&i, v) in &self.views {
-            if let Some((text, model)) = self.loaded.get(&i) {
+            if let Some((text, model)) = self.loaded.get(&i).map(|e| &**e) {
                 let new = views::apply(text, &model.prefix, v);
                 if new != *text || self.dirty_sheets.contains(&i) {
                     pkg.set_part(&self.sheets[i].part, new.into_bytes());

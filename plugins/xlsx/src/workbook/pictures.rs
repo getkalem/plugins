@@ -196,7 +196,7 @@ impl Workbook {
         )?;
         let sheet_part = self.sheets[idx].part.clone();
         let sheet_rid = self.add_rel(&sheet_part, "drawing", &drawing)?;
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let p = model.prefix.clone();
         let head = &text[..text.find("<sheetData").unwrap_or(text.len())];
         let rp = head.split("xmlns:").skip(1).find_map(|d| {

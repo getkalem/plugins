@@ -137,7 +137,7 @@ impl Workbook {
         self.compute_again(&before, trusted)?;
         match snapshot {
             Some(s) => {
-                self.undo.push(s);
+                self.push_undo(s);
                 self.redo.clear();
             }
             None => self.batch_changed = true,

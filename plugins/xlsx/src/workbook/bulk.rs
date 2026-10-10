@@ -115,7 +115,7 @@ impl Workbook {
             let gone = matches!(input, Input::Clear) && style == 0;
             xml.push((*at, (!gone).then(|| cell_xml(&prefix, *at, style, input))));
         }
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let p = model.prefix.clone();
         let mut splices: Vec<(Span<usize>, String)> = Vec::new();
         let mut news: Vec<(CellRef, String)> = Vec::new();
@@ -177,7 +177,7 @@ impl Workbook {
         if cells.is_empty() {
             return Ok(());
         }
-        let (text, model) = &self.loaded[&idx];
+        let (text, model) = &*self.loaded[&idx];
         let p = model.prefix.clone();
         let mut splices: Vec<(Span<usize>, String)> = Vec::new();
         let mut news: Vec<(CellRef, String)> = Vec::new();
