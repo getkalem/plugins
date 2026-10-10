@@ -110,12 +110,20 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("graph.yesterday", "Yesterday's Journal", &["space n r d y"]),
     c("graph.tomorrow", "Tomorrow's Journal", &["space n r d m"]),
     c("graph.journalOn", "Journal of a Date", &["space n r d d"]),
-    c("graph.nextJournal", "Next Journal", &["space n r d f"]),
-    c(
-        "graph.previousJournal",
-        "Previous Journal",
-        &["space n r d b"],
-    ),
+    // In a graph's notes, Alt+] and Alt+[ too (Logseq's `g n` and `g p`
+    // are Vim's own keys).
+    CommandInfo {
+        note_keys: &[("alt+]", in_note!(""))],
+        ..c("graph.nextJournal", "Next Journal", &["space n r d f"])
+    },
+    CommandInfo {
+        note_keys: &[("alt+[", in_note!(""))],
+        ..c(
+            "graph.previousJournal",
+            "Previous Journal",
+            &["space n r d b"],
+        )
+    },
     c("graph.pages", "All Pages", &["space n r p"]),
     c("graph.journals", "Journals", &["space n r j"]),
     c("graph.tags", "Tags", &["space n r shift+t"]),
