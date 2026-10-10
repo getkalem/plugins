@@ -11,7 +11,7 @@
 //! and an untrusted cell whose result changed loses its stored result (the
 //! cell is stale, and Excel and LibreOffice compute it on open).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ironcalc_base::Model;
 use ironcalc_base::cell::CellValue;
@@ -55,13 +55,34 @@ impl std::fmt::Debug for Engine {
 }
 
 /// A formula's text as the engine reads it: the file's future-function
-/// prefixes dropped.
+/// prefixes dropped, and `HYPERLINK`, which the engine lacks, as the value
+/// it shows.
 fn engine_formula(text: &str) -> String {
     let t = text
         .replace("_xlfn._xlws.", "")
         .replace("_xlfn.", "")
         .replace("_xlws.", "");
-    format!("={t}")
+    format!("={}", crate::formula::hyperlink_as_value(&t))
+}
+
+/// Whether `formula` calls a function the engine does not compute (not
+/// one of the workbook's names, which may hold a `LAMBDA`): `GETPIVOTDATA`,
+/// `AGGREGATE`, `WEBSERVICE`, `IMAGE`, `GROUPBY`, a function newer than the
+/// engine.
+fn calls_unknown(formula: &str, names: &HashSet<String>) -> bool {
+    static KNOWN: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+    let known = KNOWN.get_or_init(|| {
+        let mut k: HashSet<String> = crate::functions::list()
+            .into_iter()
+            .map(|(n, _)| n.to_ascii_uppercase())
+            .collect();
+        // Given to the engine as the value it shows.
+        k.insert("HYPERLINK".into());
+        k
+    });
+    crate::formula::called_functions(formula)
+        .iter()
+        .any(|f| !known.contains(f) && !names.contains(f))
 }
 
 fn rc(at: CellRef) -> (i32, i32) {
@@ -82,8 +103,11 @@ pub fn same(a: &Value, b: &Value) -> bool {
 
 impl Engine {
     /// Loads every worksheet of a workbook: values as values, formulas as
-    /// formulas; a formula the engine cannot read, an array formula or a
-    /// data table enters as its stored result.
+    /// formulas; a formula the engine cannot read or calls a function it
+    /// does not compute, an array formula or a data table enters as its
+    /// stored result, so that the formulas reading the cell compute from
+    /// it. Such a cell keeps its stored result: the engine never changes
+    /// it.
     pub fn load(
         sheets: &[(String, Option<&Sheet>)],
         names: &[(String, Option<usize>, String)],
@@ -152,6 +176,8 @@ impl Engine {
             }
             model = Model::from_workbook(wb, "en")?;
         }
+        let name_set: HashSet<String> =
+            names.iter().map(|(n, ..)| n.to_ascii_uppercase()).collect();
         for ((_, sheet), idx) in sheets.iter().zip(&map) {
             let (Some(sheet), Some(idx)) = (sheet, idx) else {
                 continue;
@@ -160,7 +186,8 @@ impl Engine {
                 let (r, c) = rc(*at);
                 let as_formula = match &cell.formula {
                     Some(f)
-                        if matches!(f.kind, FormulaKind::Normal | FormulaKind::Shared { .. }) =>
+                        if matches!(f.kind, FormulaKind::Normal | FormulaKind::Shared { .. })
+                            && !calls_unknown(&f.text, &name_set) =>
                     {
                         Some(&f.text)
                     }
@@ -405,5 +432,41 @@ mod tests {
         let r = e.evaluate(&cells).clone();
         assert_eq!(r[&cells[0]], Value::Number(30.0));
         assert_eq!(r[&cells[2]], Value::Number(40.0));
+    }
+
+    #[test]
+    fn functions_the_engine_lacks_keep_their_results() {
+        // A1 asks the network, B1 a pivot table; C1 and D1 read them; E1
+        // is a link showing its friendly name.
+        let a = sheet::parse(
+            r#"<worksheet><sheetData><row r="1"><c r="A1"><f>_xlfn.WEBSERVICE("https://example.com/rate")</f><v>4</v></c><c r="B1"><f>GETPIVOTDATA("Sum",$H$1)</f><v>10</v></c><c r="C1"><f>A1*B1+F1</f><v>40</v></c><c r="D1"><f>Twice(A1)</f><v>8</v></c><c r="E1" t="str"><f>HYPERLINK("https://example.com","Rate "&amp;A1)</f><v>Rate 4</v></c><c r="F1"><v>0</v></c></row></sheetData></worksheet>"#,
+            &[],
+            false,
+        );
+        let sheets = vec![("Data".to_owned(), Some(&a))];
+        let names = vec![("Twice".to_owned(), None, "LAMBDA(x,x*2)".to_owned())];
+        let mut e = Engine::load(&sheets, &names, &[]).unwrap();
+        let cells: Vec<_> = (0..5).map(|c| (0, CellRef::new(0, c))).collect();
+        let r = e.evaluate(&cells).clone();
+        assert_eq!(r[&cells[0]], Value::Number(4.0));
+        assert_eq!(r[&cells[1]], Value::Number(10.0));
+        assert_eq!(r[&cells[2]], Value::Number(40.0));
+        assert_eq!(r[&cells[3]], Value::Number(8.0));
+        assert_eq!(r[&cells[4]], Value::Text("Rate 4".into()));
+        // An edit of F1 reaches C1, which reads the stored results.
+        e.set(0, CellRef::new(0, 5), None, &Value::Number(2.0))
+            .unwrap();
+        let r = e.evaluate(&cells).clone();
+        assert_eq!(r[&cells[2]], Value::Number(42.0));
+        // A link typed in shows its friendly name, or its address.
+        e.set(
+            0,
+            CellRef::new(0, 4),
+            Some("HYPERLINK(\"https://x.y\")"),
+            &Value::Empty,
+        )
+        .unwrap();
+        let r = e.evaluate(&cells).clone();
+        assert_eq!(r[&cells[4]], Value::Text("https://x.y".into()));
     }
 }

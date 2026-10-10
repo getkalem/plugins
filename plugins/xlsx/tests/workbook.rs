@@ -179,6 +179,25 @@ fn a_value_edit_touches_its_sheet_and_the_calc_flag_only() {
 }
 
 #[test]
+fn formulas_reading_a_function_the_engine_lacks_compute() {
+    // A1 asks the network for a rate, which the engine cannot; C1 reads it.
+    let sheet = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f>_xlfn.WEBSERVICE("https://example.com/rate")</f><v>4</v></c><c r="B1"><v>2</v></c><c r="C1"><f>A1*B1</f><v>8</v></c><c r="D1" t="str"><f>HYPERLINK("https://example.com","Rate")</f><v>Rate</v></c></row></sheetData></worksheet>"#;
+    let mut p = Package::read(corpus("openpyxl-budget.xlsx")).unwrap();
+    p.set_part("xl/worksheets/sheet1.xml", sheet.as_bytes().to_vec());
+    let mut wb = Workbook::open(p.write().unwrap()).unwrap();
+    wb.set_cell(0, at("B1"), "3").unwrap();
+    let out = wb.save().unwrap();
+    // C1 computed from A1's stored result, which stays; the link's text too.
+    let changed = changed_cells(&p.write().unwrap(), &out, "xl/worksheets/sheet1.xml");
+    assert_eq!(changed, ["B1", "C1"]);
+    let mut again = Workbook::open(out).unwrap();
+    assert_eq!(again.display(0, at("C1")).unwrap(), "12");
+    assert_eq!(again.display(0, at("A1")).unwrap(), "4");
+    assert_eq!(again.display(0, at("D1")).unwrap(), "Rate");
+}
+
+#[test]
 fn new_cells_rows_and_entries() {
     let bytes = corpus("libreoffice-budget.xlsx");
     let mut wb = Workbook::open(bytes.clone()).unwrap();

@@ -857,6 +857,89 @@ fn calls(formula: &str) -> Vec<(usize, &str)> {
     out
 }
 
+/// The arguments of the call whose `(` is at `open`: how many there are,
+/// and where its `)` is. Commas inside parentheses, array constants,
+/// strings and quoted sheet names are not the call's.
+fn call_arguments(formula: &str, open: usize) -> Option<(usize, usize)> {
+    let b = formula.as_bytes();
+    let (mut depth, mut commas, mut any) = (0usize, 0usize, false);
+    let mut i = open;
+    while i < b.len() {
+        match b[i] {
+            q @ (b'"' | b'\'') => {
+                any = true;
+                i += 1;
+                while i < b.len() {
+                    if b[i] == q {
+                        if b.get(i + 1) == Some(&q) {
+                            i += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'(' | b'{' => {
+                any |= i != open;
+                depth += 1;
+            }
+            b')' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some((if any { commas + 1 } else { 0 }, i));
+                }
+            }
+            b',' if depth == 1 => {
+                any = true;
+                commas += 1;
+            }
+            b' ' => {}
+            _ => any = true,
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The functions `formula` calls, in capitals, without the `_xlfn.` and
+/// `_xlws.` prefixes a file writes before newer ones.
+pub fn called_functions(formula: &str) -> Vec<String> {
+    calls(formula)
+        .into_iter()
+        .map(|(_, name)| {
+            let up = name.to_ascii_uppercase();
+            let bare = up.strip_prefix("_XLFN.").unwrap_or(&up);
+            bare.strip_prefix("_XLWS.").unwrap_or(bare).to_string()
+        })
+        .collect()
+}
+
+/// `formula` with each `HYPERLINK(link, [friendly name])` written as the
+/// value it shows, `CHOOSE(n, link, [friendly name])` picking its last
+/// argument: the formula engine has no `HYPERLINK`, and a cell holding
+/// one shows that value.
+pub fn hyperlink_as_value(formula: &str) -> String {
+    let mut out = String::with_capacity(formula.len() + 4);
+    let mut at = 0;
+    for (start, name) in calls(formula) {
+        if !name.eq_ignore_ascii_case("HYPERLINK") {
+            continue;
+        }
+        let Some(open) = formula[start..].find('(').map(|k| start + k) else {
+            continue;
+        };
+        let Some((n @ 1..=2, _)) = call_arguments(formula, open) else {
+            continue;
+        };
+        out.push_str(&formula[at..start]);
+        out.push_str(&format!("CHOOSE({n},"));
+        at = open + 1;
+    }
+    out.push_str(&formula[at..]);
+    out
+}
+
 /// `formula` as a file writes it: Excel's newer functions with their
 /// `_xlfn.` prefix (`_xlfn._xlws.` for `FILTER` and `SORT`), so that Excel
 /// knows them; names already prefixed stay.
@@ -902,6 +985,29 @@ pub fn without_future_prefixes(formula: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hyperlinks_as_the_value_they_show() {
+        assert_eq!(
+            hyperlink_as_value("HYPERLINK(\"https://a.b/c,d\",\"Go\")&\"!\""),
+            "CHOOSE(2,\"https://a.b/c,d\",\"Go\")&\"!\""
+        );
+        assert_eq!(hyperlink_as_value("hyperlink (A1)"), "CHOOSE(1,A1)");
+        assert_eq!(
+            hyperlink_as_value("HYPERLINK(A1,IF(B1,{1,2},\"x\"))"),
+            "CHOOSE(2,A1,IF(B1,{1,2},\"x\"))"
+        );
+        // A sheet named so, a string saying so and a call of none or three
+        // arguments stay.
+        assert_eq!(
+            hyperlink_as_value("'HYPERLINK(1)'!A1&\"HYPERLINK(1)\"&HYPERLINK()"),
+            "'HYPERLINK(1)'!A1&\"HYPERLINK(1)\"&HYPERLINK()"
+        );
+        assert_eq!(
+            called_functions("_xlfn._xlws.SORT(A1:A3)+_xlfn.WEBSERVICE(B1)+sum(1)"),
+            ["SORT", "WEBSERVICE", "SUM"]
+        );
+    }
 
     #[test]
     fn relative_references_move() {
