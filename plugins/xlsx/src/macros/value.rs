@@ -59,6 +59,12 @@ pub enum Obj {
     RowsOf(RangeRef),
     /// `range.Columns`.
     ColsOf(RangeRef),
+    /// `range.Font`.
+    Font(RangeRef),
+    /// `range.Interior`: the fill.
+    Interior(RangeRef),
+    /// `range.Borders`, or one side of them (`xlEdgeBottom`).
+    Borders(RangeRef, Option<i64>),
     /// `Application.WorksheetFunction`.
     WorksheetFunction,
     /// `Err`.
@@ -79,7 +85,10 @@ impl PartialEq for Obj {
         match (self, other) {
             (Obj::Range(a), Obj::Range(b))
             | (Obj::RowsOf(a), Obj::RowsOf(b))
-            | (Obj::ColsOf(a), Obj::ColsOf(b)) => a == b,
+            | (Obj::ColsOf(a), Obj::ColsOf(b))
+            | (Obj::Font(a), Obj::Font(b))
+            | (Obj::Interior(a), Obj::Interior(b)) => a == b,
+            (Obj::Borders(a, x), Obj::Borders(b, y)) => a == b && x == y,
             (Obj::Sheet(a), Obj::Sheet(b)) => a == b,
             (Obj::Collection(a), Obj::Collection(b)) | (Obj::Dictionary(a), Obj::Dictionary(b)) => {
                 Rc::ptr_eq(a, b)
@@ -215,6 +224,10 @@ impl V {
                 Obj::Sheets => "Sheets",
                 Obj::Sheet(_) => "Worksheet",
                 Obj::Range(_) | Obj::RowsOf(_) | Obj::ColsOf(_) => "Range",
+                Obj::Font(_) => "Font",
+                Obj::Interior(_) => "Interior",
+                Obj::Borders(_, None) => "Borders",
+                Obj::Borders(_, Some(_)) => "Border",
                 Obj::WorksheetFunction => "WorksheetFunction",
                 Obj::ErrObject => "ErrObject",
                 Obj::Debug => "Debug",

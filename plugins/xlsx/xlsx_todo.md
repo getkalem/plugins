@@ -114,7 +114,7 @@ measurements ignored.
 
 ### XL8. Macros, the rest (Kalem's T3.7.4b)
 
-- [ ] XL8 In the interpreter (`macros/excel.rs`, `interp.rs`):
+- [~] XL8 In the interpreter (`macros/excel.rs`, `interp.rs`):
   formatting statements applied (`Font`, `Interior`, `NumberFormat`,
   `ColumnWidth`, `RowHeight`: skipped and listed in the run's report
   today); `Worksheets.Add`, `Copy`, `Move` and `Delete`, a sheet
@@ -128,7 +128,18 @@ measurements ignored.
   shows it (Kalem has Run Macro only); the corpus of `.xlsm` files
   compared with Excel's runs. Editing the source means writing the
   project ([MS-OVBA]), which the plugin never rewrites: a decision for
-  the owner, recorded either way.
+  the owner, recorded either way. (Done 2026-10-10: formatting applied
+  through the plugin's Format Cells, `Font` (bold, italic, underline,
+  strikethrough, color, `ColorIndex`, size, name), `Interior` (color,
+  `ColorIndex`, `Pattern = xlNone`), `Borders(side)` and
+  `BorderAround`, `NumberFormat`, the alignments, `WrapText`,
+  `IndentLevel`, `Orientation`, `ShrinkToFit`, `Locked`, `ColumnWidth`
+  and `RowHeight` (on `Rows` and `Columns` too), `Merge`, `UnMerge` and
+  `MergeCells`, each readable back; `RGB()` and Excel's alignment,
+  border and font constants; `Worksheet.Name` and `Visible` set; one
+  undo step for the run as before; tests in `tests/macros.rs`. Open:
+  sheets added, deleted, copied and moved (their indexes shift under
+  the macro's variables), and the rest of the list above.)
 
 ### XL9. Memory and speed (`publish_todo.md`, E38's last part)
 

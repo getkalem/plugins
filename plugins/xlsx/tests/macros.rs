@@ -174,7 +174,9 @@ End Sub
             "note A1 $B$2",
         ]
     );
-    assert_eq!(report.skipped.len(), 2, "{:?}", report.skipped);
+    // `.Font.Bold = True` applied, nothing skipped.
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert!(style(&mut wb, "A1").bold);
 }
 
 #[test]
@@ -217,6 +219,108 @@ fn what_a_macro_cannot_do() {
     assert_eq!(wb.display(0, at("A9")).unwrap(), "1");
     assert!(wb.undo());
     assert_eq!(wb.display(0, at("A9")).unwrap(), "");
+}
+
+/// The style of a cell, as a macro's formatting leaves it.
+fn style(wb: &mut Workbook, cell: &str) -> kalem_plugin_xlsx::styles::CellStyle {
+    let s = wb
+        .sheet(0)
+        .unwrap()
+        .cells
+        .get(&at(cell))
+        .map_or(0, |c| c.style);
+    wb.style(s)
+}
+
+#[test]
+fn a_macro_formats_cells() {
+    let mut wb = book();
+    let src = r#"
+Sub Dress()
+    With Range("A1:D1")
+        .Font.Bold = True
+        .Font.Color = RGB(255, 0, 0)
+        .Font.Size = 14
+        .Interior.Color = RGB(0, 0, 255)
+        .HorizontalAlignment = xlCenter
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous
+    End With
+    Range("B2:B4").NumberFormat = "0.0%"
+    Range("A2").Font.ColorIndex = 3
+    Range("A3").Interior.ColorIndex = 6
+    Range("A3").Interior.Pattern = xlNone
+    Range("A4").WrapText = True
+    Columns("C").ColumnWidth = 20
+    Rows(3).RowHeight = 30
+    Range("A6:B6").Merge
+    Range("C2").BorderAround xlContinuous, xlThick
+    Worksheets(1).Name = "Plan"
+    Debug.Print Range("A1").Font.Bold, Range("A1").Font.Color, Range("B2").NumberFormat, _
+        Range("A1").HorizontalAlignment = xlCenter, Range("A6").MergeCells, _
+        Columns("C").ColumnWidth, Range("A1").Interior.ColorIndex
+End Sub
+"#;
+    let report = run(&mut wb, src, "Dress").unwrap();
+    assert!(report.changed);
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let a1 = style(&mut wb, "A1");
+    assert!(a1.bold);
+    assert_eq!(a1.color, Some(0xFF0000));
+    assert_eq!(a1.size, Some(14.0));
+    assert_eq!(a1.fill, Some(0x0000FF));
+    assert_eq!(a1.align.as_deref(), Some("center"));
+    assert!(a1.sides[2].is_some(), "the bottom border");
+    assert!(style(&mut wb, "D1").bold);
+    assert_eq!(style(&mut wb, "B3").num_fmt, "0.0%");
+    assert_eq!(wb.display(0, at("B3")).unwrap(), "43150.0%");
+    assert_eq!(style(&mut wb, "A2").color, Some(0xFF0000));
+    assert_eq!(style(&mut wb, "A3").fill, None);
+    assert!(style(&mut wb, "A4").wrap);
+    let sheet = wb.sheet(0).unwrap();
+    assert!(
+        sheet
+            .cols
+            .iter()
+            .any(|c| c.min <= 2 && c.max >= 2 && c.width == Some(20.0))
+    );
+    assert_eq!(sheet.rows.get(&2).and_then(|r| r.height), Some(30.0));
+    assert!(
+        sheet
+            .merged
+            .iter()
+            .any(|m| m.start == at("A6") && m.end == at("B6"))
+    );
+    assert!(
+        style(&mut wb, "C2")
+            .sides
+            .iter()
+            .all(|s| s.is_some_and(|(_, thick)| thick))
+    );
+    assert_eq!(wb.sheets()[0].name, "Plan");
+    assert_eq!(report.output, ["True 255 0.0% True True 20 5"]);
+    // The whole run is one undo step.
+    assert!(wb.undo());
+    assert_ne!(style(&mut wb, "A1").fill, Some(0x0000FF));
+    assert_ne!(style(&mut wb, "B3").num_fmt, "0.0%");
+    assert!(
+        wb.sheet(0)
+            .unwrap()
+            .merged
+            .iter()
+            .all(|m| m.start != at("A6"))
+    );
+    assert_eq!(wb.sheets()[0].name, "Budget");
+    // A sheet hidden by its Visible property.
+    run(
+        &mut wb,
+        "Sub H()\n  Worksheets(2).Visible = xlSheetHidden\nEnd Sub",
+        "H",
+    )
+    .unwrap();
+    assert_ne!(
+        wb.sheets()[1].visibility,
+        kalem_plugin_xlsx::workbook::Visibility::Visible
+    );
 }
 
 #[test]

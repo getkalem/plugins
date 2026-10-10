@@ -1,8 +1,10 @@
 //! Excel's object model as far as macros reach it in Kalem: the
 //! application, the workbook, its sheets and their cells; collections and
 //! dictionaries; `Err` and `Debug`. Writes are the plugin's cell edits.
-//! Formatting (`Font`, `Interior`, widths) is not applied yet: such
-//! statements are skipped and listed in the run's report.
+//! Formatting is the plugin's Format Cells: `Font`, `Interior`,
+//! `Borders`, `NumberFormat`, alignment, wrapping, widths and heights,
+//! merging; what is not modelled (`Characters`, `FormatConditions`,
+//! theme colors) is skipped and listed in the run's report.
 
 use super::constants;
 use super::interp::Interp;
@@ -27,6 +29,422 @@ fn wb_err(e: crate::workbook::Error) -> RtError {
     RtError::new(1004, e.to_string())
 }
 
+fn bad_argument() -> RtError {
+    RtError::new(5, "Invalid procedure call or argument")
+}
+
+/// The style of a range's first cell, as `Font`, `Interior` and
+/// `NumberFormat` read it.
+fn style_of(it: &mut Interp<'_>, r: &RangeRef) -> R<crate::styles::CellStyle> {
+    let at = CellRef::new(r.r0, r.c0);
+    let own = it
+        .wb
+        .sheet(r.sheet)
+        .map_err(wb_err)?
+        .cells
+        .get(&at)
+        .map(|c| c.style);
+    let s = own.unwrap_or_else(|| it.wb.row_or_col_style(r.sheet, at));
+    Ok(it.wb.style(s))
+}
+
+/// A range's cells given a change of format, as Format Cells gives it.
+fn restyle(it: &mut Interp<'_>, r: &RangeRef, change: kalem_viewer::StyleChange) -> R<()> {
+    let range = crate::cellref::Range {
+        start: CellRef::new(r.r0, r.c0),
+        end: CellRef::new(r.r1, r.c1),
+    };
+    it.wb
+        .change_style(r.sheet, range, &change)
+        .map_err(wb_err)?;
+    it.report.changed = true;
+    Ok(())
+}
+
+/// A VBA color, a Long with red in its low byte, as RGB.
+fn color_arg(v: &V) -> R<[u8; 3]> {
+    let n = to_int(v)?;
+    if !(0..=0xFF_FFFF).contains(&n) {
+        return Err(bad_argument());
+    }
+    Ok([
+        (n & 0xFF) as u8,
+        (n >> 8 & 0xFF) as u8,
+        (n >> 16 & 0xFF) as u8,
+    ])
+}
+
+/// An RGB color as VBA's Long.
+fn vba_color(rgb: u32) -> V {
+    let (r, g, b) = (rgb >> 16 & 0xFF, rgb >> 8 & 0xFF, rgb & 0xFF);
+    V::Int(i64::from(r | g << 8 | b << 16))
+}
+
+/// A `ColorIndex` of the default palette (1 to 56) as RGB.
+fn palette_color(n: i64) -> Option<[u8; 3]> {
+    let c = usize::try_from(n)
+        .ok()
+        .filter(|n| (1..=56).contains(n))
+        .and_then(|n| crate::styles::indexed_color(n + 7))?;
+    Some([(c >> 16) as u8, (c >> 8) as u8, c as u8])
+}
+
+/// The `ColorIndex` of an RGB color in the default palette.
+fn palette_index(rgb: u32) -> Option<i64> {
+    (1..=56usize)
+        .find(|n| crate::styles::indexed_color(n + 7) == Some(rgb))
+        .map(|n| n as i64)
+}
+
+/// A range's rows (or columns), the used ones of a whole column (or
+/// row) and no more.
+fn lines_of(it: &mut Interp<'_>, r: &RangeRef, rows: bool) -> R<std::ops::RangeInclusive<u32>> {
+    let whole = if rows {
+        r.r0 == 0 && r.r1 >= MAX_ROW - 1
+    } else {
+        r.c0 == 0 && r.c1 >= MAX_COL - 1
+    };
+    let (from, to) = if rows { (r.r0, r.r1) } else { (r.c0, r.c1) };
+    if !whole {
+        return Ok(from..=to);
+    }
+    let used = it.wb.sheet(r.sheet).map_err(wb_err)?.used_range();
+    let last = used.map_or(0, |u| if rows { u.end.row } else { u.end.col });
+    Ok(from..=last.max(from))
+}
+
+/// `Range.Borders(side)` as the sides a change draws.
+fn border_set(side: Option<i64>) -> R<kalem_viewer::BorderSet> {
+    use kalem_viewer::BorderSet as B;
+    Ok(match side {
+        None => B::All,
+        Some(7) => B::Left,
+        Some(8) => B::Top,
+        Some(9) => B::Bottom,
+        Some(10) => B::Right,
+        Some(_) => return Err(unsupported("inside and diagonal borders")),
+    })
+}
+
+/// `LineStyle` (with `Weight`) as a border's line; `None` for no line.
+fn line_style(style: i64, weight: i64) -> Option<kalem_viewer::LineStyle> {
+    use kalem_viewer::LineStyle as L;
+    Some(match (style, weight) {
+        (-4142, _) => return None,
+        (-4115 | 4 | 5 | 13, _) => L::Dashed,
+        (-4118, _) => L::Dotted,
+        (-4119, _) => L::Double,
+        (_, 1) => L::Hair,
+        (_, -4138) => L::Medium,
+        (_, 4) => L::Thick,
+        _ => L::Thin,
+    })
+}
+
+/// Borders drawn on a range's sides (`set`) in a line and a color.
+fn draw_borders(
+    it: &mut Interp<'_>,
+    r: &RangeRef,
+    set: kalem_viewer::BorderSet,
+    line: Option<kalem_viewer::LineStyle>,
+    color: Option<[u8; 3]>,
+) -> R<()> {
+    let set = if line.is_none() {
+        kalem_viewer::BorderSet::None
+    } else {
+        set
+    };
+    restyle(
+        it,
+        r,
+        kalem_viewer::StyleChange {
+            borders: Some((set, color)),
+            border_style: line,
+            ..Default::default()
+        },
+    )
+}
+
+/// `Range.Font.m`.
+fn font_get(it: &mut Interp<'_>, r: &RangeRef, m: &str) -> R<V> {
+    let st = style_of(it, r)?;
+    Ok(match m {
+        "bold" => V::Bool(st.bold),
+        "italic" => V::Bool(st.italic),
+        "strikethrough" => V::Bool(st.strike),
+        "underline" => V::Int(if st.underline { 2 } else { -4142 }),
+        "color" => vba_color(st.color.unwrap_or(0)),
+        "colorindex" => V::Int(
+            st.color
+                .map_or(-4105, |c| palette_index(c).unwrap_or(-4105)),
+        ),
+        "size" => V::Num(st.size.unwrap_or(11.0)),
+        "name" => V::Str(st.font.unwrap_or_else(|| "Calibri".into())),
+        _ => return Err(RtError::new(438, format!("Font.{m}"))),
+    })
+}
+
+/// `Range.Font.m = v`.
+fn font_set(it: &mut Interp<'_>, r: &RangeRef, m: &str, v: &V) -> R<()> {
+    use kalem_viewer::StyleChange as S;
+    let change = match m {
+        "bold" => S {
+            bold: Some(to_bool(v)?),
+            ..S::default()
+        },
+        "italic" => S {
+            italic: Some(to_bool(v)?),
+            ..S::default()
+        },
+        "strikethrough" => S {
+            strike: Some(to_bool(v)?),
+            ..S::default()
+        },
+        "underline" => S {
+            underline: Some(match v {
+                V::Bool(b) => *b,
+                v => !matches!(to_int(v)?, 0 | -4142),
+            }),
+            ..S::default()
+        },
+        "color" => S {
+            color: Some(Some(color_arg(v)?)),
+            ..S::default()
+        },
+        "colorindex" => S {
+            color: Some(match to_int(v)? {
+                -4105 | 0 => None,
+                n => Some(palette_color(n).ok_or_else(bad_argument)?),
+            }),
+            ..S::default()
+        },
+        "size" => S {
+            size: Some(to_num(v)? as f32),
+            ..S::default()
+        },
+        "name" => S {
+            face: Some(to_str(v)?),
+            ..S::default()
+        },
+        _ => {
+            it.report.skipped.push(format!(
+                "line {}: Font.{m} = … (not applied by macros in Kalem)",
+                it.line
+            ));
+            return Ok(());
+        }
+    };
+    restyle(it, r, change)
+}
+
+/// `Range.Interior.m`.
+fn interior_get(it: &mut Interp<'_>, r: &RangeRef, m: &str) -> R<V> {
+    let st = style_of(it, r)?;
+    Ok(match m {
+        "color" => vba_color(st.fill.unwrap_or(0xFF_FFFF)),
+        "colorindex" => V::Int(st.fill.map_or(-4142, |c| palette_index(c).unwrap_or(-4142))),
+        "pattern" => V::Int(if st.fill.is_some() { 1 } else { -4142 }),
+        _ => return Err(RtError::new(438, format!("Interior.{m}"))),
+    })
+}
+
+/// `Range.Interior.m = v`.
+fn interior_set(it: &mut Interp<'_>, r: &RangeRef, m: &str, v: &V) -> R<()> {
+    let fill = match m {
+        "color" => Some(color_arg(v)?),
+        "colorindex" => match to_int(v)? {
+            -4142 | -4105 | 0 => None,
+            n => Some(palette_color(n).ok_or_else(bad_argument)?),
+        },
+        "pattern" if to_int(v)? == -4142 => None,
+        "pattern" => return Ok(()),
+        _ => {
+            it.report.skipped.push(format!(
+                "line {}: Interior.{m} = … (not applied by macros in Kalem)",
+                it.line
+            ));
+            return Ok(());
+        }
+    };
+    restyle(
+        it,
+        r,
+        kalem_viewer::StyleChange {
+            fill: Some(fill),
+            ..Default::default()
+        },
+    )
+}
+
+/// `Range.Borders(side).m = v`: each statement draws the sides again in
+/// what the borders have now and what it changes.
+fn borders_set(it: &mut Interp<'_>, r: &RangeRef, side: Option<i64>, m: &str, v: &V) -> R<()> {
+    let set = border_set(side)?;
+    match m {
+        "linestyle" => {
+            let line = line_style(to_int(v)?, 2);
+            draw_borders(it, r, set, line, None)
+        }
+        "weight" => {
+            let line = line_style(1, to_int(v)?);
+            draw_borders(it, r, set, line, None)
+        }
+        "color" => {
+            let c = color_arg(v)?;
+            draw_borders(it, r, set, Some(kalem_viewer::LineStyle::Thin), Some(c))
+        }
+        "colorindex" => {
+            let c = palette_color(to_int(v)?);
+            draw_borders(it, r, set, Some(kalem_viewer::LineStyle::Thin), c)
+        }
+        _ => {
+            it.report.skipped.push(format!(
+                "line {}: Borders.{m} = … (not applied by macros in Kalem)",
+                it.line
+            ));
+            Ok(())
+        }
+    }
+}
+
+/// A Range format property set: `NumberFormat`, the alignments,
+/// `WrapText`, `ColumnWidth`, `RowHeight`, `IndentLevel`, `Locked`,
+/// `Orientation`, `ShrinkToFit`, `MergeCells`.
+fn range_format_set(it: &mut Interp<'_>, r: &RangeRef, m: &str, v: &V) -> R<()> {
+    use kalem_viewer::{Align, StyleChange as S, VAlign};
+    let change = match m {
+        "numberformat" | "numberformatlocal" => S {
+            number_format: Some(to_str(v)?),
+            ..S::default()
+        },
+        "horizontalalignment" => match to_int(v)? {
+            7 => S {
+                center_across: Some(true),
+                ..S::default()
+            },
+            n => S {
+                align: Some(match n {
+                    -4131 => Align::Left,
+                    -4108 => Align::Center,
+                    -4152 => Align::Right,
+                    1 => Align::General,
+                    _ => return Err(unsupported("justified and filled alignment")),
+                }),
+                ..S::default()
+            },
+        },
+        "verticalalignment" => S {
+            valign: Some(match to_int(v)? {
+                -4160 => VAlign::Top,
+                -4108 | -4130 | -4117 => VAlign::Middle,
+                -4107 => VAlign::Bottom,
+                _ => return Err(bad_argument()),
+            }),
+            ..S::default()
+        },
+        "indentlevel" => S {
+            indent: Some(u8::try_from(to_int(v)?.clamp(0, 15)).unwrap_or(0)),
+            ..S::default()
+        },
+        "locked" => S {
+            locked: Some(to_bool(v)?),
+            ..S::default()
+        },
+        "shrinktofit" => S {
+            shrink: Some(to_bool(v)?),
+            ..S::default()
+        },
+        "orientation" => S {
+            rotation: Some(match to_int(v)? {
+                -4128 => 0,
+                -4166 => 255,
+                -4171 => 90,
+                -4170 => 180,
+                n @ 0..=90 => n as u16,
+                n @ -90..=-1 => (90 - n) as u16,
+                _ => return Err(bad_argument()),
+            }),
+            ..S::default()
+        },
+        "wraptext" => {
+            let wrap = to_bool(v)?;
+            let used = clip_to_used(it, r)?;
+            if count(&used) > MAX_CELLS {
+                return Err(RtError::new(
+                    7,
+                    "Out of memory: WrapText over too many cells",
+                ));
+            }
+            for at in cells_of(&used).collect::<Vec<_>>() {
+                it.wb.set_wrap(r.sheet, at, wrap).map_err(wb_err)?;
+            }
+            it.report.changed = true;
+            return Ok(());
+        }
+        "columnwidth" | "rowheight" => {
+            let rows = m == "rowheight";
+            let size = to_num(v)?;
+            if !(0.0..=if rows { 409.0 } else { 255.0 }).contains(&size) {
+                return Err(RtError::new(
+                    1004,
+                    format!("Unable to set the {m} property"),
+                ));
+            }
+            for i in lines_of(it, r, rows)? {
+                if rows {
+                    it.wb.set_row_height(r.sheet, i, size).map_err(wb_err)?;
+                } else {
+                    it.wb.set_col_width(r.sheet, i, size).map_err(wb_err)?;
+                }
+            }
+            it.report.changed = true;
+            return Ok(());
+        }
+        "mergecells" => return merge(it, r, to_bool(v)?, false),
+        _ => return Err(RtError::new(438, format!("Range.{m} cannot be set"))),
+    };
+    restyle(it, r, change)
+}
+
+/// `Range.Merge` (each row apart with `Across`) and `UnMerge`: unmerging
+/// takes away every merged area the range touches.
+fn merge(it: &mut Interp<'_>, r: &RangeRef, on: bool, across: bool) -> R<()> {
+    let range = |r0: u32, r1: u32| crate::cellref::Range {
+        start: CellRef::new(r0, r.c0),
+        end: CellRef::new(r1, r.c1),
+    };
+    if on {
+        if across {
+            for row in r.r0..=r.r1 {
+                it.wb
+                    .merge_cells(r.sheet, range(row, row), false)
+                    .map_err(wb_err)?;
+            }
+        } else {
+            it.wb
+                .merge_cells(r.sheet, range(r.r0, r.r1), false)
+                .map_err(wb_err)?;
+        }
+    } else {
+        let touched: Vec<CellRef> = it
+            .wb
+            .sheet(r.sheet)
+            .map_err(wb_err)?
+            .merged
+            .iter()
+            .filter(|m| {
+                m.start.row <= r.r1 && m.end.row >= r.r0 && m.start.col <= r.c1 && m.end.col >= r.c0
+            })
+            .map(|m| m.start)
+            .collect();
+        for at in touched {
+            it.wb.unmerge_cells(r.sheet, at).map_err(wb_err)?;
+        }
+    }
+    it.report.changed = true;
+    Ok(())
+}
+
 /// The names of a member's parameters, for named arguments.
 pub fn param_names(o: &Obj, m: &str) -> &'static [&'static str] {
     match (o, m) {
@@ -49,6 +467,8 @@ pub fn param_names(o: &Obj, m: &str) -> &'static [&'static str] {
         (Obj::Range(_), "offset") => &["rowoffset", "columnoffset"],
         (Obj::Range(_), "resize") => &["rowsize", "columnsize"],
         (Obj::Range(_), "insert" | "delete") => &["shift"],
+        (Obj::Range(_), "borderaround") => &["linestyle", "weight", "colorindex", "color"],
+        (Obj::Range(_), "merge") => &["across"],
         (Obj::Application, "inputbox") => &[
             "prompt",
             "title",
@@ -69,9 +489,25 @@ pub fn param_names(o: &Obj, m: &str) -> &'static [&'static str] {
 /// the default member of what `o.m` returns (`ws.Cells(1, 1) = v`).
 pub fn settable(o: &Obj, m: &str) -> bool {
     match o {
-        Obj::Range(_) => matches!(
+        Obj::Range(_) | Obj::RowsOf(_) | Obj::ColsOf(_) => matches!(
             m,
-            "value" | "value2" | "formula" | "formular1c1" | "formulalocal" | "numberformat"
+            "value"
+                | "value2"
+                | "formula"
+                | "formular1c1"
+                | "formulalocal"
+                | "numberformat"
+                | "numberformatlocal"
+                | "horizontalalignment"
+                | "verticalalignment"
+                | "wraptext"
+                | "columnwidth"
+                | "rowheight"
+                | "indentlevel"
+                | "locked"
+                | "orientation"
+                | "shrinktofit"
+                | "mergecells"
         ),
         Obj::Dictionary(_) => m == "item",
         Obj::Unsupported(_) => true,
@@ -721,16 +1157,6 @@ fn range_get(it: &mut Interp<'_>, r: &RangeRef, m: &str, a: Vec<V>) -> R<V> {
             let model = it.wb.sheet(r.sheet).map_err(wb_err)?;
             V::Bool(cells_of(r).all(|at| model.cells.get(&at).is_some_and(|c| c.formula.is_some())))
         }
-        "numberformat" => {
-            let s = it
-                .wb
-                .sheet(r.sheet)
-                .map_err(wb_err)?
-                .cells
-                .get(&CellRef::new(r.r0, r.c0))
-                .map_or(0, |c| c.style);
-            V::Str(it.wb.style(s).num_fmt)
-        }
         "address" => {
             let row_abs = !has(&a, 0) || to_bool(arg(&a, 0))?;
             let col_abs = !has(&a, 1) || to_bool(arg(&a, 1))?;
@@ -844,30 +1270,106 @@ fn range_get(it: &mut Interp<'_>, r: &RangeRef, m: &str, a: Vec<V>) -> R<V> {
             V::Empty
         }
         "calculate" => V::Empty,
-        "font"
-        | "interior"
-        | "borders"
-        | "characters"
-        | "columnwidth"
-        | "rowheight"
-        | "horizontalalignment"
-        | "verticalalignment"
-        | "wraptext"
-        | "autofit"
-        | "merge"
-        | "unmerge"
-        | "mergecells"
-        | "style"
-        | "comment"
-        | "addcomment"
-        | "hyperlinks"
-        | "validation"
-        | "formatconditions"
-        | "orientation"
-        | "indentlevel"
-        | "locked" => {
+        "font" => V::Obj(Obj::Font(*r)),
+        "interior" => V::Obj(Obj::Interior(*r)),
+        "borders" => V::Obj(Obj::Borders(
+            *r,
+            if has(&a, 0) {
+                Some(to_int(arg(&a, 0))?)
+            } else {
+                None
+            },
+        )),
+        "borderaround" => {
+            let style = if has(&a, 0) { to_int(arg(&a, 0))? } else { 1 };
+            let weight = if has(&a, 1) { to_int(arg(&a, 1))? } else { 2 };
+            let color = if has(&a, 3) {
+                Some(color_arg(arg(&a, 3))?)
+            } else if has(&a, 2) {
+                palette_color(to_int(arg(&a, 2))?)
+            } else {
+                None
+            };
+            let line = line_style(style, weight);
+            draw_borders(it, r, kalem_viewer::BorderSet::Outside, line, color)?;
+            V::Bool(true)
+        }
+        "merge" => {
+            let across = has(&a, 0) && to_bool(arg(&a, 0))?;
+            merge(it, r, true, across)?;
+            V::Empty
+        }
+        "unmerge" => {
+            merge(it, r, false, false)?;
+            V::Empty
+        }
+        "numberformat" | "numberformatlocal" => V::Str(style_of(it, r)?.num_fmt),
+        "horizontalalignment" => V::Int(match style_of(it, r)?.align.as_deref() {
+            Some("left") => -4131,
+            Some("center") => -4108,
+            Some("right") => -4152,
+            Some("centerContinuous") => 7,
+            Some("justify") => -4130,
+            Some("distributed") => -4117,
+            Some("fill") => 5,
+            _ => 1,
+        }),
+        "verticalalignment" => V::Int(match style_of(it, r)?.valign.as_deref() {
+            Some("top") => -4160,
+            Some("center") => -4108,
+            Some("justify") => -4130,
+            Some("distributed") => -4117,
+            _ => -4107,
+        }),
+        "wraptext" => V::Bool(style_of(it, r)?.wrap),
+        "indentlevel" => V::Int(i64::from(style_of(it, r)?.indent)),
+        "locked" => V::Bool(!style_of(it, r)?.unlocked),
+        "shrinktofit" => V::Bool(style_of(it, r)?.shrink),
+        "orientation" => V::Int(match style_of(it, r)?.rotation {
+            0 => -4128,
+            255 => -4166,
+            n @ 1..=90 => i64::from(n),
+            n => 90 - i64::from(n),
+        }),
+        "mergecells" => {
+            let (row, col) = (r.r0, r.c0);
+            V::Bool(
+                it.wb
+                    .sheet(r.sheet)
+                    .map_err(wb_err)?
+                    .merged
+                    .iter()
+                    .any(|m| {
+                        (m.start.row..=m.end.row).contains(&row)
+                            && (m.start.col..=m.end.col).contains(&col)
+                    }),
+            )
+        }
+        "columnwidth" => {
+            let sheet = it.wb.sheet(r.sheet).map_err(wb_err)?;
+            let w = sheet
+                .cols
+                .iter()
+                .find(|c| (c.min..=c.max).contains(&r.c0))
+                .and_then(|c| c.width)
+                .or(sheet.default_col_width)
+                .unwrap_or(8.43);
+            V::Num(w)
+        }
+        "rowheight" => {
+            let sheet = it.wb.sheet(r.sheet).map_err(wb_err)?;
+            let h = sheet
+                .rows
+                .get(&r.r0)
+                .and_then(|x| x.height)
+                .or(sheet.default_row_height)
+                .unwrap_or(15.0);
+            V::Num(h)
+        }
+        "characters" | "autofit" | "style" | "comment" | "addcomment" | "hyperlinks"
+        | "validation" | "formatconditions" => {
             it.report.skipped.push(format!(
-                "line {}: Range.{m} (formatting is not applied by macros in Kalem yet)",
+                "line {}: Range.{m} (not applied by macros in Kalem)",
                 it.line
             ));
             V::Obj(Obj::Unsupported(m.to_owned()))
@@ -1071,6 +1573,31 @@ fn keyed_get(k: &Keyed, key: &V, collection: bool) -> R<Option<usize>> {
 pub fn get(it: &mut Interp<'_>, o: &Obj, m: &str, a: Vec<V>) -> R<V> {
     match o {
         Obj::Range(r) => range_get(it, r, m, a),
+        Obj::Font(r) => font_get(it, r, m),
+        Obj::Interior(r) => interior_get(it, r, m),
+        Obj::Borders(r, side) => match m {
+            // `Borders(xlEdgeBottom)` again, `Borders.Item(xlEdgeTop)`.
+            "item" => Ok(V::Obj(Obj::Borders(*r, Some(to_int(arg(&a, 0))?)))),
+            "linestyle" | "weight" | "color" | "colorindex" => {
+                let st = style_of(it, r)?;
+                let i = match side {
+                    Some(8) => 0,
+                    Some(10) => 1,
+                    Some(9) => 2,
+                    Some(7) => 3,
+                    _ => 2,
+                };
+                Ok(match (m, st.sides[i]) {
+                    ("linestyle", Some(_)) => V::Int(1),
+                    ("linestyle", None) => V::Int(-4142),
+                    ("weight", Some((_, true))) => V::Int(-4138),
+                    ("weight", _) => V::Int(2),
+                    ("color", s) => vba_color(s.map_or(0, |(c, _)| c)),
+                    (_, s) => V::Int(s.and_then(|(c, _)| palette_index(c)).unwrap_or(-4105)),
+                })
+            }
+            _ => Err(RtError::new(438, format!("Borders.{m}"))),
+        },
         Obj::RowsOf(r) | Obj::ColsOf(r) => {
             let rows = matches!(o, Obj::RowsOf(_));
             match m {
@@ -1372,12 +1899,13 @@ pub fn set(it: &mut Interp<'_>, o: &Obj, m: &str, a: Vec<V>, v: V) -> R<()> {
         Obj::Range(r) => match m {
             "value" | "value2" | "formula" | "formulalocal" => set_range_value(it, r, v),
             "formular1c1" => Err(unsupported("FormulaR1C1")),
-            "numberformat" => {
-                it.report.skipped.push(format!("line {}: Range.NumberFormat = … (formatting is not applied by macros in Kalem yet)", it.line));
-                Ok(())
-            }
-            _ => Err(RtError::new(438, format!("Range.{m} cannot be set"))),
+            _ => range_format_set(it, r, m, &v),
         },
+        // `Rows(2).RowHeight = 20`, `Columns("A:C").ColumnWidth = 12`.
+        Obj::RowsOf(r) | Obj::ColsOf(r) if settable(o, m) => set(it, &Obj::Range(*r), m, a, v),
+        Obj::Font(r) => font_set(it, r, m, &v),
+        Obj::Interior(r) => interior_set(it, r, m, &v),
+        Obj::Borders(r, side) => borders_set(it, r, *side, m, &v),
         Obj::Application => match m {
             "screenupdating" | "displayalerts" | "enableevents" | "calculation" | "cursor"
             | "interactive" | "cutcopymode" | "displaystatusbar" => Ok(()),
@@ -1389,15 +1917,27 @@ pub fn set(it: &mut Interp<'_>, o: &Obj, m: &str, a: Vec<V>, v: V) -> R<()> {
             }
             _ => Err(unsupported(&format!("Application.{m} = …"))),
         },
-        Obj::Sheet(_) => match m {
+        Obj::Sheet(i) => match m {
+            // `False`, `xlSheetHidden` and `xlSheetVeryHidden` hide it.
             "visible" => {
-                it.report.skipped.push(format!(
-                    "line {}: Worksheet.Visible = … (not applied yet)",
-                    it.line
-                ));
+                let hidden = match v {
+                    V::Bool(b) => !b,
+                    ref v => to_int(v)? != -1,
+                };
+                it.wb
+                    .edit_sheets(&kalem_viewer::SheetEdit::Hide(*i, hidden))
+                    .map_err(wb_err)?;
+                it.report.changed = true;
                 Ok(())
             }
-            "name" => Err(unsupported("renaming a sheet")),
+            "name" => {
+                let name = to_str(&v)?;
+                it.wb
+                    .edit_sheets(&kalem_viewer::SheetEdit::Rename(*i, name))
+                    .map_err(wb_err)?;
+                it.report.changed = true;
+                Ok(())
+            }
             _ => Err(RtError::new(438, format!("Worksheet.{m} cannot be set"))),
         },
         Obj::ErrObject => {

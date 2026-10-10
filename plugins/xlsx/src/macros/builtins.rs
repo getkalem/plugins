@@ -333,6 +333,11 @@ fn call_inner(name: &str, a: &[V]) -> R<V> {
                 std::cmp::Ordering::Greater => 1,
             }))
         }
+        // A color as VBA's Long, red in the low byte.
+        "rgb" => {
+            let part = |i: usize| -> R<i64> { Ok(int(a, i)?.clamp(0, 255)) };
+            Ok(V::Int(part(0)? | part(1)? << 8 | part(2)? << 16))
+        }
         "chr" | "chrw" => str_v(
             char::from_u32(int(a, 0)? as u32)
                 .map(String::from)
