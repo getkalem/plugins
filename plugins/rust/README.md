@@ -55,6 +55,15 @@ env = { RA_LOG = "info" }
 
 A change reaches rust-analyzer without starting it again; a new check command runs at the next save. Any other setting of rust-analyzer's can be put under the same table, nested as its name is dotted. `completion.callable.snippets` makes no difference yet: Kalem takes no snippets, so rust-analyzer completes a function by its name alone.
 
+## Diagnostics
+
+Two kinds, as in VS Code:
+
+- **cargo's**: `cargo check` (or `cargo clippy`, by the setting `check.command`) runs when rust-analyzer has loaded the project and each time a file is saved, its progress in the status bar ("rust-analyzer: cargo check"), its errors and warnings for the whole workspace after it ends. The first run builds the dependencies.
+- **rust-analyzer's own**, as you type: type mismatches, names not in snake case, unresolved imports, a file no module includes, and their quick fixes as code actions (`SPC c a`; "Rename to bad_name"). rust-analyzer gives these only to an editor that asks for them. Kalem 0.6.1 and earlier do not ask, and show cargo's only; Kalem's change for this (T3.8.2, not released yet) asks after a file opens and after its changes.
+
+An error both find, a type mismatch, is listed twice, once from `rustc` and once from rust-analyzer, as VS Code lists it. While rust-analyzer loads the project (half a minute the first time, the standard library indexed) it may answer "content modified" to what it is asked; the same Kalem change asks again rather than showing that.
+
 ## A file outside a project
 
 rust-analyzer serves only files of a Cargo project it has loaded. A `.rs` file with no `Cargo.toml` above it (a scratch file, a `rust-script`) gets a server that finds no project and answers nothing: no documentation, no completion, no diagnostics. Name the file in rust-analyzer's `linkedProjects` and it is served on its own, against the standard library: documentation, completion and definitions work. A `.kalem/settings.toml` in its folder does it, with paths relative to the folder:
@@ -64,7 +73,7 @@ rust-analyzer serves only files of a Cargo project it has loaded. A `.rs` file w
 linkedProjects = ["scratch.rs"]
 ```
 
-Such a file gets no diagnostics from `cargo check`, which fails on a file that names no edition, and rust-analyzer gives its own diagnostics only to an editor that asks for them, which Kalem does not do yet (see `rust_todo.md`, RS4). A file inside a project that no `mod` names is not served either; rust-analyzer's "unlinked file" diagnostic, which says so and offers to add the `mod`, is one of those Kalem does not ask for.
+Such a file gets no diagnostics from `cargo check`, which fails on a file that names no edition; it gets rust-analyzer's own, with a Kalem that asks for them (below). A file inside a project that no `mod` names is not served either; rust-analyzer's "unlinked file" diagnostic says so, and offers to add the `mod`.
 
 The plugin does not refuse such files a server (`requireRoot`): that would refuse one to a project never built too, which has no `Cargo.lock` yet and is served from its file's folder.
 
@@ -92,7 +101,7 @@ kalem lsp ask format plugins/rust/corpus/ws/app/src/main.rs        # already for
 
 ## Not done
 
-See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; rust-analyzer's own diagnostics, which it gives only to an editor that asks; rustfmt when no server runs; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
+See [`rust_todo.md`](rust_todo.md). In short: the two editors checked by hand; rustfmt when no server runs; `cargo run` and `cargo test` at the cursor; expand macro, open docs and rust-analyzer's other requests.
 
 ## Sources and licenses
 

@@ -399,7 +399,7 @@ spike first.
 
 ## RS4. Diagnostics: `cargo check` on save, clippy by setting
 
-- [ ] RS4 `checkOnSave` true and `check.command` `check` in the
+- [~] RS4 `checkOnSave` true and `check.command` `check` in the
   manifest, `clippy` by setting (what this repository's CI runs;
   slower); `check.allTargets`, `check.extraArgs`, `check.features`
   and `check.workspace` described; the run's progress ("cargo check")
@@ -435,6 +435,47 @@ spike first.
   diagnostics pulled after it opens and after its changes settle,
   and again on `workspace/diagnostic/refresh`; the pulled and the
   pushed kept apart per document and shown together.
+  (Done 2026-10-10 on Kalem's branch `rust-server-start`, not merged,
+  and here. `checkOnSave` and `check.command` are rust-analyzer's
+  defaults, described for the panel in RS3d and not sent; the default
+  on save stays the owner's question. Kalem's part as made: pull
+  support declared (`textDocument.diagnostic`,
+  `workspace.diagnostics.refreshSupport`); a document's diagnostics
+  asked for once the server is ready, after it opens and after each
+  change, one request at a time per document and one more at most
+  when it changes meanwhile; asked again on
+  `workspace/diagnostic/refresh`; the report's `resultId` sent back,
+  an "unchanged" answer keeping the report; a cancelled answer asked
+  again on the next message after 300 ms; the given and the pushed
+  kept apart and read together (the status bar's counts, the lists,
+  `kalem lsp check`, stale when either is older than the text). And,
+  found on the way: a request rust-analyzer cancels while it loads
+  the project ("content modified"; code actions asked at its start
+  came back so, and were shown as an error) is asked again after
+  0.5, 1 and 2 s while the document is unchanged, and said as "still
+  busy (loading the project)" after that. Tested in Kalem with two
+  new behaviors of the fake server, `pull` (pushes `TODO`, gives
+  `bad` when asked, a note after a save with a refresh, "unchanged"
+  when asked again with the same report) and `busy` (two hovers
+  answered "content modified"), in the client's tests and in the
+  service test; without the retries the service test fails with the
+  busy message. With rust-analyzer 1.99.0, the branch's terminal
+  build on a copy of the corpus with a `fn BadName()` and a type
+  mismatch: `kalem lsp check` lists rust-analyzer's `non_snake_case`
+  warning and its type mismatch beside cargo's (Kalem 0.6.0 lists
+  cargo's only), and the linked loose file of RS3c its type
+  mismatch. Through Kalem's service: during the save's check the
+  status bar says "rust-analyzer: cargo check", then "2 errors, 1
+  warnings"; code actions at `BadName` start with rust-analyzer's
+  "Rename to bad_name", and asked from the server's first second on,
+  none came back as an error (one took 1.5 s, asked again). The first
+  load of the corpus, the standard library indexed, took 27 s. Known
+  differences, in the README: an error both find is listed twice
+  (`rustc` and rust-analyzer), as VS Code lists it; cargo's after the
+  save only. Open: the branch merged and released; the editors by
+  hand (underlines and gutter marks are T3.8.2's open part); the
+  borrow error asserted through the client (RS10b); Kalem's own
+  workspace (RS10a).)
 
 ## RS5. Formatting: rustfmt through the server
 
