@@ -3,7 +3,8 @@
 
 For every plugins/NAME/plugin.json the entry carries the manifest's id, name,
 version, description, api and permissions, the extensions a viewer opens
-(`opens`), the download URL of the component of that version, and its
+(`opens`), the languages a plugin serves and the markers of its layers
+(`languages`, `markers`: what makes Kalem suggest it), the download URL of the component of that version, and its
 SHA-256 when releases/NAME-vVERSION.sha256 exists (the release workflow
 writes that file). A declarative plugin (a language
 plugin: a manifest and syntax files, no `main`) is published as an archive of
@@ -48,12 +49,24 @@ def build():
         # for a file it cannot open yet, without downloading it.
         if m.get("opens"):
             entry["opens"] = list(m["opens"])
+        # What makes Kalem suggest the plugin when a file opens: the
+        # extensions of the languages it serves, and the files or folders
+        # that, in the file's folder or above it, mean it serves it (a
+        # layer's markers: logseq/config.edn, .obsidian).
         if declarative:
             entry["kind"] = "declarative"
+        if declarative or m.get("languages"):
             entry["languages"] = [
                 {"id": l["id"], "extensions": l.get("extensions", [])}
                 for l in m.get("languages", [])
             ]
+        markers = list(m.get("markers", []))
+        for layer in m.get("layers", []):
+            for marker in layer.get("markers", []):
+                if marker not in markers:
+                    markers.append(marker)
+        if markers:
+            entry["markers"] = markers
         entries.append(entry)
     return {"schema": 1, "plugins": entries}
 
