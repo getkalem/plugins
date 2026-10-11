@@ -887,7 +887,7 @@ first.
 
 ## PT14. Release, the README and the Book
 
-- [ ] PT14 The README: what it does, the feature table per dialect
+- [~] PT14 The README: what it does, the feature table per dialect
   (what the server gives, what the tool gives, what the plugin
   itself does), the install lines (hledger, Ledger, Beancount and
   Python's `beancount`, the two servers, `bean-price`, `pricehist`),
@@ -897,6 +897,23 @@ first.
   entry in `index.json`; the tag `pta-v0.1.0` once PT1 to PT8 are
   done; the Book's Part IV page for the journal formats (D53), which
   waits on Kalem.
+  (0.1.0 prepared 2026-10-11, the owner deciding that it goes out with
+  what is done rather than after all of PT1 to PT8: version 0.1.0 in
+  `plugin.json` and `Cargo.toml`; `api` `^0.2.13`, what the component
+  imports with the workspace's kalem-plugin (every interface at 0.2.13,
+  read with `wasm-tools component wit`), for Kalem 0.6.16 and later
+  (the servers' options and the plugin's keys in its languages' files,
+  K8 to K10a); the description says what the plugin does. The README
+  for the release: install lines (the plugin, each tool, the servers,
+  `pricehist` and `beanprice`), what each dialect gets and from whom
+  (server, tool, plugin), the keys under `SPC m` and in the documents,
+  the settings, what waits on Kalem (K3's marking from the
+  reconciliation, the statement in a pane beside) and what is not done
+  (PT7c, PT8c, PT9b, PT11b, PT11c, PT13), and the differences from
+  ledger-mode and Fava. `CODEOWNERS` had its line since PT1;
+  `index.json` regenerated (download empty until the tag). Left: the
+  tag `pta-v0.1.0` and its release, the git session's; the Book's page,
+  which waits on Kalem.)
 
 ## What Kalem's core must gain
 

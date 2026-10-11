@@ -1,33 +1,122 @@
 # Plain text accounting (`pta`)
 
-hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and checks, checked by the tool you already have, and, as the work list goes on, imported from bank statements, reconciled against them and reported as documents. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance and check; the plugin asks them and shows what they say. The work list is [`pta_todo.md`](pta_todo.md).
+hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and alignment, checked by the tool you already have on each save, reported as documents (balance, register, market value), reconciled against a statement, imported from bank statements, and kept in prices. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance, value and check; the plugin asks them and shows what they say, and has no engine of its own. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: the spike (PT1), the highlighter (PT2), the servers (PT3), aligning amounts (PT4), checking by the tool (PT5), writing transactions (PT6), the balance and the register (PT7), reconciliation (PT8), import from bank statements (PT9) and prices (PT10)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
+**Status: 0.1.0**, for Kalem 0.6.16 and later (plugin API 0.2.13). One plugin, one install, with two halves in one manifest, both loaded:
 
-- **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`). Completion of accounts, payees and tags, diagnostics and formatting come from the servers.
-- **The component**, which runs the journal's tool: a status bar item naming the tool and the main journal of the journal you are in (`hledger · 2026.journal`; its tooltip says why that journal), and one command, *Tool Version* (in the palette under Journal, and the item's click), which asks hledger, Ledger or `bean-check` what it is, or says how to install it.
-- **The highlighting**, the plugin's own syntaxes: one base for what the journals share (dates, statuses, descriptions, accounts, amounts and commodities, costs, lots, balance assertions, comments and their tags, periodic and automated transactions, directives), with hledger, Ledger and Beancount over it, and hledger's CSV rules beside them. Journals in Org's source blocks and Markdown's fenced blocks (`hledger`, `ledger`, `beancount`) are colored the same. Dates and amounts take the numbers' color, accounts the types', descriptions and payees the strings', statuses and directives the keywords', tag names the tags'; a tag is colored only where the tool reads one (not in a comment line of the file's own, nor in Beancount's comments).
+- **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`), each highlighted by the plugin's own syntaxes: one base for what the journals share (dates, statuses, descriptions, accounts, amounts and commodities, costs, lots, balance assertions, comments and their tags, periodic and automated transactions, directives), with hledger, Ledger and Beancount over it. Journals in Org's source blocks and Markdown's fenced blocks (`hledger`, `ledger`, `beancount`) are colored the same. Completion of accounts, payees and tags, hover, rename and the servers' diagnostics come from the servers.
+- **The component**, which runs the journal's tool: the commands below, a status bar item naming the tool and the main journal of the journal you are in (`hledger · 2026.journal · ✓`), the Journal menu and button.
 
 `.dat` files are not claimed.
 
-Nothing but the tool you already use is needed: the plugin computes no balance and has no engine of its own. hledger, Ledger and Beancount are the reference; the servers, where installed, add completion and their own checks.
+## Install
 
-## What it needs
+```
+kalem plugin install pta
+```
 
-- Kalem 0.6.9 or later. The component starts with the first journal opened.
-- The tool you use: `brew install hledger ledger`; `pip install beancount`. A tool not on the PATH Kalem sees is named by the plugin's setting `programs.NAME` (`programs.bean-check` for a virtual environment's).
-- The journal's folder among your projects (`projects.toml`): Kalem runs a plugin's programs in a project's folder only.
-- The servers, if you want completion and their checks: one of the two hledger-lsp programs below; `brew install beancount-language-server` (or `cargo install beancount-language-server`). `kalem lsp status FILE` says which runs. Ledger has no server.
+Kalem also offers it when you open a journal. Then the tool you use, and, if you like, a server and a price program:
+
+| | Tool | Server (completion, hover, rename) | Prices |
+|---|---|---|---|
+| hledger | `brew install hledger`, or a [release](https://hledger.org/install) | `npm install -g hledger-lsp`, or juev's: `go install github.com/juev/hledger-lsp/cmd/hledger-lsp@latest` (see below) | `pip install pricehist` |
+| Ledger | `brew install ledger`, or your system's package | none exists | `pip install pricehist` |
+| Beancount | `pip install beancount` (`bean-check`, `bean-query`) | `brew install beancount-language-server`, or `cargo install beancount-language-server` | `pip install beanprice` |
+
+- **The journal's folder among your projects** (`projects.toml`, or Projects: Add Project): Kalem runs a plugin's programs in a project's folder only.
+- A program not on the PATH Kalem sees (a virtual environment's `bean-check`, Kalem started from the Dock) is named by the setting `programs.NAME`.
+- The component starts with the first document you open, so that a bank statement (a CSV file, which the plugin does not claim) can be imported before any journal is open.
+- `kalem lsp status FILE` says which server runs for a journal.
+
+## What it does, per dialect
+
+| | hledger | Ledger | Beancount |
+|---|---|---|---|
+| Highlighting (the plugin) | journal and CSV rules | journal | journal |
+| Completion, hover, definition, references, rename (the server) | hledger-lsp | none | beancount-language-server |
+| Check Journal, on each save (the tool) | `hledger check --strict` and the setting `checks` | `ledger --pedantic --explicit balance` | `bean-check` |
+| Align Amounts, Format Document (the plugin) | aligns; the server's formatting turned off | aligns | aligns; Format Document is the server's or `bean-format` |
+| New Transaction, drafted from the payee's last (the tool) | `hledger print --match` | `ledger xact` | the payee's last entry |
+| Toggle Status, Copy, Sort, Next, Previous, Date ±1 (the plugin) | yes | yes | yes |
+| Balance and Register (the tool) | `hledger balance`, `register -O json` | `ledger balance`, `register` | `bean-query` |
+| Market value (the tool) | `-V --infer-market-prices` | `-V` | `value()` |
+| Reconcile, Finish (the tool's totals, the plugin's edits) | a `Balance assertion` transaction | a `Balance assertion` transaction | a `balance` directive |
+| Import a bank statement (the tool) | `hledger import` through its rules, rules offered from the statement's header | `ledger convert` | not yet (your beangulp script) |
+| Fetch Prices (your price program) | `pricehist` | `pricehist` | `bean-price --update` |
+
+## Keys
+
+In a journal, under `SPC m` in Vim's command mode; in the Word-like profile, from the **Journal** menu (the menu bar, F10 in the terminal), the **Journal** button on the toolbar (the foot of the terminal's sidebar) and the palette's Journal group. The button, `SPC m m` and `?` in the plugin's documents offer the commands as a list, each with its keys.
+
+| Keys | Command |
+|---|---|
+| `SPC m t` | New Transaction |
+| `SPC m y` | Copy Transaction |
+| `SPC m c` | Toggle Status |
+| `SPC m a` | Align Amounts |
+| `SPC m s` | Sort Transactions |
+| `Alt+Up`, `Alt+Down` | Previous, Next Transaction |
+| `Ctrl+Shift+H`, `Ctrl+Shift+L` | Date a Day Earlier, Later |
+| `SPC m k` | Check Journal |
+| `SPC m b` | Balance |
+| `SPC m R` | Register |
+| `SPC m r` | Reconcile |
+| `SPC m C` | Finish Reconciliation |
+| `SPC m p` | Fetch Prices |
+| `SPC m m` | The Journal's commands, to pick |
+| `SPC m i`, `SPC m e` | In a CSV statement: Import Statement, Edit the Statement's Rules |
+| Enter | On a posting, in the Word-like profile: aligns it, then a new line |
+
+In the plugin's documents (both profiles; in Vim's command mode): **Check**: Enter the problem's place, `r` again, `q` or Escape close. **Balance**: Tab, Left and Right fold, Enter the account's register, `p` period, `d` depth, `v` market value, `r` again, `q` close. **Register**: Enter the posting, `p` period, `v` market value, `r` again, `q` close. **Reconcile**: Enter the posting, `t` the statement's balance, `C` finish, `r` again, `q` close. **Import**: `i` import, `e` the rules, `r` again, `q` close. `?` lists them.
+
+## Settings
+
+In `settings.toml`, under `[plugins."org.kalem.pta"]`:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `journal` | empty | The main journal, the one that includes the others (absolute, from `~/`, or beside the file); empty for `LEDGER_FILE`'s when it includes the file, else the file itself |
+| `tool` | `auto` | The program for hledger's and Ledger's journals: `auto` (the file's own; a `.ledger` file is hledger's where only hledger is installed), `hledger` or `ledger` |
+| `amount_column` | 52 | Where Align Amounts puts the amounts' last digits, as ledger-mode; 0 for as near the accounts as the longest posting allows |
+| `align_on_enter` | on | Enter on a posting aligns it first |
+| `check_on_save` | on | Check the main journal on each save |
+| `checks` | `[]` | hledger's checks added to `--strict`: `ordereddates`, `payees`, `recentassertions`, `tags`, `uniqueleafnames` |
+| `insert_at` | `date` | Where New and Copy Transaction write: at the date's place, or at the `end` |
+| `toggle_postings` | off | Toggle Status on a posting line marks the posting, not its transaction |
+| `rules` | empty | hledger's rules for a statement, when not its own beside it (`statement.csv.rules`) |
+| `ledger_account`, `ledger_date_format` | empty | Ledger's import: the bank's account, and how the statement writes dates (`%d.%m.%Y`) |
+| `prices` | empty | Where Fetch Prices writes: a file your main journal includes (beside it when relative); empty for the main journal |
+| `price_sources` | `[]` | hledger and Ledger: the pairs to fetch, `SOURCE BASE/QUOTE` (`ecb EUR/USD`), a third word for the journal's symbol (`ecb EUR/USD $`) |
+| `programs.NAME` | empty | Where `hledger`, `ledger`, `bean-check`, `bean-query`, `pricehist` or `bean-price` is, when not on the PATH |
+| `servers.beancount-language-server.initializationOptions.journal_file` | empty | Beancount's main journal, for its server (below) and the plugin |
+| `servers.hledger-lsp.ignore` | `["documentFormattingProvider"]` | What of hledger-lsp Kalem leaves unused (below) |
+| `settings.hledgerLanguageServer.…`, `settings.hledger.…` | the servers' | ptimoney's and juev's hledger-lsp settings, sent to the server |
+
+## Not yet
+
+Waiting on Kalem:
+
+- **Marking from the reconciliation.** ledger-mode's reconcile buffer marks a posting where you press Space; a Kalem plugin can edit only the document a command runs in (K3), so here postings are marked in the journal (`SPC m c`) and the reconciliation is written again on save. Finish opens the journal and writes there.
+- **The statement in a pane beside.** The Reconcile and Import documents open as documents of their own, not in a pane beside the journal.
+- The tool's problems in the gutter beside the server's (K2); the servers' running balances and elided amounts as inlay hints (K4); `hledger` and `beancount` source blocks run by Org's Babel (K6); Enter aligning in Vim's insert mode.
+
+Not done yet:
+
+- **The other reports** (PT7c): cash flow, income statement alone, budget, forecast, `roi`, `stats`, Beancount's saved queries, as one pick.
+- **The statement beside the reconciliation** (PT8c): a statement's rows paired with the account's postings by date and amount.
+- **Beancount's import** (PT9b): your beangulp script, which needs a permission to run `python3`.
+- A report inserted into an Org document as a table (PT11b), the commands from `kalem run` (PT11c), and journals of 200,000 transactions measured (PT13).
+
+## Beside ledger-mode and Fava
+
+- **ledger-mode** (Emacs): the same keys' work (`C-c C-a` New Transaction through `ledger xact`, `C-c C-c` Toggle Status, alignment at column 52 and on Enter, `C-c C-r` Reconcile with its cleared, pending and target totals), for hledger and Beancount too. Not here: marking from the reconcile buffer (above), `ledger-report`'s list of your own reports (PT7c), `ledger-schedule`, and Calc on an amount. Here and not there: the tool's check on each save as a document, import from statements, prices fetched, the servers' completion and rename.
+- **Fava** (Beancount's web interface): the same reports from the same tool, in the editor where the journal is written, offline, for hledger and Ledger too. Not here: charts (balances over time, treemaps), the query shell, documents attached to entries, and importers run from the browser.
 
 ## The main journal and the tool
 
 A journal that `include`s others is checked and reported as one: checking an included file alone gives false errors (an account opened in another file is "unknown"). The plugin's setting `journal` names the main journal (absolute, from `~/`, or beside the file). Unset, an hledger journal's main journal is the one `LEDGER_FILE` names when that journal includes the file (`hledger files` says so), a Beancount journal's the one its server is told (below), else the file itself. Kalem started from the Dock or a launcher may not see the `LEDGER_FILE` of your shell: set `journal` then.
 
 The setting `tool` picks the program for hledger's and Ledger's journals: `auto` takes the file's own, and a `.ledger` file goes to Ledger where Ledger is installed and to hledger where only hledger is (hledger does not read Ledger's value expressions, such as `(-$132.00)`). A Beancount journal is always Beancount's.
-
-## The Journal menu
-
-In a journal and in the Check document, the menu bar (F10 in the terminal) has a **Journal** menu with the commands below, and the toolbar (the foot of the terminal's sidebar) a **Journal** button; the button, `SPC m m` and `?` in the Check document offer the journal's commands as a list to pick from, each with its keys, and run the one picked where you were.
 
 ## Writing transactions
 
@@ -81,7 +170,7 @@ The servers' diagnostics are their own and may disagree with the tool (hledger-l
 
 *Align Amounts* (`SPC m a` in Vim's command mode; the palette's Journal group) puts the amounts' last digits of the transaction at the cursor, or of every transaction selected, at one column: the setting `amount_column`, 52 as in ledger-mode, or 0 for as near the accounts as the longest posting allows. Only the blanks between account and amount change, two at the least: the amount as you wrote it (sign, decimal mark, digit groups, commodity and its side), a cost, a lot, a balance assertion and a comment stay as they are, and a posting without an amount is left alone. A value expression (`(-$132.00)`) is aligned by its closing parenthesis, a posting with a balance assertion alone by the assertion's amount. One undo step.
 
-With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode: from the Kalem release after 0.6.15, in the Word-like profile. Vim's insert mode takes Enter itself; there, `SPC m a` from command mode aligns.
+With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode, in the Word-like profile. Vim's insert mode takes Enter itself; there, `SPC m a` from command mode aligns.
 
 Format Document (`SPC c f`) in an hledger or Ledger journal: none (hledger-lsp's is left unused, and `hledger print` rewrites a journal); Align Amounts, with the whole file selected, is the formatter. In a Beancount journal: its server's, else set `[formatters] beancount = "bean-format -"`.
 
@@ -99,13 +188,13 @@ On the corpus, through Kalem's client (`kalem lsp ask`, `kalem lsp check`) and a
 | Rename an account | the open file only (7 of 10 places): the declaration and the year before keep the old name | every file but a periodic transaction's posting | every file |
 | Diagnostics | the failed assertion at its line; warns of an automated posting's virtual account, `(budget:food)`, as undeclared | the failed assertion at its line; an error on an automated posting's multiplier, `*-1`, which hledger reads | `bean-check`'s errors; a `!` transaction flagged |
 | Formatting | **changes what the journal means**: drops an automated posting's `*-1` and writes `==` as `=` (undo puts it back) | amounts aligned; hledger reads it as before | amounts aligned; `bean-query` reads it as before |
-| Settings sent | `settings.hledgerLanguageServer.…` | `settings.hledger.…` | its main journal, `servers.beancount-language-server.initializationOptions.journal_file`, read as it starts (from the Kalem after 0.6.15) |
+| Settings sent | `settings.hledgerLanguageServer.…` | `settings.hledger.…` | its main journal, `servers.beancount-language-server.initializationOptions.journal_file`, read as it starts |
 
 Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting; it does not yet ask for the inlay hints all three give (an elided posting's amount; running balances in juev's), nor for code lenses.
 
-The plugin turns hledger-lsp's formatting off (`servers.hledger-lsp.ignore`, `["documentFormattingProvider"]`), since ptimoney's 0.7.0 formats a journal into one that means something else; with juev's, whose formatting hledger reads as before, set it to `[]`. Kalem leaves a server's capability unused from the release after 0.6.15; Kalem 0.6.15 and earlier format with the server whatever the plugin says, so there, do not use Format Document with ptimoney's 0.7.0 on a journal with automated postings or `==` assertions (undo puts it back).
+The plugin turns hledger-lsp's formatting off (`servers.hledger-lsp.ignore`, `["documentFormattingProvider"]`), since ptimoney's 0.7.0 formats a journal into one that means something else; with juev's, whose formatting hledger reads as before, set it to `[]`.
 
-Without its main journal, beancount-language-server checks an included file alone and reports its accounts as unknown (two false errors on `2026-01.beancount` in a test); told the main journal, the file is clean and completion knows every account of the journal. Set `servers.beancount-language-server.initializationOptions.journal_file` (absolute, from `~/`, or beside the file); the plugin takes it as Beancount's main journal too while `journal` is empty. Kalem hands it to the server from the release after 0.6.15.
+Without its main journal, beancount-language-server checks an included file alone and reports its accounts as unknown (two false errors on `2026-01.beancount` in a test); told the main journal, the file is clean and completion knows every account of the journal. Set `servers.beancount-language-server.initializationOptions.journal_file` (absolute, from `~/`, or beside the file); the plugin takes it as Beancount's main journal too while `journal` is empty.
 
 ## Tests
 

@@ -39,10 +39,14 @@ fn the_manifest_has_both_halves() {
     let m = manifest();
     assert_eq!(m["id"], "org.kalem.pta");
     assert_eq!(m["main"], "dist/pta.wasm");
-    assert_eq!(m["api"], "^0.2.9");
+    // The release imports the plugin API of the kalem-plugin it is built
+    // with: every interface at 0.2.13 (`wasm-tools component wit` on the
+    // component), styled documents and `clock-2` among them.
+    assert_eq!(m["api"], "^0.2.13");
     // Started with the first document of any kind: a bank statement (a
     // CSV file, which the plugin does not claim) is imported from (PT9),
-    // and the journal's own files would start it too late.
+    // and a statement opened before any journal would find the plugin
+    // not started were the journals' files to start it.
     assert_eq!(strings(&m["activation"]), ["onEvent:document:open"]);
     let languages = m["languages"].as_array().expect("languages");
     let ids: Vec<&str> = languages.iter().filter_map(|l| l["id"].as_str()).collect();
