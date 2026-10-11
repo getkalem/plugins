@@ -882,7 +882,11 @@ const DAYS: [&str; 7] = [
 ];
 
 fn format_date(v: f64, sec: &Section, date1904: bool) -> String {
-    if v < 0.0 {
+    // Excel's dates end with 9999-12-31: a later one shows as a negative
+    // one does (a number of days past it reached the date arithmetic, which
+    // overflowed).
+    let after_last = if date1904 { 2_957_004.0 } else { 2_958_466.0 };
+    if v < 0.0 || v >= after_last {
         return "#".repeat(10);
     }
     let toks = &sec.toks;
@@ -1030,6 +1034,18 @@ mod tests {
         assert_eq!(text_color("[Red]General"), Some(0xFF0000));
         assert_eq!(text_color("[Red]0;0"), None);
         assert_eq!(number_color(1.0, "[Color99]0"), None);
+    }
+
+    #[test]
+    fn dates_end_with_the_year_9999() {
+        assert_eq!(f(2_958_465.0, "yyyy-mm-dd"), "9999-12-31");
+        assert_eq!(f(2_958_466.0, "yyyy-mm-dd"), "#".repeat(10));
+        assert_eq!(f(1e20, "yyyy-mm-dd"), "#".repeat(10));
+        assert_eq!(format_number(2_957_003.0, "yyyy-mm-dd", true), "9999-12-31");
+        assert_eq!(
+            format_number(2_957_004.0, "yyyy-mm-dd", true),
+            "#".repeat(10)
+        );
     }
 
     #[test]
