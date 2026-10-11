@@ -10,8 +10,11 @@
 //!
 //! - [`journal`]: the main journal and the tool that reads it (PT3c).
 //!
+//! - [`align`]: amounts aligned at a column, nothing else moved (PT4).
+//!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
+pub mod align;
 #[cfg(target_arch = "wasm32")]
 mod component;
 pub mod journal;
@@ -33,6 +36,15 @@ pub const TEXT_TYPES: &[&str] = &[
     "beancount",
     "bean",
 ];
+
+/// The when-clause of a journal: its text type is one of [`TEXT_TYPES`].
+pub fn journal_when() -> String {
+    let types: Vec<String> = TEXT_TYPES
+        .iter()
+        .map(|t| format!("textType == {t}"))
+        .collect();
+    format!("({})", types.join(" || "))
+}
 
 /// A journal's format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

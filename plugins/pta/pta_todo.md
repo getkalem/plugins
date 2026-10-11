@@ -355,7 +355,7 @@ first.
 
 ## PT4. Formatting as the tool writes it
 
-- [ ] PT4 Format (Kalem's `SPC c f`): the server's formatting where it
+- [~] PT4 Format (Kalem's `SPC c f`): the server's formatting where it
   formats (both do), else `commands.format`: `bean-format` for
   Beancount, nothing for hledger and Ledger (`hledger print` rewrites
   too much: it normalizes amounts, drops directives and reorders).
@@ -371,6 +371,44 @@ first.
   commodity, a cost, a balance assertion and a trailing comment,
   aligned, and unchanged by a second alignment; the file otherwise
   identical byte for byte.
+  (Done 2026-10-11 but Enter in Vim's insert mode; checked in Kalem's
+  terminal editor. Format, changed from the plan: no `commands.format`,
+  since a language plugin's `commands` are the plugin's, one `format`
+  for its three languages, and `bean-format` would run on hledger's
+  files (K11); hledger-lsp's formatting is left unused (PT3a, K9) and
+  `hledger print` rewrites too much, so Format Document in an hledger
+  or Ledger journal says there is no formatter (with K9's Kalem;
+  before it, hledger-lsp's), and Align Amounts is the journal's
+  formatter. Beancount's: its server's (bean-format's widths, read as
+  before by `bean-query`, PT3b), else, without the server, the user's
+  `formatters.beancount = "bean-format -"`, as the README says.
+  Align Amounts (`pta.align`, `SPC m a` in Vim's command mode, the
+  palette): `src/align.rs`, the anchor an amount's last digit (the sign
+  and a left commodity before it, Beancount's sum `800.00 + 42.35`
+  taken whole, a cost, a lot and a comment after it), a value
+  expression's closing parenthesis (`(-$132.00)`), or, for a posting
+  with a balance assertion alone, the assertion's amount; two blanks
+  at the least between account and amount (hledger's and Ledger's
+  rule); a posting without an amount, a comment line and Beancount's
+  metadata left alone; characters counted, not bytes; the edits the
+  gaps only, one undo step named "Align Amounts". `amount_column` 52
+  or 0 as planned. `align_on_enter`: `pta.newline`, bound to Enter in
+  a journal outside Vim's command mode, aligns the cursor's posting
+  (the transaction's column) and runs Kalem's `edit.newline`; Kalem
+  put the profile's Enter before a plugin's in a journal, so it ran
+  only once Kalem gave a plugin's keys in its languages' files the
+  place its keys in its own documents have (K10, built on Kalem's
+  branch `language-keys`; checked: Enter aligns, then the new line
+  indented). Open: Vim's insert mode, whose layer takes Enter in a
+  plain text file before any key (K10's other half); `SPC m a` from
+  command mode aligns there. Tests: 10 unit tests of the anchors and
+  the cases (quoted commodity, cost, lot, assertion, comment, a tab,
+  the column too near, the cursor's transaction only, a selection,
+  Beancount's metadata, wide characters, Enter's line only), and
+  `tests/align.rs`: every corpus journal aligned whole at 52 and at 0
+  changes only gaps, is unchanged by a second alignment, and reads as
+  before to its tool (`hledger print`, `ledger register`, `bean-query`;
+  an error file's error the same).)
 
 ## PT5. Checked by the tool
 
@@ -708,6 +746,18 @@ plugin's section 9 followed).
   (3e5c45e1): the manifest's `ignore`, the user's in its place (`[]`
   for all used, so that juev's formatting can be had back), and
   `formatters.TYPE = "off"` stopping every formatter; unreleased.
+- K10 A plugin's keys in the files of a language it declares
+  (`textType == journal`) before the profile's, as its keys in its own
+  documents are (PT4's Enter): built on Kalem's branch `language-keys`
+  (05177b87), unreleased. Its other half, open: Vim's insert mode
+  leaving a key to a plugin's binding where one applies; its layer
+  takes Enter in a plain text file before the keys
+  (`kalem-core/src/vim/insert.rs`), so ledger-mode's align on Enter
+  is not had there.
+- K11 A language plugin's `commands` per language, or a component's
+  command as a language's formatter: one `commands.format` serves all
+  of a plugin's languages (`bean-format` would run on an hledger
+  journal), and Align Amounts cannot be Format Document's in a journal.
 
 ## Open for the owner
 

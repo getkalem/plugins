@@ -11,8 +11,8 @@ use std::rc::Rc;
 use kalem_plugin::kalem::{self, Event, EventKind, Plugin, Reply, Scope};
 use kalem_plugin::{editor, process, settings, ui};
 
-use crate::Dialect;
 use crate::journal::{self, Installed, Settings, ToolChoice};
+use crate::{Dialect, align};
 
 /// The status bar item's id.
 const STATUS: &str = "pta.journal";
@@ -108,6 +108,50 @@ fn version() -> Result<String, String> {
         // Refused: a folder outside the projects, too many runs.
         ui::notify(&format!("{}: {e}", d.checker()), ui::Level::Warning);
     }
+    Ok("null".into())
+}
+
+/// Align Amounts (PT4): the amounts of the transaction at the cursor,
+/// or of the transactions selected, at the column of `amount_column`;
+/// with `line`, those of the cursor's line only (Enter's). One undo step.
+fn align(line: bool) {
+    let Some((d, _)) = dialect_here() else {
+        return;
+    };
+    let s = align::Settings::read(settings::own);
+    let text = editor::text(None);
+    let sel = editor::selected();
+    let (from, to) = (
+        sel.anchor.min(sel.head) as usize,
+        sel.anchor.max(sel.head) as usize,
+    );
+    let edits = if line {
+        align::edits_on_line(&text, sel.head as usize, d, s.column)
+    } else {
+        align::edits(&text, from..to, d, s.column)
+    };
+    for (r, blanks) in &edits {
+        let range = editor::Range {
+            start: r.start as u64,
+            end: r.end as u64,
+        };
+        if let Err(why) = editor::replace(range, blanks) {
+            ui::notify(&why, ui::Level::Warning);
+            return;
+        }
+    }
+    if !edits.is_empty() {
+        editor::transact("Align Amounts");
+    }
+}
+
+/// Enter in a journal: the posting aligned first when `align_on_enter`
+/// is on, then Kalem's own new line, which runs once this returns.
+fn newline() -> Result<String, String> {
+    if align::Settings::read(settings::own).on_enter {
+        align(true);
+    }
+    kalem::run("edit.newline", "{}")?;
     Ok("null".into())
 }
 
@@ -210,6 +254,32 @@ impl Plugin for Pta {
         );
         spec.category = "Journal".into();
         kalem::command(spec, |_| version())?;
+        let journal = crate::journal_when();
+        let mut spec = kalem::spec("pta.align", "Align Amounts", Scope::only(crate::TEXT_TYPES));
+        spec.category = "Journal".into();
+        kalem::command(spec, |_| {
+            align(false);
+            Ok("null".into())
+        })?;
+        kalem::keymap(
+            "space m a",
+            "pta.align",
+            Some(&format!("{journal} && vimCommand")),
+        )?;
+        let mut spec = kalem::spec(
+            "pta.newline",
+            "New Line, the Posting Aligned",
+            Scope::only(crate::TEXT_TYPES),
+        );
+        spec.category = "Journal".into();
+        kalem::command(spec, |_| newline())?;
+        // Not in Vim's insert mode, whose layer takes Enter in a plain
+        // text file before the keys (K10); `SPC m a` aligns there.
+        kalem::keymap(
+            "enter",
+            "pta.newline",
+            Some(&format!("{journal} && !vimCommand")),
+        )?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
