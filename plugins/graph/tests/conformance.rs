@@ -120,7 +120,10 @@ fn a_logseq_graph_in_markdown() {
     // Never read: the backup, the hidden folder; a note in assets/ is,
     // as Logseq reads it.
     assert!(i.page("ignored").is_none());
-    assert!(i.page("readme").is_some_and(|p| p.path.as_deref() == Some("assets/readme.md")));
+    assert!(
+        i.page("readme")
+            .is_some_and(|p| p.path.as_deref() == Some("assets/readme.md"))
+    );
     assert!(i.page("read from assets").is_some());
     // Titles from the file name, decoded, and from `title::`.
     assert!(
@@ -429,10 +432,8 @@ fn queries_on_the_corpus() {
             "TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]",
         ]
     );
-    assert_eq!(
-        found("(namespace [[Project]])"),
-        ["Project/Plugins", "Project/Plugins/Graph"]
-    );
+    // A namespace's children, not their children, as Logseq 0.10.9.
+    assert_eq!(found("(namespace [[Project]])"), ["Project/Plugins"]);
     // The table the corpus's block asks for, by its properties.
     let q = i.file("pages/Queries.md").unwrap();
     let holder = q

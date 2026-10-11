@@ -592,7 +592,7 @@ impl Index {
     /// The namespaces above page `key` of a Logseq graph, by key and
     /// title: `a/b` and `a` above `a/b/c`; none in a vault, whose folders
     /// are not pages.
-    fn namespace_parents(&self, key: &str, rel: &str) -> Vec<(String, String)> {
+    pub fn namespace_parents(&self, key: &str, rel: &str) -> Vec<(String, String)> {
         if self.graph.kind != Kind::Logseq {
             return Vec::new();
         }
