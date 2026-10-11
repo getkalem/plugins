@@ -10,8 +10,7 @@ authors.workspace = true
 publish = false
 
 [lib]
-# cdylib is the component; rlib lets the tests link the crate, and Kalem
-# bundle it (D28).
+# cdylib is the component; rlib lets the tests link the crate.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

@@ -1,6 +1,6 @@
 # PDF viewer
 
-PDF files (ISO 32000-2) opened as themselves (D55): pages shown as the file draws them, never converted. A plugin of Kalem's `document-viewer` contract (D54, Kalem's task T3.7.3); Kalem bundles it (D28) until components load (T3.1.12).
+PDF files (ISO 32000-2) opened as themselves (D55): pages shown as the file draws them, never converted. A plugin of Kalem's `document-viewer` contract (D54, Kalem's task T3.7.3). Kalem has no viewer built in: install this one from Kalem's plugin list, from the offer Kalem makes the first time you open such a file, or with `kalem plugin install pdf-viewer`. Kalem opens `.pdf` files with it.
 
 ## Renderer
 
@@ -8,7 +8,7 @@ PDF files (ISO 32000-2) opened as themselves (D55): pages shown as the file draw
 
 The page shown is the crop box, turned by `Rotate`, as Acrobat shows it. Annotations and form fields are drawn from their appearance streams; hidden annotations are not.
 
-A dark theme maps the page's lightness between the theme's background and foreground and keeps its colors' differences from gray, so white paper takes the background, black ink the foreground, and a figure keeps its hues.
+Asked for a dark theme, the plugin maps the page's lightness between the theme's background and foreground and keeps its colors' differences from gray, so white paper takes the background, black ink the foreground, and a figure keeps its hues. Kalem does not ask for a dark page yet: in a dark theme, pages still show as white paper.
 
 ## What it reads
 
@@ -27,7 +27,7 @@ Every walk of the catalog (outline, name and number trees) is bounded and rememb
 
 Each glyph's Unicode comes from hayro (`ToUnicode`, then the glyph's name). Glyphs outside the crop box are left out, as is a space glyph the next glyph is drawn over. The glyphs drawn in a row make runs; runs on one baseline that touch make a line, a superscript included; lines are read top to bottom, a column at a time where consecutive rows share a gutter at least an em wide and each column is at least eight ems wide (narrower columns are a table, read a row at a time). A glyph drawn twice over itself (fake bold) counts once; a space goes where two glyphs stand more than 0.15 em apart; the Latin ligatures are spelled out (`ﬁ` is `fi`) so that search finds them.
 
-Search reads every page's text once, fonts parsed once for all pages, and keeps it.
+Kalem's Find reads the pages' text one page at a time, starting at the page shown. The plugin keeps each page's text once read, so a second search is fast.
 
 ## What it edits
 
@@ -35,21 +35,21 @@ Nothing yet. Highlights, notes and form filling written as incremental updates a
 
 ## As a component
 
-The crate is a viewer of the Rust contract, which Kalem bundles, and on `wasm32` a component of the WIT world `document-viewer` through `kalem_plugin::export_viewer_of!`: it reads the file through the handle Kalem gives it and nothing else.
+The crate is a viewer of Kalem's Rust contract (`kalem-viewer`'s `Viewer`), and on `wasm32` a component of the WIT world `document-viewer` through `kalem_plugin::export_viewer_of!`: it reads the file through the handle Kalem gives it and nothing else.
 
 ```sh
 kalem plugin build plugins/pdf-viewer
 kalem plugin install plugins/pdf-viewer
 ```
 
-Kalem has this plugin built in, as its released component; an installed copy is used instead only when it is newer.
+These commands build and install it from this folder; the released plugin is installed with `kalem plugin install pdf-viewer`.
 
 ## Tests
 
-`cargo test -p kalem-plugin-pdf-viewer`: PDF files the tests write themselves (no file whose license would need recording): detection, page labels, the outline through each kind of destination, text, search and links, the information panel, rendering at scales, a turned page and the dark theme, a page past the memory budget, an outline with a cycle, and every cut of a file failing without a panic; the manifest's conformance.
+`cargo test -p kalem-plugin-pdf-viewer`: PDF files the tests write themselves (no file whose license would need recording): detection, page labels, the outline through each kind of destination, text, search and links, the information panel, rendering at scales, a turned page and the dark theme, a page past the memory budget, an outline with a cycle, and a file cut every 97 bytes, each cut opening or failing without a panic; the manifest's conformance.
 
 `cargo run --release --example pdf -- FILE [--text] [--page N] [--scale S] [--ppm OUT]` prints what the viewer reads of a file, with timings, and writes a page as PPM for comparison with `pdftoppm`.
 
-Measured against poppler on 84 pages of 21 books (O'Reilly, No Starch, Pragmatic, Manning, Addison-Wesley, a magazine; 2026-10-03): the words of the text agree with `pdftotext -cropbox` at a similarity of 0.993 on average and never below 0.96; pages render at `pdftoppm -cropbox -r 72`'s size, with a mean difference of 1 to 9 levels a channel (anti-aliasing). A 1,245-page book opens in 9 ms and shows its first page in 18 ms; searching a 766-page book takes about a second the first time.
+Measured against poppler on 84 pages of 21 books (O'Reilly, No Starch, Pragmatic, Manning, Addison-Wesley, a magazine; 2026-10-03): the words of the text agree with `pdftotext -cropbox` at a similarity of 0.993 on average and never below 0.96; pages render at `pdftoppm -cropbox -r 72`'s size, with a mean difference of 1 to 9 levels a channel (anti-aliasing). A 1,245-page book opens in 9 ms and shows its first page in 18 ms; searching a 766-page book takes about a second the first time (the example's search of every page, natively).
 
 Not yet: a corpus of pdf.js's test files compared with pdfium as the oracle (T3.7.3a), pixel similarity per page in CI, and the conformance suite against the fake host (T3.1.17).

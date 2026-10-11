@@ -546,6 +546,6 @@ mod tests {
 }
 
 // The component: this viewer as the WIT world `document-viewer`
-// (`kalem plugin build`); bundled builds leave it out.
+// (`kalem plugin build`); native builds leave it out.
 #[cfg(target_arch = "wasm32")]
 kalem_plugin::export_viewer_of!(PdfViewer);
