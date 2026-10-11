@@ -827,10 +827,11 @@ fn rename_edits(
         let ls = st[r.line as usize];
         let (a, b) = (ls + r.start as usize, ls + r.end as usize);
         let span = &text[a..b];
-        let Some(p) = span.to_lowercase().find(&old.trim().to_lowercase()) else {
+        // Found in the span itself, the name as long as it is there.
+        let Some(p) = scan::find_ci(span, old.trim()) else {
             continue;
         };
-        let (s0, s1) = (a + p, a + p + old.trim().len());
+        let (s0, s1) = (a + p.start, a + p.end);
         if r.kind == RefKind::Tag && span.starts_with('#') && !span.starts_with("#[[") && spaced {
             edits.push(Edit {
                 start: a,
