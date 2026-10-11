@@ -612,28 +612,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
             }
         }
     }
-    // Journals newest first, then pages by title, a page's blocks in
-    // order; a sort asked for goes over it.
-    let order = |h: &Hit| {
-        let (page, line) = match h {
-            Hit::Page(k) => (index.page(k), 0),
-            Hit::Block { rel, block } => (
-                index.page_of(rel),
-                index
-                    .file(rel)
-                    .and_then(|d| d.scanned.blocks.get(*block))
-                    .map_or(0, |b| b.line),
-            ),
-        };
-        let journal = page.and_then(|p| p.journal);
-        (
-            journal.is_none(),
-            std::cmp::Reverse(journal),
-            page.map_or(String::new(), |p| p.title.to_lowercase()),
-            line,
-        )
-    };
-    hits.sort_by_cached_key(order);
+    sort_hits(index, &mut hits);
     if let Some((key, desc)) = &q.sort {
         let sort_key = |h: &Hit| -> (Option<Date>, String) {
             let (page, block) = match h {
@@ -676,6 +655,31 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
         pages,
         notes: notes.into_iter().collect(),
     }
+}
+
+/// Journals newest first, then pages by title, a page's blocks in order:
+/// how a query's results are listed unless it sorts them.
+pub fn sort_hits(index: &Index, hits: &mut [Hit]) {
+    let order = |h: &Hit| {
+        let (page, line) = match h {
+            Hit::Page(k) => (index.page(k), 0),
+            Hit::Block { rel, block } => (
+                index.page_of(rel),
+                index
+                    .file(rel)
+                    .and_then(|d| d.scanned.blocks.get(*block))
+                    .map_or(0, |b| b.line),
+            ),
+        };
+        let journal = page.and_then(|p| p.journal);
+        (
+            journal.is_none(),
+            std::cmp::Reverse(journal),
+            page.map_or(String::new(), |p| p.title.to_lowercase()),
+            line,
+        )
+    };
+    hits.sort_by_cached_key(order);
 }
 
 /// How a query's answer is shown, from the properties of the block that
@@ -816,11 +820,35 @@ fn cut(text: &str, n: usize) -> String {
 /// What `{{query …}}` shows in a note away from the cursor: how many
 /// blocks or pages it finds and the first of them; `mark` before it.
 pub fn summary(index: &Index, inner: &str, today: Option<Date>, mark: &str) -> String {
-    let q = match parse(inner) {
-        Ok(q) => q,
-        Err(e) => return format!("{mark} query not read: {e}"),
-    };
-    let a = run(&q, index, today);
+    match parse(inner) {
+        Ok(q) => summary_of(index, &run(&q, index, today), mark, true),
+        Err(e) => format!("{mark} query not read: {e}"),
+    }
+}
+
+/// What `{{query …}}` shows in a note: its results under it (Kalem's API
+/// 0.2.13), ordered as Follow Reference lists them, and its line: how
+/// many it finds, without [`summary`]'s first results when they are
+/// under it.
+pub fn shown(
+    index: &Index,
+    inner: &str,
+    today: Option<Date>,
+    mark: &str,
+) -> (String, Vec<crate::rows::Row>) {
+    match parse(inner) {
+        Ok(q) => {
+            let mut a = run(&q, index, today);
+            sort_hits(index, &mut a.hits);
+            let rows = crate::rows::hits(index, &a);
+            (summary_of(index, &a, mark, rows.is_empty()), rows)
+        }
+        Err(e) => (format!("{mark} query not read: {e}"), Vec::new()),
+    }
+}
+
+/// The line of a query's answer `a`.
+fn summary_of(index: &Index, a: &Answer, mark: &str, first: bool) -> String {
     let n = a.hits.len();
     let what = match (a.pages, n) {
         (true, 1) => "1 page".to_string(),
@@ -833,6 +861,9 @@ pub fn summary(index: &Index, inner: &str, today: Option<Date>, mark: &str) -> S
             Some(note) => format!("{mark} no result: {note}"),
             None => format!("{mark} no result"),
         };
+    }
+    if !first {
+        return format!("{mark} {what}");
     }
     let first: Vec<String> = a
         .hits

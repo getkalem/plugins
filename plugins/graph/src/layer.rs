@@ -12,6 +12,7 @@
 
 use crate::config::Kind;
 use crate::index::Index;
+use crate::rows::{self, Row};
 use crate::scan::{self, Flavor, MARKERS, RefKind};
 
 /// A style's parts, added to what Kalem's mode draws.
@@ -83,6 +84,16 @@ pub struct Lines {
     pub effect: LineEffect,
 }
 
+/// Rows drawn under the line holding byte `at`, not part of the text
+/// (Kalem's API 0.2.13): an embed's blocks, a query's results.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Below {
+    /// A byte of the line.
+    pub at: usize,
+    /// The rows.
+    pub rows: Vec<Row>,
+}
+
 /// The overlays of a note.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Overlays {
@@ -90,9 +101,18 @@ pub struct Overlays {
     pub spans: Vec<Span>,
     /// Lines, in order, not overlapping.
     pub lines: Vec<Lines>,
+    /// Rows under lines, in order.
+    pub below: Vec<Below>,
 }
 
 impl Overlays {
+    /// Rows under the line holding byte `at`, when there are any.
+    fn rows(&mut self, at: usize, rows: Vec<Row>) {
+        if !rows.is_empty() {
+            self.below.push(Below { at, rows });
+        }
+    }
+
     fn span(&mut self, start: usize, end: usize, effect: Effect) {
         if start < end {
             self.spans.push(Span { start, end, effect });
@@ -116,6 +136,7 @@ impl Overlays {
             }
             keep
         });
+        self.below.sort_by_key(|b| b.at);
         self.lines.sort_by_key(|l| l.start);
         let mut end = 0;
         self.lines.retain(|l| {
@@ -258,16 +279,28 @@ fn inline(
                         let id = key.map(|k| {
                             format!("{k}#^{}", r.anchor.as_deref().unwrap_or("").to_lowercase())
                         });
+                        if let (Some(i), Some(id)) = (index, &id) {
+                            o.rows(start, rows::embedded_block(i, id));
+                        }
                         id.and_then(|id| block_text(index, &id))
                             .unwrap_or_else(|| r.target.clone())
                     }
                     (RefKind::EmbedBlock, _) => {
+                        if let Some(i) = index {
+                            o.rows(start, rows::embedded_block(i, &r.target));
+                        }
                         block_text(index, &r.target).unwrap_or_else(|| "a block".into())
                     }
-                    _ => match &r.anchor {
-                        Some(a) => format!("{} › {a}", r.target),
-                        None => r.target.clone(),
-                    },
+                    _ => {
+                        if let (Some(i), Some(rel)) = (index, rel) {
+                            let key = i.resolve(&r.target, rel);
+                            o.rows(start, rows::embedded_page(i, &key, r.anchor.as_deref()));
+                        }
+                        match &r.anchor {
+                            Some(a) => format!("{} › {a}", r.target),
+                            None => r.target.clone(),
+                        }
+                    }
                 };
                 o.span(
                     start,
@@ -955,14 +988,26 @@ pub fn overlays(kind: Kind, text: &str, index: Option<&Index>, rel: Option<&str>
 }
 
 /// The `{{query …}}` macros of a Logseq note shown as what `summary`
-/// says of each (away from the cursor), and an advanced query's
-/// `#+BEGIN_QUERY` marked as one Kalem does not run; over what the
-/// note's layer gave.
-pub fn queries(mut o: Overlays, text: &str, summary: &dyn Fn(&str) -> String) -> Overlays {
+/// says of each, and an advanced query (`#+BEGIN_QUERY` … `#+END_QUERY`)
+/// as what `advanced` says of it, its lines hidden (away from the
+/// cursor, as Logseq shows a query's results until it is clicked); over
+/// what the note's layer gave.
+pub fn queries(
+    mut o: Overlays,
+    text: &str,
+    summary: &dyn Fn(&str) -> (String, Vec<Row>),
+    advanced: &dyn Fn(&str) -> (String, Vec<Row>),
+) -> Overlays {
     let mut fence = false;
     let mut src = false;
     let mut added = false;
+    // The end of the advanced query being skipped.
+    let mut inside: Option<usize> = None;
     for (start, line) in lines(text) {
+        if inside.is_some_and(|e| start < e) {
+            continue;
+        }
+        inside = None;
         let trimmed = line.trim();
         let upper = trimmed.to_uppercase();
         if fence {
@@ -986,33 +1031,58 @@ pub fn queries(mut o: Overlays, text: &str, summary: &dyn Fn(&str) -> String) ->
             .find("#+BEGIN_QUERY")
             .or_else(|| line.find("#+begin_query"))
         {
-            let end = start + p + "#+BEGIN_QUERY".len();
+            let open = start + p;
+            let close = text[open..]
+                .to_uppercase()
+                .find("#+END_QUERY")
+                .map(|q| open + q + "#+END_QUERY".len());
+            let Some(close) = close else {
+                continue;
+            };
+            let block_end = text[close..]
+                .find('\n')
+                .map_or(text.len(), |n| close + n + 1);
+            let (shown, results) = advanced(&text[open..close]);
             o.put(
-                start + p,
-                end,
+                open,
+                open + "#+BEGIN_QUERY".len(),
                 Effect::Replace(
-                    "#+BEGIN_QUERY · an advanced query, not run by Kalem".into(),
-                    Look {
-                        dim: true,
-                        ..Look::default()
-                    },
-                ),
-            );
-            added = true;
-            continue;
-        }
-        for (s, e, inner) in crate::query::macros(line) {
-            o.put(
-                start + s,
-                start + e,
-                Effect::Replace(
-                    summary(inner),
+                    shown,
                     Look {
                         link: true,
                         ..Look::default()
                     },
                 ),
             );
+            // Under its first line, which shows its summary; the rest is
+            // hidden away from the cursor.
+            o.rows(open, results);
+            let body = line_end(text, start, line);
+            if body < block_end {
+                o.lines.push(Lines {
+                    start: body,
+                    end: block_end,
+                    effect: LineEffect::Hidden,
+                });
+            }
+            inside = Some(block_end);
+            added = true;
+            continue;
+        }
+        for (s, e, inner) in crate::query::macros(line) {
+            let (shown, results) = summary(inner);
+            o.put(
+                start + s,
+                start + e,
+                Effect::Replace(
+                    shown,
+                    Look {
+                        link: true,
+                        ..Look::default()
+                    },
+                ),
+            );
+            o.rows(start + s, results);
             added = true;
         }
     }
@@ -1098,6 +1168,32 @@ mod tests {
             .map(|s| &org[s.start..s.end])
             .collect();
         assert_eq!(styled, ["LATER", "NOW"]);
+    }
+
+    #[test]
+    fn an_advanced_query_shown_as_its_results() {
+        let text = "- before\n- #+BEGIN_QUERY\n  {:query [:find ?b]}\n  #+END_QUERY\n- after\n";
+        let row = |t: &str| Row {
+            indent: 2,
+            parts: vec![(t.to_string(), Look::default())],
+        };
+        let o = queries(
+            Overlays::default(),
+            text,
+            &|_| (String::new(), Vec::new()),
+            &|q| (format!("⌕ {} bytes", q.len()), vec![row("a result")]),
+        );
+        assert_eq!(shown(text, &o), "- before\n- ⌕ 49 bytes\n- after\n");
+        // Its results under its first line, which shows its summary.
+        assert_eq!(o.below.len(), 1);
+        let at = o.below[0].at;
+        let line_start = text[..at].rfind('\n').map_or(0, |n| n + 1);
+        assert!(
+            text[line_start..].starts_with("- #+BEGIN_QUERY"),
+            "{:?}",
+            &text[line_start..]
+        );
+        assert_eq!(o.below[0].rows, [row("a result")]);
     }
 
     #[test]

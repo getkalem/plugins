@@ -1023,6 +1023,60 @@ below replace the earlier GR4a to GR4d.
   is pushed with API 0.2.12, and the tag `graph-v0.4.0` after Kalem
   0.6.14's release.
 
+## GR14. Before a launch to Logseq's users
+
+The owner asked (2026-10-11) what is missing for a launch in Logseq's
+user groups; the gaps that code can close, in this order.
+
+- [x] GR14a Advanced queries. Logseq's `#+BEGIN_QUERY` dashboards are
+  what its power users keep; GR9a had left them out (Datascript as a
+  non-goal). (Done 2026-10-11, `src/datalog.rs`: a Datalog evaluator
+  over the index with Logseq's schema and rules, the attributes, the
+  clauses, the inputs and the finds the README lists; the note shows
+  the title, the count and the first two results, the EDN hidden away
+  from the cursor; Follow Reference opens them grouped as a simple
+  query's, values as a table. `:result-transform`, `:view` and custom
+  `:rules` are named as not run.)
+- [x] GR14b A graph's folder one step from being a project: opening a
+  note of a Logseq graph or an Obsidian vault outside Kalem's projects
+  offers to add its folder (Kalem's side: a layer's marker folder).
+  (Done 2026-10-11: Kalem offers the folder holding a layer's marker
+  once a session, adds it with `projects.auto_add`, and asks the layers
+  again when a project is added; the plugin, asked for a note's overlays
+  with no graph indexed for it, asks to index it once the note can be
+  read, through its command `graph.noteOpened`. Found on the way: Kalem
+  refused a plugin's `kalem.run` of its own command, so every flow that
+  edits the note after a question (Insert Link, Insert Block Reference,
+  Set Priority, Schedule, Deadline, Rename Page) failed after the answer
+  in every release; Kalem's fix queues it as another's.)
+- [x] GR14c Embeds and queries drawn in their note: the embedded block
+  or page and a query's results under the line (Kalem's side: lines a
+  layer adds, K2). (Done 2026-10-11: Kalem's plugin API 0.2.13, the
+  `layer-2` export, lines a layer draws under a line, drawn by both
+  editors, the cursor stepping over them; the plugin's `src/rows.rs`
+  makes them: an embedded block's children, an embedded page's blocks
+  (or those under an Obsidian heading), a simple or advanced query's
+  results under their pages or its table, 24 rows at most; the query's
+  line then gives its count only. The plugin needs Kalem 0.6.15.)
+  [~] An embed in an embed shows as written, not drawn again; the rows
+  are text, not blocks to edit in place, as Logseq's are.
+- [x] GR14d Logseq and Kalem on one graph at once: a file Logseq writes
+  while Kalem holds it, and the other way round, tested; what breaks
+  fixed. (Done 2026-10-11, with external writes standing in for Logseq,
+  which is not installed here: a page open and unchanged in Kalem is
+  read again, one with changes asks which to keep; a page written,
+  renamed or removed elsewhere was not seen at all, Kalem watching only
+  the files it held open. Kalem's side: the folder of a layer's marker,
+  once a project, watched whole (`kalem_core::tree_watch`), its files
+  told to the plugins as `workspace-file-changed`. The plugin's side:
+  each such file only noted, and read with the others in one
+  `graph.filesChanged` it queues (or before the next command), the
+  names derived once: 300 pages written at once by a script while
+  Kalem was open were all in Kalem's backlinks a few seconds later.)
+  [~] Not tested against Logseq itself: how Logseq takes a page Kalem
+  writes while Logseq has it open with typing not yet written.
+- [ ] GR14e `collapsed:: true` folded when the note opens (K3).
+
 ## What Kalem's core must gain
 
 Each is the plugin's gate or its ask, written for every plugin.
@@ -1035,7 +1089,8 @@ Each is the plugin's gate or its ask, written for every plugin.
   layer over that drawing serves where a tree would not.
 - K2 Lines a layer adds under a line, drawn and not part of the text
   (an embed's block in full, a query's results): the editors' virtual
-  lines, beside K6's virtual text. Not blocking.
+  lines, beside K6's virtual text. (Done 2026-10-11: plugin API 0.2.13,
+  `layer-2`, Kalem branch `graph-inline`.)
 - K3 Folds a layer gives (a block with `collapsed:: true` folded on
   open, a callout's `-`): a `folded` effect on lines that the editors'
   folds start from. Not blocking.

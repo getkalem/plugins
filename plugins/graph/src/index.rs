@@ -121,6 +121,16 @@ fn readable(kind: Kind, ext: &str) -> Option<Flavor> {
     }
 }
 
+/// What reading a file again changed.
+enum Reread {
+    Same,
+    /// Its blocks, the rest kept (`replace_in_place`).
+    InPlace,
+    /// Its page, or which pages there are: the names and references are
+    /// worked out again.
+    Changed,
+}
+
 impl Index {
     /// An empty index of `graph`.
     pub fn new(graph: Graph) -> Index {
@@ -207,9 +217,41 @@ impl Index {
     /// Reads `path` (absolute) again, or forgets it when it is gone or no
     /// longer the graph's; whether the index changed.
     pub fn update(&mut self, files: &dyn Files, path: &str) -> bool {
+        self.update_all(files, [path])
+    }
+
+    /// Reads `paths` (absolute) again, as [`Index::update`] reads one, the
+    /// graph's names and references worked out once for them all: a `git
+    /// pull` or Logseq writing many pages costs one pass, not one each.
+    pub fn update_all<'a>(
+        &mut self,
+        files: &dyn Files,
+        paths: impl IntoIterator<Item = &'a str>,
+    ) -> bool {
+        let mut changed = false;
+        let mut derive = false;
+        for path in paths {
+            match self.read_again(files, path) {
+                Reread::Same => {}
+                Reread::InPlace => changed = true,
+                Reread::Changed => {
+                    changed = true;
+                    derive = true;
+                }
+            }
+        }
+        if derive {
+            self.derive();
+        }
+        changed
+    }
+
+    /// Reads `path` (absolute) again; what changed, the graph's names and
+    /// references left to [`Index::derive`] when more than its blocks did.
+    fn read_again(&mut self, files: &dyn Files, path: &str) -> Reread {
         let path = files::normalize(path);
         let Some(rel) = files::relative(&self.graph.root, &path).map(str::to_string) else {
-            return false;
+            return Reread::Same;
         };
         let (_, ext) = files::stem_ext(&rel);
         if drawn_elsewhere(&self.graph, &rel) && !self.graph.is_hidden(&rel) {
@@ -220,29 +262,25 @@ impl Index {
                 (false, true) => {
                     self.remove(&rel);
                 }
-                _ => return false,
+                _ => return Reread::Same,
             }
-            self.derive();
-            return true;
+            return Reread::Changed;
         }
         let ours = readable(self.graph.kind, &ext).is_some()
             && !self.graph.is_hidden(&rel)
             && self.in_folders(&rel);
-        let changed = match files.read(&path) {
+        match files.read(&path) {
             Ok(text) if ours => {
                 if self.replace_in_place(&rel, &text) {
-                    return true;
+                    return Reread::InPlace;
                 }
                 self.remove(&rel);
                 self.add(&rel, &text);
-                true
+                Reread::Changed
             }
-            _ => self.remove(&rel),
-        };
-        if changed {
-            self.derive();
+            _ if self.remove(&rel) => Reread::Changed,
+            _ => Reread::Same,
         }
-        changed
     }
 
     /// The text of the note `rel` as the editor holds it, unsaved,
@@ -823,6 +861,11 @@ impl Index {
         let (rel, i) = self.blocks.get(id)?;
         let b = self.files.get(rel)?.scanned.blocks.get(*i)?;
         Some((rel.as_str(), b))
+    }
+
+    /// The file of the block `id` and its place among the file's blocks.
+    pub fn block_place(&self, id: &str) -> Option<(&str, usize)> {
+        self.blocks.get(id).map(|(rel, i)| (rel.as_str(), *i))
     }
 
     /// Every block that has an id: the id, the file and the block.

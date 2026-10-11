@@ -12,15 +12,15 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 ## Moving over
 
-- **From Logseq (the file version, "OG").** Add the graph's folder as a project of Kalem's and open any page: nothing is converted, and `logseq/` is never written. Keep Logseq installed for as long as you like: both read and write the same files, and each reads again a file the other saved (save in one before editing the same page in the other). Sync stays as it was: Syncthing, git or iCloud on the folder.
+- **From Logseq (the file version, "OG").** Add the graph's folder as a project of Kalem's and open any page: nothing is converted, and `logseq/` is never written. Keep Logseq installed for as long as you like: both read and write the same files, and each reads again a file the other saved (save in one before editing the same page in the other). Kalem hears every file Logseq writes, renames or removes in the graph while both are open (Kalem 0.6.15 and later; before, a page Logseq made was seen once Kalem started again or after Index Again); a page open in Kalem is read again when it has no changes of Kalem's, and Kalem asks which to keep when it has. Sync stays as it was: Syncthing, git or iCloud on the folder.
 - **From Logseq's database version.** Its SQLite database does not open in Kalem. Its Markdown Mirror does: turn it on in Logseq's settings (the desktop app), and the folder `mirror/markdown/` in the graph's folder opens as a graph, read only: pages, journals, links, tags, tasks, properties (written there as `* key:: value`), queries and search. Logseq writes the mirror from its database and writes over any change, so Kalem never writes it and its editing commands say so.
 - **From Obsidian.** Add the vault's folder as a project and open a note. Of `.obsidian/`, only `daily-notes.json`, `app.json` and `templates.json` are read, for the daily notes, where new notes go, how links are written and the templates' folder; nothing under it is written.
 
 ## What it needs
 
-- **The graph's folder is one of Kalem's projects** (Projects: Add Project). Kalem lets a plugin read only its projects' folders (`fs:read:workspace`); a note opened from a folder that is no project is not seen as a graph's.
+- **The graph's folder is one of Kalem's projects.** Kalem lets a plugin read only its projects' folders (`fs:read:workspace`). Opening a note of a graph outside the projects, Kalem offers to add its folder (Enter adds it, and the graph is indexed at once; with Kalem before 0.6.15, Projects: Add Project).
 - A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, a Logseq database graph's mirror by its `mirror/markdown/.index.edn`, from the folder of any note opened in it upwards. A folder without any is a graph when the setting `graphs` names it: a Logseq graph when it has `pages/` or `journals/`, else a vault, unless the setting gives its kind.
-- Kalem 0.6.14 or later (plugin API 0.2.12); 0.3.1 runs on Kalem 0.6.13, 0.2.0 on 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
+- Kalem 0.6.15 or later (plugin API 0.2.13); 0.4.0 runs on Kalem 0.6.14, 0.3.1 on 0.6.13, 0.2.0 on 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
 - Room to index a large graph: the plugin asks Kalem for 1 GB and 10 s a call (see Speed and size).
 
 ## Commands and keys
@@ -121,6 +121,8 @@ Logseq's simple queries run over the index: `[[page]]` and `#tag` (the page's bl
 
 The results are grouped by page, journals newest first, with each block's first line; with `query-table:: true` on the query's block they are a table of the columns `query-properties::` names (`[:block :page]` by default), sorted by `query-sort-by::` and `query-sort-desc::`. Enter opens a block, `t` cycles its keyword. The document and the line in the note are computed again when the graph changes.
 
+Advanced queries (`#+BEGIN_QUERY` … `#+END_QUERY`, Datalog) run too, as Logseq's file version runs them: the note shows the query's title, how many it finds and the first two, its EDN hidden until the cursor goes into it, and Follow Reference on it opens the results. The graph is seen as Logseq's schema has it (`:block/name`, `:block/original-name`, `:block/journal?`, `:block/journal-day`, `:block/properties`, `:block/tags`, `:block/alias`, `:block/namespace` of a page; `:block/content`, `:block/marker`, `:block/priority`, `:block/page`, `:block/parent`, `:block/refs`, `:block/path-refs`, `:block/scheduled`, `:block/deadline`, `:block/uuid` of a block). `:where` takes data patterns, `not`, `not-join`, `or`, `or-join`, `and`, the comparisons, `contains?`, `clojure.string/includes?`, `starts-with?`, `ends-with?` and `blank?`, `get`, `get-else`, `missing?`, `str`, and Logseq's rules (`page-ref`, `task`, `priority`, `property`, `page-property`, `page-tags`, `between`, `namespace`, `page`, `block-content`); `:inputs` takes `:today`, `:yesterday`, `:tomorrow`, `:-7d`, `:+7d`, `:7d-before`, `:7d-after` and `:current-page`; `:find` a variable, `(pull ?b [*])` or `(count ?b)`, other values as a table.
+
 ## What is read
 
 | | Logseq | Obsidian |
@@ -155,13 +157,13 @@ With `fs:write:workspace`: a new journal made from a template, and only when no 
 From Logseq:
 
 - Whiteboards are listed with the pages and their links resolve, but Kalem does not draw them; following one shows the file to open in Logseq. Flashcards, Logseq's plugins and their syntax, and PDF highlights drawn over the PDF are not there; a PDF's highlights page (`hls__…`) is a page like another.
-- Advanced queries (`#+BEGIN_QUERY`, Datalog) are not run. Of the simple ones, `(sample n)` takes the first n, not n at random; `created-at` and `updated-at` sort by a journal's day only, which file graphs keep; a clause Kalem does not read finds nothing and says so.
-- An embed shows one line, not the block or page in full; a query shows one line in its note and its results as a document (Kalem's layers add no lines yet).
+- Of advanced queries, `:result-transform`, `:view` and `:rules` of one's own (Clojure) are not run, nor functions beyond those above; the query says what it does not run. Of the simple ones, `(sample n)` takes the first n, not n at random; `created-at` and `updated-at` sort by a journal's day only, which file graphs keep; a clause Kalem does not read finds nothing and says so.
+- An embed shows its block's children or its page's blocks under its line, and a query its results (24 lines at most, then how many more; Follow Reference opens them all), as text in their note's style, not as editable blocks: an embed inside an embed shows as written, and a block is edited where it lives.
 - No real-time sync: Syncthing or git on the folder, as Logseq's file version is used.
 - The database version's graph itself does not open; its Markdown Mirror does, read only.
 - Completion offers no blocks without an id after `((` (Insert Block Reference writes the id), and of `/`'s commands those that write text only (no date picker, template or drawing).
 - The graph view has no filters, groups of one's own or forces to set, as Logseq's and Obsidian's have; journals are in the local graph only.
-- The index follows saves, changes on disk and, when a command runs in a note, its unsaved text; the panel and the documents are written again after a save. Recent Pages remembers this session's pages only.
+- The index follows saves, changes on disk (any file of the graph, written by Logseq, Obsidian, a sync or git, with Kalem 0.6.15 and later; the files Kalem holds open before) and, when a command runs in a note, its unsaved text; the panel and the documents are written again after a save. Recent Pages remembers this session's pages only.
 
 From Obsidian:
 
@@ -189,7 +191,7 @@ Measured on a graph generated at the scale Logseq aims at (`tests/large.rs`): 10
 | A query over the graph | 20 ms | 500 ms |
 | In Kalem: the graph indexed and All pages printed | 1.9 s, 340 MB for the whole process | |
 
-The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `plugin.json`): an extension's own, 64 MB and 100 ms, stop it at the first note of a graph of some thousand pages. The first command or note of a large graph waits for its index while Kalem runs the call; a save then changes only the saved file's entries in the index (a page renamed, or a file added or removed, derives the names again, as fast as the first build's last step). The panel's unlinked references are searched for when they are opened, as Logseq does.
+The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `plugin.json`): an extension's own, 64 MB and 100 ms, stop it at the first note of a graph of some thousand pages. The first command or note of a large graph waits for its index while Kalem runs the call; a save then changes only the saved file's entries in the index (a page renamed, or a file added or removed, derives the names again, as fast as the first build's last step). Files changed on disk together (a `git pull`, Logseq renaming a page and its references) are read together once the event that told of the first returns, the names derived and the documents written again once for them all. The panel's unlinked references are searched for when they are opened, as Logseq does.
 
 ## Tests
 

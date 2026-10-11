@@ -176,6 +176,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         ],
     ),
     c("graph.reindex", "Index Again", &["space n r s"]),
+    // Run by the plugin when a note its layer serves became readable (its
+    // folder added to Kalem's projects).
+    n("graph.noteOpened", "Index the Note's Graph", &[]),
+    // Run by the plugin once files of a graph changed on disk (Logseq,
+    // Obsidian, a sync, a `git pull`): read again together.
+    n("graph.filesChanged", "Read the Changed Files", &[]),
     // The graph drawn (Kalem's plugin API 0.2.12): all its pages, or the
     // note's page and the pages two links away.
     c("graph.graphView", "Graph View", &["space n r v"]),
@@ -588,6 +594,10 @@ const READ_ONLY: &str = "This is the Markdown Mirror of a Logseq database graph:
 /// The separator of a document key's parts.
 const SEP: char = '\u{1f}';
 
+/// What a query shows in its note: its line, and the rows of its results
+/// under it.
+type Shown = std::rc::Rc<(String, Vec<crate::rows::Row>)>;
+
 /// The plugin's state.
 #[derive(Debug)]
 pub struct App {
@@ -631,7 +641,14 @@ pub struct App {
     recent: Vec<String>,
     /// What the `{{query …}}` of the notes show, by graph and query, with
     /// the index's version they were computed from.
-    queries: std::cell::RefCell<BTreeMap<(String, String), (u64, String)>>,
+    queries: std::cell::RefCell<BTreeMap<(String, String), (u64, Shown)>>,
+    /// Notes a layer serves whose graph is not indexed, its indexing asked
+    /// for (`graph.noteOpened`) and not done yet.
+    pub(crate) unindexed: std::cell::RefCell<BTreeSet<String>>,
+    /// Files of the graphs changed on disk and not read again yet, read
+    /// together by `graph.filesChanged` (queued for them) or before the
+    /// next command, whichever comes first.
+    changed: BTreeSet<String>,
     /// The properties of each graph and the values each has, with the
     /// index's version they were counted from (completion after `::`).
     properties: std::cell::RefCell<BTreeMap<String, (u64, std::rc::Rc<complete::Properties>)>>,
@@ -664,6 +681,8 @@ impl App {
             recent: Vec::new(),
             queries: std::cell::RefCell::new(BTreeMap::new()),
             properties: std::cell::RefCell::new(BTreeMap::new()),
+            unindexed: std::cell::RefCell::new(BTreeSet::new()),
+            changed: BTreeSet::new(),
         }
     }
 
@@ -834,12 +853,46 @@ impl App {
 
     /// A file saved, or changed on disk.
     pub fn saved(&mut self, files: &dyn Files, path: &str) -> Vec<Effect> {
+        self.files_changed(files, &[files::normalize(path)])
+    }
+
+    /// A file changed on disk (`workspace-file-changed`): noted, to be
+    /// read with the others changed with it; whether it is the first
+    /// noted, for which `graph.filesChanged` is to be queued. A file of
+    /// no graph indexed is not noted.
+    pub fn file_changed(&mut self, path: &str) -> bool {
         let path = files::normalize(path);
-        self.track_saved(&path);
+        if !self
+            .indexes
+            .keys()
+            .any(|r| files::relative(r, &path).is_some())
+        {
+            return false;
+        }
+        let first = self.changed.is_empty();
+        self.changed.insert(path);
+        first
+    }
+
+    /// The files noted as changed, read again.
+    pub fn read_changed(&mut self, files: &dyn Files) -> Vec<Effect> {
+        let paths: Vec<String> = std::mem::take(&mut self.changed).into_iter().collect();
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        self.files_changed(files, &paths)
+    }
+
+    /// Files saved or changed on disk (absolute, normalized): read again,
+    /// each graph they are in worked out and drawn again once.
+    fn files_changed(&mut self, files: &dyn Files, paths: &[String]) -> Vec<Effect> {
+        for p in paths {
+            self.track_saved(p);
+        }
         let roots: Vec<String> = self
             .indexes
             .keys()
-            .filter(|r| files::relative(r, &path).is_some())
+            .filter(|r| paths.iter().any(|p| files::relative(r, p).is_some()))
             .cloned()
             .collect();
         let mut out = Vec::new();
@@ -847,7 +900,7 @@ impl App {
             let changed = self
                 .indexes
                 .get_mut(&root)
-                .is_some_and(|i| i.update(files, &path));
+                .is_some_and(|i| i.update_all(files, paths.iter().map(String::as_str)));
             if changed {
                 out.extend(self.refresh(&root));
             }
@@ -927,7 +980,13 @@ impl App {
                 if index.graph.kind == Kind::Obsidian {
                     return o;
                 }
-                crate::layer::queries(o, text, &|q| self.query_summary(index, q))
+                let current = index.page_of(&rel).map(|p| p.key.clone());
+                crate::layer::queries(
+                    o,
+                    text,
+                    &|q| (*self.query_summary(index, q)).clone(),
+                    &|q| (*self.advanced_summary(index, q, current.as_deref())).clone(),
+                )
             }
             None => crate::layer::overlays(kind, text, None, path.as_deref().map(files::file_name)),
         }
@@ -935,7 +994,7 @@ impl App {
 
     /// What `{{query q}}` shows in a note of the graph of `index`: kept
     /// until the index changes.
-    fn query_summary(&self, index: &Index, q: &str) -> String {
+    fn query_summary(&self, index: &Index, q: &str) -> Shown {
         let key = (index.graph.root.clone(), q.to_string());
         if let Some((v, s)) = self.queries.borrow().get(&key)
             && *v == index.version()
@@ -947,7 +1006,49 @@ impl App {
         } else {
             "⌕"
         };
-        let s = crate::query::summary(index, q, self.day(), mark);
+        let s = Shown::new(crate::query::shown(index, q, self.day(), mark));
+        let mut cache = self.queries.borrow_mut();
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(key, (index.version(), s.clone()));
+        s
+    }
+
+    /// Whether the note at `path`, which a layer serves, has no graph
+    /// indexed and its indexing was not asked for yet.
+    pub fn index_wanted(&self, path: &str) -> bool {
+        let path = files::normalize(path);
+        !self
+            .indexes
+            .keys()
+            .any(|r| files::relative(r, &path).is_some())
+            && !self.unindexed.borrow().contains(&path)
+    }
+
+    /// The indexing of the note at `path`'s graph asked for.
+    pub fn index_asked(&self, path: &str) {
+        self.unindexed.borrow_mut().insert(files::normalize(path));
+    }
+
+    /// What an advanced query shows in its note: kept until the index
+    /// changes, as `query_summary`'s.
+    fn advanced_summary(&self, index: &Index, q: &str, current: Option<&str>) -> Shown {
+        let key = (
+            index.graph.root.clone(),
+            format!("{}\u{1f}{q}", current.unwrap_or("")),
+        );
+        if let Some((v, s)) = self.queries.borrow().get(&key)
+            && *v == index.version()
+        {
+            return s.clone();
+        }
+        let mark = if self.settings.glyphs == "ascii" {
+            "query:"
+        } else {
+            "⌕"
+        };
+        let s = Shown::new(crate::datalog::shown(index, q, self.day(), current, mark));
         let mut cache = self.queries.borrow_mut();
         if cache.len() > 256 {
             cache.clear();
@@ -1024,6 +1125,19 @@ impl App {
                 )
             }
             "graph.graph" => (format!("Graph: {name}"), "graph-graph", views::graph(index)),
+            "graph.advancedQuery" => {
+                let current = page.filter(|p| !p.is_empty());
+                let text = parts.next()?;
+                let title = crate::datalog::parse(text)
+                    .ok()
+                    .and_then(|a| a.title)
+                    .unwrap_or_else(|| "an advanced query".into());
+                (
+                    format!("Query: {title}"),
+                    "graph-query",
+                    views::advanced(index, text, self.day(), current, g),
+                )
+            }
             "graph.graphView" => (
                 format!("Graph View: {name}"),
                 "graph-view",
@@ -1085,6 +1199,11 @@ impl App {
         if let Some(p) = &ctx.path {
             self.current = Some(files::normalize(p));
         }
+        // What changed on disk is read before any command looks.
+        out.extend(self.read_changed(files));
+        if id == "graph.filesChanged" {
+            return out;
+        }
         self.take_unsaved(ctx);
         if id == "graph.insertText" {
             if let Some(t) = serde_json::from_str::<serde_json::Value>(&ctx.args)
@@ -1138,6 +1257,15 @@ impl App {
                     Level::Info,
                 )),
             },
+            "graph.noteOpened" => {
+                if let Some(path) = serde_json::from_str::<serde_json::Value>(&ctx.args)
+                    .ok()
+                    .and_then(|v| v["path"].as_str().map(str::to_string))
+                {
+                    self.unindexed.borrow_mut().remove(&files::normalize(&path));
+                    out.extend(self.opened(files, &path));
+                }
+            }
             "graph.openNode" => {
                 let key = serde_json::from_str::<serde_json::Value>(&ctx.args)
                     .ok()

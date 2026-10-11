@@ -406,8 +406,18 @@ impl Plugin for Graph {
         })?;
         kalem::on(EventKind::WorkspaceFileChanged, |e| {
             if let Event::WorkspaceFileChanged(p) = e {
-                let p = p.clone();
-                with_app(|app| app.saved(&Fs, &p));
+                // Noted, and read with the others changed with it once
+                // this call returns: a `git pull` is one change, not one
+                // a file. Read at once where Kalem refuses the plugin its
+                // own command (before 0.6.14).
+                let first = APP.with(|a| {
+                    a.borrow_mut()
+                        .as_mut()
+                        .is_some_and(|app| app.file_changed(p))
+                });
+                if first && kalem::run("graph.filesChanged", "{}").is_err() {
+                    with_app(|app| app.read_changed(&Fs));
+                }
             }
             Reply::Proceed
         })?;
@@ -461,17 +471,34 @@ impl Plugin for Graph {
             .collect()
     }
 
-    /// The layer's overlays (plugin API 0.2.10).
-    fn overlays(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet {
+    /// The layer's overlays, with lines under lines (plugin API 0.2.13,
+    /// `layer-2`): an embed's blocks, a query's results.
+    fn overlays_2(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet2 {
         use crate::layer::{Effect as E, LineEffect as L};
         use kalem_plugin::layer as api;
-        let o = APP
+        let (o, wanted) = APP
             .with(|a| {
-                a.borrow()
-                    .as_ref()
-                    .map(|app| app.overlays(layer, path, text))
+                a.borrow().as_ref().map(|app| {
+                    let wanted = path.is_some_and(|p| app.index_wanted(p));
+                    (app.overlays(layer, path, text), wanted)
+                })
             })
             .unwrap_or_default();
+        // A note of a graph not indexed that can be read now (its folder
+        // just added to the projects): indexed, after this call.
+        if wanted
+            && let Some(p) = path
+            && fs::read(p).is_ok()
+        {
+            let args = serde_json::json!({ "path": p }).to_string();
+            if kalem::run("graph.noteOpened", &args).is_ok() {
+                APP.with(|a| {
+                    if let Some(app) = a.borrow().as_ref() {
+                        app.index_asked(p);
+                    }
+                });
+            }
+        }
         let look = |l: crate::layer::Look| {
             let mut f = api::SpanStyle::empty();
             for (on, flag) in [
@@ -493,7 +520,7 @@ impl Plugin for Graph {
             }
             f
         };
-        api::OverlaySet {
+        api::OverlaySet2 {
             spans: o
                 .spans
                 .into_iter()
@@ -520,6 +547,28 @@ impl Plugin for Graph {
                         L::Hidden => api::LineEffect::Hidden,
                         L::Folded => api::LineEffect::Folded,
                     },
+                })
+                .collect(),
+            below: o
+                .below
+                .into_iter()
+                .map(|b| api::Below {
+                    at: b.at as u64,
+                    lines: b
+                        .rows
+                        .into_iter()
+                        .map(|r| api::VirtualLine {
+                            indent: r.indent,
+                            pieces: r
+                                .parts
+                                .into_iter()
+                                .map(|(text, l)| api::Piece {
+                                    text,
+                                    style: look(l),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
                 })
                 .collect(),
         }

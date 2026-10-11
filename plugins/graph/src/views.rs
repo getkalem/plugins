@@ -1156,7 +1156,7 @@ pub fn query(
     today: Option<Date>,
     g: Glyphs,
 ) -> Content {
-    use crate::query::{self, Hit};
+    use crate::query;
     let mut c = Content::new();
     c.line(&[("Query: ", Style::Heading), (text, Style::Heading)], None);
     let mut q = match query::parse(text) {
@@ -1177,6 +1177,20 @@ pub fn query(
         q.sort = shape.sort.clone();
     }
     let a = query::run(&q, index, today);
+    answer(&mut c, index, &a, shape, g);
+    c
+}
+
+/// A query's answer under its heading: how many, then the pages, the
+/// blocks grouped by page, or the table its shape asks for.
+fn answer(
+    c: &mut Content,
+    index: &Index,
+    a: &crate::query::Answer,
+    shape: &crate::query::Shape,
+    g: Glyphs,
+) {
+    use crate::query::{self, Hit};
     let n = a.hits.len();
     let what = match (a.pages, n) {
         (true, 1) => "1 page".to_string(),
@@ -1191,7 +1205,7 @@ pub fn query(
     c.blank();
     if n == 0 {
         c.line(&[("No result.", Style::Muted)], None);
-        return c;
+        return;
     }
     if let Some(columns) = &shape.table {
         let mut columns = columns.clone();
@@ -1250,7 +1264,7 @@ pub fn query(
                 hit_target(index, h),
             );
         }
-        return c;
+        return;
     }
     if a.pages {
         for h in &a.hits {
@@ -1263,7 +1277,7 @@ pub fn query(
                 hit_target(index, h),
             );
         }
-        return c;
+        return;
     }
     // The blocks grouped by page, in the order found.
     let mut groups: Vec<(String, Vec<&Hit>)> = Vec::new();
@@ -1311,6 +1325,78 @@ pub fn query(
             }
             parts.push((rest, Style::Normal));
             c.line(&parts, hit_target(index, h));
+        }
+    }
+}
+
+/// "Query: TITLE": an advanced query's results (`crate::datalog`), from
+/// the page `current` (its key) it is in.
+pub fn advanced(
+    index: &Index,
+    text: &str,
+    today: Option<Date>,
+    current: Option<&str>,
+    g: Glyphs,
+) -> Content {
+    use crate::datalog::{self, Found};
+    let mut c = Content::new();
+    let parsed = datalog::parse(text);
+    let title = parsed
+        .as_ref()
+        .ok()
+        .and_then(|a| a.title.clone())
+        .unwrap_or_else(|| "an advanced query".into());
+    c.line(
+        &[("Query: ", Style::Heading), (&title, Style::Heading)],
+        None,
+    );
+    let found = parsed.and_then(|a| datalog::run(&a, index, today, current));
+    match found {
+        Err(e) => {
+            c.line(&[(&format!("Not run: {e}."), Style::Error)], None);
+            c.line(
+                &[(
+                    "Kalem runs Datascript's patterns, not, or, and, the comparisons, contains?, clojure.string's includes?, starts-with? and ends-with?, get, get-else, missing?, and Logseq's rules (page-ref, task, priority, property, page-property, page-tags, between, namespace, page).",
+                    Style::Muted,
+                )],
+                None,
+            );
+        }
+        Ok(Found::Hits(a)) => answer(&mut c, index, &a, &crate::query::Shape::default(), g),
+        Ok(Found::Table(columns, rows)) => {
+            let n = rows.len();
+            c.line(
+                &[(
+                    &format!("{n} row{}", if n == 1 { "" } else { "s" }),
+                    Style::Muted,
+                )],
+                None,
+            );
+            c.blank();
+            let widths: Vec<usize> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, col)| {
+                    rows.iter()
+                        .map(|r| r[i].chars().count())
+                        .chain(std::iter::once(col.chars().count()))
+                        .max()
+                        .unwrap_or(0)
+                        .min(60)
+                })
+                .collect();
+            let sep = if g.bullet == "*" { " | " } else { " │ " };
+            let header: Vec<String> = columns
+                .iter()
+                .zip(&widths)
+                .map(|(col, w)| cell(col, *w))
+                .collect();
+            c.line(&[(header.join(sep).trim_end(), Style::Heading)], None);
+            for row in &rows {
+                let cells: Vec<String> =
+                    row.iter().zip(&widths).map(|(v, w)| cell(v, *w)).collect();
+                c.line(&[(cells.join(sep).trim_end(), Style::Normal)], None);
+            }
         }
     }
     c

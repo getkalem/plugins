@@ -33,7 +33,11 @@ impl App {
             .find(|(s, e, _)| *s <= column && column < *e)
             .or_else(|| macros.first().filter(|_| anywhere));
         let Some((_, _, inner)) = found else {
-            return self.advanced_query(text, start).filter(|_| anywhere);
+            return if anywhere {
+                self.advanced_query(root, rel, text, start)
+            } else {
+                None
+            };
         };
         let index = self.indexes.get(root)?;
         // The block holding it says whether it is a table.
@@ -57,20 +61,39 @@ impl App {
         Some(self.render("graph.query", &key, true).into_iter().collect())
     }
 
-    /// When the line at `start` is inside `#+BEGIN_QUERY` … `#+END_QUERY`,
-    /// why nothing opens.
-    fn advanced_query(&self, text: &str, start: usize) -> Option<Vec<Effect>> {
+    /// When the line at `start` is inside `#+BEGIN_QUERY` … `#+END_QUERY`
+    /// of the note `rel` of graph `root`, the query's results (Logseq's
+    /// advanced queries, `crate::datalog`).
+    fn advanced_query(
+        &mut self,
+        root: &str,
+        rel: &str,
+        text: &str,
+        start: usize,
+    ) -> Option<Vec<Effect>> {
         let before = &text[..start];
         let end = text[start..].find('\n').map_or(text.len(), |p| start + p);
         let upto = &text[..end];
-        let open = upto.rfind("#+BEGIN_QUERY")?;
-        let closed = upto[open..].contains("#+END_QUERY") && before[open..].contains("#+END_QUERY");
-        (!closed).then(|| {
-            vec![Effect::Notify(
-                "An advanced query (Datalog) is not run by Kalem: its simple queries, {{query …}}, are".into(),
-                Level::Info,
-            )]
-        })
+        let open = upto.to_uppercase().rfind("#+BEGIN_QUERY")?;
+        if before[open..].to_uppercase().contains("#+END_QUERY") {
+            return None;
+        }
+        let close = text[open..]
+            .to_uppercase()
+            .find("#+END_QUERY")
+            .map(|q| open + q + "#+END_QUERY".len())?;
+        let current = self
+            .indexes
+            .get(root)
+            .and_then(|i| i.page_of(rel))
+            .map(|p| p.key.clone())
+            .unwrap_or_default();
+        let key = format!("{root}{SEP}{current}{SEP}{}", &text[open..close]);
+        Some(
+            self.render("graph.advancedQuery", &key, true)
+                .into_iter()
+                .collect(),
+        )
     }
 
     /// `t` in the Tasks or a Query document: the keyword of the line's
