@@ -8,7 +8,7 @@ A language plugin is declarative (Kalem's D57): this folder holds a manifest, `p
 
 | File types | Highlighting | Server |
 |---|---|---|
-| `.ex`, `.exs`, `mix.lock`, `.formatter.exs`, `.credo.exs`, `.iex.exs`, `#!/usr/bin/env elixir` (and `iex` or `mix`, served but not colored) | Elixir, with `~H` sigils as HEEx, `~L` as EEx, `~r` as a string, Markdown in `@doc` | yes |
+| `.ex`, `.exs`, `.formatter.exs`, `.credo.exs`, `.iex.exs`, `#!/usr/bin/env elixir` (`mix.lock`, and `#!` lines naming `iex` or `mix`, are served but not colored) | Elixir, with `~H` sigils as HEEx, `~L` as EEx, `~r` as a string, Markdown in `@doc` | yes |
 | `.heex`, `.html.heex` | HTML (HEEx): components (`<.button>`, `<Module.comp>`), `{…}` and `<%= … %>` as Elixir | yes |
 | `.eex`, `.html.eex`, `.leex`, `.html.leex` | HTML (EEx) | yes |
 
