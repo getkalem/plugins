@@ -517,7 +517,7 @@ impl Graph {
     /// Whether `rel`, relative to the root, is in a folder not read.
     pub fn is_hidden(&self, rel: &str) -> bool {
         rel.split('/')
-            .any(|part| part.starts_with('.') && !part.is_empty())
+            .any(|part| part.starts_with('.') && !part.is_empty() || part == "node_modules")
             || rel.split('/').next() == Some("logseq") && self.kind == Kind::Logseq
             || self
                 .hidden

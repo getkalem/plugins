@@ -110,15 +110,18 @@ fn a_logseq_graph_in_markdown() {
     assert_eq!(g.comma_properties, ["related", "alias", "tags"]);
     assert!(i.problems.is_empty(), "{:?}", i.problems);
     let (pages, journals, _, _) = i.counts();
-    assert_eq!((pages, journals), (19, 10));
+    assert_eq!((pages, journals), (20, 10));
     // `#+BEGIN_NOTE` is a directive, no tag.
     assert!(
         i.pages().all(|p| !p.title.starts_with('+')),
         "{:?}",
         i.pages().map(|p| &p.title).collect::<Vec<_>>()
     );
-    // Never read: the backup, the hidden folder, the assets.
+    // Never read: the backup, the hidden folder; a note in assets/ is,
+    // as Logseq reads it.
     assert!(i.page("ignored").is_none());
+    assert!(i.page("readme").is_some_and(|p| p.path.as_deref() == Some("assets/readme.md")));
+    assert!(i.page("read from assets").is_some());
     // Titles from the file name, decoded, and from `title::`.
     assert!(
         i.page("questions?")

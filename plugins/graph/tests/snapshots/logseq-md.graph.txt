@@ -8,6 +8,7 @@ Project
   Plugins  ←6 →2
     Graph  ←3 →3
 Queries  ←0 →4
+readme  ←0 →1
 
 Unlinked mentions (1)  named without a link; Enter lists them
 Kalem  2
