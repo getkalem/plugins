@@ -2,7 +2,7 @@
 
 hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and alignment, checked by the tool you already have on each save, reported as documents (balance, register, market value), reconciled against a statement, imported from bank statements, and kept in prices. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance, value and check; the plugin asks them and shows what they say, and has no engine of its own. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: 0.1.0**, for Kalem 0.6.16 and later (plugin API 0.2.13). This README describes the code on `main`. Three parts are newer than the 0.1.0 release: Report… (`SPC m r`) and the setting `reports`, Insert a Report as a Table, and the `kalem run` commands with the setting `glyphs`. In 0.1.0, `SPC m r` opens the Balance.
+**Status: 0.2.0**, for Kalem 0.6.18 and later (plugin API 0.2.13): Kalem 0.6.18 installs the plugin by its name with its syntaxes (0.6.16 and 0.6.17 wrote only the component, and the languages did not load) and waits in `kalem run` for the tool's answer. 0.1.0, for Kalem 0.6.16 and later, has everything but what 0.2.0 brings: Report… (`SPC m r`; in 0.1.0 it opens the Balance) and the setting `reports`, Insert a Report as a Table, the `kalem run` commands and the setting `glyphs`, the statement paired with the reconciliation (`match_days`), the Register narrowed (`/`) and its running total kept within a period, Main Journal and Tool…, and large journals' outputs refused rather than cut.
 
 One plugin, one install, with two halves in one manifest, both loaded:
 
@@ -166,7 +166,7 @@ In an Org or Markdown document, *Insert a Report as a Table* (the palette's Jour
 
 ## From the command line
 
-`kalem run` runs the plugin's commands without a window and prints the documents they write (from the Kalem release after 0.6.17, which waits for the tool's answer; Kalem 0.6.17 and earlier print nothing). Arguments go as JSON:
+`kalem run` runs the plugin's commands without a window and prints the documents they write (Kalem 0.6.18 and later, which wait for the tool's answer). Arguments go as JSON:
 
 ```sh
 kalem run pta pta.check 2026.journal

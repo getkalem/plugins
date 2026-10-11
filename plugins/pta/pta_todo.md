@@ -1026,7 +1026,12 @@ first.
   session. The Book's chapter, `book/part-3/plain-text-accounting.org`
   in Kalem's repository (Part III, where the plugins' chapters are, in
   the format skeleton's order), is on Kalem's branch `book-pta`
-  (worktree `org-book-pta`), listed after the note graphs.)
+  (worktree `org-book-pta`), listed after the note graphs.
+  0.2.0 prepared the same evening, for Kalem 0.6.18 (K13 and K14 in
+  it, and the Book's chapter): PT7c, PT8c, PT11b, PT11c, PT13, the
+  Register's narrowing and historical totals, Main Journal and Tool…;
+  `api` still `^0.2.13`, every interface the component imports being
+  at 0.2.13.)
 
 ## What Kalem's core must gain
 
