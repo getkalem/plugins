@@ -179,6 +179,9 @@ pub const COMMANDS: &[CommandInfo] = &[
     // Run by the plugin when a note its layer serves became readable (its
     // folder added to Kalem's projects).
     n("graph.noteOpened", "Index the Note's Graph", &[]),
+    // Run by the plugin once files of a graph changed on disk (Logseq,
+    // Obsidian, a sync, a `git pull`): read again together.
+    n("graph.filesChanged", "Read the Changed Files", &[]),
     // The graph drawn (Kalem's plugin API 0.2.12): all its pages, or the
     // note's page and the pages two links away.
     c("graph.graphView", "Graph View", &["space n r v"]),
@@ -638,6 +641,10 @@ pub struct App {
     /// Notes a layer serves whose graph is not indexed, its indexing asked
     /// for (`graph.noteOpened`) and not done yet.
     pub(crate) unindexed: std::cell::RefCell<BTreeSet<String>>,
+    /// Files of the graphs changed on disk and not read again yet, read
+    /// together by `graph.filesChanged` (queued for them) or before the
+    /// next command, whichever comes first.
+    changed: BTreeSet<String>,
     /// The properties of each graph and the values each has, with the
     /// index's version they were counted from (completion after `::`).
     properties: std::cell::RefCell<BTreeMap<String, (u64, std::rc::Rc<complete::Properties>)>>,
@@ -671,6 +678,7 @@ impl App {
             queries: std::cell::RefCell::new(BTreeMap::new()),
             properties: std::cell::RefCell::new(BTreeMap::new()),
             unindexed: std::cell::RefCell::new(BTreeSet::new()),
+            changed: BTreeSet::new(),
         }
     }
 
@@ -841,12 +849,46 @@ impl App {
 
     /// A file saved, or changed on disk.
     pub fn saved(&mut self, files: &dyn Files, path: &str) -> Vec<Effect> {
+        self.files_changed(files, &[files::normalize(path)])
+    }
+
+    /// A file changed on disk (`workspace-file-changed`): noted, to be
+    /// read with the others changed with it; whether it is the first
+    /// noted, for which `graph.filesChanged` is to be queued. A file of
+    /// no graph indexed is not noted.
+    pub fn file_changed(&mut self, path: &str) -> bool {
         let path = files::normalize(path);
-        self.track_saved(&path);
+        if !self
+            .indexes
+            .keys()
+            .any(|r| files::relative(r, &path).is_some())
+        {
+            return false;
+        }
+        let first = self.changed.is_empty();
+        self.changed.insert(path);
+        first
+    }
+
+    /// The files noted as changed, read again.
+    pub fn read_changed(&mut self, files: &dyn Files) -> Vec<Effect> {
+        let paths: Vec<String> = std::mem::take(&mut self.changed).into_iter().collect();
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        self.files_changed(files, &paths)
+    }
+
+    /// Files saved or changed on disk (absolute, normalized): read again,
+    /// each graph they are in worked out and drawn again once.
+    fn files_changed(&mut self, files: &dyn Files, paths: &[String]) -> Vec<Effect> {
+        for p in paths {
+            self.track_saved(p);
+        }
         let roots: Vec<String> = self
             .indexes
             .keys()
-            .filter(|r| files::relative(r, &path).is_some())
+            .filter(|r| paths.iter().any(|p| files::relative(r, p).is_some()))
             .cloned()
             .collect();
         let mut out = Vec::new();
@@ -854,7 +896,7 @@ impl App {
             let changed = self
                 .indexes
                 .get_mut(&root)
-                .is_some_and(|i| i.update(files, &path));
+                .is_some_and(|i| i.update_all(files, paths.iter().map(String::as_str)));
             if changed {
                 out.extend(self.refresh(&root));
             }
@@ -1149,6 +1191,11 @@ impl App {
         let mut out = Vec::new();
         if let Some(p) = &ctx.path {
             self.current = Some(files::normalize(p));
+        }
+        // What changed on disk is read before any command looks.
+        out.extend(self.read_changed(files));
+        if id == "graph.filesChanged" {
+            return out;
         }
         self.take_unsaved(ctx);
         if id == "graph.insertText" {

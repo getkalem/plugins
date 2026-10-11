@@ -1625,3 +1625,59 @@ fn a_page_with_a_title_keeps_its_file_and_a_vaults_note_is_renamed_with_it() {
         "{out:?}"
     );
 }
+
+#[test]
+fn files_changed_on_disk_are_read_together() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    // Written and removed by another program (Logseq, a `git pull`):
+    // noted, the first asking for `graph.filesChanged`.
+    m.write("/w/notes/pages/A.md", "- about [[Kalem]]\n")
+        .unwrap();
+    m.write("/w/notes/pages/B.md", "- also [[Kalem]]\n")
+        .unwrap();
+    m.remove("/w/notes/pages/Other.md");
+    assert!(app.file_changed("/w/notes/pages/A.md"));
+    assert!(!app.file_changed("/w/notes/pages/B.md"));
+    assert!(!app.file_changed("/w/notes/pages/Other.md"));
+    // A file of no graph is not noted.
+    assert!(!app.file_changed("/w/other/readme.md"));
+    let none = Ctx {
+        path: None,
+        text: None,
+        cursor: 0,
+        doc: None,
+        args: "{}".into(),
+    };
+    // Read together: the graph worked out and drawn again once.
+    let out = app.command(&m, "graph.filesChanged", &none);
+    let refreshed = out
+        .iter()
+        .filter(|e| matches!(e, Effect::RefreshLayers))
+        .count();
+    assert_eq!(refreshed, 1, "{out:?}");
+    let index = &app.indexes["/w/notes"];
+    let from: BTreeSet<&str> = index.backlinks("kalem").iter().map(|b| &*b.path).collect();
+    // The journal names Kalem by its alias.
+    assert_eq!(
+        from,
+        BTreeSet::from(["journals/2026_10_03.md", "pages/A.md", "pages/B.md"]),
+        "{from:?}"
+    );
+    // Nothing left: the next change asks again.
+    assert!(app.command(&m, "graph.filesChanged", &none).is_empty());
+    m.write("/w/notes/pages/A.md", "- no link now\n").unwrap();
+    assert!(app.file_changed("/w/notes/pages/A.md"));
+    // Any command reads what is noted first.
+    app.command(&m, "graph.pages", &ctx("/w/notes/pages/Kalem.md", "", 0));
+    let from: BTreeSet<&str> = app.indexes["/w/notes"]
+        .backlinks("kalem")
+        .iter()
+        .map(|b| &*b.path)
+        .collect();
+    assert_eq!(
+        from,
+        BTreeSet::from(["journals/2026_10_03.md", "pages/B.md"])
+    );
+}

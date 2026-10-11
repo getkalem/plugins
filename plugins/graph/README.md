@@ -12,7 +12,7 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 ## Moving over
 
-- **From Logseq (the file version, "OG").** Add the graph's folder as a project of Kalem's and open any page: nothing is converted, and `logseq/` is never written. Keep Logseq installed for as long as you like: both read and write the same files, and each reads again a file the other saved (save in one before editing the same page in the other). Sync stays as it was: Syncthing, git or iCloud on the folder.
+- **From Logseq (the file version, "OG").** Add the graph's folder as a project of Kalem's and open any page: nothing is converted, and `logseq/` is never written. Keep Logseq installed for as long as you like: both read and write the same files, and each reads again a file the other saved (save in one before editing the same page in the other). Kalem hears every file Logseq writes, renames or removes in the graph while both are open (Kalem 0.6.15 and later; before, a page Logseq made was seen once Kalem started again or after Index Again); a page open in Kalem is read again when it has no changes of Kalem's, and Kalem asks which to keep when it has. Sync stays as it was: Syncthing, git or iCloud on the folder.
 - **From Logseq's database version.** Its SQLite database does not open in Kalem. Its Markdown Mirror does: turn it on in Logseq's settings (the desktop app), and the folder `mirror/markdown/` in the graph's folder opens as a graph, read only: pages, journals, links, tags, tasks, properties (written there as `* key:: value`), queries and search. Logseq writes the mirror from its database and writes over any change, so Kalem never writes it and its editing commands say so.
 - **From Obsidian.** Add the vault's folder as a project and open a note. Of `.obsidian/`, only `daily-notes.json`, `app.json` and `templates.json` are read, for the daily notes, where new notes go, how links are written and the templates' folder; nothing under it is written.
 
@@ -163,7 +163,7 @@ From Logseq:
 - The database version's graph itself does not open; its Markdown Mirror does, read only.
 - Completion offers no blocks without an id after `((` (Insert Block Reference writes the id), and of `/`'s commands those that write text only (no date picker, template or drawing).
 - The graph view has no filters, groups of one's own or forces to set, as Logseq's and Obsidian's have; journals are in the local graph only.
-- The index follows saves, changes on disk and, when a command runs in a note, its unsaved text; the panel and the documents are written again after a save. Recent Pages remembers this session's pages only.
+- The index follows saves, changes on disk (any file of the graph, written by Logseq, Obsidian, a sync or git, with Kalem 0.6.15 and later; the files Kalem holds open before) and, when a command runs in a note, its unsaved text; the panel and the documents are written again after a save. Recent Pages remembers this session's pages only.
 
 From Obsidian:
 
@@ -191,7 +191,7 @@ Measured on a graph generated at the scale Logseq aims at (`tests/large.rs`): 10
 | A query over the graph | 20 ms | 500 ms |
 | In Kalem: the graph indexed and All pages printed | 1.9 s, 340 MB for the whole process | |
 
-The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `plugin.json`): an extension's own, 64 MB and 100 ms, stop it at the first note of a graph of some thousand pages. The first command or note of a large graph waits for its index while Kalem runs the call; a save then changes only the saved file's entries in the index (a page renamed, or a file added or removed, derives the names again, as fast as the first build's last step). The panel's unlinked references are searched for when they are opened, as Logseq does.
+The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `plugin.json`): an extension's own, 64 MB and 100 ms, stop it at the first note of a graph of some thousand pages. The first command or note of a large graph waits for its index while Kalem runs the call; a save then changes only the saved file's entries in the index (a page renamed, or a file added or removed, derives the names again, as fast as the first build's last step). Files changed on disk together (a `git pull`, Logseq renaming a page and its references) are read together once the event that told of the first returns, the names derived and the documents written again once for them all. The panel's unlinked references are searched for when they are opened, as Logseq does.
 
 ## Tests
 

@@ -1052,9 +1052,21 @@ user groups; the gaps that code can close, in this order.
 - [ ] GR14c Embeds and queries drawn in their note: the embedded block
   or page and a query's results under the line (Kalem's side: lines a
   layer adds, K2).
-- [ ] GR14d Logseq and Kalem on one graph at once: a file Logseq writes
+- [x] GR14d Logseq and Kalem on one graph at once: a file Logseq writes
   while Kalem holds it, and the other way round, tested; what breaks
-  fixed.
+  fixed. (Done 2026-10-11, with external writes standing in for Logseq,
+  which is not installed here: a page open and unchanged in Kalem is
+  read again, one with changes asks which to keep; a page written,
+  renamed or removed elsewhere was not seen at all, Kalem watching only
+  the files it held open. Kalem's side: the folder of a layer's marker,
+  once a project, watched whole (`kalem_core::tree_watch`), its files
+  told to the plugins as `workspace-file-changed`. The plugin's side:
+  each such file only noted, and read with the others in one
+  `graph.filesChanged` it queues (or before the next command), the
+  names derived once: 300 pages written at once by a script while
+  Kalem was open were all in Kalem's backlinks a few seconds later.)
+  [~] Not tested against Logseq itself: how Logseq takes a page Kalem
+  writes while Logseq has it open with typing not yet written.
 - [ ] GR14e `collapsed:: true` folded when the note opens (K3).
 
 ## What Kalem's core must gain

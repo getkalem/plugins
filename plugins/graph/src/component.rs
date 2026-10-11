@@ -406,8 +406,18 @@ impl Plugin for Graph {
         })?;
         kalem::on(EventKind::WorkspaceFileChanged, |e| {
             if let Event::WorkspaceFileChanged(p) = e {
-                let p = p.clone();
-                with_app(|app| app.saved(&Fs, &p));
+                // Noted, and read with the others changed with it once
+                // this call returns: a `git pull` is one change, not one
+                // a file. Read at once where Kalem refuses the plugin its
+                // own command (before 0.6.14).
+                let first = APP.with(|a| {
+                    a.borrow_mut()
+                        .as_mut()
+                        .is_some_and(|app| app.file_changed(p))
+                });
+                if first && kalem::run("graph.filesChanged", "{}").is_err() {
+                    with_app(|app| app.read_changed(&Fs));
+                }
             }
             Reply::Proceed
         })?;
