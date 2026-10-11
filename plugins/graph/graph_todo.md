@@ -709,7 +709,13 @@ below replace the earlier GR4a to GR4d.
   Logseq's sixteen `<` blocks as `->block` writes them, indented as the
   block's lines. Open: blocks without an id after `((` (a completion
   cannot write another file; Insert Block Reference does), property
-  keys and values after `::`, `/` commands, Obsidian's `[[note#heading`.)
+  keys and values after `::`, `/` commands, Obsidian's `[[note#heading`.
+  Done 2026-10-11 but the first: `::` at a block's start offers the
+  graph's properties and `key::` their values, `/` Logseq's commands
+  that write text (`commands-map` of 0.10.9, keywords and headings at a
+  block's start only), `[[note#` a vault note's headings and `#^` its
+  blocks with an id; Logseq's `<% time %>` and Obsidian's `{{time}}`
+  filled in from the local time.)
 
 - [~] GR8c Writing into another file: a block referenced for the first
   time gets its `id:: uuid` (a v4 UUID from `clock.random`) written
@@ -988,6 +994,29 @@ below replace the earlier GR4a to GR4d.
   `Kalem` for `Kalem.md` and `Archive/Kalem.md`); each is shown as the
   link Obsidian writes for it.
 
+## GR13. The graph drawn
+
+- [x] GR13 Logseq's and Obsidian's graph view: the pages as nodes, the
+  links as edges, laid out by forces, in the window (the owner's ask of
+  2026-10-11: "at least in the graphical version"). Kalem draws it, as
+  no plugin draws in the window: plugin API 0.2.12's `graph-view`, a
+  document of nodes (an id, a label, a group, a weight) and edges with
+  a command for the node opened, which every plugin with a graph to
+  show can use (a project's dependencies, a mind map, a citation
+  network). (Done 2026-10-11: Graph View, `SPC n r v`, the graph's
+  pages and the links between them, Logseq's journals left out as
+  Logseq leaves them out by default, colored by namespace, sized by
+  their links; Local Graph, `SPC n r V`, the note's page in the middle
+  and the pages two links away; a node opened opens its page. The text
+  lists the pages, the most linked first, each line opening its page.
+  Kalem's side lays it out with Fruchterman and Reingold's forces,
+  Barnes-Hut for the far nodes, fitted to the window while it spreads;
+  the window draws dots, lines and the hubs' labels, the terminal
+  Braille dots. Checked by a picture of the window rendered off screen
+  (`kalem-ui`'s example `graph_shot`) and in the terminal editor. Open:
+  filters (tags, orphans, journals in the whole graph), groups and
+  forces of one's own, as Logseq's and Obsidian's settings have.)
+
 ## What Kalem's core must gain
 
 Each is the plugin's gate or its ask, written for every plugin.
@@ -1051,7 +1080,10 @@ Each is the plugin's gate or its ask, written for every plugin.
   blocking.
 - K11 Renaming (and deleting) a file through `fs`, under
   `fs:write:workspace`: a page renamed with its file as Logseq does, a
-  vault's note renamed at all (GR8c). Not blocking.
+  vault's note renamed at all (GR8c). Not blocking. (Done 2026-10-11:
+  plugin API 0.2.12's `fs-2`, `rename` and `trash`, open documents
+  following their files; Rename Page renames a vault's note with its
+  file and its links, and a Logseq page named by its file.)
 - K10 A plugin learns the folders of Kalem's projects (an `editor` or
   `kalem` function, or an event when one is added), so that the graphs
   among them are found at start, and a notice can say which folder to
@@ -1072,7 +1104,10 @@ Each is the plugin's gate or its ask, written for every plugin.
   profile). Asks: the core asking the plugin whose layer serves the
   document to open the link at a place first (a function of the `layer`
   export, or a command the manifest's layer names), for every plugin
-  whose notes link by rules of their own. Not blocking.
+  whose notes link by rules of their own. Not blocking. (Done
+  2026-10-11: a manifest's layer names its command for links, `"open":
+  "graph.openLink"`, which a Ctrl-click runs with plugin API 0.2.12;
+  and `Alt+Enter` while typing in Markdown, Obsidian's Follow Link key.)
 - K16 `kalem complete FILE:LINE:COL` with the plugins' completers (API
   0.2.11). Batch mode starts no extension plugin, so the command prints
   Kalem's own completers' items only, and a plugin's completer cannot
