@@ -387,6 +387,8 @@ pub enum Style {
     Mark,
     Negative,
     Total,
+    /// To look at: a posting the statement does not have.
+    Warning,
 }
 
 /// The balance document: its text, styles, and the account of each line

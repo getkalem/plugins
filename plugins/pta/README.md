@@ -70,7 +70,7 @@ In a journal, under `SPC m` in Vim's command mode, where Doom Emacs's `:lang led
 | `SPC m p` | Fetch Prices |
 | `SPC m m` | The Journal's commands, to pick |
 | | Tool Version: what the journal's tool says it is (`--version`), from the menu or the palette |
-| `SPC m i`, `SPC m e` | In a CSV statement: Import Statement, Edit the Statement's Rules (Vim's command mode; in the Word-like profile, from the palette) |
+| `SPC m i`, `SPC m e`, `SPC m r` | In a CSV statement: Import Statement, Edit the Statement's Rules, Pair with the Reconciliation (Vim's command mode; in the Word-like profile, from the palette) |
 | Enter | On a posting, in the Word-like profile: aligns it, then a new line |
 
 In the plugin's documents (both profiles; in Vim's command mode): **Check**: Enter the problem's place, `r` again, `q` or Escape close. **Balance**: Tab, Left and Right fold, Enter the account's register, `p` period, `d` depth, `v` market value, `r` again, `q` close. **Register**: Enter the posting, `p` period, `v` market value, `r` again, `q` close. **Reconcile**: Enter the posting, `t` the statement's balance, `C` finish, `r` again, `q` close. **Import**: `i` import, `e` the rules, `r` again, `q` close. **Report**: `p` period, `o` another report, `r` again, `q` close. Escape closes each of them too. `?` lists them.
@@ -92,6 +92,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 | `rules` | empty | hledger's rules for a statement, when not its own beside it (`statement.csv.rules`) |
 | `ledger_account`, `ledger_date_format` | empty | Ledger's import: the bank's account, and how the statement writes dates (`%d.%m.%Y`) |
 | `glyphs` | `unicode` | The Balance's fold marks and a passed check's mark: `▾ ▸ ✓`, or `v > ok` (`ascii`) |
+| `match_days` | 3 | How many days apart a statement's line and its posting may be, paired |
 | `reports` | `[]` | Reports of your own, first in Report…: `NAME: ARGUMENTS` (`Food by month: balance expenses:food -M`; for Beancount, a query) |
 | `prices` | empty | Where Fetch Prices writes: a file your main journal includes (beside it when relative); empty for the main journal |
 | `price_sources` | `[]` | hledger and Ledger: the pairs to fetch, `SOURCE BASE/QUOTE` (`ecb EUR/USD`), a third word for the journal's symbol (`ecb EUR/USD $`) |
@@ -111,7 +112,6 @@ Waiting on Kalem:
 Not done yet:
 
 - **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds. hledger's `roi`, which asks for its accounts, is not offered (pin it in `reports`).
-- **The statement beside the reconciliation** (PT8c): a statement's rows paired with the account's postings by date and amount.
 - **Beancount's import** (PT9b): your beangulp script, which needs a permission to run `python3`.
 - `hledger` and `beancount` source blocks run by Babel (PT11b, K6), and journals of 200,000 transactions measured (PT13).
 
@@ -189,6 +189,8 @@ A period is `this month`, `last month`, `this quarter`, `this year`, `last year`
 ## Reconciliation
 
 *Reconcile* (`SPC m R` on a posting of the account, or pick one of your asset and liability accounts) asks the statement's closing balance (the tool's total of the cleared and pending postings offered) and opens a document with the cleared total, the pending total, their sum, the target and the difference, then the postings not cleared yet. Mark postings in the journal as you tick them off the statement (`SPC m t`, pending), save, and the difference moves; `t` changes the target, Enter opens the journal at a posting. When the difference is zero, *Finish Reconciliation* (`C`, or `SPC m C`) asks the statement's date, clears the pending postings and writes a balance assertion for the target (hledger and Ledger: a "Balance assertion" transaction with a zero posting; Beancount: a `balance` directive the day after), one undo step. Finish edits only the file where you started Reconcile: pending postings of the account in other included files stay pending. The totals are the tool's; the plugin only subtracts them from the target you typed.
+
+With the bank's statement open (a CSV file), *Pair with the Reconciliation* (`SPC m r` there) pairs its lines with the account's postings by amount and date (within `match_days`, 3): in the Reconcile document each posting not cleared says whether it is on the statement, and the statement's lines with no posting are listed in red, for Import to take. A statement that writes the account's amounts the other way round (a card's charges above zero) is paired turned. It is paired again each time the reconciliation is written, until another is paired.
 
 ## Checking by the tool
 

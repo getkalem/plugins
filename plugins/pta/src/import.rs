@@ -101,7 +101,7 @@ pub fn missing_rules(stderr: &str) -> Option<String> {
 /// meaning (`Date`, `Tarih` → `date`; `Description`, `Açıklama`,
 /// `Payee` → `description`; `Amount`, `Tutar` → `amount`; `Balance`,
 /// `Bakiye` → `balance`), another in lower case with `_` for blanks.
-fn field(header: &str) -> String {
+pub(crate) fn field(header: &str) -> String {
     let h = header.trim().trim_matches('"').to_lowercase();
     let is = |words: &[&str]| words.iter().any(|w| h == *w || h.starts_with(w));
     if is(&["date", "tarih", "datum", "fecha"]) {
@@ -134,7 +134,7 @@ fn field(header: &str) -> String {
 /// `03.02.2026`, `03/02/2026`, `2/3/2026`): day first where the first
 /// part is above 12, or the separator is a dot; month first for a slash
 /// whose second part is above 12.
-fn date_format(date: &str) -> String {
+pub(crate) fn date_format(date: &str) -> String {
     let d = date.trim().trim_matches('"');
     let sep = d.chars().find(|c| !c.is_ascii_digit()).unwrap_or('-');
     let parts: Vec<&str> = d.split(sep).collect();

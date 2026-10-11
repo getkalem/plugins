@@ -369,3 +369,29 @@ fn each_tools_reconciliation() {
         assert!(postings.iter().all(|p| p.status != '*'), "{tool:?}");
     }
 }
+
+/// A statement beside the reconciliation (PT8c): its lines paired with
+/// the account's postings the tool lists in the statement's days.
+#[test]
+fn a_statement_paired() {
+    use kalem_plugin_pta::statement;
+    let csv = "Date,Description,Amount\n2026-01-03,MIGROS,-842.35\n2026-01-31,KIRA,-15000.00\n2026-01-02,MAAS,45000.00\n2026-01-20,UNKNOWN FEE,-5.00\n";
+    let lines = statement::lines(csv).expect("lines");
+    let span = statement::span(&lines, 3);
+    let dir = corpus("hledger");
+    let main = dir.join("2026.journal").to_string_lossy().into_owned();
+    let (p, a) = report::register_command(Dialect::Hledger, &main, "assets:bank:ziraat", span);
+    let Some(out) = run(p, &a, &dir) else {
+        return;
+    };
+    let rows = kalem_plugin_pta::reconcile::hledger_register(&out);
+    let paired = statement::pair(&lines, &rows, 3);
+    assert_eq!(paired.found.len(), 3, "{rows:?}");
+    assert_eq!(paired.alone.len(), 1);
+    assert_eq!(paired.alone[0].description, "UNKNOWN FEE");
+    let market = rows
+        .iter()
+        .find(|r| r.amount == "-842,35 TRY")
+        .expect("the market");
+    assert!(paired.found.contains(&statement::key(market)));
+}

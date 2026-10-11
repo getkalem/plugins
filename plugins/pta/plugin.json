@@ -167,6 +167,11 @@
       "default": "unicode",
       "description": "The Balance's fold marks and a passed check's mark as ▾ ▸ ✓, or as v > ok for a terminal font without them"
     },
+    "match_days": {
+      "type": "integer",
+      "default": 3,
+      "description": "Pair with the Reconciliation (SPC m r in a statement): how many days a statement's line and its posting may be apart"
+    },
     "reports": {
       "type": "array",
       "default": [],

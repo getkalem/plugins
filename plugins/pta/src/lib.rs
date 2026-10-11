@@ -24,6 +24,9 @@
 //!
 //! - [`import`]: a bank statement imported by the tool (PT9).
 //!
+//! - [`statement`]: a bank statement's lines paired with the account's
+//!   postings beside a reconciliation (PT8c).
+//!
 //! - [`other`]: the tool's other reports, one pick (PT7c).
 //!
 //! - [`prices`]: prices fetched by the user's price programs (PT10).
@@ -40,6 +43,7 @@ pub mod other;
 pub mod prices;
 pub mod reconcile;
 pub mod report;
+pub mod statement;
 pub mod write;
 
 /// The manifest, embedded so that the component carries its own

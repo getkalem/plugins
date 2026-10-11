@@ -401,6 +401,7 @@ pub(super) fn styles(d: &report::Document) -> Vec<documents::StyledSpan> {
                 report::Style::Hint | report::Style::Mark => TextStyle::color(Color::Muted),
                 report::Style::Negative => TextStyle::color(Color::Red),
                 report::Style::Total => TextStyle::color(Color::Default).bold(),
+                report::Style::Warning => TextStyle::color(Color::Yellow),
             },
         })
         .collect()

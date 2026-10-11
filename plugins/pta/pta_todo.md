@@ -711,7 +711,7 @@ first.
   transaction cleared, the assertion written, `hledger check
   --strict` passing. Pending marks in an included file are not
   cleared (only the open journal is edited).)
-- [ ] PT8c The statement beside: `pta.reconcileWith`, in a CSV
+- [x] PT8c The statement beside: `pta.reconcileWith`, in a CSV
   document (Kalem's grid) or from the reconcile document, pairs the
   statement's rows with the account's postings by date and amount
   (the date within the setting `match_days`, 3; the amount exact
@@ -721,6 +721,24 @@ first.
   PT9 offered for them). No tool does this; the plugin reads the CSV
   through `editor.text` when the command runs there, or through `fs`
   (`fs:read:workspace`) when it runs from the reconcile document.
+  (Done 2026-10-11 from the CSV document, checked in the terminal
+  editor: Pair with the Reconciliation (`SPC m r` in a statement) reads
+  its lines (`src/statement.rs`: the date, description and amount
+  columns, or money in and out, by their headers as the import's rules
+  template names them; the date format of the first; the decimal mark
+  most amounts have; `;` or tab separated too), asks the tool for the
+  account's register in the statement's days widened by `match_days`
+  (3), and pairs line and posting by the same amount, the nearest
+  date first, the statement's signs as written or turned (a card's
+  charges above zero), whichever pairs more. The Reconcile document
+  then says of each posting not cleared "on the statement" (muted) or
+  "not on the statement" (yellow), and lists the statement's lines
+  without a posting in red, Import named for them. Kept with the
+  reconciliation and paired again each time it is written (the
+  journal saved). Not done: from the Reconcile document (it would need
+  `fs:read:workspace` for the file, a permission the plugin does not
+  ask yet), and the rules' own sign conventions (the turned signs
+  cover a card).)
 
 ## PT9. Import from bank statements
 

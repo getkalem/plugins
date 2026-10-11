@@ -1437,6 +1437,13 @@ impl Plugin for Pta {
             |_| import::edit_rules(),
         )?;
         kalem::keymap("space m e", "pta.editRules", Some(CSV_LEADER_WHEN))?;
+        command(
+            "pta.reconcileWith",
+            "Pair with the Reconciliation",
+            &["csv"],
+            |_| reconcile::with_statement(),
+        )?;
+        kalem::keymap("space m r", "pta.reconcileWith", Some(CSV_LEADER_WHEN))?;
         kalem::keymap("e", "pta.editRules", Some(IMPORT_WHEN))?;
         command("pta.importAccept", "Import", &[import::KIND], |_| {
             import::accept()
