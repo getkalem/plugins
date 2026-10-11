@@ -228,6 +228,90 @@ fn running(program: &'static str, started: bool) {
     }
 }
 
+/// Main Journal and Tool…: the settings `journal` and `tool` from a
+/// pick, in a journal: this file as the main journal, another typed, or
+/// none (`LEDGER_FILE`'s, else each file itself); the tool the file's
+/// own (`auto`), hledger or Ledger. The status bar item follows.
+fn setup() -> Result<String, String> {
+    let Some((_, Some(path))) = dialect_here() else {
+        ui::notify("This document is no journal with a file", ui::Level::Info);
+        return Ok("null".into());
+    };
+    let s = Settings::read(settings::own);
+    let now = |on: bool| on.then(|| "now".to_string());
+    let journal = s.journal.trim().to_string();
+    let tool = s.tool.trim().to_string();
+    let choices: Vec<(String, Option<String>, &'static str)> = vec![
+        (
+            format!("Main journal: this file, {}", journal::name(&path)),
+            now(!journal.is_empty() && journal == path),
+            "this",
+        ),
+        (
+            "Main journal: another file…".into(),
+            now(!journal.is_empty() && journal != path),
+            "other",
+        ),
+        (
+            "Main journal: LEDGER_FILE's, else each file itself".into(),
+            now(journal.is_empty()),
+            "none",
+        ),
+        (
+            "Tool: the file's own (auto)".into(),
+            now(tool.is_empty() || tool == "auto"),
+            "auto",
+        ),
+        ("Tool: hledger".into(), now(tool == "hledger"), "hledger"),
+        ("Tool: Ledger".into(), now(tool == "ledger"), "ledger"),
+    ];
+    let items: Vec<ui::PickItem> = choices
+        .iter()
+        .map(|(label, detail, _)| ui::PickItem {
+            label: label.clone(),
+            detail: detail.clone(),
+        })
+        .collect();
+    let keys: Vec<&'static str> = choices.iter().map(|c| c.2).collect();
+    ui::quick_pick(
+        &items,
+        &ui::PickOptions {
+            title: Some("Main journal and tool".into()),
+            placeholder: None,
+            many: false,
+        },
+        move |picked| {
+            let Some(&key) = picked.first().and_then(|&i| keys.get(i as usize)) else {
+                return;
+            };
+            let set = |k: &str, v: serde_json::Value| {
+                if let Err(why) = settings::set(k, &v.to_string()) {
+                    ui::notify(&why, ui::Level::Warning);
+                }
+            };
+            match key {
+                "this" => set("journal", serde_json::json!(path)),
+                "none" => set("journal", serde_json::Value::Null),
+                "other" => ui::prompt(
+                    "The main journal (absolute, from ~/, or beside the file)",
+                    &ui::PromptOptions {
+                        value: Some(journal),
+                        placeholder: None,
+                        password: false,
+                    },
+                    move |answer| {
+                        if let Some(a) = answer.filter(|a| !a.trim().is_empty()) {
+                            set("journal", serde_json::json!(a.trim()));
+                        }
+                    },
+                ),
+                tool => set("tool", serde_json::json!(tool)),
+            }
+        },
+    );
+    Ok("null".into())
+}
+
 /// Tool Version: what the journal's tool says it is.
 fn version() -> Result<String, String> {
     let Some((d, path)) = dialect_here() else {
@@ -1157,6 +1241,7 @@ fn menu() -> Result<String, String> {
             ("pta.registerVisit", "Go to the Posting", "Enter"),
             ("pta.registerPeriod", "Period…", "p"),
             ("pta.registerValue", "Market Value or Cost", "v"),
+            ("pta.registerNarrow", "Narrow…", "/"),
             ("pta.register", "Register Again", "r"),
             ("pta.registerClose", "Close the Register", "q"),
         ]
@@ -1231,6 +1316,12 @@ impl Plugin for Pta {
         command("pta.version", "Tool Version", crate::TEXT_TYPES, |_| {
             version()
         })?;
+        command(
+            "pta.setup",
+            "Main Journal and Tool…",
+            crate::TEXT_TYPES,
+            |_| setup(),
+        )?;
         command("pta.align", "Align Amounts", crate::TEXT_TYPES, |_| {
             align(false);
             Ok("null".into())
@@ -1356,6 +1447,8 @@ impl Plugin for Pta {
             register::toggle_value()
         })?;
         kalem::keymap("v", "pta.registerValue", Some(REGISTER_WHEN))?;
+        command("pta.registerNarrow", "Narrow…", r, |_| register::narrow())?;
+        kalem::keymap("/", "pta.registerNarrow", Some(REGISTER_WHEN))?;
         command("pta.registerClose", "Close the Register", r, |_| {
             register::close()
         })?;

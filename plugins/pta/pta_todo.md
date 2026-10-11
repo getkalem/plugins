@@ -289,7 +289,7 @@ first.
   that a fixed release is noticed. Ledger has no server; hledger-lsp
   is not given Ledger's files, since hledger cannot read their value
   expressions.)
-- [~] PT3b beancount-language-server (Rust, `cargo install
+- [x] PT3b beancount-language-server (Rust, `cargo install
   beancount-language-server` or Homebrew, 1.9.x): `command`
   `["beancount-language-server"]`, `candidates` it and
   `~/.cargo/bin/beancount-language-server`; it must be told the main
@@ -318,7 +318,8 @@ first.
   which the component takes as Beancount's main journal too while
   `journal` is empty, so one setting serves both; checked with a
   Kalem built from the branch: the included file clean, the item
-  `beancount · main.beancount`. Done once that Kalem is released.)
+  `beancount · main.beancount`. Done once that Kalem is released.
+  Kalem 0.6.16 released it, 2026-10-11.)
 - [x] PT3c The main journal and the tool. Includes make one file the
   root: the tool, the servers and every report must be given it.
   The plugin's setting `journal` (a path relative to the project; the
@@ -580,7 +581,7 @@ first.
   `tests/reports.rs` runs each tool on the corpus (a subtotal, a
   section's accounts, a period's change against the balance at its
   end).)
-- [~] PT7b `pta.register` (`SPC m R`; Enter on an account in PT7a; the
+- [x] PT7b `pta.register` (`SPC m R`; Enter on an account in PT7a; the
   account at the cursor in a journal, else asked): "Register:
   Expenses:Market" (kind `pta-register`), one line per posting: date,
   status, description, the other account, the amount, the running
@@ -595,7 +596,12 @@ first.
   the earlier ones by period, since `process` cuts output at 16 MB and
   a document of a million lines helps no one.
   (Done 2026-10-11 but the typed query (`SPC m /`); checked in the
-  terminal editor: from the Balance's Enter, `SPC m R` on a posting's
+  terminal editor. The typed query came later the same day: `/` in the
+  Register asks the tool's own query (hledger's terms, Ledger's, a
+  Beancount condition), added to the account's (`report::
+  narrowed_register`; Ledger's in parentheses with `and`), the header
+  naming it; a test narrows each tool's. From the Balance's Enter,
+  `SPC m R` on a posting's
   account (`write::account_at`), or an account picked from the tool's
   (`hledger accounts`, `ledger accounts`, `bean-query`'s); the account
   with its subaccounts (`^ACCOUNT(:|$)`); hledger's `register -O csv`
@@ -871,9 +877,11 @@ first.
   document suits its commands, which act on no note). Checked in the
   terminal editor: F10 lists "Journal › …" with the keys, `SPC m m`'s
   pick runs Toggle Status on the journal. The which-key group under
-  `SPC m` is named by Kalem from the commands' category. Open: the
-  tool and the journal through a pick (the settings page has them);
-  the window's toolbar not looked at.)
+  `SPC m` is named by Kalem from the commands' category. Later the
+  same day: Main Journal and Tool… (`pta.setup`, in the menu and the
+  pick) sets `journal` (this file, another typed, none) and `tool`
+  from a pick, through `settings.set`, the status bar item following.
+  Open: the window's toolbar not looked at.)
 - [~] PT11b Org: `pta.insertAsTable` in an Org document, the report of
   PT7c chosen as an Org table (`hledger … -O csv`, `bean-query -f
   csv`, converted as Kalem converts CSV to an Org table and inserted

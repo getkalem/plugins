@@ -91,6 +91,7 @@ pub const MENU: &[(&str, &str, &str)] = &[
     ("pta.finishReconcile", "Finish Reconciliation", "SPC m C"),
     ("pta.prices", "Fetch Prices", "SPC m p"),
     ("-", "", ""),
+    ("pta.setup", "Main Journal and Tool…", ""),
     ("pta.version", "Tool Version", ""),
 ];
 

@@ -124,7 +124,7 @@ Not done yet:
 
 A journal that `include`s others is checked and reported as one: checking an included file alone gives false errors (an account opened in another file is "unknown"). The plugin's setting `journal` names the main journal (absolute, from `~/`, or beside the file). Unset, an hledger journal's main journal is the one `LEDGER_FILE` names when that journal includes the file (`hledger files` says so), a Beancount journal's the one its server is told (below), else the file itself. Kalem started from the Dock or a launcher may not see the `LEDGER_FILE` of your shell: set `journal` then.
 
-The setting `tool` picks the program for hledger's and Ledger's journals: `auto` takes the file's own, and a `.ledger` file goes to Ledger where Ledger is installed and to hledger where only hledger is (hledger does not read Ledger's value expressions, such as `(-$132.00)`). A Beancount journal is always Beancount's.
+*Main Journal and Tool…* (the Journal menu, the palette) sets both from a pick: this file as the main journal, another typed, or none. The setting `tool` picks the program for hledger's and Ledger's journals: `auto` takes the file's own, and a `.ledger` file goes to Ledger where Ledger is installed and to hledger where only hledger is (hledger does not read Ledger's value expressions, such as `(-$132.00)`). A Beancount journal is always Beancount's.
 
 ## Writing transactions
 
@@ -144,7 +144,7 @@ The outline is the server's document symbols. Ledger has no server, so a Ledger 
 
 *Balance* (`SPC m b`) opens the main journal's balance as a document: assets, liabilities and equity at the period's end, then income, expenses and the other accounts within the period, as a tree (each parent with its subaccounts' amounts), every amount and total as the tool computes and writes it. Tab, Right and Left fold and unfold an account (kept as you leave it), `p` picks the period (this month, last month, this quarter, this year, last year, all dates), `d` the depth, `v` shows market values (or back to cost), `r` runs it again, Enter opens the account's register, `q` or Escape closes it. It is written again when the journal is saved.
 
-*Register* (`SPC m g r` on a posting's account, or Enter in the balance; else an account to pick) lists the account's postings, its subaccounts' too, with the tool's running total; Enter opens the journal at the posting, `p` picks the period (the running total stays the account's balance, the postings before the period counted; Beancount's first line is its opening balance), `v` the market values. The amounts are written as the journal writes them. The last 2,000 postings are shown.
+*Register* (`SPC m g r` on a posting's account, or Enter in the balance; else an account to pick) lists the account's postings, its subaccounts' too, with the tool's running total; Enter opens the journal at the posting, `p` picks the period (the running total stays the account's balance, the postings before the period counted; Beancount's first line is its opening balance), `v` the market values, `/` narrows it by the tool's own query (hledger's `desc:market amt:>100`, Ledger's `payee market`, a Beancount condition such as `narration ~ 'Market'`; the running total then the postings shown). The amounts are written as the journal writes them. The last 2,000 postings are shown.
 
 ## Import from bank statements
 

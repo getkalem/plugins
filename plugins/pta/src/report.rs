@@ -625,6 +625,21 @@ pub fn register_command(
     account: &str,
     bounds: Option<(Date, Date)>,
 ) -> (&'static str, Vec<String>) {
+    narrowed_register(tool, main, account, bounds, "")
+}
+
+/// The register narrowed by `query` in the tool's own query language:
+/// hledger's terms (`desc:market amt:>100`), Ledger's (`payee market`),
+/// a Beancount condition (`narration ~ 'Market'`); all of them and the
+/// account's.
+pub fn narrowed_register(
+    tool: Dialect,
+    main: &str,
+    account: &str,
+    bounds: Option<(Date, Date)>,
+    query: &str,
+) -> (&'static str, Vec<String>) {
+    let query = query.trim();
     let pattern = account_pattern(account);
     let mut a: Vec<String> = Vec::new();
     // Within a period the running total is still the account's balance,
@@ -650,6 +665,7 @@ pub fn register_command(
                 ]);
             }
             a.push(format!("acct:{pattern}"));
+            a.extend(crate::other::words(query));
             ("hledger", a)
         }
         Dialect::Ledger => {
@@ -661,7 +677,15 @@ pub fn register_command(
                     format!("d>=[{}] & d<[{}]", begin.written('/'), end.written('/')),
                 ]);
             }
-            a.extend(ledger_pattern(account));
+            if query.is_empty() {
+                a.extend(ledger_pattern(account));
+            } else {
+                a.push("(".into());
+                a.extend(ledger_pattern(account));
+                a.extend([")".into(), "and".into(), "(".into()]);
+                a.extend(crate::other::words(query));
+                a.push(")".into());
+            }
             ("ledger", a)
         }
         Dialect::Beancount => {
@@ -672,8 +696,13 @@ pub fn register_command(
                     end.written('-')
                 )
             });
+            let and = if query.is_empty() {
+                String::new()
+            } else {
+                format!(" AND ({query})")
+            };
             let q = format!(
-                "SELECT date, flag, payee, narration, position, balance, filename, lineno {from}WHERE account ~ '{}'",
+                "SELECT date, flag, payee, narration, position, balance, filename, lineno {from}WHERE account ~ '{}'{and}",
                 pattern.replace('\'', "\\'")
             );
             (

@@ -395,3 +395,45 @@ fn a_statement_paired() {
         .expect("the market");
     assert!(paired.found.contains(&statement::key(market)));
 }
+
+/// The register narrowed by each tool's own query (PT7b's `/`).
+#[test]
+fn a_narrowed_register() {
+    for (tool, file, account, query, payee) in [
+        (
+            Dialect::Hledger,
+            "2026.journal",
+            "assets:bank:ziraat",
+            "desc:rent",
+            "Rent",
+        ),
+        (
+            Dialect::Ledger,
+            "business.ledger",
+            "Assets:Checking",
+            "payee Client",
+            "Client A pays",
+        ),
+        (
+            Dialect::Beancount,
+            "household.beancount",
+            "Assets:Bank:Ziraat",
+            "payee ~ 'Market'",
+            "Market",
+        ),
+    ] {
+        let dir = corpus(tool.language());
+        let main = dir.join(file).to_string_lossy().into_owned();
+        let (p, a) = report::narrowed_register(tool, &main, account, None, query);
+        let Some(out) = run(p, &a, &dir) else {
+            continue;
+        };
+        let rows = match tool {
+            Dialect::Hledger => kalem_plugin_pta::reconcile::hledger_register(&out),
+            Dialect::Ledger => report::ledger_register(&out),
+            Dialect::Beancount => report::beancount_register(&out),
+        };
+        assert_eq!(rows.len(), 1, "{tool:?}: {rows:?}");
+        assert!(rows[0].description.starts_with(payee), "{tool:?}: {rows:?}");
+    }
+}
