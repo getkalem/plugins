@@ -1,0 +1,43 @@
+%YAML 1.2
+---
+# hledger's journal (pta_todo.md PT2), over the journal base: the
+# description split into payee and note at `|`, and `decimal-mark`.
+# Tags (`name:value` in a comment) are the base's. Written for the
+# plugin, licensed as the repository is (MIT OR Apache-2.0).
+name: hledger
+scope: source.hledger
+version: 2
+extends: Journal (Base).sublime-syntax
+file_extensions: [journal, hledger, j]
+
+contexts:
+  main:
+    - meta_prepend: true
+    - match: '^(decimal-mark)[ \t]+([.,])'
+      captures:
+        1: keyword.other.directive.hledger
+        2: constant.character.decimal-mark.hledger
+      push: comment-to-eol
+
+  # `payee | note`: hledger's payee is the description up to the first
+  # `|`, the note what follows; a description without one is both.
+  transaction-header:
+    - meta_scope: meta.transaction.header.journal
+    - match: '$'
+      pop: true
+    - include: comment
+    - match: '([^|;\n]*?)[ \t]*(\|)[ \t]*'
+      captures:
+        1: string.unquoted.payee.hledger
+        2: punctuation.separator.payee.hledger
+      set: transaction-note
+    - match: '[^;\n]*[^;\s]'
+      scope: string.unquoted.description.journal
+
+  transaction-note:
+    - meta_scope: meta.transaction.header.journal
+    - match: '$'
+      pop: true
+    - include: comment
+    - match: '[^;\n]*[^;\s]'
+      scope: string.unquoted.note.hledger

@@ -24,6 +24,13 @@ crate-type = ["cdylib", "rlib"]
 [dev-dependencies]
 # The manifest, read by the conformance test.
 serde_json = "1"
+# The highlighter Kalem uses, to check that the syntaxes parse every
+# corpus file to its end: Kalem's own leaves a line it cannot parse
+# uncolored.
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy", "yaml-load"] }
+# Kalem's highlighter, to load the syntaxes as Kalem loads them (`extends`
+# resolved over the journal base) and check the colors they give.
+kalem-highlight = { git = "https://github.com/getkalem/kalem", rev = "dec56dcbcbbf138af17a2651833e094cf1bd3583" }
 
 # The component: Kalem's `extension` world with its `process` interface
 # (plugin API 0.2.9).

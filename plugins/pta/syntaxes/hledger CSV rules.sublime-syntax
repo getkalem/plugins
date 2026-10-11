@@ -1,0 +1,174 @@
+%YAML 1.2
+---
+# hledger's CSV rules (`statement.csv.rules`, pta_todo.md PT2 and PT9a):
+# comments, the directives (`skip`, `fields`, `date-format`…), field
+# assignments (`account1 expenses:food`, `amount %3`) with their field
+# references and date placeholders, and `if` blocks and tables with
+# their regular expressions. Written for the plugin, licensed as the
+# repository is (MIT OR Apache-2.0).
+name: hledger CSV rules
+scope: source.hledger-rules
+version: 2
+file_extensions: [rules]
+
+variables:
+  # The fields hledger assigns: account1, amount2-in, comment, date2…
+  field: '(?:account|amount|balance|comment|currency)\d*(?:-in|-out)?|amount-(?:in|out)|date2?|description|status|code|payee|note'
+  directive: 'skip|fields|separator|date-format|timezone|newest-first|intra-day-reversed|decimal-mark|balance-type|encoding|source|archive|include'
+
+contexts:
+  main:
+    - include: comments
+    - include: directives
+    - include: if
+    - include: assignments
+
+  comments:
+    - match: '^[ \t]*[#;*]'
+      scope: punctuation.definition.comment.hledger-rules
+      push: comment
+
+  comment:
+    - meta_scope: comment.line.hledger-rules
+    - match: '$'
+      pop: true
+
+  directives:
+    - match: '^(fields)\b[ \t]*'
+      captures:
+        1: keyword.other.directive.hledger-rules
+      push: field-list
+    - match: '^(include|source|archive)\b[ \t]*([^\n]*)'
+      captures:
+        1: keyword.other.directive.hledger-rules
+        2: string.unquoted.path.hledger-rules
+    - match: '^({{directive}})\b'
+      scope: keyword.other.directive.hledger-rules
+      push: value
+    - match: '^end\b'
+      scope: keyword.other.directive.hledger-rules
+
+  # `fields date, description, , amount`: the names given to the
+  # columns, an empty one skipped.
+  field-list:
+    - match: '$'
+      pop: true
+    - match: ','
+      scope: punctuation.separator.hledger-rules
+    - match: '[^,\s]+'
+      scope: entity.other.attribute-name.field.hledger-rules
+
+  # `account1 expenses:food`, indented in an `if` block or not.
+  assignments:
+    - match: '^[ \t]*(account\d*)\b[ \t]*'
+      captures:
+        1: entity.other.attribute-name.field.hledger-rules
+      push: account-value
+    - match: '^[ \t]*({{field}})\b[ \t]*'
+      captures:
+        1: entity.other.attribute-name.field.hledger-rules
+      push: value
+
+  account-value:
+    - match: '$'
+      pop: true
+    - include: references
+    - match: '[^%\n]+'
+      scope: support.type.account.hledger-rules
+
+  # A value: text, field references (`%3`, `%description`) and a date
+  # format's placeholders (`%d/%m/%Y`).
+  value:
+    - match: '$'
+      pop: true
+    - include: references
+    - match: '\b\d+\b'
+      scope: constant.numeric.hledger-rules
+
+  references:
+    - match: '%[-_0^#]?\w+'
+      scope: constant.other.placeholder.hledger-rules
+
+  # `if MATCHER` and the matchers under it, then the indented
+  # assignments; or a table, `if,FIELD,FIELD` and its rows, its cells
+  # separated by the character after `if` (a comma, or `|`, `;` or a
+  # tab).
+  if:
+    - match: '^(if)(,)'
+      captures:
+        1: keyword.control.conditional.hledger-rules
+        2: punctuation.separator.hledger-rules
+      push: [if-table-comma, if-table-header]
+    - match: '^(if)([|;\t])'
+      captures:
+        1: keyword.control.conditional.hledger-rules
+        2: punctuation.separator.hledger-rules
+      push: [if-table, if-table-header]
+    - match: '^(if)\b[ \t]*'
+      captures:
+        1: keyword.control.conditional.hledger-rules
+      push: [if-rules, if-matchers, matcher]
+
+  if-matchers:
+    - match: '^(?=[ \t]+\S)'
+      pop: true
+    - match: '^(?=[ \t]*$)'
+      pop: true
+    - include: comments
+    - match: '^'
+      push: matcher
+
+  # `%description ^grocery`, `& %amount ^-`, `! payee`: a field, a
+  # regular expression; `&` joins it to the matcher before.
+  matcher:
+    - match: '$'
+      pop: true
+    - match: '&&?'
+      scope: keyword.operator.logical.hledger-rules
+    - match: '!'
+      scope: keyword.operator.logical.hledger-rules
+    - match: '%\w+'
+      scope: constant.other.placeholder.hledger-rules
+    - match: '\S[^\n]*'
+      scope: string.regexp.hledger-rules
+
+  if-rules:
+    - match: '^(?![ \t]+\S)'
+      pop: true
+    - include: comments
+    - include: assignments
+
+  if-table-header:
+    - match: '$'
+      pop: true
+    - match: '[,|;\t]'
+      scope: punctuation.separator.hledger-rules
+    - match: '[^,|;\t\n]+'
+      scope: entity.other.attribute-name.field.hledger-rules
+
+  # The rows: a regular expression, then the fields' values; a blank
+  # line ends the table.
+  if-table-comma:
+    - match: '^(?=[ \t]*$)'
+      pop: true
+    - include: comments
+    - match: '^([^,\n]*)'
+      captures:
+        1: string.regexp.hledger-rules
+      push: if-table-row
+
+  if-table:
+    - match: '^(?=[ \t]*$)'
+      pop: true
+    - include: comments
+    - match: '^([^|;\t\n]*)'
+      captures:
+        1: string.regexp.hledger-rules
+      push: if-table-row
+
+  if-table-row:
+    - match: '$'
+      pop: true
+    - match: '[,|;\t]'
+      scope: punctuation.separator.hledger-rules
+    - include: references

@@ -5,6 +5,7 @@ decimal-mark ,
 account assets                        ; type: A
 account assets:bank:ziraat            ; type: C
 account assets:cash                   ; type: C
+account assets:broker:index fund      ; type: A, a name with a space
 account liabilities:card              ; type: L
 account equity:opening                ; type: E
 account income:salary                 ; type: R
@@ -18,3 +19,4 @@ account budget:food
 commodity 1.000,00 TRY
 commodity 1.000,00 EUR
 commodity 1.000,00 USD
+commodity 1.000,00 "FUND A"

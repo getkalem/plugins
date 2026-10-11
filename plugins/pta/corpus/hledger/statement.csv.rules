@@ -1,0 +1,24 @@
+# Ziraat's statement (statement.csv): its columns, its date format, and
+# the accounts its lines go to (hledger import, PT9a).
+skip 1
+fields date, description, amount, balance
+date-format %Y-%m-%d
+decimal-mark .
+currency TRY
+account1 assets:bank:ziraat
+description %description
+
+if %description MIGROS
+& %amount ^-
+ account2 expenses:food:market
+ comment shop:migros
+
+if
+MAAS
+SALARY
+ account2 income:salary
+
+; A table: the matcher, then the fields it sets.
+if,account2,comment
+KAFE|RESTORAN,expenses:food:restaurant,
+ATM,expenses:unknown,a fee to look at

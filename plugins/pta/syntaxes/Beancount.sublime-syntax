@@ -1,0 +1,196 @@
+%YAML 1.2
+---
+# Beancount's journal (pta_todo.md PT2), over the journal base, whose
+# postings, amounts, lots and comments it keeps; its own: the dated
+# directives (`open`, `balance`, `price`…), the transaction's flag
+# (`*`, `!`, `txn`), the quoted payee and narration, `#tags` and
+# `^links`, `key: value` metadata under an entry or a posting, `option`,
+# `plugin`, `include`, `pushtag` and `pushmeta`, and Org's headings,
+# which Beancount skips. Written for the plugin, licensed as the
+# repository is (MIT OR Apache-2.0).
+name: Beancount
+scope: source.beancount
+version: 2
+extends: Journal (Base).sublime-syntax
+file_extensions: [beancount, bean]
+
+variables:
+  date: '\d{4}[-/]\d{1,2}[-/]\d{1,2}'
+  full_date: '\d{4}[-/]\d{1,2}[-/]\d{1,2}'
+  # `Assets:Bank:Ziraat`: no spaces, each part starting with a capital
+  # letter or a digit.
+  account: '[\p{Lu}\p{Lo}][\p{L}\p{N}-]*(?::[\p{Lu}\p{Lo}\p{N}][\p{L}\p{N}-]*)+'
+  number: '\d+(?:,\d{3})*(?:\.\d*)?|\.\d+'
+  commodity: '/?[A-Z](?:[A-Z0-9''._-]{0,22}[A-Z0-9])?'
+  tag: '#[\w/.-]+'
+  link: '\^[\w/.-]+'
+  key: '[a-z][\w-]*'
+
+contexts:
+  main:
+    - include: headings
+    - include: comment-lines
+    - include: posting-comment-lines
+    - include: dated-directives
+    - include: transactions
+    - include: undated-directives
+
+  # Lines Beancount skips: Org's headings, and lines starting with one
+  # of `:!&#?%` at the first column; `;` comments.
+  headings:
+    - match: '^(\*+)[ \t]+(.*)$'
+      captures:
+        1: punctuation.definition.heading.beancount
+        2: entity.name.section.beancount
+      scope: markup.heading.beancount
+
+  comment-lines:
+    - match: '^[;:!&#?%]'
+      scope: punctuation.definition.comment.journal
+      push: comment-line-body
+
+  # Beancount's comments carry no tags.
+  comment-tags: []
+
+  transactions:
+    - match: '^({{date}})[ \t]+(?:(\*)|(!)|(txn)\b|([&#?%PSTCURM]|''[A-Za-z]))(?=[ \t]|$)'
+      captures:
+        1: constant.numeric.date.journal
+        2: keyword.other.status.cleared.journal
+        3: keyword.other.status.pending.journal
+        4: keyword.other.txn.beancount
+        5: keyword.other.flag.beancount
+      push: [transaction-body, transaction-header]
+
+  # The payee and the narration, or the narration alone; tags and links.
+  transaction-header:
+    - meta_scope: meta.transaction.header.journal
+    - match: '$'
+      pop: true
+    - include: comment
+    - include: strings
+    - include: tags-and-links
+
+  transaction-body:
+    - meta_content_scope: meta.transaction.journal
+    - match: '^(?![ \t]+\S)'
+      pop: true
+    - include: posting-comment-lines
+    - include: metadata
+    - include: postings
+
+  # `2025-01-01 open Assets:Bank:Ziraat TRY,EUR "STRICT"` and the others,
+  # with their metadata on the lines under them.
+  dated-directives:
+    - match: '^({{date}})[ \t]+(open)\b'
+      captures:
+        1: constant.numeric.date.journal
+        2: keyword.other.directive.beancount
+      push: [entry-metadata, open-arguments]
+    - match: '^({{date}})[ \t]+(close|commodity|balance|pad|note|document|price|event|query|custom)\b'
+      captures:
+        1: constant.numeric.date.journal
+        2: keyword.other.directive.beancount
+      push: [entry-metadata, directive-arguments]
+
+  open-arguments:
+    - match: '$'
+      pop: true
+    - match: '{{account}}'
+      scope: entity.name.type.account.journal
+    - include: directive-arguments
+
+  directive-arguments:
+    - match: '$'
+      pop: true
+    - include: comment
+    - include: values
+
+  entry-metadata:
+    - match: '^(?![ \t]+\S)'
+      pop: true
+    - include: posting-comment-lines
+    - include: metadata
+
+  # `  receipt: "P-0001"` under an entry or a posting.
+  metadata:
+    - match: '^[ \t]+({{key}})(:)'
+      captures:
+        1: entity.other.attribute-name.key.beancount
+        2: punctuation.separator.key-value.beancount
+      push: metadata-value
+
+  metadata-value:
+    - match: '$'
+      pop: true
+    - include: comment
+    - include: values
+
+  # What a directive's arguments and a metadata value may be.
+  values:
+    - include: strings
+    - include: tags-and-links
+    - match: '\b(?:TRUE|FALSE|NULL)\b'
+      scope: constant.language.beancount
+    - match: '{{date}}'
+      scope: constant.numeric.date.journal
+    - match: '{{account}}'
+      scope: support.type.account.journal
+    - match: '~'
+      scope: keyword.operator.tolerance.beancount
+    - match: ','
+      scope: punctuation.separator.beancount
+    - include: amount
+    - match: '{{commodity}}'
+      scope: constant.other.commodity.journal
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.beancount
+      push: string
+
+  # A string may run over lines (a `query`'s SQL).
+  string:
+    - meta_scope: string.quoted.double.beancount
+    - match: '"'
+      scope: punctuation.definition.string.end.beancount
+      pop: true
+    - match: '\\.'
+      scope: constant.character.escape.beancount
+
+  tags-and-links:
+    - match: '{{tag}}'
+      scope: entity.name.tag.beancount
+    - match: '{{link}}'
+      scope: constant.other.link.beancount
+
+  # Postings: the base's, their amounts with Beancount's arithmetic
+  # (after the base's, so that a sign stays the number's).
+  amounts:
+    - meta_append: true
+    - match: '[-+*/]'
+      scope: keyword.operator.arithmetic.beancount
+    - match: '[()]'
+      scope: punctuation.section.group.beancount
+    - match: '#'
+      scope: keyword.operator.beancount
+
+  undated-directives:
+    - match: '^(option|plugin|include)\b'
+      scope: keyword.other.directive.beancount
+      push: directive-arguments
+    - match: '^(pushtag|poptag)\b'
+      scope: keyword.other.directive.beancount
+      push: directive-arguments
+    - match: '^(pushmeta)[ \t]+({{key}})(:)'
+      captures:
+        1: keyword.other.directive.beancount
+        2: entity.other.attribute-name.key.beancount
+        3: punctuation.separator.key-value.beancount
+      push: metadata-value
+    - match: '^(popmeta)[ \t]+({{key}})(:)'
+      captures:
+        1: keyword.other.directive.beancount
+        2: entity.other.attribute-name.key.beancount
+        3: punctuation.separator.key-value.beancount
+      push: comment-to-eol

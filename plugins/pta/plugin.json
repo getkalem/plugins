@@ -12,10 +12,18 @@
     "subprocess:bean-check",
     "subprocess:bean-query"
   ],
+  "syntaxes": [
+    "syntaxes/hledger.sublime-syntax",
+    "syntaxes/Ledger.sublime-syntax",
+    "syntaxes/Beancount.sublime-syntax",
+    "syntaxes/hledger CSV rules.sublime-syntax"
+  ],
+  "syntaxBases": ["syntaxes/Journal (Base).sublime-syntax"],
   "languages": [
     {
       "id": "hledger",
       "name": "hledger",
+      "syntax": "hledger",
       "extensions": ["journal", "hledger", "j"],
       "filenames": [".hledger.journal"],
       "comment": { "line": ";" },
@@ -24,12 +32,14 @@
     {
       "id": "ledger",
       "name": "Ledger",
+      "syntax": "Ledger",
       "extensions": ["ledger", "ldg"],
       "comment": { "line": ";" }
     },
     {
       "id": "beancount",
       "name": "Beancount",
+      "syntax": "Beancount",
       "extensions": ["beancount", "bean"],
       "comment": { "line": ";" },
       "servers": ["beancount-language-server"]
@@ -37,6 +47,7 @@
     {
       "id": "hledger-rules",
       "name": "hledger CSV rules",
+      "syntax": "hledger CSV rules",
       "extensions": ["rules"],
       "comment": { "line": "#" }
     }

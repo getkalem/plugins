@@ -1,0 +1,84 @@
+%YAML 1.2
+---
+# Ledger's journal (pta_todo.md PT2), over the journal base: `!` and `@`
+# before a directive's name, the payee ended only by a comment after a
+# tab or two spaces, `:tag:` lists and `Key: value` metadata in
+# comments, value expressions in parentheses as amounts, and the
+# timeclock entries. Written for the plugin, licensed as the repository
+# is (MIT OR Apache-2.0).
+name: Ledger
+scope: source.ledger
+version: 2
+extends: Journal (Base).sublime-syntax
+file_extensions: [ledger, ldg]
+
+variables:
+  directive_prefix: '[!@]?'
+
+contexts:
+  main:
+    - meta_prepend: true
+    # `i 2026/01/05 08:30:00 Client:A  meeting`, `o 2026/01/05 10:00:00`.
+    - match: '^([iIoObh])[ \t]+({{date}})(?:[ \t]+({{time}}))?(?:[ \t]+({{account}}))?(?:(?:  +|\t)([^;\n]*))?'
+      captures:
+        1: keyword.other.timeclock.ledger
+        2: constant.numeric.date.journal
+        3: constant.numeric.time.journal
+        4: support.type.account.journal
+        5: string.unquoted.description.journal
+      push: comment-to-eol
+    # `python`: the indented lines after it are Python, kept plain.
+    - match: '^{{directive_prefix}}python\b'
+      scope: keyword.other.directive.ledger
+      push: python-block
+
+  python-block:
+    - match: '^(?![ \t]+\S|[ \t]*$)'
+      pop: true
+
+  # Ledger's payee runs to a `;` after a tab or two spaces: a `;` inside
+  # the payee is the payee's.
+  transaction-header:
+    - meta_scope: meta.transaction.header.journal
+    - match: '$'
+      pop: true
+    - match: '(?:[ \t]*\t[ \t]*| {2,})(?=;)'
+      set: header-comment
+    - match: '(?:(?!(?:[ \t]*\t[ \t]*| {2,});)[^\n])+'
+      scope: string.unquoted.payee.ledger
+
+  header-comment:
+    - meta_scope: meta.transaction.header.journal
+    - match: '$'
+      pop: true
+    - include: comment
+
+  # `:tag1:tag2:` and `Key: value` (typed, `Key:: value`).
+  comment-tags:
+    - match: '(?<![^\s;]):(?:[^\s:]+:)+'
+      scope: entity.name.tag.journal
+    - match: '(?<![^\s;])([^\s:;]+)(::?)(?=\s|$)'
+      captures:
+        1: entity.name.tag.journal
+        2: entity.name.tag.journal punctuation.separator.tag.journal
+
+  # An amount may be a value expression in parentheses: `($-20.00)`,
+  # `(2 * $10)`.
+  amounts:
+    - meta_prepend: true
+    - match: '\('
+      scope: punctuation.section.group.begin.ledger
+      push: value-expression
+
+  value-expression:
+    - meta_scope: meta.expression.ledger
+    - match: '\)'
+      scope: punctuation.section.group.end.ledger
+      pop: true
+    - match: '(?=$)'
+      pop: true
+    - match: '\('
+      scope: punctuation.section.group.begin.ledger
+      push: value-expression
+    - include: amount
+    - include: expression
