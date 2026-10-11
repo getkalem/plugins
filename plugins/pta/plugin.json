@@ -56,19 +56,35 @@
     "hledger-lsp": {
       "name": "hledger-lsp",
       "command": ["hledger-lsp", "--stdio"],
-      "candidates": ["hledger-lsp", "/opt/homebrew/bin/hledger-lsp", "/usr/local/bin/hledger-lsp", "~/.npm-global/bin/hledger-lsp"],
-      "rootMarkers": [".hledger.journal", "hledger.conf"],
-      "install": "npm install -g hledger-lsp"
+      "candidates": ["hledger-lsp", "~/.npm-global/bin/hledger-lsp", "/opt/homebrew/bin/hledger-lsp", "/usr/local/bin/hledger-lsp", "~/go/bin/hledger-lsp"],
+      "rootMarkers": [".hledger-lsp.json", ".hledger.journal", "hledger.conf"],
+      "version": ["--version"],
+      "settings": {
+        "hledgerLanguageServer": {},
+        "hledger": {}
+      },
+      "install": "npm install -g hledger-lsp; or juev's, in the plugin's README"
     },
     "beancount-language-server": {
       "name": "beancount-language-server",
       "command": ["beancount-language-server"],
-      "candidates": ["beancount-language-server", "~/.cargo/bin/beancount-language-server", "/opt/homebrew/bin/beancount-language-server"],
+      "candidates": ["beancount-language-server", "~/.cargo/bin/beancount-language-server", "/opt/homebrew/bin/beancount-language-server", "/usr/local/bin/beancount-language-server"],
       "version": ["--version"],
-      "install": "cargo install beancount-language-server, or brew install beancount-language-server; its diagnostics need Python's beancount (pip install beancount)"
+      "install": "brew install beancount-language-server, or cargo install it"
     }
   },
   "settings": {
+    "journal": {
+      "type": "string",
+      "default": "",
+      "description": "The main journal, the one that includes the others: a path, absolute, from ~/, or beside the file; empty for the journal LEDGER_FILE names when it includes the file (hledger), else the file itself"
+    },
+    "tool": {
+      "type": "string",
+      "enum": ["auto", "hledger", "ledger", "beancount"],
+      "default": "auto",
+      "description": "The program that reads hledger's and Ledger's journals: auto for the file's own (a .ledger file is Ledger's where Ledger is installed, else hledger's), or one of them; a Beancount journal is always Beancount's"
+    },
     "programs.hledger": {
       "type": "string",
       "default": "",
@@ -88,6 +104,49 @@
       "type": "string",
       "default": "",
       "description": "Where Beancount's bean-query is, when it is not the one on the PATH; empty for the PATH's"
+    },
+    "settings.hledgerLanguageServer.maxNumberOfProblems": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1000,
+      "description": "hledger-lsp (ptimoney's): the most problems shown for a file"
+    },
+    "settings.hledgerLanguageServer.validation.undeclaredAccounts": {
+      "type": "boolean",
+      "default": true,
+      "description": "hledger-lsp (ptimoney's): warn of an account used but not declared with account (it takes an automated posting's virtual account, (budget:food), for undeclared; hledger does not)"
+    },
+    "settings.hledgerLanguageServer.validation.futureDates": {
+      "type": "boolean",
+      "default": true,
+      "description": "hledger-lsp (ptimoney's): warn of a transaction dated after today (scheduled ones, too)"
+    },
+    "settings.hledgerLanguageServer.validation.dateOrdering": {
+      "type": "boolean",
+      "default": true,
+      "description": "hledger-lsp (ptimoney's): warn of transactions out of date order"
+    },
+    "settings.hledgerLanguageServer.completion.onlyDeclaredAccounts": {
+      "type": "boolean",
+      "default": true,
+      "description": "hledger-lsp (ptimoney's): complete only the accounts declared with account; off for those used too"
+    },
+    "settings.hledger.diagnostics.accountCheck": {
+      "type": "string",
+      "enum": ["off", "lint", "strict"],
+      "default": "off",
+      "description": "hledger-lsp (juev's): check that accounts are declared: off, lint (a soft check), or strict (as hledger --strict)"
+    },
+    "settings.hledger.diagnostics.undeclaredCommodities": {
+      "type": "boolean",
+      "default": false,
+      "description": "hledger-lsp (juev's): report an amount whose commodity is not declared (hledger asks it under --strict only)"
+    },
+    "settings.hledger.completion.accountScope": {
+      "type": "string",
+      "enum": ["nonzero", "all"],
+      "default": "nonzero",
+      "description": "hledger-lsp (juev's): complete only the accounts with a balance (nonzero), or all, closed and unused ones too"
     }
   }
 }

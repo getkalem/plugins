@@ -230,7 +230,7 @@ first.
 
 ## PT3. The servers: found, in the right root, told their settings
 
-- [ ] PT3a hledger-lsp. Two programs answer to the name: ptimoney's
+- [x] PT3a hledger-lsp. Two programs answer to the name: ptimoney's
   (TypeScript, `npm install -g hledger-lsp`, 0.7.x, MIT: completion
   that learns the accounts a payee uses, fifteen validations, running
   balances as code lenses and inlay hints, rename across files, code
@@ -251,7 +251,42 @@ first.
   inlay hints: the client answers their refresh requests with nothing
   and asks for neither, `kalem-lsp/src/client.rs`) measured and
   written down: the running balances in the margin are K4.
-- [ ] PT3b beancount-language-server (Rust, `cargo install
+  (Done 2026-10-11, with ptimoney's 0.7.0 from npm and juev's 0.2.64
+  built from its module, each through Kalem 0.6.14's `kalem lsp ask`
+  and `check`, and asked directly for what Kalem cannot ask yet
+  (rename, code actions, inlay hints, code lenses); the README's table
+  has every answer. Neither is the clear choice. ptimoney's: completion
+  of the declared accounts, the failed assertion at its line, but its
+  formatting changes what the journal means (an automated posting's
+  `*-1` dropped, so hledger books 0 to the budget, and `==` written
+  `=`), its definition and hover put an account's declaration on the
+  main journal's first line, its rename changes the open file only,
+  and it takes `(budget:food)` for undeclared. juev's: definition,
+  rename across files and payee completion right, formatting that
+  hledger reads as before, but an error on the automated posting's
+  `*-1` and a hover balance that misses the amounts hledger infers.
+  The manifest: one entry, `hledger-lsp`, `--version` for `kalem lsp
+  status`, `candidates` the PATH's, npm's (`~/.npm-global/bin`,
+  Homebrew's), Go's (`~/go/bin`); `rootMarkers` with
+  `.hledger-lsp.json`, ptimoney's configuration file; `settings` with
+  both programs' sections (`hledgerLanguageServer`, `hledger`), a few
+  of each surfaced (`maxNumberOfProblems`, `validation.…`,
+  `completion.onlyDeclaredAccounts`; `diagnostics.accountCheck`,
+  `completion.accountScope`), checked to reach each program; not
+  `hledgerPath`, which ptimoney's reserves and does not read. `install`
+  names one way, the README both: Kalem shows `install` in the status
+  bar when the server is missing, and a long one pushed the plugin's
+  own item out of it. Found: Kalem formats with a server whenever it
+  offers formatting, before the plugin's `commands.format`, and the
+  user's `formatters.TYPE = "off"` does not stop it, so nothing keeps
+  ptimoney's from harming a journal but the README's warning and undo:
+  K9. `tests/server.rs` talks to each program installed through
+  `kalem-lsp` and checks a formatter by the tool (`hledger print`
+  before and after), ptimoney's 0.7.0 checked to still do its harm, so
+  that a fixed release is noticed. Ledger has no server; hledger-lsp
+  is not given Ledger's files, since hledger cannot read their value
+  expressions.)
+- [~] PT3b beancount-language-server (Rust, `cargo install
   beancount-language-server` or Homebrew, 1.9.x): `command`
   `["beancount-language-server"]`, `candidates` it and
   `~/.cargo/bin/beancount-language-server`; it must be told the main
@@ -261,7 +296,20 @@ first.
   the fallback), said in `install` and in the README; its formatter is
   bean-format's, with `prefix-width`, `num-width` and
   `currency-column` as settings. Measured on the corpus as PT3a.
-- [ ] PT3c The main journal and the tool. Includes make one file the
+  (Done 2026-10-11: 1.9.2, from crates.io and in Homebrew, measured as
+  PT3a: completion of accounts (an included file's too), payees, tags
+  and currencies, definition, references and rename across files,
+  `bean-check`'s errors (run as a program, `bean-check` on the PATH;
+  not Python embedded), its formatting read as before by `bean-query`;
+  no hover, no code actions. Without a main journal it checks the open
+  file alone: a file included from another gets its accounts reported
+  unknown (two false errors in a test of three files); told the main
+  journal, the file is clean and completion knows every account. The
+  manifest has `--version`, the Homebrew and Cargo places, a short
+  `install`. Open, waiting on Kalem: telling it the main journal and
+  its formatting widths, which it reads only from
+  `initializationOptions`, fixed in the manifest today: K8.)
+- [x] PT3c The main journal and the tool. Includes make one file the
   root: the tool, the servers and every report must be given it.
   The plugin's setting `journal` (a path relative to the project; the
   default is `LEDGER_FILE` of the environment, else the file the
@@ -272,6 +320,28 @@ first.
   journal and its last check (`hledger · 2026.journal · ✓`, or the
   error count); a click runs the check (PT5). `kalem lsp status` and
   the process log say which program ran for what.
+  (Done 2026-10-11, in Kalem 0.6.14's terminal editor: the settings
+  `journal` and `tool`, and a status bar item `hledger · 2026.journal`
+  whose tooltip says why that journal and which program reads it; its
+  click runs Tool Version until PT5's check takes it, with the item's
+  ✓ or count. The logic is `src/journal.rs`, tested natively; the
+  component follows the documents opened, closed, saved and the one
+  the cursor is in (`selection-changed`), reads the settings again
+  each time (Kalem may start the plugin before it has read them), and
+  drops an answer a newer refresh made stale. Changed from the plan:
+  `LEDGER_FILE` is read through hledger (`hledger files` without `-f`
+  lists that journal and its includes; the main journal when it lists
+  the file), since a component sees no environment, and for Ledger not
+  at all (it lists no included files that hold no postings); a
+  relative `journal` is beside the file, as a component cannot list
+  the projects (graph's K10); a `.ledger` file under `auto` goes to
+  Ledger where Ledger is installed and to hledger only where Ledger is
+  not, since hledger refuses the corpus's Ledger value expression.
+  Found: Kalem runs a plugin's programs only in a project's folder (or
+  the first project's when none is given), so a journal outside the
+  projects is read from there by absolute path, and with no project
+  at all not at all; the README says to add the journal's folder.
+  `kalem lsp status` names each server's program and version.)
 
 ## PT4. Formatting as the tool writes it
 
@@ -595,7 +665,9 @@ plugin's section 9 followed).
   not built).
 - K5 An outline provider and a completer from a plugin (design §11.11
   and §11.12's bindings), for the `.rules` files' accounts and for a
-  journal whose server is missing.
+  journal whose server is missing. The completer came with Kalem 0.6.13
+  (plugin API 0.2.11, a component's `completer` export); the outline
+  provider has not.
 - K6 Babel executors from plugins (R5.6), for `hledger` and
   `beancount` source blocks in Org (PT11b).
 - K7 A plugin language's id as the text type of the files it serves:
@@ -606,6 +678,22 @@ plugin's section 9 followed).
   `languages::for_path` knows the plugin's language and could answer
   first. The design (§11.2) says plugins extend the vocabulary. Until
   then the plugin scopes by both (PT1).
+- K8 A server's `initializationOptions` from the user's settings: the
+  user's `servers.KEY.initializationOptions` merged over the
+  manifest's, as `settings` and `servers.KEY.command` already are,
+  and shown in the plugin's page; a plugin's setting then describes
+  it (`servers.beancount-language-server.initializationOptions.journal_file`).
+  beancount-language-server reads its main journal and its formatting
+  widths only there (PT3b); any server configured only at `initialize`
+  needs it.
+- K9 A server's feature turned off: a list of the server's
+  capabilities Kalem does not use, in the manifest's server
+  (`"ignore": ["documentFormattingProvider"]`) and the user's
+  `servers.KEY.ignore`; and `formatters.TYPE = "off"` stopping a
+  server's formatting too. Kalem formats with a server whenever it
+  offers formatting, and ptimoney's hledger-lsp 0.7.0 changes what a
+  journal means when it does (PT3a): Format Document would then take
+  the plugin's formatter (PT4) or say there is none.
 
 ## Open for the owner
 

@@ -8,10 +8,13 @@
 //!
 //! - [`Dialect`]: the three journal formats, and the tool of each.
 //!
+//! - [`journal`]: the main journal and the tool that reads it (PT3c).
+//!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
 #[cfg(target_arch = "wasm32")]
 mod component;
+pub mod journal;
 
 /// The manifest, embedded so that the component carries its own
 /// description.
