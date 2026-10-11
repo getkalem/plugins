@@ -25,6 +25,7 @@ mod other;
 mod prices;
 mod reconcile;
 mod register;
+mod table;
 
 use crate::check::{self, Problem};
 use crate::journal::{self, Installed, Main, Settings, ToolChoice};
@@ -1235,6 +1236,18 @@ impl Plugin for Pta {
         command("pta.reportClose", "Close the Report", o, |_| other::close())?;
         kalem::keymap("q", "pta.reportClose", Some(REPORT_WHEN))?;
         kalem::keymap("escape", "pta.reportClose", Some(REPORT_ESCAPE_WHEN))?;
+        command(
+            "pta.insertTable",
+            "Insert a Report as a Table",
+            &["org", "markdown"],
+            |_| table::command(),
+        )?;
+        command(
+            "pta.insertTableWrite",
+            "Write the Report's Table",
+            &["org", "markdown"],
+            |_| table::write(),
+        )?;
         let mut types = crate::TEXT_TYPES.to_vec();
         types.push(reconcile::KIND);
         command("pta.reconcile", "Reconcile", &types, |_| {

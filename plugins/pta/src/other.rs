@@ -22,6 +22,8 @@ pub struct Report {
     pub journal: bool,
     /// It takes the period's dates (`-b`, `-e`).
     pub dated: bool,
+    /// Asked as CSV, for a table ([`as_table`]).
+    pub csv: bool,
 }
 
 impl Report {
@@ -31,6 +33,7 @@ impl Report {
             args: args.iter().map(|a| (*a).to_string()).collect(),
             journal: args.first() == Some(&"print") || args.first() == Some(&"PRINT"),
             dated,
+            csv: false,
         }
     }
 }
@@ -117,6 +120,7 @@ pub fn saved_queries(listed: &str) -> Vec<Report> {
             args: vec![format!(".run {name}")],
             journal: false,
             dated: false,
+            csv: false,
         })
         .collect()
 }
@@ -197,6 +201,7 @@ pub fn pinned(tool: Dialect, entries: &[String]) -> Vec<Report> {
                 journal: matches!(args.first().map(String::as_str), Some("print" | "PRINT")),
                 args,
                 dated,
+                csv: false,
             })
         })
         .collect()
@@ -212,7 +217,12 @@ pub fn command(
 ) -> (&'static str, Vec<String>) {
     match tool {
         Dialect::Beancount => {
-            let mut a = vec![main.to_string()];
+            let mut a = if r.csv {
+                vec!["-f".to_string(), "csv".to_string()]
+            } else {
+                Vec::new()
+            };
+            a.push(main.to_string());
             a.extend(r.args.iter().cloned());
             ("bean-query", a)
         }
@@ -233,6 +243,176 @@ pub fn command(
             (tool.checker(), a)
         }
     }
+}
+
+/// Ledger's balance as CSV: each account and its amounts, the lots'
+/// annotations scrubbed.
+const LEDGER_CSV: &str = "%(quoted(account)),%(quoted(scrub(display_total)))\n";
+
+/// `r` asked for CSV, where the tool writes it as a table: hledger's
+/// balance reports, register and `print` with `-O csv`; Ledger's balance
+/// through a CSV format, its register and `print` as its `csv` command;
+/// Beancount's queries with `-f csv` (not `PRINT`). `None` for a report
+/// that is no table (statistics, the lists, Ledger's budget).
+pub fn as_table(tool: Dialect, r: &Report) -> Option<Report> {
+    let first = r.args.first()?.as_str();
+    let mut t = r.clone();
+    t.csv = true;
+    t.journal = false;
+    match tool {
+        Dialect::Hledger => {
+            const TABLES: &[&str] = &[
+                "balance",
+                "bal",
+                "incomestatement",
+                "is",
+                "cashflow",
+                "cf",
+                "balancesheet",
+                "bs",
+                "balancesheetequity",
+                "bse",
+                "register",
+                "reg",
+                "aregister",
+                "areg",
+                "print",
+            ];
+            if !TABLES.contains(&first) {
+                return None;
+            }
+            t.args.extend(["-O".into(), "csv".into()]);
+        }
+        Dialect::Ledger => match first {
+            "balance" | "bal" => t.args.extend([
+                "--flat".into(),
+                "--no-total".into(),
+                "--balance-format".into(),
+                LEDGER_CSV.into(),
+            ]),
+            "register" | "reg" | "print" => t.args[0] = "csv".into(),
+            "csv" => {}
+            _ => return None,
+        },
+        Dialect::Beancount => {
+            if first.trim().eq_ignore_ascii_case("print") {
+                return None;
+            }
+        }
+    }
+    Some(t)
+}
+
+/// The header Ledger does not write for a table of `r` (its balance's,
+/// its `csv` command's).
+pub fn header(tool: Dialect, r: &Report) -> Option<&'static str> {
+    if tool != Dialect::Ledger {
+        return None;
+    }
+    match r.args.first()?.as_str() {
+        "balance" | "bal" => Some("\"Account\",\"Amount\"\n"),
+        "csv" => Some(
+            "\"Date\",\"Code\",\"Payee\",\"Account\",\"Commodity\",\"Amount\",\"Status\",\"Note\"\n",
+        ),
+        _ => None,
+    }
+}
+
+/// The rows of CSV `text`: fields split at commas outside quotes, `""`
+/// a quote, a line feed inside quotes kept.
+pub fn csv_rows(text: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (quoted, c) {
+            (true, '"') if chars.peek() == Some(&'"') => {
+                chars.next();
+                field.push('"');
+            }
+            (true, '"') => quoted = false,
+            (true, c) => field.push(c),
+            (false, '"') => quoted = true,
+            (false, ',') => row.push(std::mem::take(&mut field)),
+            (false, '\r') => {}
+            (false, '\n') => {
+                row.push(std::mem::take(&mut field));
+                rows.push(std::mem::take(&mut row));
+            }
+            (false, c) => field.push(c),
+        }
+    }
+    if !field.is_empty() || !row.is_empty() {
+        row.push(field);
+        rows.push(row);
+    }
+    rows
+}
+
+/// A table's markup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Markup {
+    Org,
+    Markdown,
+}
+
+/// The table of CSV `text` in `markup`, its columns aligned: the first
+/// row its header, under a rule. A first row of one title (hledger's
+/// "Income Statement 2026-01") is returned apart, as the caption. A
+/// field's line feeds become `, ` (Ledger's amounts of several
+/// commodities), its `|` the markup's escape.
+pub fn table(text: &str, markup: Markup) -> (Option<String>, String) {
+    let clean = |f: &str| {
+        let f = f.trim().replace('\n', ", ");
+        match markup {
+            Markup::Org => f.replace('|', "\\vert{}"),
+            Markup::Markdown => f.replace('|', "\\|"),
+        }
+    };
+    let mut rows: Vec<Vec<String>> = csv_rows(text)
+        .into_iter()
+        .map(|r| r.iter().map(|f| clean(f)).collect())
+        .collect();
+    let mut caption = None;
+    if rows.len() > 1 && rows[0].len() > 1 && rows[0][1..].iter().all(String::is_empty) {
+        caption = Some(rows.remove(0).remove(0));
+    }
+    let n = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if n == 0 {
+        return (caption, String::new());
+    }
+    let mut widths = vec![1; n];
+    for r in &rows {
+        for (i, f) in r.iter().enumerate() {
+            widths[i] = widths[i].max(f.chars().count());
+        }
+    }
+    let line = |r: &[String]| {
+        let cells: Vec<String> = (0..n)
+            .map(|i| {
+                let f = r.get(i).map_or("", String::as_str);
+                format!("{f}{}", " ".repeat(widths[i] - f.chars().count()))
+            })
+            .collect();
+        format!("| {} |\n", cells.join(" | "))
+    };
+    let rule = {
+        let dashes: Vec<String> = widths.iter().map(|w| "-".repeat(w + 2)).collect();
+        match markup {
+            Markup::Org => format!("|{}|\n", dashes.join("+")),
+            Markup::Markdown => format!("|{}|\n", dashes.join("|")),
+        }
+    };
+    let mut out = String::new();
+    for (i, r) in rows.iter().enumerate() {
+        out.push_str(&line(r));
+        if i == 0 {
+            out.push_str(&rule);
+        }
+    }
+    (caption, out)
 }
 
 #[cfg(test)]
@@ -330,5 +510,45 @@ mod tests {
                 .collect::<Vec<_>>(),
             [".run cash", ".run food-by-month"]
         );
+    }
+
+    #[test]
+    fn tables() {
+        let h = reports(Dialect::Hledger, TODAY);
+        let is = as_table(Dialect::Hledger, &h[1]).expect("a table");
+        assert_eq!(is.args, ["incomestatement", "-O", "csv"]);
+        assert!(as_table(Dialect::Hledger, &h[5]).is_none(), "stats");
+        let l = reports(Dialect::Ledger, TODAY);
+        let f = as_table(Dialect::Ledger, &l[2]).expect("the forecast");
+        assert_eq!(f.args[0], "csv");
+        assert_eq!(
+            header(Dialect::Ledger, &f).map(|h| h.starts_with("\"Date\"")),
+            Some(true)
+        );
+        let b = reports(Dialect::Beancount, TODAY);
+        let q = as_table(Dialect::Beancount, &b[0]).expect("a query");
+        assert_eq!(
+            command(Dialect::Beancount, "/j/h.beancount", &q, None).1[..3],
+            ["-f", "csv", "/j/h.beancount"]
+        );
+        assert!(
+            as_table(Dialect::Beancount, b.last().unwrap()).is_none(),
+            "PRINT"
+        );
+
+        let csv = "\"Income Statement 2026-01\",\"\"\n\"Account\",\"2026-01\"\n\"income:salary\",\"45000,00 TRY\"\n\"Expenses\",\"$49.00\nEUR 120.00\"\n\"a|b\",\"1\"\n";
+        let (caption, org) = table(csv, Markup::Org);
+        assert_eq!(caption.as_deref(), Some("Income Statement 2026-01"));
+        assert_eq!(
+            org,
+            "| Account       | 2026-01            |\n\
+             |---------------+--------------------|\n\
+             | income:salary | 45000,00 TRY       |\n\
+             | Expenses      | $49.00, EUR 120.00 |\n\
+             | a\\vert{}b     | 1                  |\n"
+        );
+        let (_, md) = table("a,b\n1,2\n", Markup::Markdown);
+        assert_eq!(md, "| a | b |\n|---|---|\n| 1 | 2 |\n");
+        assert_eq!(csv_rows("\"x \"\"y\"\"\",z"), [["x \"y\"", "z"]]);
     }
 }

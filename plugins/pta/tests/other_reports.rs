@@ -124,3 +124,45 @@ fn beancounts_saved_queries() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(out.contains("Expenses:Food:Market"), "{out}");
 }
+
+/// Each report that is a table (PT11b) gives one, from the tool's CSV:
+/// a header, a rule, rows; hledger's compound reports their title as the
+/// caption.
+#[test]
+fn each_tools_tables() {
+    use kalem_plugin_pta::other::Markup;
+    for (tool, file) in [
+        (Dialect::Hledger, "hledger/2026.journal"),
+        (Dialect::Ledger, "ledger/business.ledger"),
+        (Dialect::Beancount, "beancount/household.beancount"),
+    ] {
+        let main = corpus("").join(file);
+        let tables: Vec<Report> = other::reports(tool, TODAY)
+            .iter()
+            .filter_map(|r| other::as_table(tool, r))
+            .collect();
+        assert!(tables.len() >= 3, "{tool:?}");
+        for r in tables {
+            let Some(out) = run(tool, &main, &r, None) else {
+                break;
+            };
+            let csv = format!("{}{out}", other::header(tool, &r).unwrap_or(""));
+            let (caption, org) = other::table(&csv, Markup::Org);
+            let empty_ok = tool == Dialect::Ledger && r.title == "Forecast";
+            if empty_ok && out.trim().is_empty() {
+                continue;
+            }
+            let lines: Vec<&str> = org.lines().collect();
+            assert!(lines.len() >= 3, "{tool:?} {}: {org}", r.title);
+            let columns = lines[0].matches('|').count() - 1;
+            assert!(lines[1].starts_with("|-"), "{org}");
+            assert_eq!(lines[1].matches('+').count(), columns - 1, "{org}");
+            assert!(lines.iter().all(|l| l.starts_with('|') && l.ends_with('|')));
+            let widths: Vec<usize> = lines.iter().map(|l| l.chars().count()).collect();
+            assert!(widths.windows(2).all(|w| w[0] == w[1]), "aligned: {org}");
+            if tool == Dialect::Hledger && r.title == "Income Statement" {
+                assert!(caption.is_some_and(|c| c.starts_with("Income Statement")));
+            }
+        }
+    }
+}

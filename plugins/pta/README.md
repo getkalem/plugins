@@ -109,7 +109,7 @@ Not done yet:
 - **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds. hledger's `roi`, which asks for its accounts, is not offered (pin it in `reports`).
 - **The statement beside the reconciliation** (PT8c): a statement's rows paired with the account's postings by date and amount.
 - **Beancount's import** (PT9b): your beangulp script, which needs a permission to run `python3`.
-- A report inserted into an Org document as a table (PT11b), the commands from `kalem run` (PT11c), and journals of 200,000 transactions measured (PT13).
+- `hledger` and `beancount` source blocks run by Babel (PT11b, K6), the commands from `kalem run` (PT11c), and journals of 200,000 transactions measured (PT13).
 
 ## Beside ledger-mode and Fava
 
@@ -155,6 +155,10 @@ In a bank statement (a CSV file), *Import Statement* (`SPC m i`) shows what the 
 *Report…* (`SPC m r`, Doom's ledger-report, or `o` in a Report) lists the Balance, the Register and the tool's other reports and opens the one picked as a document, as the tool prints it: hledger's cash flow, income statement, budget and forecast (monthly, from its periodic transactions), activity, statistics, its accounts, commodities, payees, tags and prices, and `print`; Ledger's income statement, budget, forecast (six months on), cleared report, statistics, lists and `print`; Beancount's through `bean-query`: income statement, holdings at cost and value, monthly expenses, balances, lists and `PRINT`, after the journal's own saved queries (its `query` directives). `print` comes in the journal's syntax and colors. `p` picks the period of a report that takes one (hledger's and Ledger's), `r` runs it again, and it is run again when the journal is saved.
 
 The setting `reports` puts reports of your own first: `"Food by month: balance expenses:food -M"`, the tool's arguments after `-f JOURNAL` (quoted as a shell quotes), or, for Beancount, a query.
+
+## Reports in notes
+
+In an Org or Markdown document, *Insert a Report as a Table* (the palette's Journal group) offers the reports the tool writes as CSV (hledger's balance reports, register and `print`; Ledger's balance, register and `print`; Beancount's queries, its saved ones too), asks the period where the report takes one, and writes the table under the cursor's line with a caption naming the report, the journal and the period, one undo step: a monthly note keeps its figures. The journal is the setting `journal` (beside the note when relative), else `LEDGER_FILE`'s, else the journal you last opened. A source block run by Babel (`#+begin_src hledger`) waits on Kalem.
 
 ## Prices and market value
 

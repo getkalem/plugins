@@ -66,10 +66,11 @@ fn rules_of(csv: &str) -> String {
     }
 }
 
-/// The journal a statement goes into: the setting `journal` (beside the
-/// statement when relative), else the one `LEDGER_FILE` names, else the
-/// journal last opened in this session.
-fn journal_of(csv: &str, done: impl FnOnce(Option<String>) + 'static) {
+/// The journal of a file that is no journal (a statement goes into it, a
+/// note's tables come from it): the setting `journal` (beside the file
+/// when relative), else the one `LEDGER_FILE` names, else the journal
+/// last opened in this session.
+pub(super) fn journal_of(csv: &str, done: impl FnOnce(Option<String>) + 'static) {
     let set = own("journal");
     if !set.trim().is_empty() {
         let p = if set.starts_with('/') || set.starts_with('~') {

@@ -856,7 +856,7 @@ first.
   `SPC m` is named by Kalem from the commands' category. Open: the
   tool and the journal through a pick (the settings page has them);
   the window's toolbar not looked at.)
-- [ ] PT11b Org: `pta.insertAsTable` in an Org document, the report of
+- [~] PT11b Org: `pta.insertAsTable` in an Org document, the report of
   PT7c chosen as an Org table (`hledger … -O csv`, `bean-query -f
   csv`, converted as Kalem converts CSV to an Org table and inserted
   at the cursor through `editor.insert`), so that a monthly note holds
@@ -864,6 +864,24 @@ first.
   (`#+begin_src hledger :cmd "bal"`) with the tool's output as its
   result, when R5.6 gives plugins executors (K6). The three dialects'
   blocks are highlighted from PT2.
+  (Done 2026-10-11 but Babel, checked in the terminal editor on an Org
+  note: Insert a Report as a Table (`pta.insertTable`, the palette's
+  Journal group; in Markdown too) offers the reports that are tables
+  (`other::as_table`: hledger's balance reports, register and `print`
+  with `-O csv`; Ledger's balance through a CSV `--balance-format`,
+  its register and `print` as `ledger csv`, with the header Ledger
+  does not write; Beancount's queries with `bean-query -f csv`, its
+  saved ones too, not `PRINT`), the period where it takes one, and
+  writes the table under the cursor's line, columns aligned, a
+  `#+caption:` (Markdown: an emphasized line under it) naming the
+  report, the journal and the period, hledger's own title (its first
+  CSV row) taken as the caption; one undo step, by the plugin's own
+  command queued after the tool answers. Kalem has no command a plugin
+  can hand CSV to for an Org table, so `other::table` writes it (a
+  field's line feeds as `, `, `|` as `\vert{}`). The journal: the
+  setting `journal` beside the note, else `LEDGER_FILE`'s, else the
+  journal last opened. A test turns every table report of each tool
+  on the corpus into an aligned table. Waits on Kalem: Babel (K6).)
 - [ ] PT11c Batch and the terminal: `kalem run pta.balance FILE`,
   `pta.register FILE ACCOUNT`, `pta.check FILE` print their documents;
   every document and key the same in the terminal editor, checked by
