@@ -2,9 +2,11 @@
 
 hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and alignment, checked by the tool you already have on each save, reported as documents (balance, register, market value), reconciled against a statement, imported from bank statements, and kept in prices. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance, value and check; the plugin asks them and shows what they say, and has no engine of its own. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: 0.1.0**, for Kalem 0.6.16 and later (plugin API 0.2.13). One plugin, one install, with two halves in one manifest, both loaded:
+**Status: 0.1.0**, for Kalem 0.6.16 and later (plugin API 0.2.13). This README describes the code on `main`. Three parts are newer than the 0.1.0 release: Report… (`SPC m r`) and the setting `reports`, Insert a Report as a Table, and the `kalem run` commands with the setting `glyphs`. In 0.1.0, `SPC m r` opens the Balance.
 
-- **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`), each highlighted by the plugin's own syntaxes: one base for what the journals share (dates, statuses, descriptions, accounts, amounts and commodities, costs, lots, balance assertions, comments and their tags, periodic and automated transactions, directives), with hledger, Ledger and Beancount over it. Journals in Org's source blocks and Markdown's fenced blocks (`hledger`, `ledger`, `beancount`) are colored the same. Completion of accounts, payees and tags, hover, rename and the servers' diagnostics come from the servers.
+One plugin, one install, with two halves in one manifest, both loaded:
+
+- **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`), each highlighted by the plugin's own syntaxes: one base for what the journals share (dates, statuses, descriptions, accounts, amounts and commodities, costs, lots, balance assertions, comments and their tags, periodic and automated transactions, directives), with hledger, Ledger and Beancount over it. Journals in Org's source blocks and Markdown's fenced blocks (`hledger`, `ledger`, `beancount`) are colored the same. Completion, hover, rename and diagnostics come from the servers. Each server completes different things (accounts, payees, tags); see [The servers, measured](#the-servers-measured).
 - **The component**, which runs the journal's tool: the commands below, a status bar item naming the tool and the main journal of the journal you are in (`hledger · 2026.journal · ✓`), the Journal menu and button.
 
 `.dat` files are not claimed.
@@ -21,9 +23,9 @@ Kalem also offers it when you open a journal. Then the tool you use, and, if you
 |---|---|---|---|
 | hledger | `brew install hledger`, or a [release](https://hledger.org/install) | `npm install -g hledger-lsp`, or juev's: `go install github.com/juev/hledger-lsp/cmd/hledger-lsp@latest` (see below) | `pip install pricehist` |
 | Ledger | `brew install ledger`, or your system's package | none exists | `pip install pricehist` |
-| Beancount | `pip install beancount beanquery` (`bean-check`; `bean-query` for the reports) | `brew install beancount-language-server`, or `cargo install beancount-language-server` | `pip install beanprice` |
+| Beancount | `pip install beancount beanquery` (`bean-check` for Check Journal; `bean-query` for everything else: the Balance, the Register, Reconcile, New Transaction and the reports) | `brew install beancount-language-server`, or `cargo install beancount-language-server` | `pip install beanprice` |
 
-- **The journal's folder among your projects** (`projects.toml`, or Projects: Add Project): Kalem runs a plugin's programs in a project's folder only.
+- **The journal's folder among your projects** (`projects.toml`, or Project: Add Project): Kalem runs a plugin's programs in a project's folder only.
 - A program not on the PATH Kalem sees (a virtual environment's `bean-check`, Kalem started from the Dock) is named by the setting `programs.NAME`.
 - The component starts with the first document you open, so that a bank statement (a CSV file, which the plugin does not claim) can be imported before any journal is open.
 - `kalem lsp status FILE` says which server runs for a journal.
@@ -57,8 +59,8 @@ In a journal, under `SPC m` in Vim's command mode, where Doom Emacs's `:lang led
 | `SPC m d` | Delete Transaction |
 | `SPC m =` | Align Amounts |
 | `SPC m s` | Sort Transactions |
-| `[[`, `]]` (or `Alt+Up`, `Alt+Down`) | Previous, Next Transaction |
-| `Ctrl+Shift+H`, `Ctrl+Shift+L` | Date a Day Earlier, Later |
+| `[[`, `]]` (Vim's command mode), `Alt+Up`, `Alt+Down` (both profiles) | Previous, Next Transaction |
+| `Ctrl+Shift+H`, `Ctrl+Shift+L` (Vim's command mode) | Date a Day Earlier, Later |
 | `SPC m k` | Check Journal |
 | `SPC m b` (or `SPC m g b`) | Balance |
 | `SPC m g r` | Register |
@@ -67,10 +69,11 @@ In a journal, under `SPC m` in Vim's command mode, where Doom Emacs's `:lang led
 | `SPC m C` | Finish Reconciliation |
 | `SPC m p` | Fetch Prices |
 | `SPC m m` | The Journal's commands, to pick |
-| `SPC m i`, `SPC m e` | In a CSV statement: Import Statement, Edit the Statement's Rules |
+| | Tool Version: what the journal's tool says it is (`--version`), from the menu or the palette |
+| `SPC m i`, `SPC m e` | In a CSV statement: Import Statement, Edit the Statement's Rules (Vim's command mode; in the Word-like profile, from the palette) |
 | Enter | On a posting, in the Word-like profile: aligns it, then a new line |
 
-In the plugin's documents (both profiles; in Vim's command mode): **Check**: Enter the problem's place, `r` again, `q` or Escape close. **Balance**: Tab, Left and Right fold, Enter the account's register, `p` period, `d` depth, `v` market value, `r` again, `q` close. **Register**: Enter the posting, `p` period, `v` market value, `r` again, `q` close. **Reconcile**: Enter the posting, `t` the statement's balance, `C` finish, `r` again, `q` close. **Import**: `i` import, `e` the rules, `r` again, `q` close. **Report**: `p` period, `o` another report, `r` again, `q` close. `?` lists them.
+In the plugin's documents (both profiles; in Vim's command mode): **Check**: Enter the problem's place, `r` again, `q` or Escape close. **Balance**: Tab, Left and Right fold, Enter the account's register, `p` period, `d` depth, `v` market value, `r` again, `q` close. **Register**: Enter the posting, `p` period, `v` market value, `r` again, `q` close. **Reconcile**: Enter the posting, `t` the statement's balance, `C` finish, `r` again, `q` close. **Import**: `i` import, `e` the rules, `r` again, `q` close. **Report**: `p` period, `o` another report, `r` again, `q` close. Escape closes each of them too. `?` lists them.
 
 ## Settings
 
@@ -78,7 +81,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 
 | Setting | Default | What it does |
 |---|---|---|
-| `journal` | empty | The main journal, the one that includes the others (absolute, from `~/`, or beside the file); empty for `LEDGER_FILE`'s when it includes the file, else the file itself |
+| `journal` | empty | The main journal, the one that includes the others (absolute, from `~/`, or beside the file); empty for `LEDGER_FILE`'s when it includes the file (hledger's journals only; Ledger's use the file itself), else the file itself |
 | `tool` | `auto` | The program for hledger's and Ledger's journals: `auto` (the file's own; a `.ledger` file is hledger's where only hledger is installed), `hledger` or `ledger` |
 | `amount_column` | 52 | Where Align Amounts puts the amounts' last digits, as ledger-mode; 0 for as near the accounts as the longest posting allows |
 | `align_on_enter` | on | Enter on a posting aligns it first |
@@ -135,7 +138,7 @@ In a journal, under `SPC m` in Vim's command mode and in the palette's Journal g
 - *Date a Day Later* and *Earlier* (`ctrl+shift+l`, `ctrl+shift+h` in Vim's command mode).
 - *Sort Transactions* (`SPC m s`): those selected, or the file's, by date, each with the comment lines above it; refused where a directive between them (`apply account`, `alias`, `include`, `pushtag`…) would apply to others after sorting.
 
-The outline is the server's document symbols.
+The outline is the server's document symbols. Ledger has no server, so a Ledger journal has no outline.
 
 ## The balance and the register
 
@@ -145,7 +148,7 @@ The outline is the server's document symbols.
 
 ## Import from bank statements
 
-In a bank statement (a CSV file), *Import Statement* (`SPC m i`) shows what the tool would add to the journal, as the document *Import: statement.csv*; `i` there imports it, `e` opens the statement's rules, `r` runs it again. The journal is the setting `journal` (beside the statement when relative), else the one `LEDGER_FILE` names, else the journal you last opened.
+In a bank statement (a CSV or TSV file), *Import Statement* (`SPC m i`) shows what the tool would add to the journal, as the document *Import: statement.csv*; `i` there imports it, `e` opens the statement's rules, `r` runs it again. The journal is the setting `journal` (beside the statement when relative), else the one `LEDGER_FILE` names (asked through `hledger files`, so only where hledger is installed), else the journal you last opened.
 
 - **hledger** imports through the statement's rules (`statement.csv.rules` beside it, or the setting `rules`), writes the journal itself and remembers what it took, so the next import of a longer statement adds only the new lines. A statement without rules is offered rules made from its header row (columns, date format, decimal mark, the bank's account), to check and save; `SPC m e` opens them.
 - **Ledger** converts a statement whose header uses its names (`date`, `payee`, `amount`), for the account the setting `ledger_account` names and dates in `ledger_date_format`; the plugin appends the result to the journal, one undo step.
@@ -153,9 +156,9 @@ In a bank statement (a CSV file), *Import Statement* (`SPC m i`) shows what the 
 
 ## Other reports
 
-*Report…* (`SPC m r`, Doom's ledger-report, or `o` in a Report) lists the Balance, the Register and the tool's other reports and opens the one picked as a document, as the tool prints it: hledger's cash flow, income statement, budget and forecast (monthly, from its periodic transactions), activity, statistics, its accounts, commodities, payees, tags and prices, and `print`; Ledger's income statement, budget, forecast (six months on), cleared report, statistics, lists and `print`; Beancount's through `bean-query`: income statement, holdings at cost and value, monthly expenses, balances, lists and `PRINT`, after the journal's own saved queries (its `query` directives). `print` comes in the journal's syntax and colors. `p` picks the period of a report that takes one (hledger's and Ledger's), `r` runs it again, and it is run again when the journal is saved.
+*Report…* (`SPC m r`, Doom's ledger-report, or `o` in a Report) lists the Balance and the Register (only when you start it from a journal), then the tool's other reports, and opens the one picked as a document, as the tool prints it: hledger's cash flow, income statement, budget and forecast (monthly, from its periodic transactions), activity, statistics, its accounts, commodities, payees, tags and prices, and `print`; Ledger's income statement, budget, forecast (six months on), cleared report, statistics, lists and `print`; Beancount's through `bean-query`: income statement, holdings at cost and value, monthly expenses, balances, lists and `PRINT`, after the journal's own saved queries (its `query` directives). `print` comes in the journal's syntax and colors. `p` picks the period of a report that takes one (hledger's and Ledger's), `r` runs it again, and it is run again when the journal is saved.
 
-The setting `reports` puts reports of your own first: `"Food by month: balance expenses:food -M"`, the tool's arguments after `-f JOURNAL` (quoted as a shell quotes), or, for Beancount, a query.
+The setting `reports` puts reports of your own before the tool's (after the Balance and the Register): `"Food by month: balance expenses:food -M"`, the tool's arguments after `-f JOURNAL` (quoted as a shell quotes), or, for Beancount, a query.
 
 ## Reports in notes
 
@@ -172,20 +175,20 @@ kalem run pta pta.register 2026.journal --args '{"account": "assets:bank"}'
 kalem run pta pta.report 2026.journal --args '{"report": "Cash Flow", "period": "last month"}'
 ```
 
-A period is `this month`, `last month`, `this quarter`, `this year`, `last year` or `all dates`; a report is named by its title in Report… (any case), a saved Beancount query as `Query: NAME`. An unknown report or period exits with 1. The setting `glyphs` (`ascii`) writes the Balance's fold marks and a passed check's mark as `v > ok` for a terminal font without `▾ ▸ ✓`.
+A period is `this month`, `last month`, `this quarter`, `this year`, `last year` or `all dates`; a report is named by its title in Report… (any case), a saved Beancount query as `Query: NAME`; the Balance and the Register have their own commands, `pta.balance` and `pta.register`. An unknown report is an error, and `kalem run` exits with 1. An unknown period is an error too: the document is still printed, for all dates, and `kalem run` exits with 1. The setting `glyphs` (`ascii`) writes the Balance's fold marks and a passed check's mark as `v > ok` for a terminal font without `▾ ▸ ✓`.
 
 ## Prices and market value
 
 *Fetch Prices* (`SPC m p`) asks your price program for the prices since the journal's last and writes them at the end of the main journal, or of the file the setting `prices` names (beside the main journal when relative; your journal includes it), one undo step.
 
-- **hledger and Ledger**: [pricehist](https://gitlab.com/chrisberkhout/pricehist) (`pip install pricehist`) fetches each pair of the setting `price_sources`, as `SOURCE BASE/QUOTE` (`ecb EUR/USD`; a third word where the journal writes the quote otherwise, `ecb EUR/USD $`), after the last price of the pair the tool lists, or the last 30 days; written as the journal writes prices (`P 2026-10-09 EUR 1.1206 USD`, with its date separator and decimal mark).
+- **hledger and Ledger**: [pricehist](https://gitlab.com/chrisberkhout/pricehist) (`pip install pricehist`) fetches each pair of the setting `price_sources`, as `SOURCE BASE/QUOTE` (`ecb EUR/USD`; a third word where the journal writes the quote otherwise, `ecb EUR/USD $`), after the last price of the pair the tool lists, or the last 30 days; written as the journal writes prices (`P 2026-10-09 EUR 1.1206 USD`). The date separator is the one of the file's first transaction. The decimal mark is `,` when the file has a `decimal-mark ,` line, else `.`.
 - **Beancount**: `bean-price --update` (`pip install beanprice`) fetches what its commodities' `price:` metadata names since their last price.
 
 `v` in the Balance and the Register shows market values: hledger's `-V` (its transactions' costs taken as prices too), Ledger's `-V`, Beancount's `value()`; the header says "market value".
 
 ## Reconciliation
 
-*Reconcile* (`SPC m R` on a posting of the account, or pick one of your asset and liability accounts) asks the statement's closing balance (the tool's total of the cleared and pending postings offered) and opens a document with the cleared total, the pending total, their sum, the target and the difference, then the postings not cleared yet. Mark postings in the journal as you tick them off the statement (`SPC m t`, pending), save, and the difference moves; `t` changes the target, Enter opens the journal at a posting. When the difference is zero, *Finish Reconciliation* (`C`, or `SPC m C`) asks the statement's date, clears the pending postings and writes a balance assertion for the target (hledger and Ledger: a "Balance assertion" transaction with a zero posting; Beancount: a `balance` directive the day after), one undo step. The totals are the tool's; the plugin only takes them from the target you typed.
+*Reconcile* (`SPC m R` on a posting of the account, or pick one of your asset and liability accounts) asks the statement's closing balance (the tool's total of the cleared and pending postings offered) and opens a document with the cleared total, the pending total, their sum, the target and the difference, then the postings not cleared yet. Mark postings in the journal as you tick them off the statement (`SPC m t`, pending), save, and the difference moves; `t` changes the target, Enter opens the journal at a posting. When the difference is zero, *Finish Reconciliation* (`C`, or `SPC m C`) asks the statement's date, clears the pending postings and writes a balance assertion for the target (hledger and Ledger: a "Balance assertion" transaction with a zero posting; Beancount: a `balance` directive the day after), one undo step. Finish edits only the file where you started Reconcile: pending postings of the account in other included files stay pending. The totals are the tool's; the plugin only subtracts them from the target you typed.
 
 ## Checking by the tool
 
