@@ -17,6 +17,9 @@
 //! - [`write`]: transactions written, toggled, copied, dated and sorted
 //!   (PT6).
 //!
+//! - [`report`]: the tool's balance report read and laid out as a tree
+//!   (PT7a).
+//!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
 pub mod align;
@@ -24,6 +27,7 @@ pub mod check;
 #[cfg(target_arch = "wasm32")]
 mod component;
 pub mod journal;
+pub mod report;
 pub mod write;
 
 /// The manifest, embedded so that the component carries its own
@@ -62,6 +66,8 @@ pub const MENU: &[(&str, &str, &str)] = &[
     ("pta.dateLater", "Date a Day Later", "Ctrl+Shift+L"),
     ("-", "", ""),
     ("pta.check", "Check Journal", "SPC m k"),
+    ("pta.balance", "Balance", "SPC m b"),
+    ("pta.register", "Register", "SPC m R"),
     ("-", "", ""),
     ("pta.version", "Tool Version", ""),
 ];
@@ -69,12 +75,15 @@ pub const MENU: &[(&str, &str, &str)] = &[
 /// The text type of the plugin's Check document.
 pub const CHECK_KIND: &str = "pta-check";
 
-/// The when-clause of the Journal menu and button: a journal, or the
-/// plugin's Check document.
+/// The text types of the plugin's documents: Check, Balance.
+pub const DOCUMENT_KINDS: &[&str] = &[CHECK_KIND, "pta-balance", "pta-register"];
+
+/// The when-clause of the Journal menu and button: a journal, or one of
+/// the plugin's documents.
 pub fn menu_when() -> String {
     let types: Vec<String> = TEXT_TYPES
         .iter()
-        .chain(std::iter::once(&CHECK_KIND))
+        .chain(DOCUMENT_KINDS)
         .map(|t| format!("textType == {t}"))
         .collect();
     types.join(" || ")

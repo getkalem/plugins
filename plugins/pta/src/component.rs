@@ -17,6 +17,9 @@ use std::rc::Rc;
 use kalem_plugin::kalem::{self, Event, EventKind, Plugin, Reply, Scope};
 use kalem_plugin::{documents, editor, process, settings, ui};
 
+mod balance;
+mod register;
+
 use crate::check::{self, Problem};
 use crate::journal::{self, Installed, Main, Settings, ToolChoice};
 use crate::write::{self, Date};
@@ -32,6 +35,14 @@ const CHECK_KIND: &str = crate::CHECK_KIND;
 const CHECK_WHEN: &str = "textType == pta-check && (vimCommand || !vimActive)";
 const CHECK_ESCAPE_WHEN: &str =
     "textType == pta-check && !hasSelection && (vimCommand || !vimActive)";
+/// Keys in the Balance document.
+const BALANCE_WHEN: &str = "textType == pta-balance && (vimCommand || !vimActive)";
+const BALANCE_ESCAPE_WHEN: &str =
+    "textType == pta-balance && !hasSelection && (vimCommand || !vimActive)";
+/// Keys in the Register document.
+const REGISTER_WHEN: &str = "textType == pta-register && (vimCommand || !vimActive)";
+const REGISTER_ESCAPE_WHEN: &str =
+    "textType == pta-register && !hasSelection && (vimCommand || !vimActive)";
 
 /// A main journal's last check.
 #[derive(Debug, Default)]
@@ -884,7 +895,23 @@ fn insert_transaction() -> Result<String, String> {
 /// (`crate::MENU`) with their keys, or, in the Check document, its own;
 /// the one chosen runs where the pick was asked, once it is answered.
 fn menu() -> Result<String, String> {
-    let entries: Vec<(&str, &str, &str)> = if checked_here().is_some() {
+    let entries: Vec<(&str, &str, &str)> = if register::here().is_some() {
+        vec![
+            ("pta.registerVisit", "Go to the Posting", "Enter"),
+            ("pta.registerPeriod", "Period…", "p"),
+            ("pta.register", "Register Again", "r"),
+            ("pta.registerClose", "Close the Register", "q"),
+        ]
+    } else if balance::here().is_some() {
+        vec![
+            ("pta.register", "Register of the Account", "Enter"),
+            ("pta.balanceToggle", "Fold or Unfold", "Tab"),
+            ("pta.balancePeriod", "Period…", "p"),
+            ("pta.balanceDepth", "Depth…", "d"),
+            ("pta.balance", "Balance Again", "r"),
+            ("pta.balanceClose", "Close the Balance", "q"),
+        ]
+    } else if checked_here().is_some() {
         vec![
             ("pta.checkOpen", "Open the Problem's Place", "Enter"),
             ("pta.check", "Check Again", "r"),
@@ -1014,10 +1041,59 @@ impl Plugin for Pta {
         kalem::keymap("ctrl+shift+l", "pta.dateLater", Some(&leader))?;
         kalem::keymap("ctrl+shift+h", "pta.dateEarlier", Some(&leader))?;
         let mut types = crate::TEXT_TYPES.to_vec();
-        types.push(CHECK_KIND);
+        types.push(balance::KIND);
+        command("pta.balance", "Balance", &types, |_| balance::command())?;
+        kalem::keymap("space m b", "pta.balance", Some(&leader))?;
+        kalem::keymap("r", "pta.balance", Some(BALANCE_WHEN))?;
+        let b = &[balance::KIND];
+        command("pta.balanceToggle", "Fold or Unfold", b, |_| {
+            balance::fold(None)
+        })?;
+        kalem::keymap("tab", "pta.balanceToggle", Some(BALANCE_WHEN))?;
+        command("pta.balanceFold", "Fold", b, |_| balance::fold(Some(true)))?;
+        kalem::keymap("left", "pta.balanceFold", Some(BALANCE_WHEN))?;
+        command("pta.balanceUnfold", "Unfold", b, |_| {
+            balance::fold(Some(false))
+        })?;
+        kalem::keymap("right", "pta.balanceUnfold", Some(BALANCE_WHEN))?;
+        command("pta.balancePeriod", "Period…", b, |_| {
+            balance::pick_period()
+        })?;
+        kalem::keymap("p", "pta.balancePeriod", Some(BALANCE_WHEN))?;
+        command("pta.balanceDepth", "Depth…", b, |_| balance::pick_depth())?;
+        kalem::keymap("d", "pta.balanceDepth", Some(BALANCE_WHEN))?;
+        command("pta.balanceClose", "Close the Balance", b, |_| {
+            balance::close()
+        })?;
+        kalem::keymap("q", "pta.balanceClose", Some(BALANCE_WHEN))?;
+        kalem::keymap("escape", "pta.balanceClose", Some(BALANCE_ESCAPE_WHEN))?;
+        let mut types = crate::TEXT_TYPES.to_vec();
+        types.extend([balance::KIND, register::KIND]);
+        command("pta.register", "Register", &types, |_| register::command())?;
+        kalem::keymap("space m shift+r", "pta.register", Some(&leader))?;
+        kalem::keymap("enter", "pta.register", Some(BALANCE_WHEN))?;
+        kalem::keymap("r", "pta.register", Some(REGISTER_WHEN))?;
+        let r = &[register::KIND];
+        command("pta.registerVisit", "Go to the Posting", r, |_| {
+            register::visit()
+        })?;
+        kalem::keymap("enter", "pta.registerVisit", Some(REGISTER_WHEN))?;
+        command("pta.registerPeriod", "Period…", r, |_| {
+            register::pick_period()
+        })?;
+        kalem::keymap("p", "pta.registerPeriod", Some(REGISTER_WHEN))?;
+        command("pta.registerClose", "Close the Register", r, |_| {
+            register::close()
+        })?;
+        kalem::keymap("q", "pta.registerClose", Some(REGISTER_WHEN))?;
+        kalem::keymap("escape", "pta.registerClose", Some(REGISTER_ESCAPE_WHEN))?;
+        let mut types = crate::TEXT_TYPES.to_vec();
+        types.extend([CHECK_KIND, balance::KIND, register::KIND]);
         command("pta.menu", "Commands…", &types, |_| menu())?;
         kalem::keymap("space m m", "pta.menu", Some(&leader))?;
         kalem::keymap("?", "pta.menu", Some(CHECK_WHEN))?;
+        kalem::keymap("?", "pta.menu", Some(BALANCE_WHEN))?;
+        kalem::keymap("?", "pta.menu", Some(REGISTER_WHEN))?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
@@ -1040,6 +1116,8 @@ impl Plugin for Pta {
                         }
                     }
                 });
+                balance::forget(*n);
+                register::forget(*n);
                 if CURRENT.with(Cell::get) == Some(*n) {
                     CURRENT.with(|c| c.set(None));
                     refresh(None);
@@ -1065,6 +1143,12 @@ impl Plugin for Pta {
                     check(d.path.clone(), false);
                 } else {
                     refresh(Some(d.path.clone()));
+                }
+                if let Some(dialect) = Dialect::of_path(&d.path) {
+                    resolve(d.path.clone(), dialect, |_, main| {
+                        balance::saved(&main.path);
+                        register::saved(&main.path);
+                    });
                 }
             }
             Reply::Proceed

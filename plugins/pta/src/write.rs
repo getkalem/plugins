@@ -721,6 +721,41 @@ pub fn new_transaction(
     (out, at)
 }
 
+/// The account of the posting on the line holding `at`: after its
+/// indent and status, up to two blanks, a tab or a comment (one blank
+/// in Beancount), a virtual posting's parentheses or brackets taken
+/// off; none on another line.
+pub fn account_at(text: &str, at: usize, dialect: Dialect) -> Option<String> {
+    let start = text[..at.min(text.len())].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[start..].find('\n').map_or(text.len(), |i| start + i);
+    let line = &text[start..end];
+    if !indented(line) || comment_line(line, dialect) {
+        return None;
+    }
+    let mut rest = line.trim_start();
+    if dialect == Dialect::Beancount && rest.starts_with(|c: char| c.is_ascii_lowercase()) {
+        return None;
+    }
+    if let Some(r) = rest.strip_prefix(['*', '!'])
+        && r.starts_with([' ', '\t'])
+    {
+        rest = r.trim_start();
+    }
+    let mut end = rest.len();
+    for (i, c) in rest.char_indices() {
+        let two = rest[i..].starts_with("  ");
+        if c == '\t' || c == ';' || two || (dialect == Dialect::Beancount && c == ' ') {
+            end = i;
+            break;
+        }
+    }
+    let account = rest[..end]
+        .trim()
+        .trim_start_matches(['(', '['])
+        .trim_end_matches([')', ']']);
+    (!account.is_empty()).then(|| account.to_string())
+}
+
 /// The separator the text writes its dates with: its first
 /// transaction's, else the dialect's own.
 pub fn separator(text: &str, dialect: Dialect) -> char {
@@ -967,6 +1002,36 @@ mod tests {
         let (t, at) = new_transaction(Beancount, D(2026, 2, 1), '-', "Market", Some(b));
         assert!(t.starts_with("2026-02-01 ! \"Market\" \"two\"\n"), "{t}");
         assert_eq!(&t[at..at + 6], "842.35");
+    }
+
+    #[test]
+    fn the_account_at_the_cursor() {
+        let at = |line: &str| H.find(line).unwrap() + 2;
+        assert_eq!(
+            account_at(H, at("    expenses:food"), Hledger).as_deref(),
+            Some("expenses:food")
+        );
+        assert_eq!(
+            account_at(H, at("    income:salary"), Hledger).as_deref(),
+            Some("income:salary")
+        );
+        assert_eq!(account_at(H, H.find("Ziraat").unwrap(), Hledger), None);
+        let t =
+            "2026-01-01 x\n    (budget:food)  *-1\n    * assets:broker:index fund  10 \"FUND A\"\n";
+        assert_eq!(
+            account_at(t, t.find("budget").unwrap(), Hledger).as_deref(),
+            Some("budget:food")
+        );
+        assert_eq!(
+            account_at(t, t.find("index").unwrap(), Hledger).as_deref(),
+            Some("assets:broker:index fund")
+        );
+        let b = "2026-01-02 * \"Z\" \"S\"\n  receipt: \"x\"\n  Assets:Bank 1 TRY\n";
+        assert_eq!(
+            account_at(b, b.find("Bank").unwrap(), Beancount).as_deref(),
+            Some("Assets:Bank")
+        );
+        assert_eq!(account_at(b, b.find("receipt").unwrap(), Beancount), None);
     }
 
     #[test]

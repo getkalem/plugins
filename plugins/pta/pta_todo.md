@@ -536,7 +536,7 @@ first.
 
 ## PT7. The balance and the register as documents
 
-- [ ] PT7a `pta.balance` (`SPC m b`): the balance sheet of the main
+- [~] PT7a `pta.balance` (`SPC m b`): the balance sheet of the main
   journal as a document "Balance: 2026.journal" (kind `pta-balance`),
   written as the git plugin writes its status: a header line with the
   tool, the period and the depth; the account tree with `▸` and `▾`
@@ -554,7 +554,33 @@ first.
   negative amounts red, totals bold, the tree's inner segments muted,
   as `styled-documents` allows. Under `kalem run pta.balance FILE` the
   same text prints.
-- [ ] PT7b `pta.register` (`SPC m R`; Enter on an account in PT7a; the
+  (Done 2026-10-11 but `kalem run`'s printing, the depth on `SPC m p`,
+  and the negative sections' colors as planned; checked in the
+  terminal editor. The tool computes every amount: hledger's `balance
+  --tree --no-elide --format '%2(depth_spacer)%(account)|%(total)'`
+  (the journal's own amount style kept, full names from the indents),
+  Ledger's `balance --balance-format '%(account)|%(scrub(display_total))'`
+  (a parent with one child one line, `Budget:Travel`, as Ledger shows
+  it), Beancount's `bean-query` at each level of the tree
+  (`root(account, n)`, until a level adds none) and one for the total;
+  `src/report.rs` reads them, `layout` draws the tree. Two sections,
+  not `balancesheet` and `incomestatement`: assets, liabilities and
+  equity (hledger's `type:ALE`, Ledger's and Beancount's root names) at
+  the period's end, the others (income, expenses, budgets) within it,
+  each with the tool's total. Tab, Right and Left fold and unfold (the
+  folded kept by account across refreshes; Left on a leaf folds its
+  parent), Enter opens the Register, `p` the period (this month, last
+  month, this quarter, this year, last year, all dates), `d` the depth,
+  `r` again, `q` and Escape close, `?` the pick; written again on the
+  journal's save. Changed: the period and depth keys are `p` and `d` in
+  the document, not `SPC m p`; a typed period waits (Ledger and
+  Beancount would need it parsed). Styled: the header, the sections and
+  totals bold, marks muted, amounts below zero red. Tests: unit tests
+  of each tool's rows, the tree, the folds, the periods, the commands;
+  `tests/reports.rs` runs each tool on the corpus (a subtotal, a
+  section's accounts, a period's change against the balance at its
+  end).)
+- [~] PT7b `pta.register` (`SPC m R`; Enter on an account in PT7a; the
   account at the cursor in a journal, else asked): "Register:
   Expenses:Market" (kind `pta-register`), one line per posting: date,
   status, description, the other account, the amount, the running
@@ -568,6 +594,21 @@ first.
   postings in a second, the document shows the last 2,000 and offers
   the earlier ones by period, since `process` cuts output at 16 MB and
   a document of a million lines helps no one.
+  (Done 2026-10-11 but the typed query (`SPC m /`); checked in the
+  terminal editor: from the Balance's Enter, `SPC m R` on a posting's
+  account (`write::account_at`), or an account picked from the tool's
+  (`hledger accounts`, `ledger accounts`, `bean-query`'s); the account
+  with its subaccounts (`^ACCOUNT(:|$)`); hledger's `register -O csv`
+  (its CSV writes amounts without digit groups and no status), Ledger's
+  `register --register-format` (fields apart by U+001F, a payee may
+  hold `|`; its state, file and line), `bean-query`'s `date, flag,
+  payee, narration, position, balance, filename, lineno`; the last
+  2,000 shown, the earlier counted. Enter opens the journal at the
+  posting: Ledger's and Beancount's place, hledger's transaction found
+  in `hledger print -O json` (`tsourcepos`) when asked. `p` the period,
+  `r` again, `q` closes. Tests: the three parsers and the layout, and
+  each tool's register on the corpus, its first running total and the
+  first posting's place.)
 - [ ] PT7c The other reports, one quick-pick (`SPC m r r`, "Report…"):
   cash flow, income statement alone, budget (`--budget` from the
   periodic transactions), forecast (`--forecast`), `roi`, `stats`,

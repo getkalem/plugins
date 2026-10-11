@@ -15,12 +15,12 @@
   "menus": [
     {
       "title": "Journal",
-      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check",
+      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check || textType == pta-balance || textType == pta-register",
       "items": [
         "pta.newTransaction", "pta.copyTransaction", "pta.toggleStatus", "-",
         "pta.align", "pta.sort", "-",
         "pta.previousTransaction", "pta.nextTransaction", "pta.dateEarlier", "pta.dateLater", "-",
-        "pta.check", "-",
+        "pta.check", "pta.balance", "pta.register", "-",
         "pta.version", "-",
         "pta.menu"
       ]
@@ -30,7 +30,7 @@
     {
       "title": "Journal",
       "command": "pta.menu",
-      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check"
+      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check || textType == pta-balance || textType == pta-register"
     }
   ],
   "syntaxes": [
