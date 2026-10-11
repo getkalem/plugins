@@ -1037,9 +1037,18 @@ user groups; the gaps that code can close, in this order.
   from the cursor; Follow Reference opens them grouped as a simple
   query's, values as a table. `:result-transform`, `:view` and custom
   `:rules` are named as not run.)
-- [ ] GR14b A graph's folder one step from being a project: opening a
+- [x] GR14b A graph's folder one step from being a project: opening a
   note of a Logseq graph or an Obsidian vault outside Kalem's projects
   offers to add its folder (Kalem's side: a layer's marker folder).
+  (Done 2026-10-11: Kalem offers the folder holding a layer's marker
+  once a session, adds it with `projects.auto_add`, and asks the layers
+  again when a project is added; the plugin, asked for a note's overlays
+  with no graph indexed for it, asks to index it once the note can be
+  read, through its command `graph.noteOpened`. Found on the way: Kalem
+  refused a plugin's `kalem.run` of its own command, so every flow that
+  edits the note after a question (Insert Link, Insert Block Reference,
+  Set Priority, Schedule, Deadline, Rename Page) failed after the answer
+  in every release; Kalem's fix queues it as another's.)
 - [ ] GR14c Embeds and queries drawn in their note: the embedded block
   or page and a query's results under the line (Kalem's side: lines a
   layer adds, K2).

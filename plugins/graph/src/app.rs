@@ -176,6 +176,9 @@ pub const COMMANDS: &[CommandInfo] = &[
         ],
     ),
     c("graph.reindex", "Index Again", &["space n r s"]),
+    // Run by the plugin when a note its layer serves became readable (its
+    // folder added to Kalem's projects).
+    n("graph.noteOpened", "Index the Note's Graph", &[]),
     // The graph drawn (Kalem's plugin API 0.2.12): all its pages, or the
     // note's page and the pages two links away.
     c("graph.graphView", "Graph View", &["space n r v"]),
@@ -632,6 +635,9 @@ pub struct App {
     /// What the `{{query …}}` of the notes show, by graph and query, with
     /// the index's version they were computed from.
     queries: std::cell::RefCell<BTreeMap<(String, String), (u64, String)>>,
+    /// Notes a layer serves whose graph is not indexed, its indexing asked
+    /// for (`graph.noteOpened`) and not done yet.
+    pub(crate) unindexed: std::cell::RefCell<BTreeSet<String>>,
     /// The properties of each graph and the values each has, with the
     /// index's version they were counted from (completion after `::`).
     properties: std::cell::RefCell<BTreeMap<String, (u64, std::rc::Rc<complete::Properties>)>>,
@@ -664,6 +670,7 @@ impl App {
             recent: Vec::new(),
             queries: std::cell::RefCell::new(BTreeMap::new()),
             properties: std::cell::RefCell::new(BTreeMap::new()),
+            unindexed: std::cell::RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -959,6 +966,22 @@ impl App {
         s
     }
 
+    /// Whether the note at `path`, which a layer serves, has no graph
+    /// indexed and its indexing was not asked for yet.
+    pub fn index_wanted(&self, path: &str) -> bool {
+        let path = files::normalize(path);
+        !self
+            .indexes
+            .keys()
+            .any(|r| files::relative(r, &path).is_some())
+            && !self.unindexed.borrow().contains(&path)
+    }
+
+    /// The indexing of the note at `path`'s graph asked for.
+    pub fn index_asked(&self, path: &str) {
+        self.unindexed.borrow_mut().insert(files::normalize(path));
+    }
+
     /// What an advanced query shows in its note: kept until the index
     /// changes, as `query_summary`'s.
     fn advanced_summary(&self, index: &Index, q: &str, current: Option<&str>) -> String {
@@ -1180,6 +1203,15 @@ impl App {
                     Level::Info,
                 )),
             },
+            "graph.noteOpened" => {
+                if let Some(path) = serde_json::from_str::<serde_json::Value>(&ctx.args)
+                    .ok()
+                    .and_then(|v| v["path"].as_str().map(str::to_string))
+                {
+                    self.unindexed.borrow_mut().remove(&files::normalize(&path));
+                    out.extend(self.opened(files, &path));
+                }
+            }
             "graph.openNode" => {
                 let key = serde_json::from_str::<serde_json::Value>(&ctx.args)
                     .ok()

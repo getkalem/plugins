@@ -465,13 +465,29 @@ impl Plugin for Graph {
     fn overlays(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet {
         use crate::layer::{Effect as E, LineEffect as L};
         use kalem_plugin::layer as api;
-        let o = APP
+        let (o, wanted) = APP
             .with(|a| {
-                a.borrow()
-                    .as_ref()
-                    .map(|app| app.overlays(layer, path, text))
+                a.borrow().as_ref().map(|app| {
+                    let wanted = path.is_some_and(|p| app.index_wanted(p));
+                    (app.overlays(layer, path, text), wanted)
+                })
             })
             .unwrap_or_default();
+        // A note of a graph not indexed that can be read now (its folder
+        // just added to the projects): indexed, after this call.
+        if wanted
+            && let Some(p) = path
+            && fs::read(p).is_ok()
+        {
+            let args = serde_json::json!({ "path": p }).to_string();
+            if kalem::run("graph.noteOpened", &args).is_ok() {
+                APP.with(|a| {
+                    if let Some(app) = a.borrow().as_ref() {
+                        app.index_asked(p);
+                    }
+                });
+            }
+        }
         let look = |l: crate::layer::Look| {
             let mut f = api::SpanStyle::empty();
             for (on, flag) in [
