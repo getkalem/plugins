@@ -1078,8 +1078,19 @@ user groups; the gaps that code can close, in this order.
   `graph.filesChanged` it queues (or before the next command), the
   names derived once: 300 pages written at once by a script while
   Kalem was open were all in Kalem's backlinks a few seconds later.)
-  [~] Not tested against Logseq itself: how Logseq takes a page Kalem
-  writes while Logseq has it open with typing not yet written.
+  [~] Tested against Logseq 0.10.9 itself on 2026-10-11 (driven through
+  its API with its window's debugging port, the graph under git to see
+  each write): blocks, pages made and renamed by either, folds, keywords,
+  priorities, block references, and typing in both at once, the same
+  page. Found and fixed on the way: Kalem's merge of another program's
+  changes into unsaved ones (Kalem), and the plugin's references and
+  queries against Logseq's own answers (GR14h).
+- [x] GR14h The index and the queries as Logseq's (2026-10-11), compared
+  with Logseq 0.10.9's database on the corpus: notes read anywhere in
+  the folder, a namespace's parents named by a link to its pages, a
+  query's arguments no references, a page's properties a block of its
+  own (pre-block), `(namespace x)` its children only;
+  `tests/logseq_parity.rs` keeps Logseq's answers.
 - [x] GR14e `collapsed:: true` folded when the note opens (K3).
   (Done 2026-10-11: the layer has hidden a folded block's children since
   GR4, Fold Block writes `collapsed::` as Logseq does, and the vertical
