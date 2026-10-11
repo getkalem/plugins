@@ -622,6 +622,23 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
     numbered(&mut o, &s.blocks, &ls);
     for (i, b) in s.blocks.iter().enumerate() {
         if b.collapsed && s.blocks.get(i + 1).is_some_and(|c| c.parent == Some(i)) {
+            // Its bullet a closed arrow, as Logseq marks a folded block.
+            let ls = at(b.line);
+            let line = &text[ls..at(b.line + 1).max(ls)];
+            let lead = line.len() - line.trim_start().len();
+            if line[lead..].starts_with("- ") || line[lead..].starts_with("* ") {
+                o.span(
+                    ls + lead,
+                    ls + lead + 2,
+                    Effect::Replace(
+                        "▸ ".into(),
+                        Look {
+                            dim: true,
+                            ..Look::default()
+                        },
+                    ),
+                );
+            }
             let (_, end) = crate::edit::subtree(&s.blocks, i);
             let from = at(s.blocks[i + 1].line);
             let to = at(end);
@@ -1209,7 +1226,7 @@ mod tests {
         let o = logseq_markdown(text, Some(&i), Some("pages/B.md"));
         assert_eq!(
             shown(text, &o),
-            "alias:: X\n\n- TODO [#A] see The core #tag\n  type:: book\n  SCHEDULED: <2026-10-12 Mon>\n  :LOGBOOK:\n  CLOCK: [2026-10-10 Sat 09:00]\n  :END:\n- ```\n  ((6512c0de-0001-4000-8000-000000000001))\n  ```\n"
+            "alias:: X\n\n▸ TODO [#A] see The core #tag\n  type:: book\n  SCHEDULED: <2026-10-12 Mon>\n  :LOGBOOK:\n  CLOCK: [2026-10-10 Sat 09:00]\n  :END:\n- ```\n  ((6512c0de-0001-4000-8000-000000000001))\n  ```\n"
         );
         // The block is collapsed: its child, an embed, is hidden, and
         // shown as its block's text where it shows.
@@ -1302,7 +1319,8 @@ mod tests {
     fn a_collapsed_block_hides_its_children() {
         let text = "- a\n  collapsed:: true\n\t- a1\n\t  id:: x\n\t\t- a2\n- b\n";
         let o = logseq_markdown(text, None, None);
-        assert_eq!(shown(text, &o), "- a\n- b\n");
+        // Its bullet an arrow, its children hidden.
+        assert_eq!(shown(text, &o), "▸ a\n- b\n");
         // One hidden range, from the first child to the end of the last.
         let first = text.find("\t- a1").unwrap();
         let end = text.find("- b").unwrap();
