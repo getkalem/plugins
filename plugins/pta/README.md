@@ -40,6 +40,7 @@ Kalem also offers it when you open a journal. Then the tool you use, and, if you
 | Toggle Status, Copy, Sort, Next, Previous, Date ±1 (the plugin) | yes | yes | yes |
 | Balance and Register (the tool) | `hledger balance`, `register -O json` | `ledger balance`, `register` | `bean-query` |
 | Market value (the tool) | `-V --infer-market-prices` | `-V` | `value()` |
+| Other reports (the tool) | cash flow, income statement, budget, forecast, activity, statistics, lists, `print` | income statement, budget, forecast, cleared, statistics, lists, `print` | income statement, holdings, monthly expenses, lists, `PRINT`, the journal's saved queries |
 | Reconcile, Finish (the tool's totals, the plugin's edits) | a `Balance assertion` transaction | a `Balance assertion` transaction | a `balance` directive |
 | Import a bank statement (the tool) | `hledger import` through its rules, rules offered from the statement's header | `ledger convert` | not yet (your beangulp script) |
 | Fetch Prices (your price program) | `pricehist` | `pricehist` | `bean-price --update` |
@@ -59,8 +60,9 @@ In a journal, under `SPC m` in Vim's command mode, where Doom Emacs's `:lang led
 | `[[`, `]]` (or `Alt+Up`, `Alt+Down`) | Previous, Next Transaction |
 | `Ctrl+Shift+H`, `Ctrl+Shift+L` | Date a Day Earlier, Later |
 | `SPC m k` | Check Journal |
-| `SPC m b` (or `SPC m r`, `SPC m g b`) | Balance |
+| `SPC m b` (or `SPC m g b`) | Balance |
 | `SPC m g r` | Register |
+| `SPC m r` | Report…: the Balance, the Register and the tool's other reports, to pick |
 | `SPC m R` | Reconcile |
 | `SPC m C` | Finish Reconciliation |
 | `SPC m p` | Fetch Prices |
@@ -68,7 +70,7 @@ In a journal, under `SPC m` in Vim's command mode, where Doom Emacs's `:lang led
 | `SPC m i`, `SPC m e` | In a CSV statement: Import Statement, Edit the Statement's Rules |
 | Enter | On a posting, in the Word-like profile: aligns it, then a new line |
 
-In the plugin's documents (both profiles; in Vim's command mode): **Check**: Enter the problem's place, `r` again, `q` or Escape close. **Balance**: Tab, Left and Right fold, Enter the account's register, `p` period, `d` depth, `v` market value, `r` again, `q` close. **Register**: Enter the posting, `p` period, `v` market value, `r` again, `q` close. **Reconcile**: Enter the posting, `t` the statement's balance, `C` finish, `r` again, `q` close. **Import**: `i` import, `e` the rules, `r` again, `q` close. `?` lists them.
+In the plugin's documents (both profiles; in Vim's command mode): **Check**: Enter the problem's place, `r` again, `q` or Escape close. **Balance**: Tab, Left and Right fold, Enter the account's register, `p` period, `d` depth, `v` market value, `r` again, `q` close. **Register**: Enter the posting, `p` period, `v` market value, `r` again, `q` close. **Reconcile**: Enter the posting, `t` the statement's balance, `C` finish, `r` again, `q` close. **Import**: `i` import, `e` the rules, `r` again, `q` close. **Report**: `p` period, `o` another report, `r` again, `q` close. `?` lists them.
 
 ## Settings
 
@@ -86,6 +88,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 | `toggle_postings` | off | Toggle Status on a posting line marks the posting, not its transaction |
 | `rules` | empty | hledger's rules for a statement, when not its own beside it (`statement.csv.rules`) |
 | `ledger_account`, `ledger_date_format` | empty | Ledger's import: the bank's account, and how the statement writes dates (`%d.%m.%Y`) |
+| `reports` | `[]` | Reports of your own, first in Report…: `NAME: ARGUMENTS` (`Food by month: balance expenses:food -M`; for Beancount, a query) |
 | `prices` | empty | Where Fetch Prices writes: a file your main journal includes (beside it when relative); empty for the main journal |
 | `price_sources` | `[]` | hledger and Ledger: the pairs to fetch, `SOURCE BASE/QUOTE` (`ecb EUR/USD`), a third word for the journal's symbol (`ecb EUR/USD $`) |
 | `programs.NAME` | empty | Where `hledger`, `ledger`, `bean-check`, `bean-query`, `pricehist` or `bean-price` is, when not on the PATH |
@@ -103,14 +106,14 @@ Waiting on Kalem:
 
 Not done yet:
 
-- **The other reports** (PT7c): cash flow, income statement alone, budget, forecast, `roi`, `stats`, Beancount's saved queries, as one pick.
+- **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds. hledger's `roi`, which asks for its accounts, is not offered (pin it in `reports`).
 - **The statement beside the reconciliation** (PT8c): a statement's rows paired with the account's postings by date and amount.
 - **Beancount's import** (PT9b): your beangulp script, which needs a permission to run `python3`.
 - A report inserted into an Org document as a table (PT11b), the commands from `kalem run` (PT11c), and journals of 200,000 transactions measured (PT13).
 
 ## Beside ledger-mode and Fava
 
-- **ledger-mode** (Emacs, and Doom Emacs's `:lang ledger`, whose `SPC m` keys the plugin takes): the same keys' work (`C-c C-a` New Transaction through `ledger xact`, `C-c C-c` Toggle Status, alignment at column 52 and on Enter, `C-c C-r` Reconcile with its cleared, pending and target totals), for hledger and Beancount too. Not here: marking from the reconcile buffer (above), `ledger-report`'s list of reports (PT7c; Doom's `SPC m r` opens the Balance), `ledger-schedule` (Doom's `SPC m S`), Calc on an amount (`SPC m e`), and Doom's `SPC m g s` (statistics); its `SPC m g b`, the balance at point, opens the Balance. Here and not there: the tool's check on each save as a document, import from statements, prices fetched, the servers' completion and rename.
+- **ledger-mode** (Emacs, and Doom Emacs's `:lang ledger`, whose `SPC m` keys the plugin takes): the same keys' work (`C-c C-a` New Transaction through `ledger xact`, `C-c C-c` Toggle Status, alignment at column 52 and on Enter, `C-c C-r` Reconcile with its cleared, pending and target totals, `ledger-report` as Report…, its own reports the setting `reports`), for hledger and Beancount too. Not here: marking from the reconcile buffer (above), `ledger-schedule` (Doom's `SPC m S`), and Calc on an amount (`SPC m e`); Doom's `SPC m g s` (statistics) is a report of Report…, and its `SPC m g b`, the balance at point, opens the Balance. Here and not there: the tool's check on each save as a document, import from statements, prices fetched, the servers' completion and rename.
 - **Fava** (Beancount's web interface): the same reports from the same tool, in the editor where the journal is written, offline, for hledger and Ledger too. Not here: charts (balances over time, treemaps), the query shell, documents attached to entries, and importers run from the browser.
 
 ## The main journal and the tool
@@ -146,6 +149,12 @@ In a bank statement (a CSV file), *Import Statement* (`SPC m i`) shows what the 
 - **hledger** imports through the statement's rules (`statement.csv.rules` beside it, or the setting `rules`), writes the journal itself and remembers what it took, so the next import of a longer statement adds only the new lines. A statement without rules is offered rules made from its header row (columns, date format, decimal mark, the bank's account), to check and save; `SPC m e` opens them.
 - **Ledger** converts a statement whose header uses its names (`date`, `payee`, `amount`), for the account the setting `ledger_account` names and dates in `ledger_date_format`; the plugin appends the result to the journal, one undo step.
 - **Beancount**'s statements are imported by your own beangulp script, which the plugin does not run yet.
+
+## Other reports
+
+*Report…* (`SPC m r`, Doom's ledger-report, or `o` in a Report) lists the Balance, the Register and the tool's other reports and opens the one picked as a document, as the tool prints it: hledger's cash flow, income statement, budget and forecast (monthly, from its periodic transactions), activity, statistics, its accounts, commodities, payees, tags and prices, and `print`; Ledger's income statement, budget, forecast (six months on), cleared report, statistics, lists and `print`; Beancount's through `bean-query`: income statement, holdings at cost and value, monthly expenses, balances, lists and `PRINT`, after the journal's own saved queries (its `query` directives). `print` comes in the journal's syntax and colors. `p` picks the period of a report that takes one (hledger's and Ledger's), `r` runs it again, and it is run again when the journal is saved.
+
+The setting `reports` puts reports of your own first: `"Food by month: balance expenses:food -M"`, the tool's arguments after `-f JOURNAL` (quoted as a shell quotes), or, for Beancount, a query.
 
 ## Prices and market value
 

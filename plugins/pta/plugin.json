@@ -18,12 +18,12 @@
   "menus": [
     {
       "title": "Journal",
-      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check || textType == pta-balance || textType == pta-register || textType == pta-reconcile",
+      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check || textType == pta-balance || textType == pta-register || textType == pta-reconcile || textType == pta-import || textType == pta-report",
       "items": [
         "pta.newTransaction", "pta.copyTransaction", "pta.toggleStatus", "pta.deleteTransaction", "-",
         "pta.align", "pta.sort", "-",
         "pta.previousTransaction", "pta.nextTransaction", "pta.dateEarlier", "pta.dateLater", "-",
-        "pta.check", "pta.balance", "pta.register", "-",
+        "pta.check", "pta.balance", "pta.register", "pta.report", "-",
         "pta.reconcile", "pta.finishReconcile", "pta.prices", "-",
         "pta.version", "-",
         "pta.menu"
@@ -34,7 +34,7 @@
     {
       "title": "Journal",
       "command": "pta.menu",
-      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check || textType == pta-balance || textType == pta-register || textType == pta-reconcile"
+      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check || textType == pta-balance || textType == pta-register || textType == pta-reconcile || textType == pta-import || textType == pta-report"
     }
   ],
   "syntaxes": [
@@ -160,6 +160,12 @@
       "default": "",
       "examples": ["%Y/%m/%d", "%d.%m.%Y", "%m/%d/%Y"],
       "description": "Ledger's import: how a statement writes its dates, empty for Ledger's own guess"
+    },
+    "reports": {
+      "type": "array",
+      "default": [],
+      "examples": [["Food by month: balance expenses:food -M"], ["Big spending: register expenses amt:>1000"], ["Cash: SELECT account, sum(position) WHERE account ~ 'Cash' GROUP BY account"]],
+      "description": "Reports of your own, first in Report… (SPC m o): NAME: ARGUMENTS, the tool's arguments after the journal's (hledger balance expenses -M), or a Beancount query"
     },
     "prices": {
       "type": "string",

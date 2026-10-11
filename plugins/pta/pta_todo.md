@@ -609,7 +609,7 @@ first.
   `r` again, `q` closes. Tests: the three parsers and the layout, and
   each tool's register on the corpus, its first running total and the
   first posting's place.)
-- [ ] PT7c The other reports, one quick-pick (`SPC m r r`, "Report…"):
+- [x] PT7c The other reports, one quick-pick (`SPC m r r`, "Report…"):
   cash flow, income statement alone, budget (`--budget` from the
   periodic transactions), forecast (`--forecast`), `roi`, `stats`,
   `accounts`, `commodities`, `payees`, `tags`, `activity`; Beancount's
@@ -620,6 +620,25 @@ first.
   the output is a tree. A report the user runs often is pinned by the
   setting `reports`, a list of names and arguments, and appears in
   the pick and in the Journal menu.
+  (Done 2026-10-11, checked in the terminal editor: `SPC m r`, Doom's
+  ledger-report, since the keys took Doom's map (Reconcile is `SPC m
+  R`), `o` again in a Report; the Balance and the Register first in
+  the pick from a journal. The reports of `src/other.rs` per tool, each a document
+  "Report: …" of the tool's text, `print`'s in the journal's language;
+  `p` the period for hledger's and Ledger's dated ones (`-b`, `-e`),
+  `r` again, `q` closes, written again on the journal's save. hledger's
+  Prices with `--infer-market-prices`, as Ledger lists the costs'
+  prices too; Ledger's forecast with `--forecast 'd<[six months on]'`
+  from today; Beancount's saved queries listed by `bean-query FILE
+  .run` and run as `.run NAME`. The setting `reports` (`NAME:
+  ARGUMENTS`, split as a shell splits them; a Beancount query whole)
+  first in the pick, dated unless its arguments give dates. A test
+  runs every report of each tool on the corpus, dated ones within a
+  period too, a pinned one, and a saved query. Not done: the keys of
+  PT7a on a tree (only the Balance folds); `roi` (it asks for its
+  investment and profit accounts: pinned in `reports` it runs); the
+  pinned reports in the Journal menu, whose items the manifest fixes
+  (they are in the pick).)
 
 ## PT8. Reconciliation
 
@@ -992,6 +1011,18 @@ plugin's section 9 followed).
   command as a language's formatter: one `commands.format` serves all
   of a plugin's languages (`bean-format` would run on an hledger
   journal), and Align Amounts cannot be Format Document's in a journal.
+- K12 An activation for files a plugin uses but does not claim: Kalem
+  starts a component `onStartup`, `onEvent:NAME` or `onFile` (the
+  first file it serves, by `applies` and its languages;
+  `crates/kalem-cli/src/extensions.rs`). The plugin imports bank
+  statements, CSV files it must not claim (claiming them would offer
+  it for every CSV), so since PT9 it starts with the first document of
+  any kind (`onEvent:document:open`); an `onOpen:GLOB` beside `onFile`
+  (`["onFile", "onOpen:*.csv", "onOpen:*.rules"]`), starting a plugin
+  for a file without naming it as the file's plugin, would start it
+  only where it has work. Not a blocker for 0.1.0 (the git session's
+  word, 2026-10-11): one instance a session, its commands scoped to
+  their text types.
 
 ## Open for the owner
 
