@@ -1016,6 +1016,12 @@ below replace the earlier GR4a to GR4d.
   (`kalem-ui`'s example `graph_shot`) and in the terminal editor. Open:
   filters (tags, orphans, journals in the whole graph), groups and
   forces of one's own, as Logseq's and Obsidian's settings have.)
+  Released in graph 0.4.0 with what GR8b, K11 and K15 gained that day,
+  the manifest's API `^0.2.12`, for Kalem 0.6.14 and later; built and
+  tested against Kalem's branch `graph-api-0212` through a `[patch]` not
+  committed. Open: the `kalem-plugin` pin moved to Kalem's main once it
+  is pushed with API 0.2.12, and the tag `graph-v0.4.0` after Kalem
+  0.6.14's release.
 
 ## What Kalem's core must gain
 

@@ -2,7 +2,9 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: 0.3.1**, for Kalem 0.6.13 and later (plugin API 0.2.11). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; its layer draws a note as Logseq or Obsidian draws it, and its completer offers pages, tags and blocks as the user types (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+**Status: 0.4.0**, for Kalem 0.6.14 and later (plugin API 0.2.12). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below, the graph drawn among them; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; its layer draws a note as Logseq or Obsidian draws it, and its completer offers pages, tags, blocks and properties as the user types (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+
+0.3.1, for Kalem 0.6.13, has everything but what 0.4.0 and plugin API 0.2.12 bring: the graph drawn (Graph View, Local Graph), Rename Page renaming the page's file, a Ctrl-click and `Alt+Enter` opening links by the graph's rules, completion after `::`, `/` and a vault's `[[note#`, and the time in journal templates.
 
 0.2.0, for Kalem 0.6.11 and 0.6.12, has everything but what 0.3.0 and plugin API 0.2.11 bring: completion, Enter making blocks as Logseq's, Open Link by the graph's rules, `Alt+]` and `Alt+[`, the keys in a note before the Vim profile's (`SPC m t`, `SPC m p p`, `SPC m d s`, `SPC m d d`, `SPC n s`), All pages sorted, Block References, highlights, numbered lists and admonitions drawn, Logseq's keywords styled in Org notes, the commands seeing unsaved typing; and today's date is asked once a session.
 
@@ -18,7 +20,7 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 - **The graph's folder is one of Kalem's projects** (Projects: Add Project). Kalem lets a plugin read only its projects' folders (`fs:read:workspace`); a note opened from a folder that is no project is not seen as a graph's.
 - A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, a Logseq database graph's mirror by its `mirror/markdown/.index.edn`, from the folder of any note opened in it upwards. A folder without any is a graph when the setting `graphs` names it: a Logseq graph when it has `pages/` or `journals/`, else a vault, unless the setting gives its kind.
-- Kalem 0.6.13 or later (plugin API 0.2.11); 0.2.0 runs on Kalem 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
+- Kalem 0.6.14 or later (plugin API 0.2.12); 0.3.1 runs on Kalem 0.6.13, 0.2.0 on 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
 - Room to index a large graph: the plugin asks Kalem for 1 GB and 10 s a call (see Speed and size).
 
 ## Commands and keys
