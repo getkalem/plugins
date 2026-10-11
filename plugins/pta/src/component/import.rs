@@ -34,9 +34,6 @@ thread_local! {
     /// Rules made from the template, waiting for the command that writes
     /// them in their new document.
     static RULES: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
-    /// Ledger's conversion, waiting for the command that appends it in
-    /// the journal.
-    static APPEND: RefCell<Option<(String, String, String)>> = const { RefCell::new(None) };
 }
 
 fn own(key: &str) -> String {
@@ -362,13 +359,9 @@ pub(super) fn accept() -> Result<String, String> {
         return Ok("null".into());
     }
     if tool == Dialect::Ledger {
-        APPEND.with(|a| {
-            *a.borrow_mut() = Some((journal.clone(), text, journal::name(&csv).to_string()))
-        });
+        let title = format!("Import {}", journal::name(&csv));
         close_import(&csv);
-        let args = serde_json::json!({ "path": journal });
-        let _ = kalem::run("file.open", &args.to_string());
-        kalem::run("pta.importWrite", "{}")?;
+        super::append(journal, text, title);
         return Ok("null".into());
     }
     let args = import::hledger_command(&journal, &csv, Some(&own("rules")), false);
@@ -428,28 +421,6 @@ fn first_imported(journal: String, count: usize) {
             let _ = kalem::run("file.open", &args.to_string());
         }
     });
-}
-
-/// Appends Ledger's conversion at the end of the journal, the current
-/// document: one undo step.
-pub(super) fn write_append() -> Result<String, String> {
-    let Some((journal, text, csv)) = APPEND.with(|a| a.borrow_mut().take()) else {
-        return Ok("null".into());
-    };
-    let here = editor::document().and_then(|d| d.path);
-    if here.as_deref() != Some(journal.as_str()) {
-        ui::notify(
-            "The journal is no longer the current document",
-            ui::Level::Warning,
-        );
-        return Ok("null".into());
-    }
-    let current = editor::text(None);
-    let at = current.len();
-    let (ins, _) = crate::write::insertion(&current, at, &text);
-    editor::insert(Some(at as u64), &ins);
-    editor::transact(&format!("Import {csv}"));
-    Ok("null".into())
 }
 
 /// Opens the statement's rules (`SPC m e` in it, `e` in the Import

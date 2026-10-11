@@ -2,7 +2,7 @@
 
 hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and checks, checked by the tool you already have, and, as the work list goes on, imported from bank statements, reconciled against them and reported as documents. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance and check; the plugin asks them and shows what they say. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: the spike (PT1), the highlighter (PT2), the servers (PT3), aligning amounts (PT4), checking by the tool (PT5), writing transactions (PT6), the balance and the register (PT7), reconciliation (PT8) and import from bank statements (PT9)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
+**Status: the spike (PT1), the highlighter (PT2), the servers (PT3), aligning amounts (PT4), checking by the tool (PT5), writing transactions (PT6), the balance and the register (PT7), reconciliation (PT8), import from bank statements (PT9) and prices (PT10)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
 
 - **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`). Completion of accounts, payees and tags, diagnostics and formatting come from the servers.
 - **The component**, which runs the journal's tool: a status bar item naming the tool and the main journal of the journal you are in (`hledger · 2026.journal`; its tooltip says why that journal), and one command, *Tool Version* (in the palette under Journal, and the item's click), which asks hledger, Ledger or `bean-check` what it is, or says how to install it.
@@ -44,9 +44,9 @@ The outline is the server's document symbols.
 
 ## The balance and the register
 
-*Balance* (`SPC m b`) opens the main journal's balance as a document: assets, liabilities and equity at the period's end, then income, expenses and the other accounts within the period, as a tree (each parent with its subaccounts' amounts), every amount and total as the tool computes and writes it. Tab, Right and Left fold and unfold an account (kept as you leave it), `p` picks the period (this month, last month, this quarter, this year, last year, all dates), `d` the depth, `r` runs it again, Enter opens the account's register, `q` or Escape closes it. It is written again when the journal is saved.
+*Balance* (`SPC m b`) opens the main journal's balance as a document: assets, liabilities and equity at the period's end, then income, expenses and the other accounts within the period, as a tree (each parent with its subaccounts' amounts), every amount and total as the tool computes and writes it. Tab, Right and Left fold and unfold an account (kept as you leave it), `p` picks the period (this month, last month, this quarter, this year, last year, all dates), `d` the depth, `v` shows market values (or back to cost), `r` runs it again, Enter opens the account's register, `q` or Escape closes it. It is written again when the journal is saved.
 
-*Register* (`SPC m R` on a posting's account, or Enter in the balance; else an account to pick) lists the account's postings, its subaccounts' too, with the tool's running total; Enter opens the journal at the posting, `p` picks the period. The amounts are written as the journal writes them. The last 2,000 postings are shown.
+*Register* (`SPC m R` on a posting's account, or Enter in the balance; else an account to pick) lists the account's postings, its subaccounts' too, with the tool's running total; Enter opens the journal at the posting, `p` picks the period, `v` the market values. The amounts are written as the journal writes them. The last 2,000 postings are shown.
 
 ## Import from bank statements
 
@@ -55,6 +55,15 @@ In a bank statement (a CSV file), *Import Statement* (`SPC m i`) shows what the 
 - **hledger** imports through the statement's rules (`statement.csv.rules` beside it, or the setting `rules`), writes the journal itself and remembers what it took, so the next import of a longer statement adds only the new lines. A statement without rules is offered rules made from its header row (columns, date format, decimal mark, the bank's account), to check and save; `SPC m e` opens them.
 - **Ledger** converts a statement whose header uses its names (`date`, `payee`, `amount`), for the account the setting `ledger_account` names and dates in `ledger_date_format`; the plugin appends the result to the journal, one undo step.
 - **Beancount**'s statements are imported by your own beangulp script, which the plugin does not run yet.
+
+## Prices and market value
+
+*Fetch Prices* (`SPC m p`) asks your price program for the prices since the journal's last and writes them at the end of the main journal, or of the file the setting `prices` names (beside the main journal when relative; your journal includes it), one undo step.
+
+- **hledger and Ledger**: [pricehist](https://gitlab.com/chrisberkhout/pricehist) (`pip install pricehist`) fetches each pair of the setting `price_sources`, as `SOURCE BASE/QUOTE` (`ecb EUR/USD`; a third word where the journal writes the quote otherwise, `ecb EUR/USD $`), after the last price of the pair the tool lists, or the last 30 days; written as the journal writes prices (`P 2026-10-09 EUR 1.1206 USD`, with its date separator and decimal mark).
+- **Beancount**: `bean-price --update` (`pip install beanprice`) fetches what its commodities' `price:` metadata names since their last price.
+
+`v` in the Balance and the Register shows market values: hledger's `-V` (its transactions' costs taken as prices too), Ledger's `-V`, Beancount's `value()`; the header says "market value".
 
 ## Reconciliation
 

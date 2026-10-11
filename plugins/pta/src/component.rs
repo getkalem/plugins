@@ -7,7 +7,9 @@
 //! the main journal and writes its problems as the document "Check: …"
 //! (PT5), again on each save; New Transaction, Toggle Status, Copy
 //! Transaction, the next and previous one, a date a day later or
-//! earlier, and Sort Transactions write them (PT6).
+//! earlier, and Sort Transactions write them (PT6); the Balance and the
+//! Register (PT7), reconciliation (PT8), import (PT9) and prices (PT10)
+//! in their own modules.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,6 +21,7 @@ use kalem_plugin::{documents, editor, process, settings, ui};
 
 mod balance;
 mod import;
+mod prices;
 mod reconcile;
 mod register;
 
@@ -93,6 +96,9 @@ thread_local! {
     /// The journal last opened or gone to in this session: where a
     /// statement is imported when nothing names a journal.
     static LAST_JOURNAL: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Text to append at a file's end once it is the current document
+    /// (`pta.append`): the file, the text, the undo step's name.
+    static APPEND: RefCell<Option<(String, String, String)>> = const { RefCell::new(None) };
 }
 
 /// A new transaction to write.
@@ -920,6 +926,40 @@ fn insert_transaction() -> Result<String, String> {
     Ok("null".into())
 }
 
+/// Appends `text` at the end of `path`, opened for it, as one undo step
+/// named `title`: the plugin's command `pta.append` writes it, the editor
+/// being reached only while a command runs.
+fn append(path: String, text: String, title: String) {
+    APPEND.with(|a| *a.borrow_mut() = Some((path.clone(), text, title)));
+    let args = serde_json::json!({ "path": path });
+    let _ = kalem::run("file.open", &args.to_string());
+    if let Err(why) = kalem::run("pta.append", "{}") {
+        ui::notify(&why, ui::Level::Warning);
+    }
+}
+
+/// Writes what [`append`] keeps at the end of the current document, when
+/// it is still the file it was meant for.
+fn write_append() -> Result<String, String> {
+    let Some((path, text, title)) = APPEND.with(|a| a.borrow_mut().take()) else {
+        return Ok("null".into());
+    };
+    let here = editor::document().and_then(|d| d.path);
+    if here.as_deref() != Some(path.as_str()) {
+        ui::notify(
+            &format!("{} is no longer the current document", journal::name(&path)),
+            ui::Level::Warning,
+        );
+        return Ok("null".into());
+    }
+    let current = editor::text(None);
+    let at = current.len();
+    let (ins, _) = write::insertion(&current, at, &text);
+    editor::insert(Some(at as u64), &ins);
+    editor::transact(&title);
+    Ok("null".into())
+}
+
 /// The Journal button's and `SPC m m`'s pick: the journal's commands
 /// (`crate::MENU`) with their keys, or, in the Check document, its own;
 /// the one chosen runs where the pick was asked, once it is answered.
@@ -943,6 +983,7 @@ fn menu() -> Result<String, String> {
         vec![
             ("pta.registerVisit", "Go to the Posting", "Enter"),
             ("pta.registerPeriod", "Period…", "p"),
+            ("pta.registerValue", "Market Value or Cost", "v"),
             ("pta.register", "Register Again", "r"),
             ("pta.registerClose", "Close the Register", "q"),
         ]
@@ -952,6 +993,7 @@ fn menu() -> Result<String, String> {
             ("pta.balanceToggle", "Fold or Unfold", "Tab"),
             ("pta.balancePeriod", "Period…", "p"),
             ("pta.balanceDepth", "Depth…", "d"),
+            ("pta.balanceValue", "Market Value or Cost", "v"),
             ("pta.balance", "Balance Again", "r"),
             ("pta.balanceClose", "Close the Balance", "q"),
         ]
@@ -1106,6 +1148,10 @@ impl Plugin for Pta {
         kalem::keymap("p", "pta.balancePeriod", Some(BALANCE_WHEN))?;
         command("pta.balanceDepth", "Depth…", b, |_| balance::pick_depth())?;
         kalem::keymap("d", "pta.balanceDepth", Some(BALANCE_WHEN))?;
+        command("pta.balanceValue", "Market Value or Cost", b, |_| {
+            balance::toggle_value()
+        })?;
+        kalem::keymap("v", "pta.balanceValue", Some(BALANCE_WHEN))?;
         command("pta.balanceClose", "Close the Balance", b, |_| {
             balance::close()
         })?;
@@ -1126,6 +1172,10 @@ impl Plugin for Pta {
             register::pick_period()
         })?;
         kalem::keymap("p", "pta.registerPeriod", Some(REGISTER_WHEN))?;
+        command("pta.registerValue", "Market Value or Cost", r, |_| {
+            register::toggle_value()
+        })?;
+        kalem::keymap("v", "pta.registerValue", Some(REGISTER_WHEN))?;
         command("pta.registerClose", "Close the Register", r, |_| {
             register::close()
         })?;
@@ -1200,12 +1250,13 @@ impl Plugin for Pta {
             &["rules"],
             |_| import::insert_rules(),
         )?;
-        command(
-            "pta.importWrite",
-            "Write the Converted Statement",
-            crate::TEXT_TYPES,
-            |_| import::write_append(),
-        )?;
+        command("pta.prices", "Fetch Prices", t, |_| prices::command())?;
+        kalem::keymap("space m p", "pta.prices", Some(&leader))?;
+        let mut types = crate::TEXT_TYPES.to_vec();
+        types.push("text");
+        command("pta.append", "Write the Fetched Text", &types, |_| {
+            write_append()
+        })?;
         let mut types = crate::TEXT_TYPES.to_vec();
         types.extend([
             CHECK_KIND,

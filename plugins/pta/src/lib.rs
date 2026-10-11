@@ -24,6 +24,8 @@
 //!
 //! - [`import`]: a bank statement imported by the tool (PT9).
 //!
+//! - [`prices`]: prices fetched by the user's price programs (PT10).
+//!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
 pub mod align;
@@ -32,6 +34,7 @@ pub mod check;
 mod component;
 pub mod import;
 pub mod journal;
+pub mod prices;
 pub mod reconcile;
 pub mod report;
 pub mod write;
@@ -77,6 +80,7 @@ pub const MENU: &[(&str, &str, &str)] = &[
     ("-", "", ""),
     ("pta.reconcile", "Reconcile", "SPC m r"),
     ("pta.finishReconcile", "Finish Reconciliation", "SPC m C"),
+    ("pta.prices", "Fetch Prices", "SPC m p"),
     ("-", "", ""),
     ("pta.version", "Tool Version", ""),
 ];

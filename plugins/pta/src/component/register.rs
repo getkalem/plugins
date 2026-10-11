@@ -25,6 +25,8 @@ struct Register {
     account: String,
     doc: Option<u64>,
     period: Period,
+    /// Market values (`v`).
+    valued: bool,
     rows: Vec<Posting>,
     shown: report::Document,
     run: u64,
@@ -136,6 +138,7 @@ fn open(tool: Dialect, main: String, account: String) {
             account,
             doc: None,
             period: Period::All,
+            valued: false,
             rows: Vec::new(),
             shown: report::Document::default(),
             run: 0,
@@ -160,15 +163,19 @@ pub(super) fn saved(main: &str) {
 
 /// Runs the tool's register and writes the document.
 fn gather(key: &(String, String), open: bool) {
-    let Some((tool, period, run_no)) = REGISTERS.with(|r| {
+    let Some((tool, period, valued, run_no)) = REGISTERS.with(|r| {
         let mut r = r.borrow_mut();
         let e = r.get_mut(key)?;
         e.run += 1;
-        Some((e.tool, e.period, e.run))
+        Some((e.tool, e.period, e.valued, e.run))
     }) else {
         return;
     };
-    let (program, args) = report::register_command(tool, &key.0, &key.1, period.bounds(today()));
+    let (program, mut args) =
+        report::register_command(tool, &key.0, &key.1, period.bounds(today()));
+    if valued {
+        args = report::value_args(tool, &mut args);
+    }
     let dir = journal::folder(&key.0).to_string();
     let key = key.clone();
     run(program, args, &dir, move |r| {
@@ -212,13 +219,14 @@ fn write(key: &(String, String), open: bool) {
         let mut r = r.borrow_mut();
         let e = r.get_mut(key)?;
         let header = format!(
-            "Register: {} · {} · {} · {}",
+            "Register: {} · {} · {} · {}{}",
             e.account,
             journal::name(&e.main),
             e.tool.language(),
-            e.period.name()
+            e.period.name(),
+            if e.valued { " · market value" } else { "" }
         );
-        let hint = "Enter the posting · p period · r again · q close";
+        let hint = "Enter the posting · p period · v value · r again · q close";
         e.shown = report::register_layout(&header, hint, &e.rows);
         let last = e.shown.lines.iter().rposition(Option::is_some).map(|n| {
             e.shown
@@ -359,6 +367,20 @@ pub(super) fn pick_period() -> Result<String, String> {
             gather(&key, false);
         },
     );
+    Ok("null".into())
+}
+
+/// `v`: market values, or back.
+pub(super) fn toggle_value() -> Result<String, String> {
+    let Some(key) = here() else {
+        return Ok("null".into());
+    };
+    REGISTERS.with(|r| {
+        if let Some(e) = r.borrow_mut().get_mut(&key) {
+            e.valued = !e.valued;
+        }
+    });
+    gather(&key, false);
     Ok("null".into())
 }
 

@@ -172,7 +172,9 @@
         "subprocess:hledger",
         "subprocess:ledger",
         "subprocess:bean-check",
-        "subprocess:bean-query"
+        "subprocess:bean-query",
+        "subprocess:pricehist",
+        "subprocess:bean-price"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pta",
       "download": null,

@@ -72,8 +72,12 @@ fn the_manifest_has_both_halves() {
     // The programs the component runs are permitted, each with its
     // setting for where it is.
     let permissions = strings(&m["permissions"]);
-    for d in Dialect::ALL {
-        let program = d.checker();
+    let programs =
+        Dialect::ALL
+            .iter()
+            .map(|d| d.checker())
+            .chain(["bean-query", "pricehist", "bean-price"]);
+    for program in programs {
         assert!(
             permissions.contains(&format!("subprocess:{program}")),
             "{program}"

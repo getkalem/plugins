@@ -11,7 +11,9 @@
     "subprocess:hledger",
     "subprocess:ledger",
     "subprocess:bean-check",
-    "subprocess:bean-query"
+    "subprocess:bean-query",
+    "subprocess:pricehist",
+    "subprocess:bean-price"
   ],
   "menus": [
     {
@@ -22,7 +24,7 @@
         "pta.align", "pta.sort", "-",
         "pta.previousTransaction", "pta.nextTransaction", "pta.dateEarlier", "pta.dateLater", "-",
         "pta.check", "pta.balance", "pta.register", "-",
-        "pta.reconcile", "pta.finishReconcile", "-",
+        "pta.reconcile", "pta.finishReconcile", "pta.prices", "-",
         "pta.version", "-",
         "pta.menu"
       ]
@@ -159,6 +161,18 @@
       "examples": ["%Y/%m/%d", "%d.%m.%Y", "%m/%d/%Y"],
       "description": "Ledger's import: how a statement writes its dates, empty for Ledger's own guess"
     },
+    "prices": {
+      "type": "string",
+      "default": "",
+      "examples": ["prices.journal", "~/finance/prices.db"],
+      "description": "Where Fetch Prices writes: a file the main journal includes, absolute or beside the main journal; empty for the main journal itself"
+    },
+    "price_sources": {
+      "type": "array",
+      "default": [],
+      "examples": [["ecb EUR/USD"], ["ecb EUR/USD $", "yahoo AAPL/USD"]],
+      "description": "hledger and Ledger: the prices Fetch Prices asks pricehist for, as SOURCE BASE/QUOTE, a third word when the journal writes the quote otherwise ($ for USD); Beancount's come from its commodities' price: metadata"
+    },
     "programs.hledger": {
       "type": "string",
       "default": "",
@@ -178,6 +192,16 @@
       "type": "string",
       "default": "",
       "description": "Where Beancount's bean-query is, when it is not the one on the PATH; empty for the PATH's"
+    },
+    "programs.pricehist": {
+      "type": "string",
+      "default": "",
+      "description": "Where pricehist is (Fetch Prices for hledger and Ledger), when it is not the one on the PATH; empty for the PATH's"
+    },
+    "programs.bean-price": {
+      "type": "string",
+      "default": "",
+      "description": "Where Beancount's bean-price is (Fetch Prices), when it is not the one on the PATH; empty for the PATH's"
     },
     "servers.beancount-language-server.initializationOptions.journal_file": {
       "type": "string",

@@ -125,6 +125,16 @@ fn absolute(p: &str) -> bool {
         || p.as_bytes().get(1) == Some(&b':')
 }
 
+/// `p` as a setting names a file: as it is when absolute, else beside
+/// `file`.
+pub fn beside(file: &str, p: &str) -> String {
+    if absolute(p) {
+        p.to_string()
+    } else {
+        join(folder(file), p)
+    }
+}
+
 /// The main journal of `current` from the setting `journal` (empty when
 /// unset), and the files `hledger files` listed for `LEDGER_FILE` (run in
 /// `current`'s folder; `None` when it was not asked or failed).

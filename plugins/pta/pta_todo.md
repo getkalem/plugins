@@ -771,7 +771,7 @@ first.
 
 ## PT10. Prices and values
 
-- [ ] PT10 `pta.prices` (`SPC m $`): `bean-price` for Beancount
+- [x] PT10 `pta.prices` (`SPC m $`): `bean-price` for Beancount
   (`subprocess:bean-price`), `pricehist` for hledger and Ledger
   (`subprocess:pricehist`, where installed; both say so in `install`),
   for the commodities the journal holds and the dates missing since
@@ -782,6 +782,33 @@ first.
   `SPC m v` in a balance or register document, with the valuation in
   the header. Tests: a corpus with two commodities and prices,
   valued; a tool not installed gives one notice.
+  (Done 2026-10-11, checked in the terminal editor: Fetch Prices (`SPC
+  m p`, which-key's row reading "p → Fetch Prices", rather than `SPC m
+  $`) in a Ledger copy of the corpus fetched EUR/USD from the ECB
+  through `pricehist` after the journal's last price (Feb 1) and
+  appended the `P` lines as the journal writes them (`P 2026/10/09 EUR
+  $1.1206`), one undo step; again, "No new prices". hledger and Ledger
+  fetch the pairs of the setting `price_sources` (`ecb EUR/USD`, a
+  third word for the journal's symbol of the quote: `ecb EUR/USD $`),
+  each after its last price as `hledger prices` or `ledger prices`
+  lists them (`-sx`), a pair without one from 30 days back, with the
+  journal's date separator and decimal mark (hledger's `decimal-mark
+  ,`); Beancount runs `bean-price --update` on the main journal, which
+  reads its commodities' `price:` metadata. Written at the end of the
+  setting `prices` (beside the main journal when relative: a file the
+  journal includes) or the main journal, opened for it and written by
+  the plugin's own command `pta.append`, which Ledger's import now
+  shares. A program missing, refused or failing gives one notice
+  (`pip install pricehist`, `pip install beanprice`, the settings
+  `programs.pricehist` and `programs.bean-price`). Market value: `v` in
+  the Balance and the Register, the header then saying "market value":
+  hledger `-V --infer-market-prices` (its costs as prices too), Ledger
+  `-V`, Beancount's queries through `value()`; tests value the corpus
+  with each tool (Ledger's EUR expenses at $1.12, hledger's cash at
+  its costs, Beancount's fund at its last price) and have Ledger and
+  hledger read prices written the plugin's way, the network left out.
+  Not done: `--value=then` (the value at each posting's date) as a
+  third state of `v`.)
 
 ## PT11. The rest of Kalem
 

@@ -207,6 +207,32 @@ pub fn command(
     }
 }
 
+/// A balance's or register's run made to give market values (PT10):
+/// hledger's `-V` (its prices, and the costs of the journal's
+/// transactions as prices: `--infer-market-prices`), Ledger's `-V`,
+/// Beancount's `value()` of the sums and positions.
+pub fn value_args(tool: Dialect, args: &mut [String]) -> Vec<String> {
+    match tool {
+        Dialect::Hledger => {
+            let mut a = args.to_vec();
+            a.extend(["-V".into(), "--infer-market-prices".into()]);
+            a
+        }
+        Dialect::Ledger => {
+            let mut a = args.to_vec();
+            a.push("-V".into());
+            a
+        }
+        Dialect::Beancount => args
+            .iter()
+            .map(|a| {
+                a.replace("units(sum(position))", "value(sum(position))")
+                    .replace("position, balance,", "value(position), value(balance),")
+            })
+            .collect(),
+    }
+}
+
 /// hledger's rows: `INDENT name|amount`, more amounts on the lines
 /// after; the total after a line of dashes, with no name. Full names
 /// from the indents (two blanks a level).
@@ -972,6 +998,21 @@ mod tests {
             a[3].contains("root(account, 2)") && a[3].contains("date >= 2026-01-01"),
             "{}",
             a[3]
+        );
+    }
+
+    #[test]
+    fn valued() {
+        let (_, mut a) = command(Dialect::Hledger, "/j", Section::Sheet, None, 0, 0);
+        assert!(
+            value_args(Dialect::Hledger, &mut a)
+                .ends_with(&["-V".into(), "--infer-market-prices".into()])
+        );
+        let (_, mut a) = command(Dialect::Beancount, "/j", Section::Sheet, None, 0, 1);
+        assert!(value_args(Dialect::Beancount, &mut a)[3].contains("value(sum(position))"));
+        let (_, mut a) = register_command(Dialect::Beancount, "/j", "Assets", None);
+        assert!(
+            value_args(Dialect::Beancount, &mut a)[3].contains("value(position), value(balance),")
         );
     }
 

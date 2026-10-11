@@ -26,6 +26,8 @@ struct Balance {
     period: Period,
     depth: usize,
     folded: BTreeSet<String>,
+    /// Market values (`v`).
+    valued: bool,
     parts: Vec<(Section, String, Part)>,
     shown: report::Document,
     /// Counts its runs: an older run's answer is dropped.
@@ -66,6 +68,7 @@ pub(super) fn command() -> Result<String, String> {
                             period: Period::All,
                             depth: 0,
                             folded: BTreeSet::new(),
+                            valued: false,
                             parts: Vec::new(),
                             shown: report::Document::default(),
                             run: 0,
@@ -187,7 +190,10 @@ fn section(
     done: impl FnOnce(Result<Part, String>) + 'static,
 ) {
     if tool != Dialect::Beancount {
-        let (program, args) = report::command(tool, &main, s, bounds, depth, 0);
+        let (program, mut args) = report::command(tool, &main, s, bounds, depth, 0);
+        if valued(&main) {
+            args = report::value_args(tool_or(&main), &mut args);
+        }
         run(program, args, &dir, move |r| {
             done(read(tool, r).map(|out| {
                 Part::of(if tool == Dialect::Hledger {
@@ -215,7 +221,10 @@ fn levels(
     mut got: Vec<Vec<Row>>,
     done: impl FnOnce(Result<Part, String>) + 'static,
 ) {
-    let (program, args) = report::command(Dialect::Beancount, &main, s, bounds, depth, level);
+    let (program, mut args) = report::command(Dialect::Beancount, &main, s, bounds, depth, level);
+    if valued(&main) {
+        args = report::value_args(tool_or(&main), &mut args);
+    }
     let d = dir.clone();
     run(program, args, &dir, move |r| {
         let rows = match read(Dialect::Beancount, r) {
@@ -235,7 +244,10 @@ fn levels(
         if !last {
             return levels(main, s, bounds, depth, d, level + 1, got, done);
         }
-        let (program, args) = report::command(Dialect::Beancount, &main, s, bounds, depth, 0);
+        let (program, mut args) = report::command(Dialect::Beancount, &main, s, bounds, depth, 0);
+        if valued(&main) {
+            args = report::value_args(tool_or(&main), &mut args);
+        }
         run(program, args, &d, move |r| {
             done(read(Dialect::Beancount, r).map(|out| {
                 Part {
@@ -282,12 +294,13 @@ fn write(main: &str, open: bool, account: Option<&str>) {
             format!("{} levels", e.depth)
         };
         let header = format!(
-            "Balance: {} · {} · {} · {depth}",
+            "Balance: {} · {} · {} · {depth}{}",
             journal::name(main),
             e.tool.language(),
-            e.period.name()
+            e.period.name(),
+            if e.valued { " · market value" } else { "" }
         );
-        let hint = "Tab fold · Enter register · p period · d depth · r again · q close";
+        let hint = "Tab fold · Enter register · p period · d depth · v value · r again · q close";
         e.shown = report::layout(&header, hint, &e.parts, &e.folded);
         let cursor = account.and_then(|a| {
             let n = e.shown.lines.iter().position(|l| l.as_deref() == Some(a))?;
@@ -349,6 +362,29 @@ pub(super) fn styles(d: &report::Document) -> Vec<documents::StyledSpan> {
             },
         })
         .collect()
+}
+
+/// Whether `main`'s balance shows market values.
+fn valued(main: &str) -> bool {
+    BALANCES.with(|b| b.borrow().get(main).is_some_and(|e| e.valued))
+}
+
+fn tool_or(main: &str) -> Dialect {
+    tool_of(main).unwrap_or(Dialect::Hledger)
+}
+
+/// `v`: market values, or back.
+pub(super) fn toggle_value() -> Result<String, String> {
+    let Some(main) = here() else {
+        return Ok("null".into());
+    };
+    BALANCES.with(|b| {
+        if let Some(e) = b.borrow_mut().get_mut(&main) {
+            e.valued = !e.valued;
+        }
+    });
+    refresh(&main, false);
+    Ok("null".into())
 }
 
 /// The tool of `main`'s balance.

@@ -1,7 +1,7 @@
 //! The balance (PT7a) as the plugin asks each tool for it, on the
 //! corpus: each section's accounts with their subaccounts' amounts, and
-//! its total, read from what the tool printed. A tool not installed is
-//! skipped with a note.
+//! its total, read from what the tool printed; at market value too
+//! (PT10). A tool not installed is skipped with a note.
 
 // A tool not installed is said on standard error.
 #![allow(clippy::print_stderr)]
@@ -37,11 +37,29 @@ fn run(program: &str, args: &[String], dir: &Path) -> Option<String> {
 /// The section as the component reads it: hledger's and Ledger's one
 /// run, Beancount's levels and its total.
 fn section(tool: Dialect, file: &str, s: Section, bounds: Option<(Date, Date)>) -> Option<Part> {
+    section_as(tool, file, s, bounds, false)
+}
+
+/// The section, at market value where `valued`.
+fn section_as(
+    tool: Dialect,
+    file: &str,
+    s: Section,
+    bounds: Option<(Date, Date)>,
+    valued: bool,
+) -> Option<Part> {
     let dir = corpus(tool.language());
     let main = dir.join(file).to_string_lossy().into_owned();
+    let command = |depth, level| {
+        let (p, mut a) = report::command(tool, &main, s, bounds, depth, level);
+        if valued {
+            a = report::value_args(tool, &mut a);
+        }
+        (p, a)
+    };
     Some(match tool {
         Dialect::Hledger | Dialect::Ledger => {
-            let (p, a) = report::command(tool, &main, s, bounds, 0, 0);
+            let (p, a) = command(0, 0);
             let out = run(p, &a, &dir)?;
             Part::of(if tool == Dialect::Hledger {
                 report::hledger_rows(&out)
@@ -52,10 +70,10 @@ fn section(tool: Dialect, file: &str, s: Section, bounds: Option<(Date, Date)>) 
         Dialect::Beancount => {
             let mut levels: Vec<Vec<Row>> = Vec::new();
             for level in 1..=4 {
-                let (p, a) = report::command(tool, &main, s, bounds, 0, level);
+                let (p, a) = command(0, level);
                 levels.push(report::beancount_rows(&run(p, &a, &dir)?));
             }
-            let (p, a) = report::command(tool, &main, s, bounds, 0, 0);
+            let (p, a) = command(0, 0);
             let total = report::beancount_rows(&run(p, &a, &dir)?);
             Part {
                 rows: report::beancount_tree(&levels),
@@ -169,6 +187,41 @@ fn beancounts_balance() {
     );
     assert!(!flow.total.is_empty());
     let _ = Period::All;
+}
+
+/// Market values (PT10): each tool values at its prices, hledger's
+/// inferred from the costs, Ledger's from its `P` directives,
+/// Beancount's from its prices and costs.
+#[test]
+fn each_tools_market_value() {
+    let Some(sheet) = section_as(Dialect::Hledger, "2026.journal", Section::Sheet, None, true)
+    else {
+        return;
+    };
+    assert_eq!(amounts(&sheet, "assets:cash"), ["12.210,00 TRY"]);
+    assert_eq!(amounts(&sheet, "assets"), ["79.407,25 TRY"]);
+    if let Some(flow) = section_as(
+        Dialect::Ledger,
+        "business.ledger",
+        Section::Flow,
+        None,
+        true,
+    ) {
+        assert_eq!(amounts(&flow, "Expenses"), ["$183.40"], "EUR at $1.12");
+    }
+    if let Some(sheet) = section_as(
+        Dialect::Beancount,
+        "household.beancount",
+        Section::Sheet,
+        None,
+        true,
+    ) {
+        assert!(
+            amounts(&sheet, "Assets").contains(&"87157.65 TRY".to_string()),
+            "6 FUND at 380.00 TRY: {:?}",
+            amounts(&sheet, "Assets")
+        );
+    }
 }
 
 /// The register (PT7b) of an account, each tool's: its postings with the
