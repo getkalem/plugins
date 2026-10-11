@@ -397,7 +397,7 @@ impl ViewerDocument for DocxDoc {
         Some(kalem_viewer::FlowLayout {
             items,
             version: self.version,
-            editable: self.doc.protection().is_none(),
+            editable: self.doc.editable(),
         })
     }
 

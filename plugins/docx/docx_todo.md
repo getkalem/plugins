@@ -659,7 +659,12 @@ order they are done, the spike first.
   Protect Document and Unprotect with a password.
   (Done 2026-10-09 for a password to open, read and written
   with the shared layer; enforced protection is read and edits are
-  refused while it holds. Open: Protect and Unprotect.)
+  refused while it holds; since 2026-10-11 accepting and rejecting
+  tracked changes and turning Track Changes on or off too, as Word
+  refuses them, though one protected for tracked changes takes
+  Track Changes turned on. Open: Protect and Unprotect; in a document
+  protected for tracked changes, edits written as tracked changes and
+  comments taken, as Word takes them.)
 - [ ] WP12c Macros run (later, if asked, as T3.7.4b was): the macro
   interpreter's language half shared from xlsx, Word's object model
   (`ActiveDocument`, `Paragraphs`, `Range`, `Selection`, `Find`,
