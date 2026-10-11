@@ -33,9 +33,9 @@ pub const KINDS: &[&str] = &[
     "graph-view",
 ];
 /// Where the documents' keys apply.
-pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view) && (vimCommand || !vimActive)";
+pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-home) && (vimCommand || !vimActive)";
 /// Where the leader's keys of a graph's notes apply in its documents too.
-pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view) && vimCommand";
+pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-home) && vimCommand";
 /// Where `t` cycles a task's keyword: the documents listing tasks.
 pub const TASK_DOC_WHEN: &str =
     "(textType == graph-tasks || textType == graph-query) && (vimCommand || !vimActive)";
@@ -78,6 +78,27 @@ const fn n(
         doc_keys: &[],
         note_keys,
     }
+}
+
+/// The keys of the graph's menu (`graph.home`), letters while Vim types
+/// none.
+macro_rules! in_menu {
+    () => {
+        "textType == graph-home && (vimCommand || !vimActive)"
+    };
+}
+
+/// A command under the leader, with key `menu` in the graph's menu.
+macro_rules! m {
+    ($id:literal, $title:literal, $keys:expr, $menu:literal) => {
+        CommandInfo {
+            id: $id,
+            title: $title,
+            keys: $keys,
+            doc_keys: &[],
+            note_keys: &[($menu, in_menu!())],
+        }
+    };
 }
 
 const fn c(id: &'static str, title: &'static str, keys: &'static [&'static str]) -> CommandInfo {
@@ -124,14 +145,14 @@ pub const COMMANDS: &[CommandInfo] = &[
             ),
         ],
     ),
-    c("graph.findPage", "Find Page", &["space n r f"]),
+    m!("graph.findPage", "Find Page", &["space n r f"], "f"),
     c("graph.insertLink", "Insert Link", &["space n r i"]),
     c(
         "graph.insertBlockRef",
         "Insert Block Reference",
         &["space n r b"],
     ),
-    c("graph.today", "Today's Journal", &["space n r d t"]),
+    m!("graph.today", "Today's Journal", &["space n r d t"], "."),
     c("graph.yesterday", "Yesterday's Journal", &["space n r d y"]),
     c("graph.tomorrow", "Tomorrow's Journal", &["space n r d m"]),
     c("graph.journalOn", "Journal of a Date", &["space n r d d"]),
@@ -149,10 +170,13 @@ pub const COMMANDS: &[CommandInfo] = &[
             &["space n r d b"],
         )
     },
-    c("graph.pages", "All Pages", &["space n r p"]),
-    c("graph.journals", "Journals", &["space n r j"]),
-    c("graph.tags", "Tags", &["space n r shift+t"]),
-    c("graph.tasks", "Tasks", &["space n r t"]),
+    // The graph's menu, as Logseq's left sidebar: the status bar item's
+    // click opens it.
+    c("graph.home", "Menu", &["space n r m"]),
+    m!("graph.pages", "All Pages", &["space n r p"], "p"),
+    m!("graph.journals", "Journals", &["space n r j"], "j"),
+    m!("graph.tags", "Tags", &["space n r shift+t"], "shift+t"),
+    m!("graph.tasks", "Tasks", &["space n r t"], "t"),
     c("graph.graph", "Graph", &["space n r g"]),
     c("graph.runQuery", "Run Query", &["space n r q"]),
     c("graph.recent", "Recent Pages", &["space n r l"]),
@@ -165,6 +189,7 @@ pub const COMMANDS: &[CommandInfo] = &[
         &[
             ("space n s", in_note!(" && vimCommand")),
             ("space n s", DOC_LEADER_WHEN),
+            ("/", in_menu!()),
         ],
     ),
     n(
@@ -184,7 +209,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     n("graph.filesChanged", "Read the Changed Files", &[]),
     // The graph drawn (Kalem's plugin API 0.2.12): all its pages, or the
     // note's page and the pages two links away.
-    c("graph.graphView", "Graph View", &["space n r v"]),
+    m!("graph.graphView", "Graph View", &["space n r v"], "g"),
     c("graph.localGraph", "Local Graph", &["space n r shift+v"]),
     // Run by Kalem when a node of a drawn graph is opened.
     n("graph.openNode", "Open a Node of the Graph", &[]),
@@ -1108,6 +1133,27 @@ impl App {
                 views::journals(index, self.settings.journals_shown, g),
             ),
             "graph.tags" => (format!("Tags: {name}"), "graph-tags", views::tags(index)),
+            "graph.home" => {
+                // The pages of this graph opened last, newest first.
+                let recent: Vec<String> = self
+                    .recent
+                    .iter()
+                    .filter_map(|p| files::relative(root, p))
+                    .filter_map(|rel| index.page_of(rel).map(|p| p.key.clone()))
+                    .take(10)
+                    .collect();
+                let others: Vec<(String, String)> = self
+                    .indexes
+                    .iter()
+                    .filter(|(r, _)| r.as_str() != root)
+                    .map(|(r, i)| (r.clone(), i.graph.name().to_string()))
+                    .collect();
+                (
+                    format!("Graph: {name}"),
+                    "graph-home",
+                    views::home(index, &recent, &others, g),
+                )
+            }
             "graph.tasks" => (
                 format!("Tasks: {name}"),
                 "graph-tasks",
@@ -1246,6 +1292,16 @@ impl App {
                 )),
             },
             "graph.pages" | "graph.journals" | "graph.tags" | "graph.graph" | "graph.graphView" => {
+                out.extend(self.render(id, &root, true));
+            }
+            "graph.home" => {
+                // Another graph's, from the menu's list of graphs.
+                let other = serde_json::from_str::<serde_json::Value>(&ctx.args)
+                    .ok()
+                    .and_then(|v| v["root"].as_str().map(str::to_string))
+                    .filter(|r| self.indexes.contains_key(r));
+                let root = other.unwrap_or(root);
+                self.last = Some(root.clone());
                 out.extend(self.render(id, &root, true));
             }
             "graph.localGraph" => match ctx.path.as_deref().and_then(|p| self.page_of(p)) {
@@ -1679,6 +1735,9 @@ impl App {
                     .into_iter()
                     .collect()
             }
+            // An entry of the graph's menu: its command, run once this
+            // one returns.
+            Some(Target::Command { id, args }) => vec![Effect::Run { id, args }],
             None => Vec::new(),
         }
     }
@@ -1711,6 +1770,7 @@ impl App {
                 }
                 None => Vec::new(),
             },
+            Some(Target::Command { id, args }) => vec![Effect::Run { id, args }],
             None => Vec::new(),
         }
     }

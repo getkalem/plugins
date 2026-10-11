@@ -18,11 +18,20 @@
       "triggers": ["[[", "((", "#", "<", "::", "/"], "replaces": ["wiki", "words"], "priority": 12
     }
   ],
+  "buttons": [
+    {
+      "title": "Graph",
+      "command": "graph.home",
+      "when": "editorLayer == graph.logseq || editorLayer == graph.obsidian || textType == graph-home || textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view"
+    }
+  ],
   "menus": [
     {
       "title": "Graph",
-      "when": "textType == markdown || textType == org || textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view",
+      "when": "textType == markdown || textType == org || textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-home",
       "items": [
+        "graph.home",
+        "-",
         "graph.today", "graph.yesterday", "graph.tomorrow", "graph.journalOn",
         "graph.previousJournal", "graph.nextJournal",
         "-",

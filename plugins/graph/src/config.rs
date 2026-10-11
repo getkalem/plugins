@@ -154,8 +154,34 @@ pub struct Graph {
     /// Never written: the Markdown Mirror of a Logseq database graph,
     /// which Logseq writes over from its database.
     pub read_only: bool,
+    /// The pages the user marked: Logseq's `:favorites` (titles),
+    /// Obsidian's bookmarked notes (paths without `.md`), in their order.
+    pub favorites: Vec<String>,
     /// What could not be read, for one notice.
     pub problems: Vec<String>,
+}
+
+/// The notes Obsidian's Bookmarks keep (`.obsidian/bookmarks.json`), in
+/// their order, groups opened: their paths without `.md`.
+fn bookmarks(json: Option<&str>) -> Vec<String> {
+    fn walk(items: &serde_json::Value, out: &mut Vec<String>) {
+        for item in items.as_array().into_iter().flatten() {
+            match item.get("type").and_then(serde_json::Value::as_str) {
+                Some("file") => {
+                    if let Some(p) = item.get("path").and_then(serde_json::Value::as_str) {
+                        out.push(p.strip_suffix(".md").unwrap_or(p).to_string());
+                    }
+                }
+                Some("group") => walk(&item["items"], out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(v) = json.and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()) {
+        walk(&v["items"], &mut out);
+    }
+    out
 }
 
 /// Whose graph `dir` is, by what it holds: `logseq/config.edn` or
@@ -283,13 +309,15 @@ impl Graph {
                         .read(&files::join(&root, &format!(".obsidian/{name}")))
                         .ok()
                 };
-                Graph::obsidian(
+                let mut g = Graph::obsidian(
                     &root,
                     read("daily-notes.json").as_deref(),
                     read("app.json").as_deref(),
                     read("templates.json").as_deref(),
                     fallbacks,
-                )
+                );
+                g.favorites = bookmarks(read("bookmarks.json").as_deref());
+                g
             }
         }
     }
@@ -376,6 +404,7 @@ impl Graph {
                 s("whiteboards-directory").map_or_else(|| "whiteboards".into(), |p| folder(&p)),
             ),
             read_only: false,
+            favorites: c.get("favorites").map(Value::strings).unwrap_or_default(),
             problems,
         }
     }
@@ -460,6 +489,7 @@ impl Graph {
             templates_dir: text(&tpl, "folder").map(|f| folder(&f)),
             whiteboards_dir: None,
             read_only: false,
+            favorites: Vec::new(),
             problems,
         }
     }
@@ -508,6 +538,16 @@ impl Graph {
 mod tests {
     use super::*;
     use crate::files::Memory;
+
+    #[test]
+    fn obsidians_bookmarks() {
+        let json = r#"{"items":[{"type":"file","path":"Projects/Kalem.md"},{"type":"search","query":"x"},{"type":"group","title":"g","items":[{"type":"file","path":"Home.md"}]}]}"#;
+        assert_eq!(bookmarks(Some(json)), ["Projects/Kalem", "Home"]);
+        assert!(bookmarks(Some("not json")).is_empty());
+        assert!(bookmarks(None).is_empty());
+        let g = Graph::logseq("/g", "{:favorites [\"A\" \"b c\"]}");
+        assert_eq!(g.favorites, ["A", "b c"]);
+    }
 
     #[test]
     fn logseq_defaults_and_settings() {
