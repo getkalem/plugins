@@ -1,8 +1,8 @@
 # Kalem git plugin: design document
 
-Status: **draft, proposed** (2026-10-07; keys revised the same day on the owner's direction: arrows, Enter and Escape in the documents, Doom's `SPC g` map for the actions). A plugin of `getkalem/plugins` (`plugins/git`, crate `kalem-plugin-git`, id `org.kalem.git`). Kalem's task T2.7i.11 and roadmap item R5.15; decisions D11, D28 and D29 of Kalem's design document apply. The decisions this document proposes (G1 to G12, section 12) and the asks of the core (section 9) wait for the owner. Phase 0's library is written and tested (the README says what runs); where writing it settled a detail, this document says what was written.
+Status: **design, partly built** (proposed 2026-10-07; keys revised the same day on the owner's direction: arrows, Enter and Escape in the documents, Doom's `SPC g` map for the actions). A plugin of `getkalem/plugins` (`plugins/git`, crate `kalem-plugin-git`, id `org.kalem.git`). Kalem's task T2.7i.11 and roadmap item R5.15; decisions D11, D28 and D29 of Kalem's design document apply. The decisions this document proposes are G1 to G12 (section 12), and the asks of the core are in section 9. Phase 0 and part of phase 1 are built and released (git 0.0.9; the README says what runs). Sections 1 to 7 and the appendices are the plan. Where the plugin was built otherwise, sections 8 and 9 say so, and the README and the code are right: the status shows lazygit's tabs (section 8), not the sections of 2.1; and it binds magit's letters (5.1, revised), although principle 2 and G3 say it binds none.
 
-This file is `plugins/git/DESIGN.md` in `getkalem/plugins`; the README of the plugin is written from its sections 2 and 5.
+This file is `plugins/git/DESIGN.md` in `getkalem/plugins`; the plugin's README describes what is built.
 
 ## Contents
 
@@ -28,7 +28,7 @@ Appendices: A, the WIT sketches; B, the git commands used; C, the manifest; D, t
 
 ## 0. About this document
 
-Kalem reserves `SPC g` for a git plugin that does not exist yet (`tests/keys/doom-leader.toml` lists sixteen keys as "needs the git plugin of getkalem/plugins"; the evaluation of 2026-10-04 lists "git anywhere" as missing for everyone). This document designs that plugin.
+Kalem reserved `SPC g` for a git plugin that did not exist yet when this document was written (`tests/keys/doom-leader.toml` lists sixteen keys as "needs the git plugin of getkalem/plugins"; the evaluation of 2026-10-04 lists "git anywhere" as missing for everyone). This document designs that plugin.
 
 It takes from two programs:
 

@@ -1,10 +1,10 @@
 # Git (`git`)
 
-The repository's status as a document in Kalem: the changed files with their diffs under them, moved through with the arrows, staged, unstaged and reverted by file, hunk or selected lines with Doom Emacs's `SPC g` keys, committed without leaving the editor, and read with the editor's own highlighting, search, selection and motions, the same in the window and in the terminal. Lazygit's simplicity, magit's place inside the editor. Kalem's task T2.7i.11 and roadmap item R5.15; the design is [`DESIGN.md`](DESIGN.md).
+The repository's status as a document in Kalem: the changed files with their diffs under them, moved through with the arrows, staged, unstaged and reverted by file, hunk or selected lines with magit's keys (and whole files with Doom Emacs's `SPC g` keys), committed without leaving the editor, and read with the editor's own highlighting, search, selection and motions, the same in the window and in the terminal. Lazygit's simplicity, magit's place inside the editor. Kalem's task T2.7i.11 and roadmap item R5.15; the design is [`DESIGN.md`](DESIGN.md).
 
-**Status: phase 1.** `SPC g g` (Word-like keys: the palette's "Git: Status") opens the status as a document of its own: a line of keys, the repository's status (its branch, how far from its upstream, its tag), and lazygit's panels as tabs: **Files** (every changed path in a tree of folders, with git's two letters: `M ` staged, ` M` not, `MM` both, `??` untracked, `UU` in conflict), **Local branches**, **Commits** (hash, author's initials, tags, subject; `↑` not pushed) and **Stash**, in lazygit's colors (what is not staged red, what is staged green, tags magenta). Tab on a file shows its diff under it as magit does, hunk by hunk (the unstaged ones, then the staged), highlighted as a diff; the changed lines of every file opened are marked beside the lines, in both editors. A status bar item (`⎇ main ↑1 ↓2 •3`) and the Git panel stay. It needs Kalem's plugin API 0.2.6 (`process`, `documents`, `decorations`, `styled-documents`) and a repository inside one of Kalem's projects.
+**Status: phase 1.** `SPC g g` or Ctrl+Shift+G (in both profiles; the palette's "Git: Status") opens the status as a document of its own: a line of keys, the repository's status (its branch, how far from its upstream, its tag), and lazygit's panels as tabs: **Files** (every changed path in a tree of folders, with git's two letters: `M ` staged, ` M` not, `MM` both, `??` untracked, `UU` in conflict), **Local branches**, **Commits** (hash, author's initials, tags, subject; `↑` not pushed) and **Stash**, in lazygit's colors (what is not staged red, what is staged green, tags magenta). Tab on a file shows its diff under it as magit does, hunk by hunk (the unstaged ones, then the staged), highlighted as a diff; the changed lines of every file opened are marked beside the lines, in both editors. A status bar item (`⎇ main ↑1 ↓2 •3`) and the Git panel stay. It needs Kalem's plugin API 0.2.6 (`process`, `documents`, `decorations`, `styled-documents`), so Kalem 0.5.0 or later, and a repository inside one of Kalem's projects.
 
-A **Git menu** stands in the menu bar (and in the F10 list of both editors) while the current file is in a git repository, and in the status: Status (the same as `SPC g g`), commit, amend, push, pull, fetch, branches, stash, and the file's stage, unstage, revert, delete and blame. It needs Kalem 0.4.1. Without a file (a new document, the projects view) the first project's folder counts.
+A **Git menu** stands in the menu bar (and in the F10 list of both editors) while the current file is in a git repository, and in the status: Status (the same as `SPC g g`), commit, amend, push, pull, fetch, branches, stash, and the file's stage, unstage, revert, delete and the blame of its line. Without a file (a new document, the projects view) the first project's folder counts.
 
 A **Git button** stands beside File Manager and Projects, on the window's toolbar and in the terminal's list of open files, in the same places; a click opens the status, as `SPC g g` does, and it is pressed while the status shows. It needs Kalem 0.5.2.
 
@@ -16,9 +16,9 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 |---|---|
 | `1` to `4`, `[` and `]`, Enter on a tab's name | The tabs: Files, Local branches, Commits, Stash |
 | Up, Down; Alt+Up, Alt+Down | Move; the previous and next file, hunk or commit |
-| Tab; Shift+Tab | Show or hide a file's diff, fold a folder, a hunk or a panel; everything, step by step |
+| Tab; Shift+Tab | Show or hide a file's diff, fold a folder or a hunk; every diff shown, then everything as it was |
 | Right, Left | Unfold (on an unfolded one: into it); fold (on a folded one: to what holds it) |
-| Enter | The obvious thing: open the file (at the diff's line), switch to the branch, show the commit, the stash's Apply, Pop or Drop, the `Head:` and `Upstream:` lines' menus |
+| Enter | The obvious thing: open the file (at the diff's line), switch to the branch, show the commit, the stash's Apply, Pop or Drop; on the branch line, Switch Branch, New Branch and Stash Changes; on the upstream line, Push, Pull and Fetch |
 | Alt+Enter, `?` | What can be done here, then every command |
 | `s`, `u` | Stage, unstage the file, the hunk, or the lines selected (a folder: what is in it) |
 | `a` | Stage everything, untracked files too; everything staged, unstage everything (lazygit's `a`) |
@@ -47,9 +47,13 @@ The letters are magit's (as Doom's evil-collection has them: `x` discards) and a
 
 The marks beside the lines compare with the index (what `s` would stage; the setting `gutter_base = "head"` compares with the last commit) and come again on each save; the setting `gutter = false` takes them away. The log, blame, the time machine and the remote's links come later (DESIGN.md, section 8).
 
+The status is read again when it opens, after each save and when a file of the working tree changes. A change inside `.git` alone (a commit or a checkout made in a terminal) shows after `SPC g g`. A commit's message is one line, asked at the bottom (Enter commits, Escape cancels); amend keeps the old message's body.
+
+The other settings: `confirm_discard` (Revert asks first; on), `pull` (`config`, `rebase`, `merge` or `ff-only`; with `config`, a pull of branches that have parted asks which, and writes the answer here), `fetch_prune` (on), `untracked` (`normal`, `all` or `no`), `signoff` (off), `glyphs` and `programs.git`. The settings panel also lists `status_placement`, `context_lines`, `log_graph`, `log_count`, `remote_link` and `panel`, which do nothing yet.
+
 ## Try it
 
-Until Kalem runs the plugin, the library comes with a command line:
+The library also comes with a command line, to try it without Kalem:
 
 ```sh
 cargo run -p kalem-plugin-git --example git -- status --open
@@ -71,4 +75,4 @@ The plugin runs the `git` program (2.23 or later) and reads its porcelain output
 
 ## Tests
 
-`cargo test -p kalem-plugin-git`: the readers of git's output, the patches, the documents and the actions on fixed inputs; then the library against a real git in repositories the tests make (`tests/repo.rs`, git isolated from the user's configuration); the plugin's state machine driven as Kalem drives the component, its questions answered from a script (`tests/app.rs`); the manifest's conformance. The component itself builds for `wasm32-unknown-unknown` against a Kalem with plugin API 0.2.5.
+`cargo test -p kalem-plugin-git`: the readers of git's output, the patches, the documents and the actions on fixed inputs; then the library against a real git in repositories the tests make (`tests/repo.rs`, git isolated from the user's configuration); the plugin's state machine driven as Kalem drives the component, its questions answered from a script (`tests/app.rs`); the manifest's conformance. The component itself builds for `wasm32-unknown-unknown` against a Kalem with plugin API 0.2.6.
