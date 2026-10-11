@@ -1080,7 +1080,18 @@ user groups; the gaps that code can close, in this order.
   Kalem was open were all in Kalem's backlinks a few seconds later.)
   [~] Not tested against Logseq itself: how Logseq takes a page Kalem
   writes while Logseq has it open with typing not yet written.
-- [ ] GR14e `collapsed:: true` folded when the note opens (K3).
+- [x] GR14e `collapsed:: true` folded when the note opens (K3).
+  (Done 2026-10-11: the layer has hidden a folded block's children since
+  GR4, Fold Block writes `collapsed::` as Logseq does, and the vertical
+  motion steps over them; now its bullet is an arrow `▸`, and Kalem's
+  fix keeps them folded when the cursor comes up onto them from the
+  next block, which opened them. Kalem's own folds stay headings' only:
+  a folded block is Logseq's property, not a view state.)
+- [x] GR14f The graph's menu, as Logseq's left sidebar, behind a Graph
+  button (the owner's ask, 2026-10-11): `graph.home`, the documents a
+  key away, favorites, recent pages, whiteboards, the other graphs.
+- [x] GR14g The graph drawn as Logseq's (the owner's ask, 2026-10-11):
+  pages grey, every name that fits, none over another (Kalem's side).
 
 ## What Kalem's core must gain
 
