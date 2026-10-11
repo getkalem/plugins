@@ -20,7 +20,7 @@
       "title": "Journal",
       "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check || textType == pta-balance || textType == pta-register || textType == pta-reconcile",
       "items": [
-        "pta.newTransaction", "pta.copyTransaction", "pta.toggleStatus", "-",
+        "pta.newTransaction", "pta.copyTransaction", "pta.toggleStatus", "pta.deleteTransaction", "-",
         "pta.align", "pta.sort", "-",
         "pta.previousTransaction", "pta.nextTransaction", "pta.dateEarlier", "pta.dateLater", "-",
         "pta.check", "pta.balance", "pta.register", "-",

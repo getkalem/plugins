@@ -627,6 +627,21 @@ fn toggle_status() -> Result<String, String> {
     Ok("null".into())
 }
 
+/// Delete Transaction (`SPC m d`, Doom's): the transaction at the cursor
+/// with its comment lines above it and a blank line after it, one undo
+/// step.
+fn delete_transaction() -> Result<String, String> {
+    let Some((d, _, text, _)) = journal_here() else {
+        return Ok("null".into());
+    };
+    let at = editor::selected().head as usize;
+    match write::deletion(&text, d, at) {
+        Some(r) => edit(&[(r, String::new())], "Delete Transaction"),
+        None => ui::notify("No transaction at the cursor", ui::Level::Info),
+    }
+    Ok("null".into())
+}
+
 /// The next transaction, or the previous one.
 fn neighbour(forward: bool) -> Result<String, String> {
     let Some((d, path, text, sel)) = journal_here() else {
@@ -1068,7 +1083,7 @@ impl Plugin for Pta {
             align(false);
             Ok("null".into())
         })?;
-        kalem::keymap("space m a", "pta.align", Some(&leader))?;
+        kalem::keymap("space m =", "pta.align", Some(&leader))?;
         command(
             "pta.newline",
             "New Line, the Posting Aligned",
@@ -1103,7 +1118,7 @@ impl Plugin for Pta {
         command("pta.newTransaction", "New Transaction", t, |_| {
             new_transaction()
         })?;
-        kalem::keymap("space m t", "pta.newTransaction", Some(&leader))?;
+        kalem::keymap("space m a", "pta.newTransaction", Some(&leader))?;
         command(
             "pta.insertTransaction",
             "Write the New Transaction Asked For",
@@ -1111,7 +1126,11 @@ impl Plugin for Pta {
             |_| insert_transaction(),
         )?;
         command("pta.toggleStatus", "Toggle Status", t, |_| toggle_status())?;
-        kalem::keymap("space m c", "pta.toggleStatus", Some(&leader))?;
+        kalem::keymap("space m t", "pta.toggleStatus", Some(&leader))?;
+        command("pta.deleteTransaction", "Delete Transaction", t, |_| {
+            delete_transaction()
+        })?;
+        kalem::keymap("space m d", "pta.deleteTransaction", Some(&leader))?;
         command("pta.copyTransaction", "Copy Transaction", t, |_| {
             copy_transaction()
         })?;
@@ -1126,6 +1145,8 @@ impl Plugin for Pta {
         })?;
         kalem::keymap("alt+down", "pta.nextTransaction", Some(&journal))?;
         kalem::keymap("alt+up", "pta.previousTransaction", Some(&journal))?;
+        kalem::keymap("] ]", "pta.nextTransaction", Some(&leader))?;
+        kalem::keymap("[ [", "pta.previousTransaction", Some(&leader))?;
         command("pta.dateLater", "Date a Day Later", t, |_| shift_date(1))?;
         command("pta.dateEarlier", "Date a Day Earlier", t, |_| {
             shift_date(-1)
@@ -1136,6 +1157,9 @@ impl Plugin for Pta {
         types.push(balance::KIND);
         command("pta.balance", "Balance", &types, |_| balance::command())?;
         kalem::keymap("space m b", "pta.balance", Some(&leader))?;
+        // Doom's `SPC m r` is its report; the Balance is 0.1.0's one.
+        kalem::keymap("space m r", "pta.balance", Some(&leader))?;
+        kalem::keymap("space m g b", "pta.balance", Some(&leader))?;
         kalem::keymap("r", "pta.balance", Some(BALANCE_WHEN))?;
         let b = &[balance::KIND];
         command("pta.balanceToggle", "Fold or Unfold", b, |_| {
@@ -1166,7 +1190,7 @@ impl Plugin for Pta {
         let mut types = crate::TEXT_TYPES.to_vec();
         types.extend([balance::KIND, register::KIND]);
         command("pta.register", "Register", &types, |_| register::command())?;
-        kalem::keymap("space m shift+r", "pta.register", Some(&leader))?;
+        kalem::keymap("space m g r", "pta.register", Some(&leader))?;
         kalem::keymap("enter", "pta.register", Some(BALANCE_WHEN))?;
         kalem::keymap("r", "pta.register", Some(REGISTER_WHEN))?;
         let r = &[register::KIND];
@@ -1192,7 +1216,7 @@ impl Plugin for Pta {
         command("pta.reconcile", "Reconcile", &types, |_| {
             reconcile::command()
         })?;
-        kalem::keymap("space m r", "pta.reconcile", Some(&leader))?;
+        kalem::keymap("space m shift+r", "pta.reconcile", Some(&leader))?;
         kalem::keymap("r", "pta.reconcile", Some(RECONCILE_WHEN))?;
         command(
             "pta.finishReconcile",

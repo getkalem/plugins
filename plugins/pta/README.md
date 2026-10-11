@@ -46,21 +46,22 @@ Kalem also offers it when you open a journal. Then the tool you use, and, if you
 
 ## Keys
 
-In a journal, under `SPC m` in Vim's command mode; in the Word-like profile, from the **Journal** menu (the menu bar, F10 in the terminal), the **Journal** button on the toolbar (the foot of the terminal's sidebar) and the palette's Journal group. The button, `SPC m m` and `?` in the plugin's documents offer the commands as a list, each with its keys.
+In a journal, under `SPC m` in Vim's command mode, where Doom Emacs's `:lang ledger` has its keys (`a` add, `t` toggle, `d` delete, `r` report, `R` reconcile, `s` sort, `[[` and `]]`) and the plugin's others take letters Doom leaves free; in the Word-like profile, from the **Journal** menu (the menu bar, F10 in the terminal), the **Journal** button on the toolbar (the foot of the terminal's sidebar) and the palette's Journal group. The button, `SPC m m` and `?` in the plugin's documents offer the commands as a list, each with its keys.
 
 | Keys | Command |
 |---|---|
-| `SPC m t` | New Transaction |
+| `SPC m a` | New Transaction |
 | `SPC m y` | Copy Transaction |
-| `SPC m c` | Toggle Status |
-| `SPC m a` | Align Amounts |
+| `SPC m t` | Toggle Status |
+| `SPC m d` | Delete Transaction |
+| `SPC m =` | Align Amounts |
 | `SPC m s` | Sort Transactions |
-| `Alt+Up`, `Alt+Down` | Previous, Next Transaction |
+| `[[`, `]]` (or `Alt+Up`, `Alt+Down`) | Previous, Next Transaction |
 | `Ctrl+Shift+H`, `Ctrl+Shift+L` | Date a Day Earlier, Later |
 | `SPC m k` | Check Journal |
-| `SPC m b` | Balance |
-| `SPC m R` | Register |
-| `SPC m r` | Reconcile |
+| `SPC m b` (or `SPC m r`, `SPC m g b`) | Balance |
+| `SPC m g r` | Register |
+| `SPC m R` | Reconcile |
 | `SPC m C` | Finish Reconciliation |
 | `SPC m p` | Fetch Prices |
 | `SPC m m` | The Journal's commands, to pick |
@@ -96,7 +97,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 
 Waiting on Kalem:
 
-- **Marking from the reconciliation.** ledger-mode's reconcile buffer marks a posting where you press Space; a Kalem plugin can edit only the document a command runs in (K3), so here postings are marked in the journal (`SPC m c`) and the reconciliation is written again on save. Finish opens the journal and writes there.
+- **Marking from the reconciliation.** ledger-mode's reconcile buffer marks a posting where you press Space; a Kalem plugin can edit only the document a command runs in (K3), so here postings are marked in the journal (`SPC m t`) and the reconciliation is written again on save. Finish opens the journal and writes there.
 - **The statement in a pane beside.** The Reconcile and Import documents open as documents of their own, not in a pane beside the journal.
 - The tool's problems in the gutter beside the server's (K2); the servers' running balances and elided amounts as inlay hints (K4); `hledger` and `beancount` source blocks run by Org's Babel (K6); Enter aligning in Vim's insert mode.
 
@@ -109,7 +110,7 @@ Not done yet:
 
 ## Beside ledger-mode and Fava
 
-- **ledger-mode** (Emacs): the same keys' work (`C-c C-a` New Transaction through `ledger xact`, `C-c C-c` Toggle Status, alignment at column 52 and on Enter, `C-c C-r` Reconcile with its cleared, pending and target totals), for hledger and Beancount too. Not here: marking from the reconcile buffer (above), `ledger-report`'s list of your own reports (PT7c), `ledger-schedule`, and Calc on an amount. Here and not there: the tool's check on each save as a document, import from statements, prices fetched, the servers' completion and rename.
+- **ledger-mode** (Emacs, and Doom Emacs's `:lang ledger`, whose `SPC m` keys the plugin takes): the same keys' work (`C-c C-a` New Transaction through `ledger xact`, `C-c C-c` Toggle Status, alignment at column 52 and on Enter, `C-c C-r` Reconcile with its cleared, pending and target totals), for hledger and Beancount too. Not here: marking from the reconcile buffer (above), `ledger-report`'s list of reports (PT7c; Doom's `SPC m r` opens the Balance), `ledger-schedule` (Doom's `SPC m S`), Calc on an amount (`SPC m e`), and Doom's `SPC m g s` (statistics); its `SPC m g b`, the balance at point, opens the Balance. Here and not there: the tool's check on each save as a document, import from statements, prices fetched, the servers' completion and rename.
 - **Fava** (Beancount's web interface): the same reports from the same tool, in the editor where the journal is written, offline, for hledger and Ledger too. Not here: charts (balances over time, treemaps), the query shell, documents attached to entries, and importers run from the browser.
 
 ## The main journal and the tool
@@ -122,10 +123,11 @@ The setting `tool` picks the program for hledger's and Ledger's journals: `auto`
 
 In a journal, under `SPC m` in Vim's command mode and in the palette's Journal group, each one undo step:
 
-- *New Transaction* (`SPC m t`): asks the date (today offered; `yesterday`, `-3`, `5`, `10/5`, `friday`, `last friday` taken) and the payee (the journal's, the last written first, or another), then writes the transaction the tool drafts from that payee's last one (`hledger print --match`, `ledger xact`, Beancount's last entry), dated, without its old balance assertions, at its date's place (or at the end, `insert_at`), the cursor on its first amount.
-- *Toggle Status* (`SPC m c`): unmarked, pending `!`, cleared `*`, unmarked (Beancount's `txn`, `!`, `*`); the transactions selected all to the first one's next; the posting at the cursor with `toggle_postings`.
+- *New Transaction* (`SPC m a`): asks the date (today offered; `yesterday`, `-3`, `5`, `10/5`, `friday`, `last friday` taken) and the payee (the journal's, the last written first, or another), then writes the transaction the tool drafts from that payee's last one (`hledger print --match`, `ledger xact`, Beancount's last entry), dated, without its old balance assertions, at its date's place (or at the end, `insert_at`), the cursor on its first amount.
+- *Toggle Status* (`SPC m t`): unmarked, pending `!`, cleared `*`, unmarked (Beancount's `txn`, `!`, `*`); the transactions selected all to the first one's next; the posting at the cursor with `toggle_postings`.
 - *Copy Transaction* (`SPC m y`): the transaction again, dated today, at its date's place.
-- *Next* and *Previous Transaction* (Alt+Down, Alt+Up).
+- *Delete Transaction* (`SPC m d`): the transaction at the cursor, with its comment lines above it.
+- *Next* and *Previous Transaction* (`]]`, `[[`; Alt+Down, Alt+Up).
 - *Date a Day Later* and *Earlier* (`ctrl+shift+l`, `ctrl+shift+h` in Vim's command mode).
 - *Sort Transactions* (`SPC m s`): those selected, or the file's, by date, each with the comment lines above it; refused where a directive between them (`apply account`, `alias`, `include`, `pushtag`…) would apply to others after sorting.
 
@@ -135,7 +137,7 @@ The outline is the server's document symbols.
 
 *Balance* (`SPC m b`) opens the main journal's balance as a document: assets, liabilities and equity at the period's end, then income, expenses and the other accounts within the period, as a tree (each parent with its subaccounts' amounts), every amount and total as the tool computes and writes it. Tab, Right and Left fold and unfold an account (kept as you leave it), `p` picks the period (this month, last month, this quarter, this year, last year, all dates), `d` the depth, `v` shows market values (or back to cost), `r` runs it again, Enter opens the account's register, `q` or Escape closes it. It is written again when the journal is saved.
 
-*Register* (`SPC m R` on a posting's account, or Enter in the balance; else an account to pick) lists the account's postings, its subaccounts' too, with the tool's running total; Enter opens the journal at the posting, `p` picks the period, `v` the market values. The amounts are written as the journal writes them. The last 2,000 postings are shown.
+*Register* (`SPC m g r` on a posting's account, or Enter in the balance; else an account to pick) lists the account's postings, its subaccounts' too, with the tool's running total; Enter opens the journal at the posting, `p` picks the period, `v` the market values. The amounts are written as the journal writes them. The last 2,000 postings are shown.
 
 ## Import from bank statements
 
@@ -156,7 +158,7 @@ In a bank statement (a CSV file), *Import Statement* (`SPC m i`) shows what the 
 
 ## Reconciliation
 
-*Reconcile* (`SPC m r` on a posting of the account, or pick one of your asset and liability accounts) asks the statement's closing balance (the tool's total of the cleared and pending postings offered) and opens a document with the cleared total, the pending total, their sum, the target and the difference, then the postings not cleared yet. Mark postings in the journal as you tick them off the statement (`SPC m c`, pending), save, and the difference moves; `t` changes the target, Enter opens the journal at a posting. When the difference is zero, *Finish Reconciliation* (`C`, or `SPC m C`) asks the statement's date, clears the pending postings and writes a balance assertion for the target (hledger and Ledger: a "Balance assertion" transaction with a zero posting; Beancount: a `balance` directive the day after), one undo step. The totals are the tool's; the plugin only takes them from the target you typed.
+*Reconcile* (`SPC m R` on a posting of the account, or pick one of your asset and liability accounts) asks the statement's closing balance (the tool's total of the cleared and pending postings offered) and opens a document with the cleared total, the pending total, their sum, the target and the difference, then the postings not cleared yet. Mark postings in the journal as you tick them off the statement (`SPC m t`, pending), save, and the difference moves; `t` changes the target, Enter opens the journal at a posting. When the difference is zero, *Finish Reconciliation* (`C`, or `SPC m C`) asks the statement's date, clears the pending postings and writes a balance assertion for the target (hledger and Ledger: a "Balance assertion" transaction with a zero posting; Beancount: a `balance` directive the day after), one undo step. The totals are the tool's; the plugin only takes them from the target you typed.
 
 ## Checking by the tool
 
@@ -168,9 +170,9 @@ The servers' diagnostics are their own and may disagree with the tool (hledger-l
 
 ## Aligning amounts
 
-*Align Amounts* (`SPC m a` in Vim's command mode; the palette's Journal group) puts the amounts' last digits of the transaction at the cursor, or of every transaction selected, at one column: the setting `amount_column`, 52 as in ledger-mode, or 0 for as near the accounts as the longest posting allows. Only the blanks between account and amount change, two at the least: the amount as you wrote it (sign, decimal mark, digit groups, commodity and its side), a cost, a lot, a balance assertion and a comment stay as they are, and a posting without an amount is left alone. A value expression (`(-$132.00)`) is aligned by its closing parenthesis, a posting with a balance assertion alone by the assertion's amount. One undo step.
+*Align Amounts* (`SPC m =` in Vim's command mode; the palette's Journal group) puts the amounts' last digits of the transaction at the cursor, or of every transaction selected, at one column: the setting `amount_column`, 52 as in ledger-mode, or 0 for as near the accounts as the longest posting allows. Only the blanks between account and amount change, two at the least: the amount as you wrote it (sign, decimal mark, digit groups, commodity and its side), a cost, a lot, a balance assertion and a comment stay as they are, and a posting without an amount is left alone. A value expression (`(-$132.00)`) is aligned by its closing parenthesis, a posting with a balance assertion alone by the assertion's amount. One undo step.
 
-With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode, in the Word-like profile. Vim's insert mode takes Enter itself; there, `SPC m a` from command mode aligns.
+With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode, in the Word-like profile. Vim's insert mode takes Enter itself; there, `SPC m =` from command mode aligns.
 
 Format Document (`SPC c f`) in an hledger or Ledger journal: none (hledger-lsp's is left unused, and `hledger print` rewrites a journal); Align Amounts, with the whole file selected, is the formatter. In a Beancount journal: its server's, else set `[formatters] beancount = "bean-format -"`.
 

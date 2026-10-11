@@ -914,6 +914,14 @@ first.
   `index.json` regenerated (download empty until the tag). Left: the
   tag `pta-v0.1.0` and its release, the git session's; the Book's page,
   which waits on Kalem.)
+  Before the tag, at the Vim and Doom compatibility session's word: the
+  `SPC m` keys moved to Doom Emacs's `:lang ledger` map where it has
+  one (`a` New Transaction, `t` Toggle Status, `d` Delete Transaction,
+  new, `R` Reconcile, `s` Sort, `]]` and `[[` the next and previous
+  transaction, `g b` the Balance; `r`, Doom's report, the Balance until
+  Report… comes), the plugin's others on letters Doom leaves free (`=`
+  Align Amounts, `g r` Register, `k`, `b`, `y`, `p`, `C`, `m`); the
+  keys the tasks above name are their first letters.)
 
 ## What Kalem's core must gain
 

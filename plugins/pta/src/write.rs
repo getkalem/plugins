@@ -258,6 +258,27 @@ pub fn at(txs: &[Transaction], at: usize) -> Option<&Transaction> {
         .find(|t| t.range.contains(&at) || (t.range.end == at && at > t.range.start))
 }
 
+/// What deleting the transaction at `at` takes: its comment lines
+/// above it, its lines, and one blank line after it (else before it).
+pub fn deletion(text: &str, dialect: Dialect, at: usize) -> Option<Range<usize>> {
+    let txs = transactions(text, dialect);
+    let t = self::at(&txs, at)?;
+    let (start, end) = (t.with_comments.start, t.range.end);
+    let blank = |s: &str| s.strip_suffix('\n').is_some_and(|l| l.trim().is_empty());
+    let next = text[end..].split_inclusive('\n').next().unwrap_or("");
+    if blank(next) {
+        return Some(start..end + next.len());
+    }
+    let before = text[..start].trim_end_matches(['\n']);
+    let line = text[..start].len() - before.len();
+    if line >= 2 {
+        // The blank line before it, its own line feed kept on the line
+        // above.
+        return Some(start - (line - 1)..end);
+    }
+    Some(start..end)
+}
+
 /// A status, as the cycle goes: unmarked, pending, cleared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -1002,6 +1023,29 @@ mod tests {
         let (t, at) = new_transaction(Beancount, D(2026, 2, 1), '-', "Market", Some(b));
         assert!(t.starts_with("2026-02-01 ! \"Market\" \"two\"\n"), "{t}");
         assert_eq!(&t[at..at + 6], "842.35");
+    }
+
+    #[test]
+    fn a_deletion() {
+        let j = "2026-01-01 A\n    a  1\n    b\n\n; note\n2026-01-02 B\n    a  2\n    b\n\n2026-01-03 C\n    a  3\n    b\n";
+        let del = |at: usize| {
+            let r = deletion(j, Dialect::Hledger, at).expect("a transaction");
+            format!("{}{}", &j[..r.start], &j[r.end..])
+        };
+        // The middle one with its comment and the blank after it.
+        assert_eq!(
+            del(j.find("B").unwrap()),
+            "2026-01-01 A\n    a  1\n    b\n\n2026-01-03 C\n    a  3\n    b\n"
+        );
+        // The last one with the blank before it.
+        assert_eq!(
+            del(j.find("C").unwrap()),
+            "2026-01-01 A\n    a  1\n    b\n\n; note\n2026-01-02 B\n    a  2\n    b\n"
+        );
+        assert_eq!(
+            deletion(j, Dialect::Hledger, j.find("; note").unwrap() + 2),
+            None
+        );
     }
 
     #[test]
