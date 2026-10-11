@@ -865,7 +865,9 @@ pub fn run<'a>(r: &mut Reader<'a>, tag: &Tag<'a>) -> Run {
             Token::Text { .. } => {}
         }
     }
+    // The part ends inside the run: its end tag, missing, where it ends.
     run.span = tag.span.start..r.pos();
+    run.end_tag = r.pos()..r.pos();
     run
 }
 
