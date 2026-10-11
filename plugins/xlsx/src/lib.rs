@@ -11,11 +11,10 @@
 //! input unchanged. The VBA project's modules are read as source
 //! ([`vba`]).
 //!
-//! Kalem loads plugins as WebAssembly components through the `document-viewer`
-//! and `document-editor` contracts of its design document (11.13, D54). Until
-//! the bindings (`kalem-plugin`, task T3.1.3) are published, this crate is
-//! the format library those contracts will wrap: units are sheets, a unit's
-//! grid is [`Workbook::grid`], an edit is [`Workbook::set_cell`], and save is
+//! Kalem loads it as a WebAssembly component of the `spreadsheet-viewer`
+//! world (`viewer.rs`, through the `kalem-plugin` bindings). The crate is
+//! also the format library under it: units are sheets, a unit's grid is
+//! [`Workbook::grid`], an edit is [`Workbook::set_cell`], and save is
 //! [`Workbook::save`].
 
 pub mod calc;

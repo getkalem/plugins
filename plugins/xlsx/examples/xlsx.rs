@@ -1,5 +1,4 @@
-//! A command line over the plugin's library, for trying it before Kalem's
-//! plugin host exists:
+//! A command line over the plugin's library, for trying it without Kalem:
 //!
 //! ```sh
 //! cargo run -p kalem-plugin-xlsx --example xlsx -- info book.xlsx
