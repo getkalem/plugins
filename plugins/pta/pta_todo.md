@@ -1066,6 +1066,19 @@ plugin's section 9 followed).
   command as a language's formatter: one `commands.format` serves all
   of a plugin's languages (`bean-format` would run on an hledger
   journal), and Align Amounts cannot be Format Document's in a journal.
+- K14 A component installed from the index by its name gets the files
+  its manifest names: Kalem 0.6.16 and 0.6.17 write only the released
+  component and `plugin.json` (`plugin_store::released_component`), so
+  pta 0.1.0 installed as `kalem plugin install pta` (or from Browse
+  Plugins) has no syntaxes, and Kalem loads none of its languages
+  (`languages::load_plugin` fails on the first syntax file missing):
+  no highlighting, no servers, the commands only. Found by the
+  documentation session, 2026-10-11. Done the same day on the Kalem
+  branch `released-files` (worktree `org-released-files`): the
+  manifest's `syntaxes` and `syntaxBases` fetched from the folder at
+  the release's tag, as the manifest is. Until that Kalem is released,
+  the plugin's folder link installs it whole (the folder at the tag,
+  the component from the release).
 - K13 `kalem run` waiting for a plugin's programs and requests: batch
   mode stopped as soon as the command returned, so a command whose
   document is written once its program ends (every one of this
