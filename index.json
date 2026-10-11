@@ -9,8 +9,8 @@
       "api": "^0.2.13",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/docx",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/docx-v0.0.7/docx.wasm",
+      "sha256": "b4f6b955abbb4251ceeaae35ba53ad64460a990c16c5a6a3d6df6eae582d13f7",
       "opens": [
         ".docx",
         ".docm",
