@@ -4,13 +4,13 @@
     {
       "id": "org.kalem.docx",
       "name": "Word documents",
-      "version": "0.0.7",
+      "version": "0.0.8",
       "description": "Opens Word documents (.docx, .docm, .dotx, .dotm) as themselves, laid out by Kalem: styles, lists, tables, pictures, notes, comments and tracked changes read; text edited and formatted (marks, typefaces, sizes, colors, paragraph styles, alignment, indents, spacing, lists), tracked changes accepted and rejected, comments added, answered, edited, resolved and deleted, every other part kept byte for byte",
       "api": "^0.2.13",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/docx",
-      "download": "https://github.com/getkalem/plugins/releases/download/docx-v0.0.7/docx.wasm",
-      "sha256": "b4f6b955abbb4251ceeaae35ba53ad64460a990c16c5a6a3d6df6eae582d13f7",
+      "download": null,
+      "sha256": null,
       "opens": [
         ".docx",
         ".docm",
@@ -84,7 +84,7 @@
     {
       "id": "org.kalem.graph",
       "name": "Note graphs",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags, tasks and queries, edited as an outliner, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
       "api": "^0.2.13",
       "permissions": [
@@ -92,8 +92,8 @@
         "fs:write:workspace"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
-      "download": "https://github.com/getkalem/plugins/releases/download/graph-v0.7.0/graph.wasm",
-      "sha256": "c4780164929e1846b3be2d9f558243fcb9e3ffcab7d90adb1fe62245e784f768",
+      "download": null,
+      "sha256": null,
       "layers": [
         {
           "id": "logseq",
