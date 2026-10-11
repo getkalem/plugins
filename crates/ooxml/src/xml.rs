@@ -48,44 +48,56 @@ pub struct Tag<'a> {
 impl<'a> Tag<'a> {
     /// The attributes, prefixes dropped, values unescaped.
     pub fn attrs(&self) -> Vec<(&'a str, Cow<'a, str>)> {
-        let mut out = Vec::new();
+        self.raw_attrs()
+            .map(|(name, value)| (local(name), unescape(value)))
+            .collect()
+    }
+
+    /// One attribute by local name: the attributes read up to it, and only
+    /// its value unescaped (a sheet's cell asks three of each `<c>`).
+    pub fn attr(&self, name: &str) -> Option<Cow<'a, str>> {
+        self.raw_attrs()
+            .find(|(n, _)| local(n) == name)
+            .map(|(_, v)| unescape(v))
+    }
+
+    /// The attributes as written: qualified names and escaped values, up
+    /// to the first that is not well formed.
+    fn raw_attrs(&self) -> impl Iterator<Item = (&'a str, &'a str)> {
         let s = self.attrs;
         let b = s.as_bytes();
         let mut i = 0;
-        while i < b.len() {
-            while i < b.len() && b[i].is_ascii_whitespace() {
-                i += 1;
+        std::iter::from_fn(move || {
+            while i < b.len() {
+                while i < b.len() && b[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                let ns = i;
+                while i < b.len() && b[i] != b'=' && !b[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                let name = &s[ns..i];
+                while i < b.len() && (b[i].is_ascii_whitespace() || b[i] == b'=') {
+                    i += 1;
+                }
+                let q = *b.get(i)?;
+                if q != b'"' && q != b'\'' {
+                    // Ends the attributes, here and after.
+                    i = b.len();
+                    return None;
+                }
+                let vs = i + 1;
+                let Some(len) = s[vs..].find(q as char) else {
+                    i = b.len();
+                    return None;
+                };
+                i = vs + len + 1;
+                if !name.is_empty() {
+                    return Some((name, &s[vs..vs + len]));
+                }
             }
-            let ns = i;
-            while i < b.len() && b[i] != b'=' && !b[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            let name = &s[ns..i];
-            while i < b.len() && (b[i].is_ascii_whitespace() || b[i] == b'=') {
-                i += 1;
-            }
-            let Some(&q) = b.get(i) else { break };
-            if q != b'"' && q != b'\'' {
-                break;
-            }
-            let vs = i + 1;
-            let Some(len) = s[vs..].find(q as char) else {
-                break;
-            };
-            i = vs + len + 1;
-            if !name.is_empty() {
-                out.push((local(name), unescape(&s[vs..vs + len])));
-            }
-        }
-        out
-    }
-
-    /// One attribute by local name.
-    pub fn attr(&self, name: &str) -> Option<Cow<'a, str>> {
-        self.attrs()
-            .into_iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, v)| v)
+            None
+        })
     }
 
     /// One attribute by its qualified name as written (`r:id`, `xml:space`).
@@ -269,9 +281,16 @@ impl<'a> Reader<'a> {
                 }
                 i += 1;
             }
-            let end = (start + i + 1).min(s.len());
+            // A tag cut off before its `>` (a damaged part) runs to the
+            // end of the text: its last character is not a `>` to drop,
+            // and a lone `<` at the end has nothing inside.
+            let (end, inner_end) = if i < b.len() {
+                (start + i + 1, start + i)
+            } else {
+                (s.len(), s.len())
+            };
             self.pos = end;
-            let inner = &s[start + 1..end - 1];
+            let inner = &s[start + 1..inner_end];
             if let Some(name) = inner.strip_prefix('/') {
                 return Some(Token::End {
                     name: local(name.trim()),
@@ -515,6 +534,49 @@ mod tests {
         assert_eq!(text(raw), "t<");
         assert!(matches!(r.next_token(), Some(Token::End { name: "a", .. })));
         assert_eq!(r.next_token(), None);
+    }
+
+    #[test]
+    fn one_attribute_read_as_among_all() {
+        let tags = [
+            r#"<c r="A1" s="3" t="s">"#,
+            r#"<w:p w:rsidR='00A1' xml:space = "preserve" w:val="a &amp; b">"#,
+            r#"<x a="1" ="2" b="3">"#,
+            r#"<x a="1" b=3 c="4">"#,
+            r#"<x a="1" b="unclosed>"#,
+            r#"<x a="1" a="2">"#,
+        ];
+        for t in tags {
+            let mut r = Reader::new(t);
+            let Some(Token::Start(tag)) = r.next_token() else {
+                panic!("{t}")
+            };
+            let all = tag.attrs();
+            for name in [
+                "r", "s", "t", "rsidR", "space", "val", "a", "b", "c", "none",
+            ] {
+                let first = all.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
+                assert_eq!(tag.attr(name), first, "{name} in {t}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_tag_cut_off_at_the_end_reads_to_the_end() {
+        for (s, name) in [
+            ("<a><b", "b"),
+            ("<a><", ""),
+            ("<a><bé", "bé"),
+            ("<a><b x=\"1", "b"),
+        ] {
+            let mut r = Reader::new(s);
+            assert!(matches!(r.next_token(), Some(Token::Start(t)) if t.name == "a"));
+            let Some(Token::Start(t)) = r.next_token() else {
+                panic!("{s}")
+            };
+            assert_eq!((t.name, t.span.end), (name, s.len()), "{s}");
+            assert_eq!(r.next_token(), None);
+        }
     }
 
     #[test]
