@@ -11,6 +11,9 @@ the reader meets their different ways of writing the same content.
   and complex fields, a hyperlink and a bookmark, a content control, a
   text box in `mc:AlternateContent`, a picture, OMML math, symbols, tabs
   and breaks, a section break, header and footer with a PAGE field.
+- `handmade-protected.docx`: the same, tracking changes and protected
+  for tracked changes as Word protects it without a password
+  (`w:documentProtection`, `w:edit="trackedChanges"`, enforced).
 - `libreoffice-*.docx`: each of the two saved again by LibreOffice Writer
   (headless), a second producer's way of writing the same document.
 
@@ -651,7 +654,7 @@ APP = (
 )
 
 
-def features():
+def features(path="handmade-features.docx", settings=SETTINGS):
     types = (
         f'{DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
@@ -705,7 +708,7 @@ def features():
         ("word/_rels/document.xml.rels", doc_rels),
         ("word/styles.xml", styles()),
         ("word/numbering.xml", numbering()),
-        ("word/settings.xml", SETTINGS),
+        ("word/settings.xml", settings),
         ("word/footnotes.xml", notes("foot")),
         ("word/endnotes.xml", notes("end")),
         ("word/comments.xml", COMMENTS),
@@ -713,7 +716,7 @@ def features():
         ("word/footer1.xml", FOOTER),
         ("word/theme/theme1.xml", THEME),
     ]
-    with zipfile.ZipFile("handmade-features.docx", "w", zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for name, text in parts:
             # A fixed time, so that the file is the same on every run.
             info = zipfile.ZipInfo(name, (2026, 10, 9, 0, 0, 0))
@@ -721,6 +724,14 @@ def features():
             z.writestr(info, text.encode("utf-8"))
         info = zipfile.ZipInfo("word/media/image1.png", (2026, 10, 9, 0, 0, 0))
         z.writestr(info, png(16, 16, (200, 30, 30)))
+
+
+def protected():
+    # Where the schema puts them: after w:zoom, before w:defaultTabStop.
+    zoom = '<w:zoom w:percent="100"/>'
+    lock = '<w:trackRevisions/><w:documentProtection w:edit="trackedChanges" w:enforcement="1"/>'
+    assert zoom in SETTINGS
+    features("handmade-protected.docx", SETTINGS.replace(zoom, zoom + lock))
 
 
 def via_libreoffice(src, dst):
@@ -736,6 +747,7 @@ def via_libreoffice(src, dst):
 if __name__ == "__main__":
     basic()
     features()
+    protected()
     via_libreoffice("python-docx-basic.docx", "libreoffice-basic.docx")
     via_libreoffice("handmade-features.docx", "libreoffice-features.docx")
     print("written:", *sorted(f for f in os.listdir(".") if f.endswith(".docx")), file=sys.stderr)

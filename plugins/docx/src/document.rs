@@ -559,6 +559,12 @@ impl Document {
         self.protection.as_deref()
     }
 
+    /// Whether its protection lets it be edited: none is enforced, or
+    /// the one enforced is `none`.
+    pub fn editable(&self) -> bool {
+        self.check_editable().is_ok()
+    }
+
     /// Whether it holds a VBA project.
     pub fn has_vba(&self) -> bool {
         self.related("vbaProject").is_some()
@@ -918,7 +924,12 @@ impl Document {
 
     /// Turns Track Changes on or off (`w:trackRevisions` of the
     /// settings): while it is on, edits are written as tracked changes.
+    /// Refused in a protected document, as Word refuses it; one protected
+    /// for tracked changes keeps tracking on, so turning it on is taken.
     pub fn set_track_changes(&mut self, on: bool) -> Result<()> {
+        if !(on && self.protection() == Some("trackedChanges")) {
+            self.check_editable()?;
+        }
         let part = self
             .related("settings")
             .filter(|p| self.texts.contains_key(p))
@@ -1231,8 +1242,11 @@ impl Document {
     /// gone; a deletion accepted is gone, rejected its text is back; a
     /// formatting change rejected brings the old formatting back; a
     /// paragraph mark inserted and rejected, or deleted and accepted,
-    /// joins its paragraph with the next. One step.
+    /// joins its paragraph with the next. One step. Refused in a protected
+    /// document, as Word refuses it (in one protected for tracked changes
+    /// too: the changes stay for its owner to decide).
     pub fn decide(&mut self, id: &str, accept: bool) -> Result<()> {
+        self.check_editable()?;
         self.begin_batch();
         let r = self.decide_one(id, accept);
         self.finish_batch(r)
@@ -1241,6 +1255,7 @@ impl Document {
     /// [`Document::decide`] for every tracked change; formatting changes
     /// of paragraphs, which are not rejected yet, are left when rejecting.
     pub fn decide_all(&mut self, accept: bool) -> Result<()> {
+        self.check_editable()?;
         self.begin_batch();
         let r = (|| {
             for part in self.story_parts() {
