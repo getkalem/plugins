@@ -1327,6 +1327,11 @@ impl App {
                     .ok()
                     .and_then(|v| v["node"].as_str().map(str::to_string));
                 if let Some(key) = key {
+                    // An alias's node (Logseq draws aliases) opens its page.
+                    let key = match self.indexes.get(&root) {
+                        Some(i) if i.page(&key).is_none() => i.resolve(&key, ""),
+                        _ => key,
+                    };
                     out.extend(self.open_page(files, &root, &key, None, None));
                 }
             }

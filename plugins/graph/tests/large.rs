@@ -323,16 +323,22 @@ fn a_million_blocks() {
     assert!(!a.hits.is_empty());
     // The query's results under its line in the note (rows), as many as
     // the note shows.
-    time("a query's rows under its line", Duration::from_millis(500), || {
-        query::shown(&index, "(and [[Hub]] (task TODO LATER))", None, "⌕")
-    });
+    time(
+        "a query's rows under its line",
+        Duration::from_millis(500),
+        || query::shown(&index, "(and [[Hub]] (task TODO LATER))", None, "⌕"),
+    );
     // An advanced query: the Datalog's database of the whole graph made,
     // and a rule run over it.
-    let adv = datalog::parse("{:query [:find (pull ?b [*]) :where (page-ref ?b \"hub\") [?b :block/marker \"TODO\"]]}")
-        .unwrap();
-    let found = time("an advanced query over the graph", Duration::from_secs(2), || {
-        datalog::run(&adv, &index, None, None).unwrap()
-    });
+    let adv = datalog::parse(
+        "{:query [:find (pull ?b [*]) :where (page-ref ?b \"hub\") [?b :block/marker \"TODO\"]]}",
+    )
+    .unwrap();
+    let found = time(
+        "an advanced query over the graph",
+        Duration::from_secs(2),
+        || datalog::run(&adv, &index, None, None).unwrap(),
+    );
     assert!(matches!(found, datalog::Found::Hits(ref a) if !a.hits.is_empty()));
     // The graph drawn (Graph View): its nodes and edges.
     let drawn = time("the Graph View's drawing", Duration::from_secs(2), || {

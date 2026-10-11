@@ -698,30 +698,97 @@ pub fn tasks(index: &Index, today: Option<Date>) -> Content {
     c
 }
 
+/// Logseq's own pages, which its graph view leaves out unless
+/// `:builtin-pages?`: the task keywords, the priorities, and three more.
+const BUILTIN_PAGES: [&str; 16] = [
+    "now",
+    "later",
+    "doing",
+    "done",
+    "canceled",
+    "cancelled",
+    "in-progress",
+    "todo",
+    "wait",
+    "waiting",
+    "a",
+    "b",
+    "c",
+    "contents",
+    "favorites",
+    "card",
+];
+
 /// The graph drawn by Kalem (plugin API 0.2.12): its pages and the links
-/// between them (Logseq's journals left out, as Logseq's graph view
-/// leaves them out by default), or with `focus` the page of that key and
-/// the pages two links from it. Its text lists the pages, the most linked
-/// first, each line opening its page.
+/// between them, as the graph's app is set to show them
+/// ([`crate::config::GraphView`]: Logseq's journals, orphans, own pages
+/// and excluded pages left out by default), or with `focus` the page of
+/// that key and the pages two links from it, all of them. Its text lists
+/// the pages, the most linked first, each line opening its page.
 pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
-    use std::collections::{BTreeSet, HashMap};
-    // The links, each once, by the pages' keys.
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    // A Logseq page's aliases, pages of their own in Logseq, each linked
+    // to its page: by key, the alias as a page, and its page's key.
+    let mut aliases: BTreeMap<String, (crate::index::Page, String)> = BTreeMap::new();
+    if index.graph.kind == Kind::Logseq {
+        for p in index.pages() {
+            for a in &p.aliases {
+                let key = crate::names::key(a);
+                if key != p.key && index.page(&key).is_none() {
+                    let page = crate::index::Page {
+                        key: key.clone(),
+                        title: a.clone(),
+                        path: None,
+                        aliases: Vec::new(),
+                        journal: None,
+                        props: Vec::new(),
+                    };
+                    aliases.entry(key).or_insert((page, p.key.clone()));
+                }
+            }
+        }
+    }
+    let page = |k: &str| index.page(k).or_else(|| aliases.get(k).map(|(p, _)| p));
+    // The links, each once, by the pages' keys: a page's references, a
+    // namespace's parents among them as Logseq's references have them,
+    // each page of a namespace to its parent and each alias to its page,
+    // as Logseq draws them.
     let mut links: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut link = |from: &str, to: String| {
+        if to != from && page(&to).is_some() {
+            let pair = if from < to.as_str() {
+                (from.to_string(), to)
+            } else {
+                (to, from.to_string())
+            };
+            links.insert(pair);
+        }
+    };
     for (rel, d) in index.files() {
         for r in &d.scanned.refs {
             if r.kind.to_block() || (index.graph.kind == Kind::Obsidian && r.kind == RefKind::Tag) {
                 continue;
             }
             let to = index.resolve(&r.target, rel);
-            if to != d.key && index.page(&to).is_some() {
-                let (a, b) = if d.key < to {
-                    (d.key.clone(), to)
-                } else {
-                    (to, d.key.clone())
-                };
-                links.insert((a, b));
+            if to.contains('/') {
+                for (parent, _) in index.namespace_parents(&to, rel) {
+                    link(&d.key, parent);
+                }
             }
+            link(&d.key, to);
         }
+    }
+    for p in index.pages() {
+        let rel = p.path.as_deref().unwrap_or_default();
+        if !p.title.contains('/') {
+            continue;
+        }
+        if let Some((parent, _)) = index.namespace_parents(&p.key, rel).pop() {
+            link(&p.key, parent);
+        }
+    }
+    for (key, (_, of)) in &aliases {
+        link(of, key.clone());
     }
     let mut near: HashMap<&str, Vec<&str>> = HashMap::new();
     for (a, b) in &links {
@@ -746,21 +813,52 @@ pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
             }
             seen
         }
-        None => index
-            .pages()
-            .filter(|p| {
-                !(index.graph.kind == Kind::Logseq && p.journal.is_some())
-                    && (p.path.is_some() || near.contains_key(p.key.as_str()))
-                    && !p
-                        .path
+        None => {
+            let gv = index.graph.graph_view;
+            let journal = |k: &str| index.page(k).is_some_and(|p| p.journal.is_some());
+            // Linked: by a link that is drawn, a journal's only with them.
+            let linked: BTreeSet<&str> = links
+                .iter()
+                .filter(|(a, b)| gv.journals || !(journal(a) || journal(b)))
+                .flat_map(|(a, b)| [a.as_str(), b.as_str()])
+                .collect();
+            let excluded = |p: &crate::index::Page| {
+                p.props.iter().any(|(k, v)| {
+                    k.eq_ignore_ascii_case("exclude-from-graph-view") && v.trim() == "true"
+                })
+            };
+            // An Obsidian canvas is not a note of its graph; a Logseq
+            // whiteboard is a page of Logseq's.
+            let canvas = |p: &crate::index::Page| {
+                index.graph.kind == Kind::Obsidian
+                    && p.path
                         .as_deref()
                         .is_some_and(|r| crate::index::drawn_elsewhere(&index.graph, r))
-            })
-            .map(|p| p.key.clone())
-            .collect(),
+            };
+            let mut shown: BTreeSet<String> = index
+                .pages()
+                .filter(|p| {
+                    (gv.journals || p.journal.is_none())
+                        && (p.path.is_some()
+                            || (gv.unresolved && near.contains_key(p.key.as_str())))
+                        && (gv.excluded || !excluded(p))
+                        && (gv.builtin || !BUILTIN_PAGES.contains(&p.key.as_str()))
+                        && (gv.orphans || linked.contains(p.key.as_str()))
+                        && !canvas(p)
+                })
+                .map(|p| p.key.clone())
+                .collect();
+            // An alias with its page.
+            for (key, (_, of)) in &aliases {
+                if shown.contains(of) {
+                    shown.insert(key.clone());
+                }
+            }
+            shown
+        }
     };
     let degree = |k: &str| near.get(k).map_or(0, Vec::len);
-    let mut pages: Vec<&crate::index::Page> = shown.iter().filter_map(|k| index.page(k)).collect();
+    let mut pages: Vec<&crate::index::Page> = shown.iter().filter_map(|k| page(k)).collect();
     pages.sort_by_key(|p| (std::cmp::Reverse(degree(&p.key)), p.title.to_lowercase()));
     let group = |p: &crate::index::Page| {
         if p.journal.is_some() {
@@ -808,7 +906,8 @@ pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
                     path: index.graph.path(r),
                     line: 0,
                 },
-                None => Target::Page(p.key.clone()),
+                // An alias opens its page.
+                None => Target::Page(aliases.get(&p.key).map_or(&p.key, |(_, of)| of).clone()),
             }),
         );
     }
@@ -1617,6 +1716,80 @@ mod tests {
             "{labels:?}"
         );
         assert!(labels.contains(&"Kalem"), "{labels:?}");
+    }
+
+    #[test]
+    fn the_graph_drawn_as_the_graphs_app_is_set() {
+        let files = |settings: &str| {
+            Memory::new(&[
+                ("/g/logseq/config.edn", settings),
+                ("/g/pages/Kalem.md", "- An editor, see [[Org]]\n"),
+                ("/g/pages/Org.md", "- A format\n"),
+                ("/g/pages/Alone.md", "- nothing here\n"),
+                (
+                    "/g/pages/Hidden.md",
+                    "exclude-from-graph-view:: true\n\n- see [[Kalem]]\n",
+                ),
+                ("/g/pages/Plan.md", "- [[TODO]] [[Daily]]\n"),
+                ("/g/journals/2026_10_03.md", "- [[Daily]] notes\n"),
+            ])
+        };
+        let shown = |settings: &str| {
+            let m = files(settings);
+            let i = Index::build(
+                &m,
+                Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+            );
+            let d = drawing(&i, None).drawing.unwrap();
+            let mut ids: Vec<String> = d.nodes.into_iter().map(|n| n.id).collect();
+            ids.sort();
+            ids
+        };
+        // Logseq's defaults: no journals, no excluded or own pages, the
+        // orphans shown.
+        assert_eq!(shown("{}"), ["alone", "daily", "kalem", "org", "plan"]);
+        assert_eq!(
+            shown("{:graph/settings {:journal? true :excluded-pages? true :builtin-pages? true}}"),
+            [
+                "alone",
+                "daily",
+                "hidden",
+                "kalem",
+                "oct 3rd, 2026",
+                "org",
+                "plan",
+                "todo"
+            ]
+        );
+        // Without orphans: Daily is linked by Plan, not only by the
+        // journal left out.
+        assert_eq!(
+            shown("{:graph/settings {:orphan-pages? false}}"),
+            ["daily", "kalem", "org", "plan"]
+        );
+        // Obsidian's: orphans and pages with no file hidden as set.
+        let vault = |graph: &str| {
+            let m = Memory::new(&[
+                ("/v/.obsidian/app.json", "{}"),
+                ("/v/.obsidian/graph.json", graph),
+                ("/v/Kalem.md", "An editor, see [[Org]] and [[Missing]]\n"),
+                ("/v/Org.md", "A format\n"),
+                ("/v/Alone.md", "nothing here\n"),
+            ]);
+            let i = Index::build(
+                &m,
+                Graph::load(&m, "/v", Kind::Obsidian, &Fallbacks::default()),
+            );
+            let d = drawing(&i, None).drawing.unwrap();
+            let mut ids: Vec<String> = d.nodes.into_iter().map(|n| n.id).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(vault("{}"), ["alone", "kalem", "missing", "org"]);
+        assert_eq!(
+            vault(r#"{"showOrphans": false, "hideUnresolved": true}"#),
+            ["kalem", "org"]
+        );
     }
 
     #[test]

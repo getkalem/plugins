@@ -1,0 +1,23 @@
+⌬ logseq-md
+Logseq · corpus/logseq-md · 20 pages, 10 journals
+
+  Journals                  j
+  Today's journal           .
+  Graph view                g
+  All pages                 p
+  Tags                      T
+  Tasks                     t
+  Search the graph          /
+  Find or create a page     f
+
+Favorites
+  None: a page's ⋯ › Add to favorites in Logseq
+
+Recent
+  • Kalem
+
+Whiteboards (shown in the file manager, to open there)
+  • Design
+
+Other graphs
+  ⌬ other  /notes/other

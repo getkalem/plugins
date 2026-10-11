@@ -1,0 +1,23 @@
+⌬ obsidian
+Obsidian · corpus/obsidian · 9 pages, 3 journals
+
+  Journals                  j
+  Today's journal           .
+  Graph view                g
+  All pages                 p
+  Tags                      T
+  Tasks                     t
+  Search the graph          /
+  Find or create a page     f
+
+Bookmarks
+  None: Bookmark in Obsidian
+
+Recent
+  • Kalem
+
+Canvases (shown in the file manager, to open there)
+  • Board.canvas
+
+Other graphs
+  ⌬ other  /notes/other

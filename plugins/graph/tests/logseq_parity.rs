@@ -123,3 +123,81 @@ fn queries_and_references_as_logseq_answers() {
         differ.join("\n")
     );
 }
+
+#[test]
+fn the_graph_view_as_logseq_draws_it() {
+    let root = corpus();
+    let kind = config::kind_of(&Native, &root).unwrap();
+    let i = Index::build(
+        &Native,
+        Graph::load(&Native, &root, kind, &Fallbacks::default()),
+    );
+    let answers: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/logseq/answers-0.10.9.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    // Logseq's own, not drawn by the plugin: the pages of the properties'
+    // names (`:property-pages/enabled?`), and a page named by the block
+    // `{{embed ((uuid))}}` embeds, which Logseq 0.10.9 makes by mistake.
+    let logseq_only = [
+        "file",
+        "file-path",
+        "related",
+        "type",
+        "6512c0de-0001-4000-8000-000000000001",
+    ];
+    let want_nodes: BTreeSet<String> = answers["graph_view"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_str().unwrap().to_string())
+        .filter(|n| !logseq_only.contains(&n.as_str()))
+        .collect();
+    let want_links: BTreeSet<(String, String)> = answers["graph_view"]["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            let l = l.as_array().unwrap();
+            (
+                l[0].as_str().unwrap().to_string(),
+                l[1].as_str().unwrap().to_string(),
+            )
+        })
+        .filter(|(a, b)| !logseq_only.contains(&a.as_str()) && !logseq_only.contains(&b.as_str()))
+        .collect();
+    let d = kalem_plugin_graph::views::drawing(&i, None)
+        .drawing
+        .unwrap();
+    let got_nodes: BTreeSet<String> = d.nodes.iter().map(|n| n.id.clone()).collect();
+    let got_links: BTreeSet<(String, String)> = d
+        .edges
+        .iter()
+        .map(|(a, b)| {
+            if a < b {
+                (a.clone(), b.clone())
+            } else {
+                (b.clone(), a.clone())
+            }
+        })
+        .collect();
+    assert_eq!(
+        (
+            want_nodes.difference(&got_nodes).collect::<Vec<_>>(),
+            got_nodes.difference(&want_nodes).collect::<Vec<_>>()
+        ),
+        (Vec::<&String>::new(), Vec::<&String>::new()),
+        "nodes: Logseq's only, the plugin's only"
+    );
+    assert_eq!(
+        (
+            want_links.difference(&got_links).collect::<Vec<_>>(),
+            got_links.difference(&want_links).collect::<Vec<_>>()
+        ),
+        (Vec::new(), Vec::new()),
+        "links: Logseq's only, the plugin's only"
+    );
+}

@@ -1105,6 +1105,26 @@ user groups; the gaps that code can close, in this order.
   0.10.9 (`tests/logseq_parity.rs`), for Kalem 0.6.15 and later.
 - [x] GR14g The graph drawn as Logseq's (the owner's ask, 2026-10-11):
   pages grey, every name that fits, none over another (Kalem's side).
+  Then (2026-10-11) the same pages and links as Logseq's: aliases and
+  whiteboards drawn, a namespace's pages linked to their parent and the
+  parents a link names, and Logseq's `:graph/settings` (journals,
+  orphans, Logseq's own and excluded pages) or Obsidian's `graph.json`
+  (orphans, notes not written) followed; checked against Logseq 0.10.9's
+  graph view on the corpus, built from its database as its
+  `build-global-graph` builds it (`tests/logseq_parity.rs`). Left out:
+  the pages Logseq makes of properties' names, and the page it makes by
+  mistake of a block an embed names.
+- [x] GR14i The first contact (2026-10-11): a Logseq user without the
+  plugin opens a note, Kalem suggests the plugin, Install Suggested
+  Plugin installs it. Tried in a fresh configuration through a terminal:
+  the plugin was installed but did not start until Kalem was started
+  again, and a note opened before its layer existed was never offered
+  as a project. Kalem's side (branch `extensions-start-installed`): an
+  extension plugin installed, updated or removed while Kalem runs is
+  started or stopped at once, told of the documents open, and the
+  editors offer the folder once its layer arrives. The plugin needs
+  nothing new. Also: the graph's menu and the drawn graph's text among
+  the snapshots; the README's Getting started.
 
 ## What Kalem's core must gain
 
