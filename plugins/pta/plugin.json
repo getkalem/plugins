@@ -5,6 +5,7 @@
   "description": "hledger, Ledger and Beancount journals in Kalem: completed and checked by their language servers, and run through the tool you already have",
   "main": "dist/pta.wasm",
   "api": "^0.2.9",
+  "activation": ["onEvent:document:open"],
   "permissions": [
     "subprocess",
     "subprocess:hledger",
@@ -141,6 +142,22 @@
       "type": "boolean",
       "default": false,
       "description": "Toggle Status on a posting line marks that posting (as ledger-mode's), not its transaction"
+    },
+    "rules": {
+      "type": "string",
+      "default": "",
+      "description": "hledger's rules for importing bank statements, when not the statement's own beside it (statement.csv.rules): a path, absolute or beside the statement"
+    },
+    "ledger_account": {
+      "type": "string",
+      "default": "",
+      "description": "Ledger's import (ledger convert): the account a statement's lines are posted to, such as Assets:Checking"
+    },
+    "ledger_date_format": {
+      "type": "string",
+      "default": "",
+      "examples": ["%Y/%m/%d", "%d.%m.%Y", "%m/%d/%Y"],
+      "description": "Ledger's import: how a statement writes its dates, empty for Ledger's own guess"
     },
     "programs.hledger": {
       "type": "string",

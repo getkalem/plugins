@@ -705,7 +705,7 @@ first.
 
 ## PT9. Import from bank statements
 
-- [ ] PT9a hledger: `pta.import` (`SPC m i`), in a CSV document: the
+- [x] PT9a hledger: `pta.import` (`SPC m i`), in a CSV document: the
   rules file beside it (`statement.csv.rules`, hledger's convention)
   or the one the setting `rules` names, else offered to be made from a
   template with the CSV's header row as `fields` and the journal's
@@ -725,6 +725,27 @@ first.
   `date-format`, `if` blocks with their patterns, `account1`…,
   `amount`, `balance`, `include`), and "Edit rules" (`SPC m e`) opens
   the rules file from the CSV or from the import document.
+  (Done 2026-10-11, checked in the terminal editor on the corpus's
+  `statement.csv`: `SPC m i` in a CSV statement (or Import Statement in
+  the palette) shows `hledger import --dry-run` as "Import:
+  statement.csv", in hledger's syntax and highlighting, with a comment
+  header (the count; `i` import, `e` the rules, `r` again, `q`); `i`
+  runs the import, which hledger writes and remembers, the journal
+  then opened at the first transaction imported (the last of `hledger
+  print -O json`). The journal: the setting `journal` (beside the
+  statement when relative), else `LEDGER_FILE`'s (`hledger files`),
+  else the journal last opened in the session. A statement without
+  rules (hledger's error read): offered rules from a template of its
+  header row (`src/import.rs`: the usual names in English, Turkish,
+  German, Spanish, French; the separator, the date format and the
+  decimal mark guessed from the first data row; `account1` picked
+  among the journal's asset accounts), written in the new rules file
+  by the plugin's own command, queued; a test has hledger import the
+  statement through them. Changed: the plugin starts with any
+  document (`activation` `onEvent:document:open`), since a CSV file is
+  not one it claims and claiming CSV would suggest it for every CSV.
+  Not done: the yellow of the postings to `expenses:unknown` (the
+  document is highlighted as hledger's journal).)
 - [ ] PT9b Beancount: the user's beangulp import script (`import.py`
   at the journal's root, or the setting `importer`) run as `python3
   SCRIPT extract FILE` (the permission `subprocess:python3`, asked of
@@ -736,9 +757,17 @@ first.
   editor, `editor.insert` at its end when the import document is
   closed and the journal is the current document, and K3 for the clean
   way. `bean-check` runs after, as PT5.
-- [ ] PT9c Ledger: `ledger convert FILE` with the account and the input
+  (Waits on the owner: `subprocess:python3` is the open question
+  below; until then Import in a Beancount journal's statement says so.)
+- [x] PT9c Ledger: `ledger convert FILE` with the account and the input
   date format from settings, through PT9a's document, appended as PT9b
   appends.
+  (Done 2026-10-11: the settings `ledger_account` and
+  `ledger_date_format`; Ledger's conversion shown in the Import
+  document, `i` appending it at the end of the journal, opened and
+  edited by the plugin's own command, queued: one undo step. Ledger's
+  `convert` reads a header of its own names (`date`, `payee`,
+  `amount`…); a test converts such a statement.)
 
 ## PT10. Prices and values
 

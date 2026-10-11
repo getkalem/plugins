@@ -18,6 +18,7 @@ use kalem_plugin::kalem::{self, Event, EventKind, Plugin, Reply, Scope};
 use kalem_plugin::{documents, editor, process, settings, ui};
 
 mod balance;
+mod import;
 mod reconcile;
 mod register;
 
@@ -44,6 +45,11 @@ const BALANCE_ESCAPE_WHEN: &str =
 const RECONCILE_WHEN: &str = "textType == pta-reconcile && (vimCommand || !vimActive)";
 const RECONCILE_ESCAPE_WHEN: &str =
     "textType == pta-reconcile && !hasSelection && (vimCommand || !vimActive)";
+/// Keys in the Import document, and in a CSV statement.
+const IMPORT_WHEN: &str = "textType == pta-import && (vimCommand || !vimActive)";
+const IMPORT_ESCAPE_WHEN: &str =
+    "textType == pta-import && !hasSelection && (vimCommand || !vimActive)";
+const CSV_LEADER_WHEN: &str = "textType == csv && vimCommand";
 /// Keys in the Register document.
 const REGISTER_WHEN: &str = "textType == pta-register && (vimCommand || !vimActive)";
 const REGISTER_ESCAPE_WHEN: &str =
@@ -84,6 +90,9 @@ thread_local! {
     /// The new transaction asked for, waiting for the plugin's command
     /// that writes it (the editor is reached only while a command runs).
     static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
+    /// The journal last opened or gone to in this session: where a
+    /// statement is imported when nothing names a journal.
+    static LAST_JOURNAL: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// A new transaction to write.
@@ -504,12 +513,27 @@ fn close_check() -> Result<String, String> {
     Ok("null".into())
 }
 
+/// The journal last opened or gone to.
+fn last_journal() -> Option<String> {
+    LAST_JOURNAL.with(|l| l.borrow().clone())
+}
+
+fn seen_journal(path: &str) {
+    if Dialect::of_path(path).is_some() {
+        LAST_JOURNAL.with(|l| *l.borrow_mut() = Some(path.to_string()));
+    }
+}
+
 /// The cursor is in document `n` now.
 fn current(n: u64) {
     if CURRENT.with(|c| c.replace(Some(n))) == Some(n) {
         return;
     }
-    refresh(DOCS.with(|d| d.borrow().get(&n).cloned()));
+    let path = DOCS.with(|d| d.borrow().get(&n).cloned());
+    if let Some(p) = &path {
+        seen_journal(p);
+    }
+    refresh(path);
 }
 
 fn current_path() -> Option<String> {
@@ -900,7 +924,14 @@ fn insert_transaction() -> Result<String, String> {
 /// (`crate::MENU`) with their keys, or, in the Check document, its own;
 /// the one chosen runs where the pick was asked, once it is answered.
 fn menu() -> Result<String, String> {
-    let entries: Vec<(&str, &str, &str)> = if reconcile::here().is_some() {
+    let entries: Vec<(&str, &str, &str)> = if import::here().is_some() {
+        vec![
+            ("pta.importAccept", "Import", "i"),
+            ("pta.editRules", "Edit the Rules", "e"),
+            ("pta.import", "Import Dry Run Again", "r"),
+            ("pta.importClose", "Close the Import", "q"),
+        ]
+    } else if reconcile::here().is_some() {
         vec![
             ("pta.reconcileVisit", "Go to the Posting", "Enter"),
             ("pta.reconcileTarget", "Statement Balance…", "t"),
@@ -1135,20 +1166,68 @@ impl Plugin for Pta {
         })?;
         kalem::keymap("q", "pta.reconcileClose", Some(RECONCILE_WHEN))?;
         kalem::keymap("escape", "pta.reconcileClose", Some(RECONCILE_ESCAPE_WHEN))?;
+        command(
+            "pta.import",
+            "Import Statement",
+            &["csv", import::KIND],
+            |_| import::command(),
+        )?;
+        kalem::keymap("space m i", "pta.import", Some(CSV_LEADER_WHEN))?;
+        kalem::keymap("r", "pta.import", Some(IMPORT_WHEN))?;
+        command(
+            "pta.editRules",
+            "Edit the Statement's Rules",
+            &["csv", import::KIND],
+            |_| import::edit_rules(),
+        )?;
+        kalem::keymap("space m e", "pta.editRules", Some(CSV_LEADER_WHEN))?;
+        kalem::keymap("e", "pta.editRules", Some(IMPORT_WHEN))?;
+        command("pta.importAccept", "Import", &[import::KIND], |_| {
+            import::accept()
+        })?;
+        kalem::keymap("i", "pta.importAccept", Some(IMPORT_WHEN))?;
+        command(
+            "pta.importClose",
+            "Close the Import",
+            &[import::KIND],
+            |_| import::close(),
+        )?;
+        kalem::keymap("q", "pta.importClose", Some(IMPORT_WHEN))?;
+        kalem::keymap("escape", "pta.importClose", Some(IMPORT_ESCAPE_WHEN))?;
+        command(
+            "pta.insertRules",
+            "Write the Rules from the Template",
+            &["rules"],
+            |_| import::insert_rules(),
+        )?;
+        command(
+            "pta.importWrite",
+            "Write the Converted Statement",
+            crate::TEXT_TYPES,
+            |_| import::write_append(),
+        )?;
         let mut types = crate::TEXT_TYPES.to_vec();
-        types.extend([CHECK_KIND, balance::KIND, register::KIND, reconcile::KIND]);
+        types.extend([
+            CHECK_KIND,
+            balance::KIND,
+            register::KIND,
+            reconcile::KIND,
+            import::KIND,
+        ]);
         command("pta.menu", "Commands…", &types, |_| menu())?;
         kalem::keymap("space m m", "pta.menu", Some(&leader))?;
         kalem::keymap("?", "pta.menu", Some(CHECK_WHEN))?;
         kalem::keymap("?", "pta.menu", Some(BALANCE_WHEN))?;
         kalem::keymap("?", "pta.menu", Some(REGISTER_WHEN))?;
         kalem::keymap("?", "pta.menu", Some(RECONCILE_WHEN))?;
+        kalem::keymap("?", "pta.menu", Some(IMPORT_WHEN))?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
             {
                 DOCS.with(|docs| docs.borrow_mut().insert(d.document, p.clone()));
                 if Dialect::of_path(p).is_some() {
+                    seen_journal(p);
                     CURRENT.with(|c| c.set(Some(d.document)));
                     refresh(Some(p.clone()));
                 }
@@ -1168,6 +1247,7 @@ impl Plugin for Pta {
                 balance::forget(*n);
                 register::forget(*n);
                 reconcile::forget(*n);
+                import::forget(*n);
                 if CURRENT.with(Cell::get) == Some(*n) {
                     CURRENT.with(|c| c.set(None));
                     refresh(None);

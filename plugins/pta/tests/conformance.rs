@@ -40,9 +40,10 @@ fn the_manifest_has_both_halves() {
     assert_eq!(m["id"], "org.kalem.pta");
     assert_eq!(m["main"], "dist/pta.wasm");
     assert_eq!(m["api"], "^0.2.9");
-    // No activation: Kalem starts it with the first journal it serves (a
-    // Kalem before 0.6.9, at its start).
-    assert!(m.get("activation").is_none());
+    // Started with the first document of any kind: a bank statement (a
+    // CSV file, which the plugin does not claim) is imported from (PT9),
+    // and the journal's own files would start it too late.
+    assert_eq!(strings(&m["activation"]), ["onEvent:document:open"]);
     let languages = m["languages"].as_array().expect("languages");
     let ids: Vec<&str> = languages.iter().filter_map(|l| l["id"].as_str()).collect();
     assert_eq!(ids, ["hledger", "ledger", "beancount", "hledger-rules"]);

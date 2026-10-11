@@ -22,12 +22,15 @@
 //!
 //! - [`reconcile`]: an account against a statement, cleared (PT8).
 //!
+//! - [`import`]: a bank statement imported by the tool (PT9).
+//!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
 pub mod align;
 pub mod check;
 #[cfg(target_arch = "wasm32")]
 mod component;
+pub mod import;
 pub mod journal;
 pub mod reconcile;
 pub mod report;
