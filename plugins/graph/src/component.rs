@@ -36,6 +36,10 @@ impl Files for Fs {
     fn write(&self, path: &str, text: &str) -> Result<(), String> {
         fs::write(path, text)
     }
+
+    fn rename(&self, from: &str, to: &str) -> Result<(), String> {
+        fs::rename(from, to)
+    }
 }
 
 thread_local! {

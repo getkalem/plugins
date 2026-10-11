@@ -668,10 +668,19 @@ fn a_page_renamed_everywhere() {
     let mut c = ctx("/w/notes/pages/Kalem.md", &text, 0);
     c.args = args.clone();
     let out = app.command(&m, id, &c);
-    // The current document by the editor: its title written.
-    assert_eq!(
-        crate::edit::apply(&text, &edits_of(&out)),
-        format!("title:: Kalem Editor\n{text}")
+    // Its file renamed, as Logseq renames a page named by its file: no
+    // `title::` written.
+    assert!(
+        !out.iter().any(|e| matches!(e, Effect::Edits { .. })),
+        "{out:?}"
+    );
+    assert_eq!(m.get("/w/notes/pages/Kalem.md"), None);
+    assert_eq!(m.get("/w/notes/pages/Kalem Editor.md"), Some(text.clone()));
+    assert!(
+        app.index("/w/notes")
+            .unwrap()
+            .page("kalem editor")
+            .is_some_and(|p| p.path.as_deref() == Some("pages/Kalem Editor.md"))
     );
     // The other file by the plugin; the alias left as it was.
     assert_eq!(
@@ -1550,4 +1559,64 @@ fn the_graph_drawn_whole_and_around_a_page() {
     o.args = r#"{"node":"kalem"}"#.into();
     let out = app.command(&m, "graph.openNode", &o);
     assert_eq!(opens(&out), [("/w/notes/pages/Kalem.md".to_string(), 1)]);
+}
+
+#[test]
+fn a_page_with_a_title_keeps_its_file_and_a_vaults_note_is_renamed_with_it() {
+    // Logseq: a page whose `title::` names it keeps its file.
+    let m = Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{}"),
+        ("/w/notes/pages/kalem_page.md", "title:: Kalem\n\n- x\n"),
+        ("/w/notes/pages/Other.md", "- [[Kalem]]\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    let text = m.get("/w/notes/pages/kalem_page.md").unwrap();
+    app.opened(&m, "/w/notes/pages/kalem_page.md");
+    let mut c = ctx("/w/notes/pages/kalem_page.md", &text, 0);
+    c.args = r#"{"root":"/w/notes","key":"kalem","title":"Pen"}"#.into();
+    let out = app.command(&m, "graph.renameNow", &c);
+    assert_eq!(
+        crate::edit::apply(&text, &edits_of(&out)),
+        "title:: Pen\n\n- x\n"
+    );
+    assert!(m.get("/w/notes/pages/kalem_page.md").is_some());
+    assert_eq!(m.get("/w/notes/pages/Other.md").unwrap(), "- [[Pen]]\n");
+    // A vault's note: renamed with its file, every link to it rewritten.
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        (
+            "/v/Home.md",
+            "[[Note]], [[Note|shown]], [[Deep/Note#Part]] and ![[Note#^b1]]\n",
+        ),
+        ("/v/Deep/Note.md", "# Part\ntext ^b1\n"),
+        ("/v/Other.md", "[x](Deep/Note.md) [[Elsewhere]]\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Home.md");
+    let mut c = ctx("/v/Home.md", &m.get("/v/Home.md").unwrap(), 0);
+    c.path = Some("/v/Other.md".into());
+    c.text = m.get("/v/Other.md");
+    c.args = r#"{"root":"/v","key":"deep/note","title":"Big Idea"}"#.into();
+    let out = app.command(&m, "graph.renameNow", &c);
+    assert_eq!(m.get("/v/Deep/Note.md"), None);
+    assert_eq!(
+        m.get("/v/Deep/Big Idea.md").as_deref(),
+        Some("# Part\ntext ^b1\n")
+    );
+    assert_eq!(
+        m.get("/v/Home.md").unwrap(),
+        "[[Big Idea]], [[Big Idea|shown]], [[Deep/Big Idea#Part]] and ![[Big Idea#^b1]]\n"
+    );
+    // The current document by the editor.
+    assert_eq!(
+        crate::edit::apply(&m.get("/v/Other.md").unwrap(), &edits_of(&out)),
+        "[x](Deep/Big%20Idea.md) [[Elsewhere]]\n"
+    );
+    // A name with a slash is a move, not a rename.
+    c.args = r#"{"root":"/v","key":"deep/big idea","title":"a/b"}"#.into();
+    let out = app.command(&m, "graph.renameNow", &c);
+    assert!(
+        matches!(&out[0], Effect::Notify(_, Level::Warning)),
+        "{out:?}"
+    );
 }

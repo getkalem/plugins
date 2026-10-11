@@ -19,6 +19,11 @@ pub trait Files {
     fn list(&self, dir: &str) -> Result<Vec<String>, String>;
     /// Writes a text file, its folder made when missing.
     fn write(&self, path: &str, text: &str) -> Result<(), String>;
+    /// Moves a file to another path, its folder made when missing;
+    /// refused when that path is taken (Kalem's plugin API 0.2.12).
+    fn rename(&self, from: &str, _to: &str) -> Result<(), String> {
+        Err(format!("{from} cannot be renamed here"))
+    }
 }
 
 /// `path` with `/` for every separator and no `/` at its end (but the
@@ -113,6 +118,16 @@ impl Files for Native {
         }
         std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
     }
+
+    fn rename(&self, from: &str, to: &str) -> Result<(), String> {
+        if std::path::Path::new(to).exists() {
+            return Err(format!("{to} exists already"));
+        }
+        if let Some(dir) = parent(to) {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{to}: {e}"))?;
+        }
+        std::fs::rename(from, to).map_err(|e| format!("{from}: {e}"))
+    }
 }
 
 /// Files kept in memory, for the tests: paths to texts.
@@ -178,6 +193,18 @@ impl Files for Memory {
         self.files
             .borrow_mut()
             .insert(path.to_string(), text.to_string());
+        Ok(())
+    }
+
+    fn rename(&self, from: &str, to: &str) -> Result<(), String> {
+        let mut files = self.files.borrow_mut();
+        if files.contains_key(to) {
+            return Err(format!("{to} exists already"));
+        }
+        let text = files
+            .remove(from)
+            .ok_or_else(|| format!("{from}: no such file"))?;
+        files.insert(to.to_string(), text);
         Ok(())
     }
 }

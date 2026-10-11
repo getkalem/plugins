@@ -500,12 +500,6 @@ impl App {
                 let Some(index) = self.indexes.get(root) else {
                     return Vec::new();
                 };
-                if index.graph.kind == Kind::Obsidian {
-                    return vec![Effect::Notify(
-                        "A note of a vault is renamed with its file, which Kalem gives plugins no way to do yet".into(),
-                        Level::Info,
-                    )];
-                }
                 let Some(page) = index.page_of(rel).cloned() else {
                     return Vec::new();
                 };
@@ -548,13 +542,54 @@ impl App {
         let Some(page) = index.page(key).cloned() else {
             return vec![Effect::Notify("No such page".into(), Level::Warning)];
         };
+        let vault = index.graph.kind == Kind::Obsidian;
+        let title = title.trim();
+        if title.is_empty() || (vault && title.contains(['/', '\\', '#', '|', '^', '[', ']'])) {
+            return vec![Effect::Notify(
+                format!("{title} cannot name a note"),
+                Level::Warning,
+            )];
+        }
         let new_key = crate::names::key(title);
-        if new_key != page.key && index.page(&new_key).is_some_and(|p| p.path.is_some()) {
+        if !vault && new_key != page.key && index.page(&new_key).is_some_and(|p| p.path.is_some()) {
             return vec![Effect::Notify(
                 format!("A page called {title} exists: Kalem does not merge pages"),
                 Level::Warning,
             )];
         }
+        // The page's file renamed with it (Kalem's plugin API 0.2.12): a
+        // vault's note always, as Obsidian renames it; a Logseq page named
+        // by its file, as Logseq renames it (one with `title::` keeps its
+        // file, its `title::` changed).
+        let moved: Option<(String, String)> = page.path.as_ref().and_then(|rel| {
+            let by_file = vault || !page.props.iter().any(|(k, _)| k == "title");
+            if !by_file || index.graph.read_only {
+                return None;
+            }
+            let to = if vault {
+                let name = format!("{title}.md");
+                match rel.rsplit_once('/') {
+                    Some((dir, _)) => format!("{dir}/{name}"),
+                    None => name,
+                }
+            } else {
+                index.page_path(title, None)
+            };
+            (to != *rel).then(|| (rel.clone(), to))
+        });
+        if let Some((_, to)) = &moved
+            && (index.file(to).is_some() || files.read(&index.graph.path(to)).is_ok())
+        {
+            return vec![Effect::Notify(
+                format!("{to} exists: Kalem does not merge pages"),
+                Level::Warning,
+            )];
+        }
+        let old_name = page
+            .path
+            .as_deref()
+            .map(|r| files::stem_ext(r).0.to_string())
+            .unwrap_or_else(|| page.title.clone());
         let current = ctx
             .path
             .as_deref()
@@ -585,14 +620,27 @@ impl App {
         let old = page.title.clone();
         let mut out = Vec::new();
         let mut written = Vec::new();
+        let index = &self.indexes[root];
+        // A note's own title written only when the file keeps its name.
+        let edits_of = |text: &str, rel: &str, own: bool| match index.graph.kind {
+            Kind::Obsidian => vault_rename_edits(text, rel, index, key, &old_name, title),
+            Kind::Logseq => rename_edits(
+                text,
+                self.flavor_in(root, rel),
+                &comma,
+                &old,
+                title,
+                own && moved.is_none(),
+            ),
+        };
+        let mut writes: Vec<(String, String)> = Vec::new();
         for rel in &rels {
-            let flavor = self.flavor_in(root, rel);
             let own = page.path.as_deref() == Some(rel.as_str());
             if Some(rel.as_str()) == current.as_deref() {
                 let Some(text) = ctx.text.as_deref() else {
                     continue;
                 };
-                let edits = rename_edits(text, flavor, &comma, &old, title, own);
+                let edits = edits_of(text, rel, own);
                 if !edits.is_empty() {
                     out.push(Effect::Edits {
                         edits,
@@ -602,16 +650,43 @@ impl App {
                 }
                 continue;
             }
-            let path = self.indexes[root].graph.path(rel);
+            let path = index.graph.path(rel);
             let Ok(text) = files.read(&path) else {
                 continue;
             };
-            let edits = rename_edits(&text, flavor, &comma, &old, title, own);
-            if edits.is_empty() {
-                continue;
+            let edits = edits_of(&text, rel, own);
+            if !edits.is_empty() {
+                writes.push((path, edit::apply(&text, &edits)));
             }
-            match files.write(&path, &edit::apply(&text, &edits)) {
+        }
+        for (path, text) in writes {
+            match files.write(&path, &text) {
                 Ok(()) => written.push(path),
+                Err(e) => out.push(Effect::Notify(e, Level::Error)),
+            }
+        }
+        // The file renamed: Kalem's document of it follows it.
+        if let Some((from, to)) = &moved {
+            let (from, to) = (
+                self.indexes[root].graph.path(from),
+                self.indexes[root].graph.path(to),
+            );
+            match files.rename(&from, &to) {
+                Ok(()) => {
+                    written.push(from.clone());
+                    written.push(to.clone());
+                    if self.dirty.remove(&from) {
+                        self.dirty.insert(to.clone());
+                    }
+                    for p in self.open.values_mut() {
+                        if *p == from {
+                            p.clone_from(&to);
+                        }
+                    }
+                    if self.current.as_deref() == Some(from.as_str()) {
+                        self.current = Some(to);
+                    }
+                }
                 Err(e) => out.push(Effect::Notify(e, Level::Error)),
             }
         }
@@ -627,6 +702,76 @@ impl App {
         out.extend(self.refresh(root));
         out
     }
+}
+
+/// The edits renaming the vault's note `key`, called `old` by its file,
+/// to `new` in `text` (the note `rel`): every link resolving to it, its
+/// name in the link changed where it is written (`[[old]]`,
+/// `[[Folder/old#Heading|shown]]`, `![[old]]`, `[x](old.md)`).
+fn vault_rename_edits(
+    text: &str,
+    rel: &str,
+    index: &crate::index::Index,
+    key: &str,
+    old: &str,
+    new: &str,
+) -> Vec<Edit> {
+    let st = starts(text);
+    let s = scan::scan(text, Flavor::Obsidian, &scan::Options::default());
+    let mut edits = Vec::new();
+    for r in &s.refs {
+        if matches!(r.kind, RefKind::Tag | RefKind::Property)
+            || r.start == r.end
+            || index.resolve(&r.target, rel) != key
+        {
+            continue;
+        }
+        let ls = st[r.line as usize];
+        let (a, b) = (ls + r.start as usize, ls + r.end as usize);
+        let span = &text[a..b];
+        // A Markdown link's target is a URL: its spaces written `%20`.
+        let url = span.contains("](");
+        let new = if url {
+            new.replace(' ', "%20")
+        } else {
+            new.to_string()
+        };
+        for (o, n) in [
+            (old.to_string(), new.clone()),
+            (old.replace(' ', "%20"), new.replace(' ', "%20")),
+        ] {
+            if let Some(p) = name_in(span, &o) {
+                edits.push(Edit {
+                    start: a + p,
+                    end: a + p + o.len(),
+                    text: n,
+                });
+                break;
+            }
+        }
+    }
+    edits
+}
+
+/// Where a note's name `name` is written in the link `span`: after `[[`,
+/// `(` or a folder's `/`, before `]]`, `|`, `#`, `.md` or `)`, its case
+/// as it is.
+fn name_in(span: &str, name: &str) -> Option<usize> {
+    let lower = span.to_lowercase();
+    let want = name.to_lowercase();
+    let mut from = 0;
+    while let Some(p) = lower[from..].find(&want) {
+        let at = from + p;
+        let before = lower[..at].chars().next_back();
+        let after = lower[at + want.len()..].chars().next();
+        if matches!(before, Some('[' | '(' | '/'))
+            && matches!(after, Some(']' | '|' | '#' | '.' | ')'))
+        {
+            return Some(at);
+        }
+        from = at + want.len().max(1);
+    }
+    None
 }
 
 /// The first line of the block that starts at `line` with `text`, or,
