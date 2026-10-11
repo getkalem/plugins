@@ -206,6 +206,20 @@ With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mod
 
 Format Document (`SPC c f`) in an hledger or Ledger journal: none (hledger-lsp's is left unused, and `hledger print` rewrites a journal); Align Amounts, with the whole file selected, is the formatter. In a Beancount journal: its server's, else set `[formatters] beancount = "bean-format -"`.
 
+## Large journals
+
+Every tool call runs beside the editor, which never waits for it; the status bar item names the program running (`hledger · all.journal · ✓ · hledger…`). The tool reads the whole journal for each call, so on a large journal each takes the tool's time. Measured on the accountant's journal of `tests/large.rs`, 200,000 transactions over ten yearly files, on an Apple M-series Mac shared with other work (`cargo test -p kalem-plugin-pta --test large -- --ignored --nocapture`):
+
+| | hledger 1.52 | Ledger 3.4 | Beancount 3.2 |
+|---|---|---|---|
+| Check | 9.9 s | 1.0 s | 2.0 s (its cache warm) |
+| Balance sheet, a run | 7.8 s | 1.3 s | 7.2 s a level, the levels side by side |
+| Register of the busiest account, this month | 7.8 s, 1.6 MB | 0.9 s, 0.1 MB | 7.1 s, 0.1 MB |
+| … all dates (140,000 postings) | 184 MB: refused | 3.3 s, 13.5 MB | 11.3 s, 14.1 MB |
+| A server's first completion | ptimoney's 12.8 s, juev's 4.5 s | none | 10.0 s |
+
+Kalem takes at most 16 MB of what a program prints. An output past it is not shown cut: a notice says so and names a shorter period. hledger's register comes as JSON (its amounts' styles and statuses), some 1.3 KB a posting, so past about 12,000 postings of one account in the period it is refused, where Ledger's and Beancount's, some 100 bytes a posting, pass 150,000; the Register shows the last 2,000 either way. The plugin reads 14,000 postings of hledger's JSON in 0.1 s. hledger's `files` (which journal `LEDGER_FILE` names) is asked once until a journal is saved, and the place of a posting from hledger's `print` of its day only.
+
 ## The servers, measured
 
 On the corpus, through Kalem's client (`kalem lsp ask`, `kalem lsp check`) and asked directly where Kalem cannot ask yet, with hledger 1.52.4 and Beancount 3.2.3. The server's checks are its own: the tool's check (PT5) is the one to trust.

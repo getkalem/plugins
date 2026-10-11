@@ -202,6 +202,7 @@ fn gather(key: &(String, String), open: bool) {
                 return ui::notify(&format!("{}: {first}", tool.checker()), ui::Level::Warning);
             }
             Err(NotRun::Missing) => return ui::notify(&super::missing(tool), ui::Level::Warning),
+            Err(NotRun::TooLong) => return,
             Err(NotRun::Refused(why)) => {
                 return ui::notify(&format!("{}: {why}", tool.checker()), ui::Level::Warning);
             }
@@ -304,7 +305,8 @@ pub(super) fn visit() -> Result<String, String> {
 }
 
 /// The journal at `posting`: its place, or hledger's transaction's,
-/// found in `hledger print -O json` of `main` when asked.
+/// found in `hledger print -O json` of `main` for the posting's day (the
+/// whole journal's may pass 16 MB) when asked.
 pub(super) fn go_to(tool: Dialect, main: &str, posting: Posting) {
     if let Some((file, line)) = posting.place {
         go(&file, line);
@@ -313,13 +315,21 @@ pub(super) fn go_to(tool: Dialect, main: &str, posting: Posting) {
     let Some(n) = posting.transaction else {
         return;
     };
-    let args = vec![
+    let mut args = vec![
         "-f".into(),
         main.to_string(),
         "print".into(),
         "-O".into(),
         "json".into(),
     ];
+    if let Some((day, _, _)) = crate::write::date_at(&posting.date) {
+        args.extend([
+            "-b".into(),
+            day.written('-'),
+            "-e".into(),
+            day.plus(1).written('-'),
+        ]);
+    }
     let dir = journal::folder(main).to_string();
     run(tool.checker(), args, &dir, move |r| {
         let place = r

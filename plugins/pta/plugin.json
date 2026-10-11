@@ -116,12 +116,12 @@
       "minimum": 0,
       "maximum": 400,
       "default": 52,
-      "description": "Align Amounts (SPC m a) puts the amounts' last digits at this column, as ledger-mode does; 0 for as near the accounts as the longest posting allows"
+      "description": "Align Amounts (SPC m =) puts the amounts' last digits at this column, as ledger-mode does; 0 for as near the accounts as the longest posting allows"
     },
     "align_on_enter": {
       "type": "boolean",
       "default": true,
-      "description": "Enter on a posting aligns its amount first, as ledger-mode does (not in Vim's insert mode, where SPC m a in normal mode does it)"
+      "description": "Enter on a posting aligns its amount first, as ledger-mode does (not in Vim's insert mode, where SPC m = in normal mode does it)"
     },
     "check_on_save": {
       "type": "boolean",
@@ -171,7 +171,7 @@
       "type": "array",
       "default": [],
       "examples": [["Food by month: balance expenses:food -M"], ["Big spending: register expenses amt:>1000"], ["Cash: SELECT account, sum(position) WHERE account ~ 'Cash' GROUP BY account"]],
-      "description": "Reports of your own, first in Report… (SPC m o): NAME: ARGUMENTS, the tool's arguments after the journal's (hledger balance expenses -M), or a Beancount query"
+      "description": "Reports of your own, first in Report… (SPC m r): NAME: ARGUMENTS, the tool's arguments after the journal's (hledger balance expenses -M), or a Beancount query"
     },
     "prices": {
       "type": "string",

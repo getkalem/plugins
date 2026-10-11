@@ -74,6 +74,22 @@ pub fn drafted(tool: Dialect, stdout: &str) -> (usize, String) {
     (count, text)
 }
 
+/// The `k`-th last transaction of hledger's `print -O json` by its
+/// number (`tindex`): the first of the last `k` appended.
+pub fn nth_last(print_json: &str, k: usize) -> Option<usize> {
+    let all: serde_json::Value = serde_json::from_str(print_json).ok()?;
+    let mut n: Vec<u64> = all
+        .as_array()?
+        .iter()
+        .filter_map(|t| t["tindex"].as_u64())
+        .collect();
+    n.sort_unstable();
+    n.len()
+        .checked_sub(k.max(1))
+        .and_then(|i| n.get(i))
+        .map(|&t| t as usize)
+}
+
 /// The rules file hledger said is missing, from its error.
 pub fn missing_rules(stderr: &str) -> Option<String> {
     let at = stderr.find(".rules: openFile: does not exist")?;
@@ -249,6 +265,10 @@ mod tests {
             Some("/s/other.csv.rules")
         );
         assert_eq!(missing_rules("hledger: Error: something else"), None);
+        let printed = r#"[{"tindex": 7}, {"tindex": 40}, {"tindex": 41}]"#;
+        assert_eq!(nth_last(printed, 2), Some(40));
+        assert_eq!(nth_last(printed, 1), Some(41));
+        assert_eq!(nth_last(printed, 4), None);
     }
 
     #[test]

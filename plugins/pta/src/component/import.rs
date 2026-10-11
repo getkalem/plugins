@@ -204,6 +204,7 @@ fn dry_run(csv: String, csv_text: Option<String>, open: bool) {
         }
         Err(NotRun::Missing) => ui::notify(&super::missing(tool), ui::Level::Warning),
         Err(NotRun::Refused(why)) => ui::notify(&format!("{program}: {why}"), ui::Level::Warning),
+        Err(NotRun::TooLong) => {}
     });
 }
 
@@ -372,7 +373,7 @@ pub(super) fn accept() -> Result<String, String> {
             let said = String::from_utf8_lossy(&e.stdout);
             ui::notify(said.lines().next().unwrap_or("imported"), ui::Level::Info);
             close_import(&csv);
-            first_imported(journal, count);
+            first_imported(journal, &text);
         }
         Ok(e) => {
             let said = String::from_utf8_lossy(&e.stderr);
@@ -391,15 +392,26 @@ pub(super) fn accept() -> Result<String, String> {
     Ok("null".into())
 }
 
-/// The journal at the first of the `count` transactions just imported:
-/// the last ones of hledger's print.
-fn first_imported(journal: String, count: usize) {
+/// The journal at the first transaction just imported, `drafted` its
+/// dry run: hledger's print of that transaction's day (not the whole
+/// journal's, which may pass 16 MB), the transactions imported that day
+/// the last of it.
+fn first_imported(journal: String, drafted: &str) {
+    let txs = crate::write::transactions(drafted, Dialect::Hledger);
+    let Some(day) = txs.first().map(|t| t.date) else {
+        return;
+    };
+    let that_day = txs.iter().filter(|t| t.date == day).count();
     let args = vec![
         "-f".into(),
         journal.clone(),
         "print".into(),
         "-O".into(),
         "json".into(),
+        "-b".into(),
+        day.written('-'),
+        "-e".into(),
+        day.plus(1).written('-'),
     ];
     run("hledger", args, journal::folder(&journal), move |r| {
         let Some(json) = r
@@ -409,15 +421,9 @@ fn first_imported(journal: String, count: usize) {
         else {
             return;
         };
-        let all: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
-        let Some(n) = all
-            .as_array()
-            .and_then(|a| a.iter().filter_map(|t| t["tindex"].as_u64()).max())
-        else {
-            return;
-        };
-        let first = (n as usize + 1).saturating_sub(count);
-        if let Some((file, line)) = crate::report::hledger_place(&json, first) {
+        let place =
+            import::nth_last(&json, that_day).and_then(|n| crate::report::hledger_place(&json, n));
+        if let Some((file, line)) = place {
             let args = serde_json::json!({ "path": file, "line": line });
             let _ = kalem::run("file.open", &args.to_string());
         }

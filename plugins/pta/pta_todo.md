@@ -917,7 +917,7 @@ first.
 
 ## PT13. Speed, limits and the tests
 
-- [ ] PT13 The accountant's journal: 200,000 transactions over ten
+- [x] PT13 The accountant's journal: 200,000 transactions over ten
   files. Every tool call asynchronous (`process` never waits), the
   status bar item showing the running one; the documents of PT7
   paged by period as said; outputs over `process`'s 16 MB refused
@@ -934,6 +934,30 @@ first.
   fixtures, so they run without the tools; snapshot tests of every
   document kind in both frontends; the byte-for-byte tests of PT4 and
   PT6 on every corpus file.
+  (Done 2026-10-11, measured by `tests/large.rs` (ignored, run by hand:
+  it writes the journal for hledger and Ledger, one syntax, and for
+  Beancount, in `PTA_LARGE`) and `tests/server.rs`'s ignored
+  `the_servers_on_the_large_journal`; the numbers in the README. Every
+  call was asynchronous already; the status bar item now names the
+  program running. An output Kalem cut at 16 MB (`truncated`) is
+  refused in `run` with a notice naming a shorter period (`NotRun::
+  TooLong`), never shown cut: hledger's JSON register, some 1.3 KB a
+  posting, passes it beyond some 12,000 postings in the period (184 MB
+  for the busiest account's 140,000), Ledger's and Beancount's at some
+  150,000. hledger's `print -O json` for a posting's place (Enter in
+  the Register, the first transaction imported) asked for its day
+  only, not the whole journal. `hledger files` (LEDGER_FILE's journal),
+  some 9 s of a processor on this journal, asked once and kept until a
+  journal is saved, its askers waiting together. Beancount's Balance
+  asks its accounts whole first, then the levels above and the total
+  side by side, not one after another. The JSON of 140,000 postings is
+  parsed in 1.1 s natively (14,000 in 0.1 s), within the component's
+  budget since no more than 16 MB arrives. Tests on recorded fixtures
+  were there for each tool's output (balance rows, registers, checks,
+  hledger's JSON); snapshot tests of the frontends are Kalem's. Times
+  vary with the machine's load: measured while other sessions built;
+  hledger's own parsing (some 8 to 10 s of a processor a call) is the
+  floor.)
 
 ## PT14. Release, the README and the Book
 

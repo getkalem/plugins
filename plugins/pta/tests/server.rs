@@ -10,8 +10,9 @@
 //! the manifest's commands where they run. A server or a tool not
 //! installed is skipped with a note, as on CI.
 
-// A test skipped is said on standard error.
-#![allow(clippy::print_stderr)]
+// A test skipped is said on standard error; the large journal's
+// measures are printed.
+#![allow(clippy::print_stderr, clippy::print_stdout)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -94,6 +95,19 @@ impl Drop for Server {
 
 impl Server {
     fn start(key: &str, program: &str, root: PathBuf, language: &str, files: &[&str]) -> Server {
+        let init = manifest()["servers"][key]["initializationOptions"].clone();
+        Server::start_with(key, program, root, language, files, init)
+    }
+
+    /// As [`Server::start`], with `init` its initialization options.
+    fn start_with(
+        key: &str,
+        program: &str,
+        root: PathBuf,
+        language: &str,
+        files: &[&str],
+        init: Value,
+    ) -> Server {
         let spec = &manifest()["servers"][key];
         let args: Vec<String> = spec["command"]
             .as_array()
@@ -109,7 +123,7 @@ impl Server {
                 args,
                 root: root.clone(),
                 settings: spec["settings"].clone(),
-                initialization_options: spec["initializationOptions"].clone(),
+                initialization_options: init,
                 ..ServerConfig::default()
             },
             Arc::new(|| {}),
@@ -389,5 +403,68 @@ fn the_corpus_through_beancount_language_server() {
                 ],
             )
         });
+    }
+}
+
+/// The servers on the accountant's journal (PT13): the 200,000
+/// transactions `tests/large.rs` writes in `PTA_LARGE`, each server
+/// started there and told the main journal, the time until it is ready
+/// and until its first completion of an account in the last year's file.
+/// Run by hand after `tests/large.rs`: `PTA_LARGE=… cargo test -p
+/// kalem-plugin-pta --test server -- --ignored --nocapture`.
+#[test]
+#[ignore = "the large journal and minutes of the servers' time: run by hand"]
+fn the_servers_on_the_large_journal() {
+    let Some(root) = std::env::var_os("PTA_LARGE").map(PathBuf::from) else {
+        eprintln!("PTA_LARGE names no folder: run tests/large.rs first");
+        return;
+    };
+    let timed = |key: &str,
+                 program: &str,
+                 language: &str,
+                 main: &str,
+                 file: &str,
+                 line: &str,
+                 prefix: &str| {
+        let t = Instant::now();
+        // Told the main journal, as the setting tells it.
+        let init = json!({ "journal_file": root.join(main).to_string_lossy() });
+        let s = Server::start_with(key, program, root.clone(), language, &[main, file], init);
+        let ready = t.elapsed().as_secs_f64();
+        let t = Instant::now();
+        let place = s.at(file, line, prefix, prefix.len());
+        let answer = s.ask(
+            "textDocument/completion",
+            json!({ "textDocument": { "uri": uri(&root, file) }, "position": place }),
+            600,
+            |v| !features::completion_items(v, false).0.is_empty(),
+        );
+        let n = features::completion_items(&answer, false).0.len();
+        println!(
+            "{program}: ready in {ready:.1} s, {n} completions in {:.1} s",
+            t.elapsed().as_secs_f64()
+        );
+    };
+    for program in programs("PTA_HLEDGER_LSP", "hledger-lsp") {
+        timed(
+            "hledger-lsp",
+            &program,
+            "hledger",
+            "all.journal",
+            "2026.journal",
+            "    expenses:",
+            "    exp",
+        );
+    }
+    for program in programs("PTA_BEANCOUNT_LSP", "beancount-language-server") {
+        timed(
+            "beancount-language-server",
+            &program,
+            "beancount",
+            "all.beancount",
+            "2026.beancount",
+            "  Expenses:",
+            "  Exp",
+        );
     }
 }

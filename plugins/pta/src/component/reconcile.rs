@@ -2,7 +2,7 @@
 //! closing balance. The tool's totals (cleared, pending, both) and its
 //! postings not cleared (`crate::reconcile`), the difference to the
 //! target the user typed, written again on the journal's save; the
-//! journal stays where postings are marked (`SPC m c`). Finish clears
+//! journal stays where postings are marked (`SPC m t`). Finish clears
 //! the pending postings and writes the target as a balance assertion,
 //! in the journal, once the difference is zero.
 
@@ -63,7 +63,7 @@ pub(super) fn here() -> Option<(String, String)> {
     })
 }
 
-/// Reconcile (`SPC m r`): in a journal, the account of the posting at
+/// Reconcile (`SPC m R`): in a journal, the account of the posting at
 /// the cursor (else one picked), its target asked (the tool's total of
 /// the cleared and pending postings offered); in the document, run
 /// again.
@@ -179,6 +179,7 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                 );
             }
             Err(NotRun::Missing) => return ui::notify(&super::missing(tool), ui::Level::Warning),
+            Err(NotRun::TooLong) => return,
             Err(NotRun::Refused(why)) => {
                 return ui::notify(&format!("{}: {why}", tool.checker()), ui::Level::Warning);
             }
@@ -308,7 +309,7 @@ fn write(key: &(String, String), open: bool) {
         let mut r = r.borrow_mut();
         let e = r.get_mut(key)?;
         let header = format!("Reconcile: {} · {} · {}", key.1, journal::name(&key.0), e.tool.language());
-        let hint = "Enter the posting · t target · C finish · r again · q close; mark postings in the journal (SPC m c), then save";
+        let hint = "Enter the posting · t target · C finish · r again · q close; mark postings in the journal (SPC m t), then save";
         e.shown = reconcile::layout(&header, hint, &e.figures, &e.postings);
         Some((e.doc, e.shown.text.clone(), super::balance::styles(&e.shown)))
     }) else {
@@ -410,7 +411,7 @@ pub(super) fn finish() -> Result<String, String> {
     });
     let Some(key) = key else {
         ui::notify(
-            "No reconciliation of this journal: Reconcile first (SPC m r)",
+            "No reconciliation of this journal: Reconcile first (SPC m R)",
             ui::Level::Info,
         );
         return Ok("null".into());

@@ -105,6 +105,12 @@ thread_local! {
     /// Text to append at a file's end once it is the current document
     /// (`pta.append`): the file, the text, the undo step's name.
     static APPEND: RefCell<Option<(String, String, String)>> = const { RefCell::new(None) };
+    /// `hledger files`' answers by folder, until a journal is saved.
+    static FILES: RefCell<BTreeMap<String, Files>> = const { RefCell::new(BTreeMap::new()) };
+    /// The programs running, in their order.
+    static RUNNING: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    /// What the status bar item shows: the tool and the main journal.
+    static SHOWN: RefCell<Option<(Dialect, Main)>> = const { RefCell::new(None) };
 }
 
 /// A new transaction to write.
@@ -146,17 +152,36 @@ fn missing(d: Dialect) -> String {
     )
 }
 
-/// Why a program did not run.
+/// Why a program did not run, or what it printed is not taken.
 enum NotRun {
     /// Kalem refused the run (no project, too many runs): its words.
     Refused(String),
     /// The program could not start: not installed.
     Missing,
+    /// It printed more than Kalem takes (`process`'s 16 MB): cut, so not
+    /// shown, and the user told once ([`run`]).
+    TooLong,
+}
+
+/// What `program` printed, whole: an output Kalem cut is refused, with a
+/// notice naming a shorter period, rather than shown cut.
+fn whole(program: &str, e: process::Exit) -> Result<process::Exit, NotRun> {
+    if e.truncated {
+        ui::notify(
+            &format!(
+                "{program} printed more than Kalem takes (16 MB): a shorter period shows less"
+            ),
+            ui::Level::Warning,
+        );
+        return Err(NotRun::TooLong);
+    }
+    Ok(e)
 }
 
 /// Runs `program` with `args` in `dir`, or, where Kalem refuses that
 /// folder (a plugin's programs run in the projects' folders only), in
-/// the first project's; `done` gets how it ended.
+/// the first project's; `done` gets how it ended. While it runs, the
+/// status bar item names it.
 fn run(
     program: &'static str,
     args: Vec<String>,
@@ -164,19 +189,42 @@ fn run(
     done: impl FnOnce(Result<process::Exit, NotRun>) + 'static,
 ) {
     let done = Rc::new(RefCell::new(Some(done)));
+    running(program, true);
     let finish = move |r: Result<process::Exit, NotRun>| {
+        running(program, false);
         if let Some(f) = done.borrow_mut().take() {
             f(r);
         }
     };
     let here = process::Command::new(program).args(args.clone()).cwd(dir);
     let first = finish.clone();
-    if process::run(&here, move |r| first(r.map_err(|_| NotRun::Missing))).is_err() {
+    let taken = move |r: Result<process::Exit, String>| {
+        r.map_err(|_| NotRun::Missing)
+            .and_then(|e| whole(program, e))
+    };
+    if process::run(&here, move |r| first(taken(r))).is_err() {
         let anywhere = process::Command::new(program).args(args);
         let second = finish.clone();
-        if let Err(why) = process::run(&anywhere, move |r| second(r.map_err(|_| NotRun::Missing))) {
+        if let Err(why) = process::run(&anywhere, move |r| second(taken(r))) {
             finish(Err(NotRun::Refused(why)));
         }
+    }
+}
+
+/// `program` started or ended: the status bar item names the programs
+/// running (`hledger · all.journal · ✓ · hledger…`), the long runs of a
+/// large journal seen.
+fn running(program: &'static str, started: bool) {
+    RUNNING.with(|r| {
+        let mut r = r.borrow_mut();
+        if started {
+            r.push(program);
+        } else if let Some(i) = r.iter().position(|p| *p == program) {
+            r.remove(i);
+        }
+    });
+    if let Some((tool, main)) = SHOWN.with(|s| s.borrow().clone()) {
+        show(tool, &main);
     }
 }
 
@@ -201,6 +249,7 @@ fn version() -> Result<String, String> {
                 ui::Level::Info,
             ),
             Err(NotRun::Missing) => ui::notify(&missing(d), ui::Level::Warning),
+            Err(NotRun::TooLong) => {}
             Err(NotRun::Refused(why)) => {
                 ui::notify(&format!("{}: {why}", d.checker()), ui::Level::Warning);
             }
@@ -254,6 +303,7 @@ fn newline() -> Result<String, String> {
 }
 
 fn hide() {
+    SHOWN.with(|s| s.borrow_mut().take());
     if let Some(d) = ITEM.with(|i| i.borrow_mut().take()) {
         d.dispose();
     }
@@ -268,6 +318,12 @@ fn show(tool: Dialect, main: &Main) {
         text.push_str(" · ");
         text.push_str(&check::mark(n, glyphs()));
     }
+    if let Some(p) = RUNNING.with(|r| r.borrow().first().copied()) {
+        text.push_str(" · ");
+        text.push_str(p);
+        text.push('…');
+    }
+    SHOWN.with(|s| *s.borrow_mut() = Some((tool, main.clone())));
     let options = ui::StatusOptions {
         tooltip: Some(journal::status_tooltip(tool, main)),
         command: Some("pta.check".into()),
@@ -312,18 +368,69 @@ fn resolve(path: String, dialect: Dialect, done: impl FnOnce(Dialect, Main) + 's
     let tool = journal::tool(choice, dialect, &path, INSTALLED.with(Cell::get));
     let set = s.journal_for(dialect).to_string();
     if tool == Dialect::Hledger && set.trim().is_empty() {
-        // `hledger files` without `-f`: the journal LEDGER_FILE names and
-        // its includes.
-        run("hledger", vec!["files".into()], &dir, move |r| {
-            let listed = r
-                .ok()
-                .filter(|e| e.status == Some(0))
-                .map(|e| journal::files_listed(&e.stdout));
+        ledger_files(dir, move |listed| {
             done(tool, journal::main_journal("", &path, listed.as_deref()));
         });
         return;
     }
     done(tool, journal::main_journal(&set, &path, None));
+}
+
+/// `hledger files` without `-f`, run in `dir`: the journal LEDGER_FILE
+/// names and its includes. hledger reads the whole journal for it (some
+/// 9 s of a processor for 200,000 transactions), so the answer is kept
+/// until a journal is saved, and asked once while it is on its way.
+fn ledger_files(dir: String, done: impl FnOnce(Option<Vec<String>>) + 'static) {
+    let mut done: Option<Waiting> = Some(Box::new(done));
+    // The answer known, or none and whether this call asks for it.
+    let (known, ask) = FILES.with(|f| {
+        let mut f = f.borrow_mut();
+        match f.get_mut(&dir) {
+            Some(Files::Known(l)) => (Some(l.clone()), false),
+            Some(Files::Asking(waiting)) => {
+                waiting.extend(done.take());
+                (None, false)
+            }
+            None => {
+                let waiting = done.take().into_iter().collect();
+                f.insert(dir.clone(), Files::Asking(waiting));
+                (None, true)
+            }
+        }
+    });
+    if let (Some(listed), Some(d)) = (known, done.take()) {
+        return d(listed);
+    }
+    if !ask {
+        return;
+    }
+    let d = dir.clone();
+    run("hledger", vec!["files".into()], &dir, move |r| {
+        let listed = r
+            .ok()
+            .filter(|e| e.status == Some(0))
+            .map(|e| journal::files_listed(&e.stdout));
+        let waiting =
+            FILES.with(
+                |f| match f.borrow_mut().insert(d, Files::Known(listed.clone())) {
+                    Some(Files::Asking(w)) => w,
+                    _ => Vec::new(),
+                },
+            );
+        for w in waiting {
+            w(listed.clone());
+        }
+    });
+}
+
+/// One waiting for `hledger files`' answer.
+type Waiting = Box<dyn FnOnce(Option<Vec<String>>)>;
+
+/// `hledger files`' answer for a folder: known, or asked with those
+/// waiting for it.
+enum Files {
+    Known(Option<Vec<String>>),
+    Asking(Vec<Waiting>),
 }
 
 /// The item for the journal at `path`, or none where it is no journal.
@@ -389,6 +496,7 @@ fn check(path: String, open: bool) {
                         ui::notify(&missing(tool), ui::Level::Warning);
                     }
                 }
+                Err(NotRun::TooLong) => {}
                 Err(NotRun::Refused(why)) => {
                     if open {
                         ui::notify(&format!("{}: {why}", tool.checker()), ui::Level::Warning);
@@ -653,7 +761,7 @@ fn journal_here() -> Option<(Dialect, String, String, Range<usize>)> {
     Some((d, path, text, selection))
 }
 
-/// Toggle Status (`SPC m c`): the transaction at the cursor (or its
+/// Toggle Status (`SPC m t`): the transaction at the cursor (or its
 /// posting, with `toggle_postings`), or those selected.
 fn toggle_status() -> Result<String, String> {
     let Some((d, _, text, sel)) = journal_here() else {
@@ -767,7 +875,7 @@ fn sort_transactions() -> Result<String, String> {
     Ok("null".into())
 }
 
-/// New Transaction (`SPC m t`): its date asked (today's offered; smart
+/// New Transaction (`SPC m a`): its date asked (today's offered; smart
 /// dates taken), then its payee from the journal's, the recent first,
 /// or another typed; the tool's draft from the payee's last transaction
 /// then written at the date's place by `pta.insertTransaction`.
@@ -1135,7 +1243,7 @@ impl Plugin for Pta {
             |_| newline(),
         )?;
         // Not in Vim's insert mode, whose layer takes Enter in a plain
-        // text file before the keys (K10); `SPC m a` aligns there.
+        // text file before the keys (K10); `SPC m =` aligns there.
         kalem::keymap(
             "enter",
             "pta.newline",
@@ -1417,6 +1525,8 @@ impl Plugin for Pta {
             if let Event::DocumentAfterSave(d) = e
                 && Dialect::of_path(&d.path).is_some()
             {
+                // An include may have come or gone.
+                FILES.with(|f| f.borrow_mut().retain(|_, v| matches!(v, Files::Asking(_))));
                 let on_save = settings::own("check_on_save")
                     .and_then(|v| serde_json::from_str::<bool>(&v).ok())
                     .unwrap_or(true);
