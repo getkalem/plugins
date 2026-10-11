@@ -882,11 +882,24 @@ first.
   setting `journal` beside the note, else `LEDGER_FILE`'s, else the
   journal last opened. A test turns every table report of each tool
   on the corpus into an aligned table. Waits on Kalem: Babel (K6).)
-- [ ] PT11c Batch and the terminal: `kalem run pta.balance FILE`,
+- [x] PT11c Batch and the terminal: `kalem run pta.balance FILE`,
   `pta.register FILE ACCOUNT`, `pta.check FILE` print their documents;
   every document and key the same in the terminal editor, checked by
   hand and by the frontends' snapshot tests, with the `glyphs`
   setting of the git plugin (`▸ ▾` or `> v`) shared.
+  (Done 2026-10-11 with K13, Kalem's side: `kalem run pta pta.check
+  FILE`, `pta.balance` (`{"period": "this year", "value": true}`),
+  `pta.register` (`{"account": …, "period": …}`) and `pta.report`
+  (`{"report": "Cash Flow", "period": …}`, by the title in Report…, a
+  saved Beancount query as `Query: NAME`) print their documents, checked
+  on the corpus with a Kalem built from K13's branch; an unknown report
+  or period is an error notice, so `kalem run` exits with 1. The
+  setting `glyphs` (`unicode`, `ascii`), as the git plugin's (each
+  plugin reads its own settings: not shared), for the Balance's fold
+  marks and a passed check's mark (`v > ok`), the status bar item's
+  too. Every document and key was checked by hand in the terminal
+  editor through the tasks; snapshot tests of the frontends are
+  Kalem's, not the plugin's.)
 
 ## PT12. An engine inside: not built (the owner, 2026-10-11)
 
@@ -1029,6 +1042,15 @@ plugin's section 9 followed).
   command as a language's formatter: one `commands.format` serves all
   of a plugin's languages (`bean-format` would run on an hledger
   journal), and Align Amounts cannot be Format Document's in a journal.
+- K13 `kalem run` waiting for a plugin's programs and requests: batch
+  mode stopped as soon as the command returned, so a command whose
+  document is written once its program ends (every one of this
+  plugin's) printed nothing. Done 2026-10-11 on the Kalem branch
+  `batch-wait` (worktree `org-batch-wait`): `kalem_core::extensions`
+  counts the answers owed (a run until its end is handed over, a
+  failed start, a fetch) and `kalem run`'s rounds wait for them; the
+  run test plugin's `run.startShow` and the batch-mode test show it.
+  For the Kalem release after 0.6.17.
 - K12 An activation for files a plugin uses but does not claim: Kalem
   starts a component `onStartup`, `onEvent:NAME` or `onFile` (the
   first file it serves, by `applies` and its languages;

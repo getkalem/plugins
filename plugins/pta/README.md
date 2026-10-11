@@ -88,6 +88,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 | `toggle_postings` | off | Toggle Status on a posting line marks the posting, not its transaction |
 | `rules` | empty | hledger's rules for a statement, when not its own beside it (`statement.csv.rules`) |
 | `ledger_account`, `ledger_date_format` | empty | Ledger's import: the bank's account, and how the statement writes dates (`%d.%m.%Y`) |
+| `glyphs` | `unicode` | The Balance's fold marks and a passed check's mark: `▾ ▸ ✓`, or `v > ok` (`ascii`) |
 | `reports` | `[]` | Reports of your own, first in Report…: `NAME: ARGUMENTS` (`Food by month: balance expenses:food -M`; for Beancount, a query) |
 | `prices` | empty | Where Fetch Prices writes: a file your main journal includes (beside it when relative); empty for the main journal |
 | `price_sources` | `[]` | hledger and Ledger: the pairs to fetch, `SOURCE BASE/QUOTE` (`ecb EUR/USD`), a third word for the journal's symbol (`ecb EUR/USD $`) |
@@ -109,7 +110,7 @@ Not done yet:
 - **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds. hledger's `roi`, which asks for its accounts, is not offered (pin it in `reports`).
 - **The statement beside the reconciliation** (PT8c): a statement's rows paired with the account's postings by date and amount.
 - **Beancount's import** (PT9b): your beangulp script, which needs a permission to run `python3`.
-- `hledger` and `beancount` source blocks run by Babel (PT11b, K6), the commands from `kalem run` (PT11c), and journals of 200,000 transactions measured (PT13).
+- `hledger` and `beancount` source blocks run by Babel (PT11b, K6), and journals of 200,000 transactions measured (PT13).
 
 ## Beside ledger-mode and Fava
 
@@ -159,6 +160,19 @@ The setting `reports` puts reports of your own first: `"Food by month: balance e
 ## Reports in notes
 
 In an Org or Markdown document, *Insert a Report as a Table* (the palette's Journal group) offers the reports the tool writes as CSV (hledger's balance reports, register and `print`; Ledger's balance, register and `print`; Beancount's queries, its saved ones too), asks the period where the report takes one, and writes the table under the cursor's line with a caption naming the report, the journal and the period, one undo step: a monthly note keeps its figures. The journal is the setting `journal` (beside the note when relative), else `LEDGER_FILE`'s, else the journal you last opened. A source block run by Babel (`#+begin_src hledger`) waits on Kalem.
+
+## From the command line
+
+`kalem run` runs the plugin's commands without a window and prints the documents they write (from the Kalem release after 0.6.17, which waits for the tool's answer; Kalem 0.6.17 and earlier print nothing). Arguments go as JSON:
+
+```sh
+kalem run pta pta.check 2026.journal
+kalem run pta pta.balance 2026.journal --args '{"period": "this year", "value": true}'
+kalem run pta pta.register 2026.journal --args '{"account": "assets:bank"}'
+kalem run pta pta.report 2026.journal --args '{"report": "Cash Flow", "period": "last month"}'
+```
+
+A period is `this month`, `last month`, `this quarter`, `this year`, `last year` or `all dates`; a report is named by its title in Report… (any case), a saved Beancount query as `Query: NAME`. An unknown report or period exits with 1. The setting `glyphs` (`ascii`) writes the Balance's fold marks and a passed check's mark as `v > ok` for a terminal font without `▾ ▸ ✓`.
 
 ## Prices and market value
 

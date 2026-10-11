@@ -90,6 +90,50 @@ pub const MENU: &[(&str, &str, &str)] = &[
     ("pta.version", "Tool Version", ""),
 ];
 
+/// The marks of the plugin's documents and status bar item: Unicode's
+/// (`▾ ▸ ✓`), or ASCII's (`v > ok`) for a terminal font without them,
+/// as the git plugin's `glyphs` setting has them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Glyphs {
+    #[default]
+    Unicode,
+    Ascii,
+}
+
+impl Glyphs {
+    /// The setting's value (`"ascii"`, JSON), Unicode's otherwise.
+    pub fn of_setting(value: Option<&str>) -> Glyphs {
+        if value.is_some_and(|v| v.trim().trim_matches('"') == "ascii") {
+            Glyphs::Ascii
+        } else {
+            Glyphs::Unicode
+        }
+    }
+
+    /// An unfolded account's mark, and a folded one's.
+    pub fn open(self) -> &'static str {
+        match self {
+            Glyphs::Unicode => "▾ ",
+            Glyphs::Ascii => "v ",
+        }
+    }
+
+    pub fn folded(self) -> &'static str {
+        match self {
+            Glyphs::Unicode => "▸ ",
+            Glyphs::Ascii => "> ",
+        }
+    }
+
+    /// A check without problems.
+    pub fn passed(self) -> &'static str {
+        match self {
+            Glyphs::Unicode => "✓",
+            Glyphs::Ascii => "ok",
+        }
+    }
+}
+
 /// The text type of the plugin's Check document.
 pub const CHECK_KIND: &str = "pta-check";
 

@@ -50,30 +50,38 @@ pub(super) fn here() -> Option<String> {
 }
 
 /// Balance (`SPC m b`): the main journal's, opened; in the document,
-/// written again.
-pub(super) fn command() -> Result<String, String> {
+/// written again. Its arguments (`kalem run`) may name the `period` and
+/// ask for market values (`"value": true`).
+pub(super) fn command(args: &str) -> Result<String, String> {
     if let Some(main) = here() {
         refresh(&main, true);
         return Ok("null".into());
     }
+    let period = super::period_arg(args);
+    let valued = super::arg(args, "value").map(|v| v == "true");
     match super::dialect_here() {
         Some((d, Some(path))) => {
             resolve(path, d, move |tool, main| {
                 BALANCES.with(|b| {
-                    b.borrow_mut()
-                        .entry(main.path.clone())
-                        .or_insert(Balance {
-                            tool,
-                            doc: None,
-                            period: Period::All,
-                            depth: 0,
-                            folded: BTreeSet::new(),
-                            valued: false,
-                            parts: Vec::new(),
-                            shown: report::Document::default(),
-                            run: 0,
-                        })
-                        .tool = tool;
+                    let mut b = b.borrow_mut();
+                    let e = b.entry(main.path.clone()).or_insert(Balance {
+                        tool,
+                        doc: None,
+                        period: Period::All,
+                        depth: 0,
+                        folded: BTreeSet::new(),
+                        valued: false,
+                        parts: Vec::new(),
+                        shown: report::Document::default(),
+                        run: 0,
+                    });
+                    e.tool = tool;
+                    if let Some(p) = period {
+                        e.period = p;
+                    }
+                    if let Some(v) = valued {
+                        e.valued = v;
+                    }
                 });
                 gather(main, true);
             });
@@ -301,7 +309,7 @@ fn write(main: &str, open: bool, account: Option<&str>) {
             if e.valued { " · market value" } else { "" }
         );
         let hint = "Tab fold · Enter register · p period · d depth · v value · r again · q close";
-        e.shown = report::layout(&header, hint, &e.parts, &e.folded);
+        e.shown = report::layout(&header, hint, &e.parts, &e.folded, super::glyphs());
         let cursor = account.and_then(|a| {
             let n = e.shown.lines.iter().position(|l| l.as_deref() == Some(a))?;
             Some(

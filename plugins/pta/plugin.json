@@ -161,6 +161,12 @@
       "examples": ["%Y/%m/%d", "%d.%m.%Y", "%m/%d/%Y"],
       "description": "Ledger's import: how a statement writes its dates, empty for Ledger's own guess"
     },
+    "glyphs": {
+      "type": "string",
+      "enum": ["unicode", "ascii"],
+      "default": "unicode",
+      "description": "The Balance's fold marks and a passed check's mark as ▾ ▸ ✓, or as v > ok for a terminal font without them"
+    },
     "reports": {
       "type": "array",
       "default": [],

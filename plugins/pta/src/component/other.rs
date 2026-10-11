@@ -48,8 +48,20 @@ pub(super) fn here() -> Option<(String, String)> {
 
 /// Report… (`SPC m r` in a journal, Doom's ledger-report; `o` in a
 /// Report): the reports of the journal's tool, to pick one; from a
-/// journal, the Balance and the Register first.
-pub(super) fn command() -> Result<String, String> {
+/// journal, the Balance and the Register first. Its arguments (`kalem
+/// run`) may name the `report` by its title, and its `period`.
+pub(super) fn command(args: &str) -> Result<String, String> {
+    if let Some(title) = super::arg(args, "report") {
+        let period = super::period_arg(args);
+        let Some((d, Some(path))) = super::dialect_here() else {
+            ui::notify("This document is no journal with a file", ui::Level::Info);
+            return Ok("null".into());
+        };
+        resolve(path, d, move |tool, main| {
+            named(tool, main.path, title, period);
+        });
+        return Ok("null".into());
+    }
     let shown =
         here().and_then(|k| REPORTS.with(|r| r.borrow().get(&k).map(|e| (e.tool, k.0.clone()))));
     if let Some((tool, main)) = shown {
@@ -67,6 +79,43 @@ pub(super) fn command() -> Result<String, String> {
     };
     resolve(path, d, |tool, main| pick(tool, main.path, true));
     Ok("null".into())
+}
+
+/// Opens the report titled `title` (any case), the setting's, a saved
+/// query's (`Query: NAME`) or the tool's, of `period` when given.
+fn named(tool: Dialect, main: String, title: String, period: Option<Period>) {
+    let entries = settings::own("reports")
+        .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
+        .unwrap_or_default();
+    let mut list = other::pinned(tool, &entries);
+    let open_it = move |list: Vec<Report>, main: String| match list
+        .into_iter()
+        .find(|r| r.title.eq_ignore_ascii_case(title.trim()))
+    {
+        Some(r) => open(tool, main, r, period),
+        // An error: `kalem run` exits with 1.
+        None => ui::notify(&format!("No report {title}"), ui::Level::Error),
+    };
+    if tool != Dialect::Beancount {
+        list.extend(other::reports(tool, today()));
+        return open_it(list, main);
+    }
+    let dir = journal::folder(&main).to_string();
+    let queried = main.clone();
+    run(
+        "bean-query",
+        other::saved_queries_args(&queried),
+        &dir,
+        move |r| {
+            if let Ok(e) = &r
+                && e.status == Some(0)
+            {
+                list.extend(other::saved_queries(&String::from_utf8_lossy(&e.stdout)));
+            }
+            list.extend(other::reports(tool, today()));
+            open_it(list, main);
+        },
+    );
 }
 
 /// The plugin's own reports, run as their commands from a journal, with
@@ -143,14 +192,14 @@ fn offer(tool: Dialect, main: String, list: Vec<Report>, own: bool) {
                     ui::notify(&why, ui::Level::Warning);
                 }
             } else if let Some(r) = list.get(i - first.len()) {
-                open(tool, main, r.clone());
+                open(tool, main, r.clone(), None);
             }
         },
     );
 }
 
-/// Opens report `r` of `main`.
-fn open(tool: Dialect, main: String, r: Report) {
+/// Opens report `r` of `main`, of `period` when given.
+fn open(tool: Dialect, main: String, r: Report, period: Option<Period>) {
     let key = (main, r.title.clone());
     REPORTS.with(|m| {
         let mut m = m.borrow_mut();
@@ -163,6 +212,9 @@ fn open(tool: Dialect, main: String, r: Report) {
         });
         e.tool = tool;
         e.report = r;
+        if let Some(p) = period {
+            e.period = p;
+        }
     });
     gather(&key, true);
 }

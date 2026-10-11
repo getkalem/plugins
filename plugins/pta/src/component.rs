@@ -266,7 +266,7 @@ fn show(tool: Dialect, main: &Main) {
     let mut text = journal::status_text(tool, main);
     if let Some(n) = problems {
         text.push_str(" · ");
-        text.push_str(&check::mark(n));
+        text.push_str(&check::mark(n, glyphs()));
     }
     let options = ui::StatusOptions {
         tooltip: Some(journal::status_tooltip(tool, main)),
@@ -377,7 +377,7 @@ fn check(path: String, open: bool) {
                     };
                     let problems =
                         check::problems(tool, exit.status, &String::from_utf8_lossy(out));
-                    let report = check::report(&said, &main.path, &problems);
+                    let report = check::report(&said, &main.path, &problems, glyphs());
                     write_report(&main, &report, open);
                     if GENERATION.with(Cell::get) == generation {
                         show(tool, &main);
@@ -562,6 +562,37 @@ fn current_path() -> Option<String> {
 /// Today, as the user's calendar has it.
 fn today() -> Date {
     Date::of_millis(kalem_plugin::clock::local_now())
+}
+
+/// A command's argument `key` (JSON, `kalem run … --args '{"account":
+/// "assets:bank"}'`), as text.
+fn arg(args: &str, key: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(args).ok()?;
+    match &v[key] {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// The argument `period` (`this month`, `last year`, `all dates`).
+fn period_arg(args: &str) -> Option<crate::report::Period> {
+    let name = arg(args, "period")?;
+    let p = crate::report::Period::named(&name);
+    if p.is_none() {
+        ui::notify(
+            &format!(
+                "{name}: a period is this month, last month, this quarter, this year, last year or all dates"
+            ),
+            ui::Level::Error,
+        );
+    }
+    p
+}
+
+/// The setting `glyphs`: the documents' marks.
+fn glyphs() -> crate::Glyphs {
+    crate::Glyphs::of_setting(settings::own("glyphs").as_deref())
 }
 
 /// The setting `insert_at`: `end` puts a new transaction at the end of
@@ -1168,7 +1199,7 @@ impl Plugin for Pta {
         kalem::keymap("ctrl+shift+h", "pta.dateEarlier", Some(&leader))?;
         let mut types = crate::TEXT_TYPES.to_vec();
         types.push(balance::KIND);
-        command("pta.balance", "Balance", &types, |_| balance::command())?;
+        command("pta.balance", "Balance", &types, balance::command)?;
         kalem::keymap("space m b", "pta.balance", Some(&leader))?;
         kalem::keymap("space m g b", "pta.balance", Some(&leader))?;
         kalem::keymap("r", "pta.balance", Some(BALANCE_WHEN))?;
@@ -1200,7 +1231,7 @@ impl Plugin for Pta {
         kalem::keymap("escape", "pta.balanceClose", Some(BALANCE_ESCAPE_WHEN))?;
         let mut types = crate::TEXT_TYPES.to_vec();
         types.extend([balance::KIND, register::KIND]);
-        command("pta.register", "Register", &types, |_| register::command())?;
+        command("pta.register", "Register", &types, register::command)?;
         kalem::keymap("space m g r", "pta.register", Some(&leader))?;
         kalem::keymap("enter", "pta.register", Some(BALANCE_WHEN))?;
         kalem::keymap("r", "pta.register", Some(REGISTER_WHEN))?;
@@ -1224,7 +1255,7 @@ impl Plugin for Pta {
         kalem::keymap("escape", "pta.registerClose", Some(REGISTER_ESCAPE_WHEN))?;
         let mut types = crate::TEXT_TYPES.to_vec();
         types.extend([balance::KIND, other::KIND]);
-        command("pta.report", "Report…", &types, |_| other::command())?;
+        command("pta.report", "Report…", &types, other::command)?;
         // Doom's `SPC m r`, ledger-report.
         kalem::keymap("space m r", "pta.report", Some(&leader))?;
         kalem::keymap("o", "pta.report", Some(REPORT_WHEN))?;
@@ -1406,7 +1437,7 @@ impl Plugin for Pta {
             }
             Reply::Proceed
         })?;
-        for key in ["journal", "tool"] {
+        for key in ["journal", "tool", "glyphs"] {
             settings::watch(key, true, |_| refresh(current_path()))?;
         }
         Ok(())

@@ -293,12 +293,16 @@ fn shown(file: &str, main: &str) -> String {
 }
 
 /// The report of `problems` found by `check` (as [`said`] puts it) in
-/// `main`.
-pub fn report(check: &str, main: &str, problems: &[Problem]) -> Report {
+/// `main`, with `glyphs`' mark of a check passed.
+pub fn report(check: &str, main: &str, problems: &[Problem], glyphs: crate::Glyphs) -> Report {
     let mut r = Report::default();
     let n = problems.len();
     let header = match n {
-        0 => format!("✓ {}: no problems", crate::journal::name(main)),
+        0 => format!(
+            "{} {}: no problems",
+            glyphs.passed(),
+            crate::journal::name(main)
+        ),
         1 => format!("{}: 1 problem", crate::journal::name(main)),
         _ => format!("{}: {n} problems", crate::journal::name(main)),
     };
@@ -343,10 +347,11 @@ pub fn report(check: &str, main: &str, problems: &[Problem]) -> Report {
     r
 }
 
-/// The status bar item's mark for `problems`: ✓, or their count.
-pub fn mark(problems: usize) -> String {
+/// The status bar item's mark for `problems`: ✓ (`glyphs`'), or their
+/// count.
+pub fn mark(problems: usize, glyphs: crate::Glyphs) -> String {
     match problems {
-        0 => "✓".to_string(),
+        0 => glyphs.passed().to_string(),
         1 => "1 problem".to_string(),
         n => format!("{n} problems"),
     }
@@ -447,20 +452,31 @@ mod tests {
     fn the_report() {
         let p = problems(Dialect::Hledger, Some(1), HLEDGER);
         let main = "/tmp/m/hledger/2026.journal";
-        let r = report(&said(Dialect::Hledger, main, &[]), main, &p);
+        let r = report(
+            &said(Dialect::Hledger, main, &[]),
+            main,
+            &p,
+            crate::Glyphs::Unicode,
+        );
         assert!(r.text.starts_with("2026.journal: 1 problem\nhledger -f 2026.journal check --strict\n\nerrors.journal:13:49\n  Balance assertion failed"), "{}", r.text);
         assert!(r.text.contains("\n    13 |     assets:bank:ziraat"));
         assert_eq!(r.entries.len(), 1);
         let (range, problem) = &r.entries[0];
         assert!(r.text[range.clone()].starts_with("errors.journal:13:49\n"));
         assert_eq!(problem.line, Some(13));
-        let ok = report("bean-check h.beancount", "/j/h.beancount", &[]);
+        let ok = report(
+            "bean-check h.beancount",
+            "/j/h.beancount",
+            &[],
+            crate::Glyphs::Unicode,
+        );
         assert_eq!(
             ok.text,
             "✓ h.beancount: no problems\nbean-check h.beancount\n"
         );
         assert_eq!(ok.styles[0].1, Color::Passed);
-        assert_eq!(mark(0), "✓");
-        assert_eq!(mark(3), "3 problems");
+        assert_eq!(mark(0, crate::Glyphs::Unicode), "✓");
+        assert_eq!(mark(0, crate::Glyphs::Ascii), "ok");
+        assert_eq!(mark(3, crate::Glyphs::Ascii), "3 problems");
     }
 }

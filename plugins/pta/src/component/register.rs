@@ -48,29 +48,33 @@ pub(super) fn here() -> Option<(String, String)> {
     })
 }
 
-/// Register (`SPC m R`; Enter on an account of the Balance): in the
+/// Register (`SPC m g r`; Enter on an account of the Balance): in the
 /// Balance, of the account at the cursor; in a journal, of the account
-/// of the posting at the cursor, else of one picked; in a Register,
-/// written again.
-pub(super) fn command() -> Result<String, String> {
+/// the arguments name (`kalem run`: `account`, `period`), else of the
+/// posting at the cursor, else of one picked; in a Register, written
+/// again.
+pub(super) fn command(args: &str) -> Result<String, String> {
     if let Some(key) = here() {
         gather(&key, true);
         return Ok("null".into());
     }
     if let Some((main, account)) = super::balance::account_here() {
         let tool = super::balance::tool_of(&main).unwrap_or(Dialect::Hledger);
-        open(tool, main, account);
+        open(tool, main, account, None);
         return Ok("null".into());
     }
     let Some((d, Some(path))) = super::dialect_here() else {
         ui::notify("This document is no journal with a file", ui::Level::Info);
         return Ok("null".into());
     };
-    let text = editor::text(None);
-    let at = editor::selected().head as usize;
-    let account = crate::write::account_at(&text, at, d);
+    let period = super::period_arg(args);
+    let account = super::arg(args, "account").or_else(|| {
+        let text = editor::text(None);
+        let at = editor::selected().head as usize;
+        crate::write::account_at(&text, at, d)
+    });
     resolve(path, d, move |tool, main| match account {
-        Some(a) => open(tool, main.path, a),
+        Some(a) => open(tool, main.path, a, period),
         None => pick_account(tool, main),
     });
     Ok("null".into())
@@ -121,18 +125,19 @@ fn pick_account(tool: Dialect, main: Main) {
             },
             move |picked| {
                 if let Some(a) = picked.first().and_then(|&i| accounts.get(i as usize)) {
-                    open(tool, main.path, a.clone());
+                    open(tool, main.path, a.clone(), None);
                 }
             },
         );
     });
 }
 
-/// Opens the register of `account` in `main`.
-fn open(tool: Dialect, main: String, account: String) {
+/// Opens the register of `account` in `main`, of `period` when given.
+fn open(tool: Dialect, main: String, account: String, period: Option<Period>) {
     let key = (main.clone(), account.clone());
     REGISTERS.with(|r| {
-        r.borrow_mut().entry(key.clone()).or_insert(Register {
+        let mut r = r.borrow_mut();
+        let e = r.entry(key.clone()).or_insert(Register {
             tool,
             main,
             account,
@@ -143,6 +148,9 @@ fn open(tool: Dialect, main: String, account: String) {
             shown: report::Document::default(),
             run: 0,
         });
+        if let Some(p) = period {
+            e.period = p;
+        }
     });
     gather(&key, true);
 }

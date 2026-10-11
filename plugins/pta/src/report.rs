@@ -46,6 +46,16 @@ impl Period {
         Period::All,
     ];
 
+    /// The period named `name` as the pick names it (`this month`, `last
+    /// year`, `all dates`; `all` too), for a command's arguments.
+    pub fn named(name: &str) -> Option<Period> {
+        let n = name.trim().to_lowercase();
+        if n == "all" {
+            return Some(Period::All);
+        }
+        Period::ALL.into_iter().find(|p| p.name() == n)
+    }
+
     /// Its name in the pick and the header.
     pub fn name(self) -> &'static str {
         match self {
@@ -406,13 +416,15 @@ const MIN_COLUMN: usize = 40;
 
 /// Lays out `parts` (the sections in order) with `folded` accounts'
 /// children hidden: a header, then each section's title, its accounts as
-/// a tree (`▾` unfolded, `▸` folded, two blanks a level), their amounts
-/// right-aligned (one line per commodity), and its total.
+/// a tree (`▾` unfolded, `▸` folded, two blanks a level; `glyphs`'
+/// marks), their amounts right-aligned (one line per commodity), and its
+/// total.
 pub fn layout(
     header: &str,
     hint: &str,
     parts: &[(Section, String, Part)],
     folded: &BTreeSet<String>,
+    glyphs: crate::Glyphs,
 ) -> Document {
     let mut doc = Document::default();
     let push = |doc: &mut Document, s: &str, style: Option<Style>, account: Option<String>| {
@@ -468,9 +480,9 @@ pub fn layout(
             let depth = depth_of(&part.rows, &r.account);
             let mark = if parents.contains(&r.account) {
                 if folded.contains(&r.account) {
-                    "▸ "
+                    glyphs.folded()
                 } else {
-                    "▾ "
+                    glyphs.open()
                 }
             } else {
                 "  "
@@ -1025,6 +1037,7 @@ mod tests {
             "keys",
             &[(Section::Sheet, "Assets".into(), part.clone())],
             &none,
+            crate::Glyphs::Unicode,
         );
         let text = &d.text;
         assert!(text.contains("\n▾ assets "), "{text}");
@@ -1046,10 +1059,20 @@ mod tests {
         let d = layout(
             "Balance",
             "keys",
-            &[(Section::Sheet, "Assets".into(), part)],
+            &[(Section::Sheet, "Assets".into(), part.clone())],
             &folded,
+            crate::Glyphs::Unicode,
         );
         assert!(d.text.contains("▸ bank") && !d.text.contains("ziraat"));
+        let ascii = layout(
+            "Balance",
+            "keys",
+            &[(Section::Sheet, "Assets".into(), part)],
+            &folded,
+            crate::Glyphs::Ascii,
+        );
+        assert!(ascii.text.contains("\nv assets ") && ascii.text.contains("> bank"));
+        assert!(ascii.text.is_ascii() || !ascii.text.contains(['▸', '▾']));
         // Below zero: red.
         assert!(negative("-1.120,00 TRY") && negative("$-400.00") && !negative("1.120,00 TRY"));
         assert!(
