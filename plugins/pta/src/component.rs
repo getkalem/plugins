@@ -5,7 +5,9 @@
 //! from `hledger files`, with the last check's mark; Align Amounts and
 //! Enter align postings (PT4); Check Journal runs the tool's check on
 //! the main journal and writes its problems as the document "Check: …"
-//! (PT5), again on each save.
+//! (PT5), again on each save; New Transaction, Toggle Status, Copy
+//! Transaction, the next and previous one, a date a day later or
+//! earlier, and Sort Transactions write them (PT6).
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,6 +19,7 @@ use kalem_plugin::{documents, editor, process, settings, ui};
 
 use crate::check::{self, Problem};
 use crate::journal::{self, Installed, Main, Settings, ToolChoice};
+use crate::write::{self, Date};
 use crate::{Dialect, align};
 
 /// The status bar item's id.
@@ -62,6 +65,21 @@ thread_local! {
     static CHECKS: RefCell<BTreeMap<String, Checked>> = const { RefCell::new(BTreeMap::new()) };
     /// The tools whose absence a check on save has told.
     static TOLD: RefCell<BTreeSet<&'static str>> = const { RefCell::new(BTreeSet::new()) };
+    /// The new transaction asked for, waiting for the plugin's command
+    /// that writes it (the editor is reached only while a command runs).
+    static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
+}
+
+/// A new transaction to write.
+#[derive(Debug)]
+struct Pending {
+    /// The journal it goes in.
+    path: String,
+    dialect: Dialect,
+    date: Date,
+    /// Its text, and where the cursor goes in it.
+    text: String,
+    cursor: usize,
 }
 
 /// The journal's dialect: the document's language, else its file name.
@@ -483,6 +501,385 @@ fn current_path() -> Option<String> {
     DOCS.with(|d| d.borrow().get(&n).cloned())
 }
 
+/// Today, as the user's calendar has it.
+fn today() -> Date {
+    Date::of_millis(kalem_plugin::clock::local_now())
+}
+
+/// The setting `insert_at`: `end` puts a new transaction at the end of
+/// the journal, else at its date's place.
+fn at_end() -> bool {
+    settings::own("insert_at").as_deref() == Some("\"end\"")
+}
+
+/// Applies `edits` (places of the text as the command found it) as one
+/// undo step named `label`.
+fn edit(edits: &[(Range<usize>, String)], label: &str) {
+    for (r, s) in edits {
+        let done = if r.is_empty() {
+            editor::insert(Some(r.start as u64), s);
+            Ok(())
+        } else {
+            editor::replace(
+                editor::Range {
+                    start: r.start as u64,
+                    end: r.end as u64,
+                },
+                s,
+            )
+        };
+        if let Err(why) = done {
+            ui::notify(&why, ui::Level::Warning);
+            return;
+        }
+    }
+    if !edits.is_empty() {
+        editor::transact(label);
+    }
+}
+
+/// Puts the cursor at byte `at` of `text` (the document's text once the
+/// command's edits are made), through `file.open`, which runs after
+/// them.
+fn put_cursor(path: &str, text: &str, at: usize) {
+    let at = at.min(text.len());
+    let line = text[..at].matches('\n').count() + 1;
+    let column = at - text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let args = serde_json::json!({ "path": path, "line": line, "column": column });
+    if let Err(why) = kalem::run("file.open", &args.to_string()) {
+        ui::notify(&why, ui::Level::Warning);
+    }
+}
+
+/// The journal the command runs in: its dialect, file and text, and the
+/// selection; none (and said) elsewhere.
+fn journal_here() -> Option<(Dialect, String, String, Range<usize>)> {
+    let Some((d, Some(path))) = dialect_here() else {
+        ui::notify("This document is no journal with a file", ui::Level::Info);
+        return None;
+    };
+    let text = editor::text(None);
+    let sel = editor::selected();
+    let selection = sel.anchor.min(sel.head) as usize..sel.anchor.max(sel.head) as usize;
+    Some((d, path, text, selection))
+}
+
+/// Toggle Status (`SPC m c`): the transaction at the cursor (or its
+/// posting, with `toggle_postings`), or those selected.
+fn toggle_status() -> Result<String, String> {
+    let Some((d, _, text, sel)) = journal_here() else {
+        return Ok("null".into());
+    };
+    let postings = settings::own("toggle_postings").as_deref() == Some("true");
+    edit(&write::toggle(&text, d, sel, postings), "Toggle Status");
+    Ok("null".into())
+}
+
+/// The next transaction, or the previous one.
+fn neighbour(forward: bool) -> Result<String, String> {
+    let Some((d, path, text, sel)) = journal_here() else {
+        return Ok("null".into());
+    };
+    let at = editor::selected().head as usize;
+    let _ = sel;
+    match write::neighbour(&text, d, at, forward) {
+        Some(to) => put_cursor(&path, &text, to),
+        None => ui::notify(
+            if forward {
+                "No transaction after this one"
+            } else {
+                "No transaction before this one"
+            },
+            ui::Level::Info,
+        ),
+    }
+    Ok("null".into())
+}
+
+/// Copy Transaction (`SPC m y`): the transaction at the cursor again,
+/// dated today, at its date's place; the cursor on the copy.
+fn copy_transaction() -> Result<String, String> {
+    let Some((d, path, text, _)) = journal_here() else {
+        return Ok("null".into());
+    };
+    let at = editor::selected().head as usize;
+    let Some((place, ins, start)) = write::copy(&text, d, at, today(), at_end()) else {
+        ui::notify("No transaction here", ui::Level::Info);
+        return Ok("null".into());
+    };
+    edit(&[(place..place, ins.clone())], "Copy Transaction");
+    let after = format!("{}{}{}", &text[..place], ins, &text[place..]);
+    put_cursor(&path, &after, place + start);
+    Ok("null".into())
+}
+
+/// The transaction's date a day later, or earlier.
+fn shift_date(days: i64) -> Result<String, String> {
+    let Some((d, _, text, _)) = journal_here() else {
+        return Ok("null".into());
+    };
+    let at = editor::selected().head as usize;
+    match write::shift_date(&text, d, at, days) {
+        Some(e) => edit(
+            &[e],
+            if days > 0 {
+                "Date a Day Later"
+            } else {
+                "Date a Day Earlier"
+            },
+        ),
+        None => ui::notify("No transaction here", ui::Level::Info),
+    }
+    Ok("null".into())
+}
+
+/// Sort Transactions (`SPC m s`): those selected, or the file's, by date.
+fn sort_transactions() -> Result<String, String> {
+    let Some((d, path, text, sel)) = journal_here() else {
+        return Ok("null".into());
+    };
+    match write::sort(&text, d, sel) {
+        Ok(Some((r, sorted))) => {
+            // The cursor stays in its transaction, wherever it went.
+            let at = editor::selected().head as usize;
+            let txs = write::transactions(&text, d);
+            let mine = write::at(&txs, at).map(|t| {
+                (
+                    text[t.with_comments.clone()].to_string(),
+                    at - t.with_comments.start,
+                )
+            });
+            edit(&[(r.clone(), sorted.clone())], "Sort Transactions");
+            if let Some((own, offset)) = mine
+                && let Some(i) = sorted.find(&own)
+            {
+                let after = format!("{}{}{}", &text[..r.start], sorted, &text[r.end..]);
+                put_cursor(&path, &after, r.start + i + offset);
+            }
+        }
+        Ok(None) => ui::notify("The transactions are in date order", ui::Level::Info),
+        Err(why) => ui::notify(&why, ui::Level::Warning),
+    }
+    Ok("null".into())
+}
+
+/// New Transaction (`SPC m t`): its date asked (today's offered; smart
+/// dates taken), then its payee from the journal's, the recent first,
+/// or another typed; the tool's draft from the payee's last transaction
+/// then written at the date's place by `pta.insertTransaction`.
+fn new_transaction() -> Result<String, String> {
+    let Some((d, path, text, _)) = journal_here() else {
+        return Ok("null".into());
+    };
+    let today = today();
+    let sep = write::separator(&text, d);
+    let recent = write::payees_in(&text, d);
+    ui::prompt(
+        "Date of the new transaction",
+        &ui::PromptOptions {
+            value: Some(today.written(sep)),
+            placeholder: Some("today, yesterday, 10/5, last friday, -3".into()),
+            password: false,
+        },
+        move |answer| {
+            let Some(typed) = answer else {
+                return;
+            };
+            let Some(date) = write::smart_date(&typed, today) else {
+                ui::notify(&format!("Not a date: {typed}"), ui::Level::Warning);
+                return;
+            };
+            choose_payee(d, path, sep, date, recent);
+        },
+    );
+    Ok("null".into())
+}
+
+/// The payees the tool knows, after the journal's recent ones; then the
+/// draft for the one chosen.
+fn choose_payee(d: Dialect, path: String, sep: char, date: Date, recent: Vec<String>) {
+    resolve(path.clone(), d, move |tool, main| {
+        let args: Vec<String> = match tool {
+            Dialect::Beancount => vec![
+                "-f".into(),
+                "csv".into(),
+                main.path.clone(),
+                "SELECT DISTINCT payee".into(),
+            ],
+            _ => vec!["-f".into(), main.path.clone(), "payees".into()],
+        };
+        let program = if tool == Dialect::Beancount {
+            "bean-query"
+        } else {
+            tool.checker()
+        };
+        let dir = journal::folder(&main.path).to_string();
+        run(program, args, &dir, move |r| {
+            let mut payees = recent;
+            if let Ok(e) = r
+                && e.status == Some(0)
+            {
+                let listed = String::from_utf8_lossy(&e.stdout).into_owned();
+                let lines = listed.lines().skip(usize::from(tool == Dialect::Beancount));
+                for p in lines {
+                    let p = p.trim().trim_matches('"').to_string();
+                    if !p.is_empty() && !payees.contains(&p) {
+                        payees.push(p);
+                    }
+                }
+            }
+            let mut items: Vec<ui::PickItem> = payees
+                .iter()
+                .map(|p| ui::PickItem {
+                    label: p.clone(),
+                    detail: None,
+                })
+                .collect();
+            items.push(ui::PickItem {
+                label: "Another payee…".into(),
+                detail: Some("a payee not in the journal yet".into()),
+            });
+            ui::quick_pick(
+                &items,
+                &ui::PickOptions {
+                    title: Some(format!("Payee of the transaction of {}", date.written(sep))),
+                    placeholder: None,
+                    many: false,
+                },
+                move |picked| {
+                    let Some(&i) = picked.first() else {
+                        return;
+                    };
+                    let i = i as usize;
+                    if let Some(payee) = payees.get(i).cloned() {
+                        draft(d, tool, main, path, sep, date, payee);
+                    } else {
+                        ui::prompt(
+                            "Payee",
+                            &ui::PromptOptions {
+                                value: None,
+                                placeholder: None,
+                                password: false,
+                            },
+                            move |answer| {
+                                if let Some(payee) = answer.filter(|p| !p.trim().is_empty()) {
+                                    pend(
+                                        d,
+                                        path,
+                                        date,
+                                        write::new_transaction(d, date, sep, payee.trim(), None),
+                                    );
+                                }
+                            },
+                        );
+                    }
+                },
+            );
+        });
+    });
+}
+
+/// The tool's draft of a transaction of `payee` (its last one), then the
+/// new transaction written.
+fn draft(
+    d: Dialect,
+    tool: Dialect,
+    main: Main,
+    path: String,
+    sep: char,
+    date: Date,
+    payee: String,
+) {
+    let (program, args): (&'static str, Vec<String>) = match tool {
+        Dialect::Hledger => (
+            "hledger",
+            vec![
+                "-f".into(),
+                main.path.clone(),
+                "print".into(),
+                "--match".into(),
+                payee.clone(),
+            ],
+        ),
+        Dialect::Ledger => (
+            "ledger",
+            vec![
+                "-f".into(),
+                main.path.clone(),
+                "xact".into(),
+                date.written('/'),
+                payee.clone(),
+            ],
+        ),
+        Dialect::Beancount => (
+            "bean-query",
+            vec![
+                main.path.clone(),
+                format!("PRINT FROM payee = \"{}\"", payee.replace('"', "\\\"")),
+            ],
+        ),
+    };
+    let dir = journal::folder(&main.path).to_string();
+    run(program, args, &dir, move |r| {
+        let drafted = r
+            .ok()
+            .filter(|e| e.status == Some(0))
+            .map(|e| String::from_utf8_lossy(&e.stdout).into_owned());
+        pend(
+            d,
+            path,
+            date,
+            write::new_transaction(d, date, sep, &payee, drafted.as_deref()),
+        );
+    });
+}
+
+/// Keeps the new transaction and runs the command that writes it.
+fn pend(dialect: Dialect, path: String, date: Date, (text, cursor): (String, usize)) {
+    PENDING.with(|p| {
+        *p.borrow_mut() = Some(Pending {
+            path,
+            dialect,
+            date,
+            text,
+            cursor,
+        });
+    });
+    if let Err(why) = kalem::run("pta.insertTransaction", "{}") {
+        ui::notify(&why, ui::Level::Warning);
+    }
+}
+
+/// Writes the new transaction asked for, when its journal is the
+/// current document: at its date's place, one undo step, the cursor on
+/// its first amount.
+fn insert_transaction() -> Result<String, String> {
+    let Some(p) = PENDING.with(|p| p.borrow_mut().take()) else {
+        return Ok("null".into());
+    };
+    let Some((_, Some(path))) = dialect_here() else {
+        ui::notify(
+            "The journal is no longer the current document",
+            ui::Level::Warning,
+        );
+        return Ok("null".into());
+    };
+    if path != p.path {
+        ui::notify(
+            "The journal is no longer the current document",
+            ui::Level::Warning,
+        );
+        return Ok("null".into());
+    }
+    let text = editor::text(None);
+    let place = write::place(&text, p.dialect, p.date, at_end());
+    let (ins, start) = write::insertion(&text, place, &p.text);
+    edit(&[(place..place, ins.clone())], "New Transaction");
+    let after = format!("{}{}{}", &text[..place], ins, &text[place..]);
+    put_cursor(&path, &after, place + start + p.cursor);
+    Ok("null".into())
+}
+
 /// Registers command `id`, in the palette's Journal group, where `types`
 /// are.
 fn command(
@@ -540,6 +937,39 @@ impl Plugin for Pta {
         })?;
         kalem::keymap("q", "pta.checkClose", Some(CHECK_WHEN))?;
         kalem::keymap("escape", "pta.checkClose", Some(CHECK_ESCAPE_WHEN))?;
+        let t = crate::TEXT_TYPES;
+        command("pta.newTransaction", "New Transaction", t, |_| {
+            new_transaction()
+        })?;
+        kalem::keymap("space m t", "pta.newTransaction", Some(&leader))?;
+        command(
+            "pta.insertTransaction",
+            "Write the New Transaction Asked For",
+            t,
+            |_| insert_transaction(),
+        )?;
+        command("pta.toggleStatus", "Toggle Status", t, |_| toggle_status())?;
+        kalem::keymap("space m c", "pta.toggleStatus", Some(&leader))?;
+        command("pta.copyTransaction", "Copy Transaction", t, |_| {
+            copy_transaction()
+        })?;
+        kalem::keymap("space m y", "pta.copyTransaction", Some(&leader))?;
+        command("pta.sort", "Sort Transactions", t, |_| sort_transactions())?;
+        kalem::keymap("space m s", "pta.sort", Some(&leader))?;
+        command("pta.nextTransaction", "Next Transaction", t, |_| {
+            neighbour(true)
+        })?;
+        command("pta.previousTransaction", "Previous Transaction", t, |_| {
+            neighbour(false)
+        })?;
+        kalem::keymap("alt+down", "pta.nextTransaction", Some(&journal))?;
+        kalem::keymap("alt+up", "pta.previousTransaction", Some(&journal))?;
+        command("pta.dateLater", "Date a Day Later", t, |_| shift_date(1))?;
+        command("pta.dateEarlier", "Date a Day Earlier", t, |_| {
+            shift_date(-1)
+        })?;
+        kalem::keymap("ctrl+shift+l", "pta.dateLater", Some(&leader))?;
+        kalem::keymap("ctrl+shift+h", "pta.dateEarlier", Some(&leader))?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path

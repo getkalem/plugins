@@ -461,7 +461,7 @@ first.
 
 ## PT6. Writing transactions
 
-- [ ] PT6a `pta.newTransaction` (`SPC m t`; ledger-mode's `C-c C-a`):
+- [x] PT6a `pta.newTransaction` (`SPC m t`; ledger-mode's `C-c C-a`):
   asks the date (today from `clock`; the prompt takes hledger's smart
   dates, `yesterday`, `10/5`, `last friday`, which the plugin resolves
   itself to the dialect's form), then the payee from a quick-pick of
@@ -475,7 +475,22 @@ first.
   cursor on its first amount; a payee not seen before gives an empty
   transaction with one posting line and the cursor on its account,
   where the server completes. One undo step, named.
-- [ ] PT6b `pta.toggleStatus` (`SPC m c`; ledger-mode's `C-c C-c`):
+  (Done 2026-10-11, checked in Kalem's terminal editor: the date asked
+  with today's offered (the clock's local day) and hledger's smart
+  dates taken (`yesterday`, `-3`, `5`, `10/5`, a weekday, `last` and
+  `next` ones), resolved by `src/write.rs`; the payees the journal's
+  text names, the last written first, then the tool's (`hledger
+  payees`, `ledger payees`, `bean-query`'s `SELECT DISTINCT payee`),
+  and "Another payee…" asked as text; the draft `hledger print
+  --match`, `ledger xact` or `bean-query`'s `PRINT FROM payee = …`
+  (its last entry), only for a payee of the journal, since hledger and
+  Ledger match loosely and draft from another's otherwise; the draft
+  dated, without its code, status (Beancount's flag kept), second date
+  and balance assertions; written at the date's place (`insert_at`)
+  by the plugin's own `pta.insertTransaction`, queued, since a
+  question's answer comes when no command runs; the cursor on its
+  first amount through `file.open`.)
+- [x] PT6b `pta.toggleStatus` (`SPC m c`; ledger-mode's `C-c C-c`):
   the transaction at the cursor, or the posting when the cursor is on
   a posting line and the setting `toggle_postings` is on, goes
   unmarked → pending `!` → cleared `*` → unmarked, written where the
@@ -493,10 +508,31 @@ first.
   account` between them would change meaning). Each a single
   `editor.replace`, one undo step; each tested on the corpus for the
   bytes it leaves alone.
-- [ ] PT6c The outline (Kalem's outline and sidebar): the server's
+  (Done 2026-10-11, checked in the terminal editor. Changed from the
+  plan: `toggle_postings` off by default (hledger's users mark
+  transactions); the selection's transactions all to the first one's
+  next; Alt+Down and Alt+Up as planned (free in a plain text file);
+  the date a day later or earlier on `ctrl+shift+l` and `ctrl+shift+h`
+  in Vim's command mode, Doom's keys for an Org timestamp, not
+  Shift+Up and Shift+Down, which extend the selection, and the date of
+  the transaction at the cursor, not only with the cursor on it; Sort
+  Transactions keeps the cursor in its transaction, refuses across
+  `apply`, `end`, `alias`, `Y`, `D`, `decimal-mark`, `include`,
+  `bucket`, `fixed`, comment blocks, and Beancount's `pushtag`,
+  `pushmeta`, `include` and `option`, and takes a last line without
+  its line feed. Tests: 10 unit tests (dates and their arithmetic,
+  smart dates, finding transactions and Beancount's directives apart,
+  toggling a transaction, a posting and a selection, Beancount's
+  `txn`, moving, copying, placing, sorting with comments and a
+  refusal, drafts of the three tools, payees).)
+- [x] PT6c The outline (Kalem's outline and sidebar): the server's
   document symbols, which both servers give (transactions by date and
   description, directives), checked in both editors; nothing of the
   plugin's own until a plugin can give an outline.
+  (Done: both hledger-lsp programs and beancount-language-server give
+  document symbols, measured through `kalem lsp ask symbols` in PT3:
+  ptimoney's lists transactions and their postings, juev's groups the
+  transactions by month, Beancount's lists entries and postings.)
 
 ## PT7. The balance and the register as documents
 

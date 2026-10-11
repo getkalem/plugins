@@ -14,6 +14,9 @@
 //!
 //! - [`check`]: the tool's check, its problems and their document (PT5).
 //!
+//! - [`write`]: transactions written, toggled, copied, dated and sorted
+//!   (PT6).
+//!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
 pub mod align;
@@ -21,6 +24,7 @@ pub mod check;
 #[cfg(target_arch = "wasm32")]
 mod component;
 pub mod journal;
+pub mod write;
 
 /// The manifest, embedded so that the component carries its own
 /// description.

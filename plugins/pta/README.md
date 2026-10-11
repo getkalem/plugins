@@ -2,7 +2,7 @@
 
 hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and checks, checked by the tool you already have, and, as the work list goes on, imported from bank statements, reconciled against them and reported as documents. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance and check; the plugin asks them and shows what they say. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: the spike (PT1), the highlighter (PT2), the servers (PT3), aligning amounts (PT4) and checking by the tool (PT5)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
+**Status: the spike (PT1), the highlighter (PT2), the servers (PT3), aligning amounts (PT4), checking by the tool (PT5) and writing transactions (PT6)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
 
 - **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`). Completion of accounts, payees and tags, diagnostics and formatting come from the servers.
 - **The component**, which runs the journal's tool: a status bar item naming the tool and the main journal of the journal you are in (`hledger · 2026.journal`; its tooltip says why that journal), and one command, *Tool Version* (in the palette under Journal, and the item's click), which asks hledger, Ledger or `bean-check` what it is, or says how to install it.
@@ -24,6 +24,19 @@ Nothing but the tool you already use is needed: the plugin computes no balance a
 A journal that `include`s others is checked and reported as one: checking an included file alone gives false errors (an account opened in another file is "unknown"). The plugin's setting `journal` names the main journal (absolute, from `~/`, or beside the file). Unset, an hledger journal's main journal is the one `LEDGER_FILE` names when that journal includes the file (`hledger files` says so), a Beancount journal's the one its server is told (below), else the file itself. Kalem started from the Dock or a launcher may not see the `LEDGER_FILE` of your shell: set `journal` then.
 
 The setting `tool` picks the program for hledger's and Ledger's journals: `auto` takes the file's own, and a `.ledger` file goes to Ledger where Ledger is installed and to hledger where only hledger is (hledger does not read Ledger's value expressions, such as `(-$132.00)`). A Beancount journal is always Beancount's.
+
+## Writing transactions
+
+In a journal, under `SPC m` in Vim's command mode and in the palette's Journal group, each one undo step:
+
+- *New Transaction* (`SPC m t`): asks the date (today offered; `yesterday`, `-3`, `5`, `10/5`, `friday`, `last friday` taken) and the payee (the journal's, the last written first, or another), then writes the transaction the tool drafts from that payee's last one (`hledger print --match`, `ledger xact`, Beancount's last entry), dated, without its old balance assertions, at its date's place (or at the end, `insert_at`), the cursor on its first amount.
+- *Toggle Status* (`SPC m c`): unmarked, pending `!`, cleared `*`, unmarked (Beancount's `txn`, `!`, `*`); the transactions selected all to the first one's next; the posting at the cursor with `toggle_postings`.
+- *Copy Transaction* (`SPC m y`): the transaction again, dated today, at its date's place.
+- *Next* and *Previous Transaction* (Alt+Down, Alt+Up).
+- *Date a Day Later* and *Earlier* (`ctrl+shift+l`, `ctrl+shift+h` in Vim's command mode).
+- *Sort Transactions* (`SPC m s`): those selected, or the file's, by date, each with the comment lines above it; refused where a directive between them (`apply account`, `alias`, `include`, `pushtag`…) would apply to others after sorting.
+
+The outline is the server's document symbols.
 
 ## Checking by the tool
 

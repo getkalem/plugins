@@ -109,6 +109,17 @@
       "default": [],
       "description": "hledger's checks added to hledger check --strict: ordereddates, payees, recentassertions, tags, uniqueleafnames (hledger's own names; Ledger and Beancount have none)"
     },
+    "insert_at": {
+      "type": "string",
+      "enum": ["date", "end"],
+      "default": "date",
+      "description": "Where New Transaction and Copy Transaction write: at the date's place (after the last transaction dated on or before it), or at the end of the journal"
+    },
+    "toggle_postings": {
+      "type": "boolean",
+      "default": false,
+      "description": "Toggle Status on a posting line marks that posting (as ledger-mode's), not its transaction"
+    },
     "programs.hledger": {
       "type": "string",
       "default": "",
