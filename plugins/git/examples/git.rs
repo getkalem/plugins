@@ -1,5 +1,5 @@
-//! A command line over the plugin's library, for trying it before Kalem's
-//! plugin host runs it (DESIGN.md, section 8, phase 0):
+//! A command line over the plugin's library, for trying it without Kalem
+//! (DESIGN.md, section 8, phase 0):
 //!
 //! ```sh
 //! cargo run -p kalem-plugin-git --example git -- status [--open] [--ascii]
