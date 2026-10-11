@@ -73,7 +73,7 @@
       "name": "Git",
       "version": "0.0.10",
       "description": "The repository's status as a document, lazygit's panels in magit's form: changed files with their diffs under them (Tab), staged by file, hunk or line with magit's keys, committed, pushed and pulled; branches and stashes; changed lines marked beside the lines; on Doom's SPC g keys, with the arrows, Enter and Escape",
-      "api": "^0.2.6",
+      "api": "^0.2.13",
       "permissions": [
         "subprocess:git"
       ],
