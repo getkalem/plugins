@@ -127,6 +127,10 @@ pub struct Scanned {
     pub headings: Vec<Heading>,
     /// Its lines.
     pub lines: u32,
+    /// Logseq's pre-block: the page's properties at its top, a block of
+    /// their own in Logseq (queries find it), kept apart from `blocks`,
+    /// which the outliner edits.
+    pub pre: Option<Block>,
 }
 
 /// What the scanner is told of the graph.
@@ -379,6 +383,11 @@ fn inline(line: &str, flavor: Flavor) -> Vec<Raw> {
                     Some(p) => i + n + p + n,
                     None => i + n,
                 };
+            }
+            // A query's arguments name no page, as Logseq's references
+            // leave them out.
+            b'{' if line[i..].starts_with("{{query") => {
+                i = line[i..].find("}}").map_or(b.len(), |p| i + p + 2);
             }
             b'{' if line[i..].starts_with("{{embed") => {
                 let end = line[i..].find("}}").map_or(b.len(), |p| i + p + 2);
@@ -1174,13 +1183,37 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             && page.iter().any(|(_, _, l)| *l == b.line as usize)
     });
     if pre {
-        s.blocks.remove(0);
+        let mut b = s.blocks.remove(0);
+        b.text = s
+            .props
+            .iter()
+            .map(|(k, v)| format!("{k}:: {v}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        b.props = s.props.clone();
+        s.pre = Some(b);
         for b in &mut s.blocks {
             b.parent = b.parent.and_then(|p| p.checked_sub(1));
         }
         for r in &mut s.refs {
             r.block = r.block.and_then(|p| p.checked_sub(1));
         }
+    }
+    // The properties at the top without a bullet: a pre-block too.
+    if s.pre.is_none() && !s.props.is_empty() {
+        let end = s.blocks.first().map_or(s.lines, |b| b.line);
+        s.pre = Some(Block {
+            line: 0,
+            end,
+            text: s
+                .props
+                .iter()
+                .map(|(k, v)| format!("{k}:: {v}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            props: s.props.clone(),
+            ..Block::default()
+        });
     }
     s
 }
@@ -1650,9 +1683,9 @@ mod tests {
                 (RefKind::Tag, "two words"),
                 (RefKind::Page, "a [[b]]"),
                 (RefKind::Page, "b"),
-                (RefKind::Page, "q"),
             ]
         );
+        // A query's `[[q]]` names no page, as in Logseq.
         assert_eq!(s.blocks.last().unwrap().text, "after");
     }
 

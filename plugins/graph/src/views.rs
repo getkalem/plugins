@@ -1085,6 +1085,7 @@ fn column_value(index: &Index, hit: &crate::query::Hit, column: &str) -> String 
     use crate::query::Hit;
     let (page, block) = match hit {
         Hit::Page(k) => (index.page(k), None),
+        Hit::Props { rel } => (index.page_of(rel), None),
         Hit::Block { rel, block } => (
             index.page_of(rel),
             index.file(rel).and_then(|d| d.scanned.blocks.get(*block)),
@@ -1130,6 +1131,11 @@ fn hit_target(index: &Index, hit: &crate::query::Hit) -> Option<Target> {
                 path: index.graph.path(rel),
                 line: b.line,
             }),
+        // A page's properties, at its top.
+        Hit::Props { rel } => Some(Target::File {
+            path: index.graph.path(rel),
+            line: 0,
+        }),
     }
 }
 

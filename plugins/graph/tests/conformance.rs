@@ -110,15 +110,21 @@ fn a_logseq_graph_in_markdown() {
     assert_eq!(g.comma_properties, ["related", "alias", "tags"]);
     assert!(i.problems.is_empty(), "{:?}", i.problems);
     let (pages, journals, _, _) = i.counts();
-    assert_eq!((pages, journals), (19, 10));
+    assert_eq!((pages, journals), (20, 10));
     // `#+BEGIN_NOTE` is a directive, no tag.
     assert!(
         i.pages().all(|p| !p.title.starts_with('+')),
         "{:?}",
         i.pages().map(|p| &p.title).collect::<Vec<_>>()
     );
-    // Never read: the backup, the hidden folder, the assets.
+    // Never read: the backup, the hidden folder; a note in assets/ is,
+    // as Logseq reads it.
     assert!(i.page("ignored").is_none());
+    assert!(
+        i.page("readme")
+            .is_some_and(|p| p.path.as_deref() == Some("assets/readme.md"))
+    );
+    assert!(i.page("read from assets").is_some());
     // Titles from the file name, decoded, and from `title::`.
     assert!(
         i.page("questions?")
@@ -406,10 +412,12 @@ fn queries_on_the_corpus() {
         a.hits.iter().map(|h| query::hit_text(&i, h)).collect()
     };
     // The page's open tasks, the corpus's own query, a block reference
-    // shown as its block's text.
+    // shown as its block's text; a task naming a page of its namespace
+    // (`[[Project/Plugins/Graph]]`) is one too, as Logseq 0.10.9 finds.
     assert_eq!(
         found("(and [[Project/Plugins]] (task NOW LATER TODO DOING))"),
         [
+            "NOW Start [[Project/Plugins/Graph]]",
             "TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]",
             "DOING [#B] The plain-text accounting plugin",
             "LATER The Typst mode, after the mode binding",
@@ -424,10 +432,8 @@ fn queries_on_the_corpus() {
             "TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]",
         ]
     );
-    assert_eq!(
-        found("(namespace [[Project]])"),
-        ["Project/Plugins", "Project/Plugins/Graph"]
-    );
+    // A namespace's children, not their children, as Logseq 0.10.9.
+    assert_eq!(found("(namespace [[Project]])"), ["Project/Plugins"]);
     // The table the corpus's block asks for, by its properties.
     let q = i.file("pages/Queries.md").unwrap();
     let holder = q
@@ -449,12 +455,19 @@ fn queries_on_the_corpus() {
         views::Glyphs::new("unicode"),
     );
     let lines: Vec<&str> = c.text.lines().collect();
-    assert_eq!(lines[1], "4 blocks");
+    assert_eq!(lines[1], "5 blocks");
     assert!(lines[3].starts_with("block ") && lines[3].ends_with("│ page"));
+    let row = |start: &str, page: &str| {
+        lines[4..]
+            .iter()
+            .any(|l| l.starts_with(start) && l.ends_with(&format!("│ {page}")))
+    };
     assert!(
-        lines[4].starts_with("TODO [#A] Write the graph plugin")
-            && lines[4].ends_with("│ Project/Plugins")
+        row("TODO [#A] Write the graph plugin", "Project/Plugins"),
+        "{}",
+        c.text
     );
+    assert!(row("NOW Start", "Oct 10th, 2026"), "{}", c.text);
     // Each row opens its block.
     assert!(matches!(
         c.target(4),

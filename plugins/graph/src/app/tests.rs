@@ -1113,9 +1113,10 @@ fn unsaved_typing_is_seen_by_commands() {
     );
     let (_, _, _, closed) = document(&out);
     assert!(!closed.text.contains("typed now"), "{}", closed.text);
-    // A file not of the graph's folders is not taken.
+    // A file of a folder the graph hides is not taken.
     let mut i = app.index("/w/notes").unwrap().clone();
-    assert!(!i.update_unsaved("readme.md", "- [[Kalem]]"));
+    assert!(!i.update_unsaved("logseq/bak/x.md", "- [[Kalem]]"));
+    assert!(!i.update_unsaved(".hidden/x.md", "- [[Kalem]]"));
 }
 
 #[test]

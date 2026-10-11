@@ -165,6 +165,7 @@ impl<'a> Db<'a> {
             .collect();
         let mut blocks = Vec::new();
         let mut first = HashMap::new();
+        let mut pre: HashMap<&str, u32> = HashMap::new();
         let mut of_page: HashMap<u32, Vec<u32>> = HashMap::new();
         let base = pages.len() as u32;
         for (rel, d) in index.files() {
@@ -179,20 +180,54 @@ impl<'a> Db<'a> {
                     .push(base + blocks.len() as u32);
                 blocks.push((rel.as_str(), i, b, p));
             }
+            // The page's properties, Logseq's pre-block, numbered past
+            // the file's blocks.
+            if let Some(b) = &d.scanned.pre {
+                pre.insert(rel.as_str(), base + blocks.len() as u32);
+                of_page
+                    .entry(p)
+                    .or_default()
+                    .push(base + blocks.len() as u32);
+                blocks.push((rel.as_str(), PRE, b, p));
+            }
         }
+        // Each block's references from its own links, as Logseq's
+        // :block/refs: a page's own included (which its backlinks leave
+        // out), and a namespace's parents.
         let mut refs = vec![Vec::new(); blocks.len()];
         let mut referred: HashMap<u32, Vec<u32>> = HashMap::new();
-        for (key, &p) in &page_id {
-            for r in index.backlinks(key) {
-                let (Some(i), Some(&f)) = (r.block, first.get(&*r.path)) else {
+        for (rel, d) in index.files() {
+            let Some(&f) = first.get(rel.as_str()) else {
+                continue;
+            };
+            for r in &d.scanned.refs {
+                if r.kind.to_block() {
                     continue;
+                }
+                // A page property's: the pre-block's.
+                let b = match (r.block, pre.get(rel.as_str())) {
+                    (Some(i), _) => f + i as u32,
+                    (None, Some(&e)) => e,
+                    (None, None) => continue,
                 };
-                let b = f + i as u32;
-                if let Some(v) = refs.get_mut((b - base) as usize)
-                    && !v.contains(&p)
-                {
-                    v.push(p);
-                    referred.entry(p).or_default().push(b);
+                let key = index.resolve(&r.target, rel);
+                let mut keys = vec![key.clone()];
+                keys.extend(
+                    index
+                        .namespace_parents(&key, rel)
+                        .into_iter()
+                        .map(|(k, _)| k),
+                );
+                for k in keys {
+                    let Some(&p) = page_id.get(k.as_str()) else {
+                        continue;
+                    };
+                    if let Some(v) = refs.get_mut((b - base) as usize)
+                        && !v.contains(&p)
+                    {
+                        v.push(p);
+                        referred.entry(p).or_default().push(b);
+                    }
                 }
             }
         }
@@ -330,6 +365,7 @@ impl<'a> Db<'a> {
             "block/deadline" => b.deadline.map(|d| V::Int(day_int(d))).into_iter().collect(),
             "block/uuid" => b.id.clone().map(V::Str).into_iter().collect(),
             "block/collapsed?" => vec![V::Bool(b.collapsed)],
+            "block/pre-block?" => vec![V::Bool(self.block(e).is_some_and(|x| x.1 == PRE))],
             _ => Vec::new(),
         }
     }
@@ -376,6 +412,9 @@ pub enum Found {
     /// A table: its columns and rows.
     Table(Vec<String>, Vec<Vec<String>>),
 }
+
+/// The number a page's pre-block goes by among its file's blocks.
+const PRE: usize = usize::MAX;
 
 type Row = HashMap<String, V>;
 
@@ -999,6 +1038,9 @@ pub fn run(
             .iter()
             .filter_map(|&e| match (db.page(e), db.block(e)) {
                 (Some(p), _) => Some(Hit::Page(p.key.clone())),
+                (_, Some((rel, PRE, _, _))) => Some(Hit::Props {
+                    rel: rel.to_string(),
+                }),
                 (_, Some((rel, i, _, _))) => Some(Hit::Block {
                     rel: rel.to_string(),
                     block: i,
@@ -1189,9 +1231,11 @@ mod tests {
     fn references_rules_and_negation() {
         // Blocks referring to a page, through the rule and the pattern.
         // As Logseq's rule counts them (`:block/path-refs`): the page's own
-        // blocks and those under them too; journals first.
+        // blocks, its properties' pre-block among them, and those under
+        // them too; journals first.
         let by_rule = ask("{:query [:find (pull ?b [*]) :where (page-ref ?b \"kalem\")]}");
-        assert_eq!(by_rule.len(), 5, "{by_rule:?}");
+        assert_eq!(by_rule.len(), 6, "{by_rule:?}");
+        assert!(by_rule.contains(&"type:: program".to_string()));
         assert_eq!(by_rule[0], "DOING a day of [[Kalem]]");
         assert!(by_rule.contains(&"TODO index [[Kalem]]".to_string()));
         let by_pattern = ask(
@@ -1210,10 +1254,11 @@ mod tests {
 
     #[test]
     fn pages_properties_values_and_counts() {
+        // The page and its pre-block hold its properties, as in Logseq.
         let pages = ask(
             "{:query [:find (pull ?p [*]) :where [?p :block/properties ?props] [(get ?props :type) ?t] [(= ?t \"program\")]]}",
         );
-        assert_eq!(pages, ["Kalem"]);
+        assert_eq!(pages, ["Kalem", "type:: program"]);
         assert_eq!(
             ask("{:query [:find (pull ?p [*]) :where (page-property ?p :type \"program\")]}"),
             ["Kalem"]

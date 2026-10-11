@@ -244,6 +244,28 @@ pub fn hits(index: &Index, answer: &Answer) -> Vec<Row> {
                 }
                 rows.push(block_row(index, b, 4));
             }
+            // A page's properties: the page, as the block that names.
+            Hit::Props { rel } => {
+                let title = index
+                    .page_of(rel)
+                    .map_or(rel.as_str(), |p| p.title.as_str());
+                rows.push(Row {
+                    indent: 2,
+                    parts: vec![
+                        (
+                            title.to_string(),
+                            look(|l| {
+                                l.link = true;
+                                l.bold = true;
+                            }),
+                        ),
+                        (
+                            format!("  {}", crate::query::hit_text(index, h)),
+                            look(|l| l.dim = true),
+                        ),
+                    ],
+                });
+            }
         }
     }
     capped(rows, 2)

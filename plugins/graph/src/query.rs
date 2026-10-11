@@ -336,6 +336,13 @@ pub enum Hit {
     },
     /// A page, by key.
     Page(String),
+    /// A Logseq page's properties at its top, a block of their own in
+    /// Logseq (its pre-block): what a query naming a page that a property
+    /// names finds (`type:: [[book]]` and `{{query [[book]]}}`).
+    Props {
+        /// The file, relative.
+        rel: String,
+    },
 }
 
 /// A query's answer.
@@ -433,9 +440,12 @@ struct Ctx<'a> {
     /// The page, read once for the file.
     page_data: Option<&'a crate::index::Page>,
     /// For each page the query names, which of the file's blocks refer
-    /// to it (none: no block does).
+    /// to it, and last whether its page's properties do (none: nothing
+    /// does).
     refs: &'a HashMap<&'a str, Vec<bool>>,
     today: Option<Date>,
+    /// The page's properties asked, as Logseq's pre-block.
+    props: bool,
 }
 
 fn eval(e: &Expr, c: &Ctx<'_>, notes: &mut BTreeSet<String>) -> bool {
@@ -470,6 +480,11 @@ fn eval(e: &Expr, c: &Ctx<'_>, notes: &mut BTreeSet<String>) -> bool {
                 || c.block
                     .is_some_and(|b| within(b.scheduled) || within(b.deadline))
         }
+        Expr::Property(k, v) if c.props => page.is_some_and(|p| {
+            p.props
+                .iter()
+                .any(|(pk, pv)| pk == k && value_matches(pv, v))
+        }),
         Expr::Property(k, v) => c.block.is_some_and(|b| {
             b.props
                 .iter()
@@ -488,9 +503,12 @@ fn eval(e: &Expr, c: &Ctx<'_>, notes: &mut BTreeSet<String>) -> bool {
                 .any(|t| tags.iter().any(|w| bare(w) == bare(&t)))
         }),
         Expr::Page(name) => c.page == c.index.resolve(name, c.rel),
+        // The namespace's children, not their children: Logseq 0.10.9's.
         Expr::Namespace(ns) => page.is_some_and(|p| {
             let ns = names::key(ns.trim_start_matches("[[").trim_end_matches("]]"));
-            p.key.starts_with(&format!("{ns}/"))
+            p.key
+                .strip_prefix(&format!("{ns}/"))
+                .is_some_and(|rest| !rest.contains('/'))
         }),
         Expr::Unknown(name) => {
             notes.insert(format!("({name} …) is not read by Kalem"));
@@ -512,11 +530,14 @@ fn ref_names<'e>(e: &'e Expr, out: &mut Vec<&'e str>) {
 /// The blocks of a page's references, by file: from the index's
 /// backlinks, block references left out, as Logseq's path references
 /// count pages.
-fn by_file(index: &Index, key: &str) -> HashMap<String, Vec<usize>> {
-    let mut out: HashMap<String, Vec<usize>> = HashMap::new();
+fn by_file(index: &Index, key: &str) -> HashMap<String, (Vec<usize>, bool)> {
+    let mut out: HashMap<String, (Vec<usize>, bool)> = HashMap::new();
     for b in index.backlinks(key) {
-        if let (false, Some(block)) = (b.kind.to_block(), b.block) {
-            out.entry(b.path.to_string()).or_default().push(block);
+        match (b.kind.to_block(), b.block) {
+            (false, Some(block)) => out.entry(b.path.to_string()).or_default().0.push(block),
+            // A page's property naming it.
+            (false, None) => out.entry(b.path.to_string()).or_default().1 = true,
+            _ => {}
         }
     }
     out
@@ -525,13 +546,19 @@ fn by_file(index: &Index, key: &str) -> HashMap<String, Vec<usize>> {
 /// Which blocks of file `rel` refer to the page `key` as Logseq's path
 /// references count: on it, naming it, or under a block that names it;
 /// none when no block of the file does.
-fn file_refs(d: &crate::index::FileData, key: &str, own: Option<&Vec<usize>>) -> Option<Vec<bool>> {
+fn file_refs(
+    d: &crate::index::FileData,
+    key: &str,
+    own: Option<&(Vec<usize>, bool)>,
+) -> Option<Vec<bool>> {
     let blocks = &d.scanned.blocks;
+    // The blocks, then the page's properties.
     if d.key == key {
-        return Some(vec![true; blocks.len()]);
+        return Some(vec![true; blocks.len() + 1]);
     }
-    let own = own?;
-    let mut has = vec![false; blocks.len()];
+    let (own, props) = own?;
+    let mut has = vec![false; blocks.len() + 1];
+    has[blocks.len()] = *props;
     for b in own {
         if let Some(h) = has.get_mut(*b) {
             *h = true;
@@ -539,6 +566,9 @@ fn file_refs(d: &crate::index::FileData, key: &str, own: Option<&Vec<usize>>) ->
     }
     // A block's parent comes before it.
     for i in 0..blocks.len() {
+        if i >= has.len() {
+            break;
+        }
         if let Some(p) = blocks[i].parent
             && p < i
             && has[p]
@@ -566,6 +596,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
                 page_data: Some(p),
                 refs: &empty,
                 today,
+                props: false,
             };
             if eval(&q.expr, &c, &mut notes) {
                 hits.push(Hit::Page(p.key.clone()));
@@ -575,7 +606,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
         let mut names = Vec::new();
         ref_names(&q.expr, &mut names);
         // The files referring to each page named, read from the index once.
-        let mut keyed: HashMap<String, HashMap<String, Vec<usize>>> = HashMap::new();
+        let mut keyed: HashMap<String, HashMap<String, (Vec<usize>, bool)>> = HashMap::new();
         for (rel, d) in index.files() {
             let mut refs: HashMap<&str, Vec<bool>> = HashMap::new();
             for name in &names {
@@ -602,12 +633,30 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
                     page_data,
                     refs: &refs,
                     today,
+                    props: false,
                 };
                 if eval(&q.expr, &c, &mut notes) {
                     hits.push(Hit::Block {
                         rel: rel.clone(),
                         block: i,
                     });
+                }
+            }
+            // A Logseq page's properties: a block of their own there.
+            if index.graph.kind == crate::config::Kind::Logseq && !d.scanned.props.is_empty() {
+                let c = Ctx {
+                    index,
+                    rel,
+                    block: None,
+                    at: d.scanned.blocks.len(),
+                    page: &d.key,
+                    page_data,
+                    refs: &refs,
+                    today,
+                    props: true,
+                };
+                if eval(&q.expr, &c, &mut notes) {
+                    hits.push(Hit::Props { rel: rel.clone() });
                 }
             }
         }
@@ -617,6 +666,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
         let sort_key = |h: &Hit| -> (Option<Date>, String) {
             let (page, block) = match h {
                 Hit::Page(k) => (index.page(k), None),
+                Hit::Props { rel } => (index.page_of(rel), None),
                 Hit::Block { rel, block } => (
                     index.page_of(rel),
                     index.file(rel).and_then(|d| d.scanned.blocks.get(*block)),
@@ -663,6 +713,7 @@ pub fn sort_hits(index: &Index, hits: &mut [Hit]) {
     let order = |h: &Hit| {
         let (page, line) = match h {
             Hit::Page(k) => (index.page(k), 0),
+            Hit::Props { rel } => (index.page_of(rel), 0),
             Hit::Block { rel, block } => (
                 index.page_of(rel),
                 index
@@ -759,6 +810,11 @@ impl Shape {
 pub fn hit_text(index: &Index, hit: &Hit) -> String {
     match hit {
         Hit::Page(k) => index.page(k).map_or(k.clone(), |p| p.title.clone()),
+        // A page's properties, as Logseq shows its pre-block: the first.
+        Hit::Props { rel } => index
+            .page_of(rel)
+            .and_then(|p| p.props.first())
+            .map_or(String::new(), |(k, v)| format!("{k}:: {v}")),
         Hit::Block { rel, block } => {
             let Some(b) = index.file(rel).and_then(|d| d.scanned.blocks.get(*block)) else {
                 return String::new();
@@ -916,6 +972,7 @@ mod tests {
                     i.file(rel).unwrap().scanned.blocks[*block].text.clone()
                 }
                 Hit::Page(k) => i.page(k).unwrap().title.clone(),
+                Hit::Props { rel } => format!("{rel} properties"),
             })
             .collect()
     }
@@ -930,7 +987,8 @@ mod tests {
     fn clauses() {
         let i = index();
         // A page: its blocks, the blocks referring to it and those under
-        // them.
+        // them, and the pages whose properties name it (Logseq's
+        // pre-blocks: `tags:: kalem`).
         assert_eq!(
             q(&i, "[[Kalem]]"),
             [
@@ -938,6 +996,8 @@ mod tests {
                 "child of the editor",
                 "decided things",
                 "met about [[Kalem]]",
+                "pages/Kalem___Plugins.md properties",
+                "pages/Project.md properties",
                 "ship #release",
                 "shipped [[Kalem]]",
                 "write [[Kalem]] docs"

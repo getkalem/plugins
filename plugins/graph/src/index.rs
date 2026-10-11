@@ -159,18 +159,10 @@ impl Index {
     /// The index of `graph`, its files read.
     pub fn build(files: &dyn Files, graph: Graph) -> Index {
         let mut index = Index::new(graph);
-        let folders: Vec<String> = match index.graph.kind {
-            Kind::Logseq => {
-                let mut f = vec![
-                    index.graph.pages_dir.clone(),
-                    index.graph.journals_dir.clone(),
-                ];
-                f.extend(index.graph.whiteboards_dir.clone());
-                f.dedup();
-                f
-            }
-            Kind::Obsidian => vec![String::new()],
-        };
+        // The whole folder, as Logseq and Obsidian read it: Logseq a note
+        // anywhere but `logseq/` and the hidden folders, not only its pages
+        // and journals.
+        let folders = vec![String::new()];
         let mut seen = std::collections::BTreeSet::new();
         for folder in folders {
             let mut todo = vec![index.graph.path(&folder)];
@@ -309,12 +301,8 @@ impl Index {
     }
 
     fn in_folders(&self, rel: &str) -> bool {
-        match self.graph.kind {
-            Kind::Obsidian => true,
-            Kind::Logseq => [&self.graph.pages_dir, &self.graph.journals_dir]
-                .iter()
-                .any(|d| d.is_empty() || rel.starts_with(&format!("{d}/"))),
-        }
+        // Every folder the graph does not hide ([`Graph::is_hidden`]).
+        !self.graph.is_hidden(rel)
     }
 
     fn remove(&mut self, rel: &str) -> bool {
@@ -576,11 +564,50 @@ impl Index {
                 };
                 self.pages.insert(key.clone(), page);
             }
+            // A link to a page of a namespace names its parents too, as
+            // Logseq's references do (`[[a/b/c]]` refers to `a/b` and `a`).
+            for (parent, title) in self.namespace_parents(&key, rel) {
+                if !self.pages.contains_key(&parent) {
+                    let page = Page {
+                        key: parent.clone(),
+                        title,
+                        path: None,
+                        aliases: Vec::new(),
+                        journal: None,
+                        props: Vec::new(),
+                    };
+                    self.pages.insert(parent.clone(), page);
+                }
+                if parent != d.key {
+                    self.incoming.entry(parent).or_default().push(back.clone());
+                }
+            }
             if key != d.key {
                 self.incoming.entry(key).or_default().push(back);
             }
         }
         self.files.insert(rel.to_string(), d);
+    }
+
+    /// The namespaces above page `key` of a Logseq graph, by key and
+    /// title: `a/b` and `a` above `a/b/c`; none in a vault, whose folders
+    /// are not pages.
+    pub fn namespace_parents(&self, key: &str, rel: &str) -> Vec<(String, String)> {
+        if self.graph.kind != Kind::Logseq {
+            return Vec::new();
+        }
+        let title = self.pages.get(key).map_or(key, |p| p.title.as_str());
+        let mut out = Vec::new();
+        let mut at = 0;
+        while let Some(p) = title[at..].find('/') {
+            let prefix = &title[..at + p];
+            at += p + 1;
+            if prefix.trim().is_empty() {
+                continue;
+            }
+            out.push((self.resolve(prefix, rel), prefix.to_string()));
+        }
+        out
     }
 
     /// What [`Index::contribute`] added for file `rel` taken away again,
@@ -643,6 +670,12 @@ impl Index {
                 if self.block_incoming.get_mut(&k).is_some_and(drop_mine) {
                     self.block_incoming.remove(&k);
                 }
+            }
+            for (parent, _) in self.namespace_parents(&key, rel) {
+                if self.incoming.get_mut(&parent).is_some_and(drop_mine) {
+                    self.incoming.remove(&parent);
+                }
+                named.insert(parent);
             }
             if self.incoming.get_mut(&key).is_some_and(drop_mine) {
                 self.incoming.remove(&key);
@@ -832,7 +865,14 @@ impl Index {
 
     /// The page of the file `rel`.
     pub fn page_of(&self, rel: &str) -> Option<&Page> {
-        self.files.get(rel).and_then(|d| self.pages.get(&d.key))
+        match self.files.get(rel) {
+            Some(d) => self.pages.get(&d.key),
+            // A whiteboard or a canvas, a page drawn by its application.
+            None if self.drawings.contains(rel) => {
+                self.pages.values().find(|p| p.path.as_deref() == Some(rel))
+            }
+            None => None,
+        }
     }
 
     /// A file's data.
@@ -1166,7 +1206,7 @@ mod tests {
                 "- met [[Project/Plugins]] and [[Oct 4th, 2026]]\n",
             ),
             ("/g/journals/2026_10_04.md", "- DONE ship\n"),
-            ("/g/logseq/bak/pages/Kalem.md", "- [[ignored]]"),
+            ("/g/logseq/bak/pages/Kalem.md", "- [[in bak]]"),
             ("/g/assets/x.md", "- [[ignored]]"),
         ]);
         let g = Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default());
@@ -1177,9 +1217,11 @@ mod tests {
     #[test]
     fn logseq_pages_names_and_backlinks() {
         let (_, i) = logseq();
+        // A note in assets/ is one, as Logseq 0.10.9 reads it; not in
+        // logseq/bak/.
         assert_eq!(
             i.counts().0,
-            5,
+            6,
             "{:?}",
             i.pages().map(|p| &p.key).collect::<Vec<_>>()
         );
@@ -1191,7 +1233,9 @@ mod tests {
             i.page("real title").unwrap().path.as_deref(),
             Some("pages/Named.md")
         );
-        assert!(i.page("ignored").is_none());
+        // Logseq's backups are not read; a note in assets/ is.
+        assert!(i.page("in bak").is_none());
+        assert!(i.page("ignored").is_some());
         // `[[kalem]]` and the alias `[[EDITOR]]` both reach Kalem.
         let back = i.backlinks("kalem");
         assert_eq!(back.len(), 2);
