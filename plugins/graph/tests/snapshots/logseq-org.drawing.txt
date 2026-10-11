@@ -1,10 +1,11 @@
 Graph view: logseq-org
-7 pages · 6 links
+8 pages · 7 links
 
-Kalem  6 links
+Kalem  5 links
+Project/Plugins  4 links
 Project  3 links
-Project/Plugins  3 links
-Editor  1 link
+Editor  2 links
 meeting  1 link
 Org  1 link
+plugins  1 link
 software  1 link

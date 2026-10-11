@@ -769,7 +769,8 @@ pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
             if r.kind.to_block() || (index.graph.kind == Kind::Obsidian && r.kind == RefKind::Tag) {
                 continue;
             }
-            let to = index.resolve(&r.target, rel);
+            // An alias a node of its own, as in Logseq.
+            let to = index.resolve_exact(&r.target, rel);
             if to.contains('/') {
                 for (parent, _) in index.namespace_parents(&to, rel) {
                     link(&d.key, parent);

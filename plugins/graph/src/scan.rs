@@ -1246,15 +1246,35 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
                 s.blocks[c].end = n as u32;
             }
             let content = line[stars..].trim();
-            // Org's tags at the end: `:a:b:`.
+            // Org's tags at the end: `:a:b:`, tags as Logseq reads them.
+            let mut tags = Vec::new();
             let content = match content.rfind(" :") {
                 Some(p) if content.ends_with(':') && !content[p + 2..].contains(' ') => {
+                    let end = line.trim_end().len();
+                    let mut at = end - (content.len() - p - 1);
+                    for t in content[p + 2..content.len() - 1].split(':') {
+                        if !t.is_empty() {
+                            tags.push((t.to_string(), at + 1, at + 1 + t.len()));
+                        }
+                        at += t.len() + 1;
+                    }
                     content[..p].trim_end()
                 }
                 _ => content,
             };
             let (marker, priority, text) = task(content);
             let index = s.blocks.len();
+            for (target, start, end) in tags {
+                s.refs.push(Ref {
+                    kind: RefKind::Tag,
+                    target,
+                    anchor: None,
+                    block: Some(index),
+                    line: n as u32,
+                    start: start as u32,
+                    end: end as u32,
+                });
+            }
             s.blocks.push(Block {
                 line: n as u32,
                 end: n as u32 + 1,
@@ -1367,6 +1387,22 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
         );
     }
     page_props(&mut s, &page, options, true);
+    // The page's properties at its top (`#+title:`, `#+alias:`): Logseq's
+    // pre-block, as in Markdown.
+    if let Some(first) = page.first().map(|(_, _, l)| *l as u32) {
+        let end = s.blocks.first().map_or(lines.len() as u32, |b| b.line);
+        s.pre = Some(Block {
+            line: first,
+            end,
+            text: page
+                .iter()
+                .map(|(k, v, _)| format!("#+{k}: {v}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            props: s.props.clone(),
+            ..Block::default()
+        });
+    }
     s
 }
 
@@ -1730,11 +1766,17 @@ mod tests {
             [
                 (RefKind::Property, "OP"),
                 (RefKind::Page, "Link"),
+                // A headline's tag, as Logseq reads it.
+                (RefKind::Tag, "tag"),
                 (RefKind::Block, "6512abcd-1111-2222-3333-444455556666"),
                 (RefKind::Page, "other_page"),
                 (RefKind::Tag, "tag"),
             ]
         );
+        // The tag's bytes in its line.
+        let line = "* TODO [#B] Headline [[Link]] :tag:";
+        let r = &s.refs[2];
+        assert_eq!(&line[r.start as usize..r.end as usize], "tag");
     }
 
     #[test]

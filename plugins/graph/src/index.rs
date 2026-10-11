@@ -735,6 +735,33 @@ impl Index {
         true
     }
 
+    /// The key of the page `target` names as Logseq's queries and graph
+    /// view count it: a page's alias a page of its own (`[[Editor]]` is
+    /// not `[[Kalem]]` there, though Kalem's backlinks list it, as
+    /// Logseq's linked references do); else as [`Index::resolve`].
+    pub fn resolve_exact(&self, target: &str, from: &str) -> String {
+        let key = self.resolve(target, from);
+        if self.graph.kind != Kind::Logseq {
+            return key;
+        }
+        let k = names::key(target);
+        match self.pages.get(&key) {
+            Some(p) if k != key && p.aliases.iter().any(|a| names::key(a) == k) => k,
+            _ => key,
+        }
+    }
+
+    /// Whether `key` is a Logseq page's alias rather than a page of its
+    /// own.
+    pub fn is_alias(&self, key: &str) -> bool {
+        !self.pages.contains_key(key)
+            && self
+                .names
+                .get(key)
+                .and_then(|p| self.pages.get(p))
+                .is_some_and(|p| p.aliases.iter().any(|a| names::key(a) == key))
+    }
+
     /// The key of the page `target` names from the file `from`
     /// (relative): an existing page, or the key a page of that name would
     /// have.

@@ -1554,15 +1554,15 @@ fn the_graph_drawn_whole_and_around_a_page() {
     );
     assert_eq!(d.command, "graph.openNode");
     assert!(content.text.contains("Kalem  "));
-    // Around a page: it in the middle, the journal two links away too.
+    // Around a page: it in the middle, the pages two links away; Kalem's
+    // alias a node of its own, as in Logseq, the journal linking to it
+    // three links away.
     let (_, _, _, content) = document(&app.command(&m, "graph.localGraph", &c));
     let d = content.drawing.unwrap();
     assert_eq!(d.focus.as_deref(), Some("other"));
     let ids: Vec<&str> = d.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert!(
-        ids.contains(&"kalem") && ids.iter().any(|i| i.starts_with("oct")),
-        "{ids:?}"
-    );
+    assert!(ids.contains(&"kalem") && ids.contains(&"editor"), "{ids:?}");
+    assert!(!ids.iter().any(|i| i.starts_with("oct")), "{ids:?}");
     // A node opened: its page.
     let mut o = c.clone();
     o.doc = Some(("graph.graphView".into(), key));

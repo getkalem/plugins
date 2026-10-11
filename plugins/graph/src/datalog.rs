@@ -134,6 +134,31 @@ fn value(e: &Edn) -> V {
     }
 }
 
+/// A Logseq page's aliases, each a page of its own in Logseq's database
+/// (without blocks), as the queries find them.
+fn alias_pages(index: &Index) -> Vec<Page> {
+    let mut out: Vec<Page> = Vec::new();
+    if index.graph.kind != crate::config::Kind::Logseq {
+        return out;
+    }
+    for p in index.pages() {
+        for a in &p.aliases {
+            let key = crate::names::key(a);
+            if index.page(&key).is_none() && !out.iter().any(|o| o.key == key) {
+                out.push(Page {
+                    key,
+                    title: a.clone(),
+                    path: None,
+                    aliases: Vec::new(),
+                    journal: None,
+                    props: Vec::new(),
+                });
+            }
+        }
+    }
+    out
+}
+
 /// A day as Logseq keeps a journal's: 20261011.
 fn day_int(d: Date) -> i64 {
     i64::from(d.year) * 10_000 + i64::from(d.month) * 100 + i64::from(d.day)
@@ -156,8 +181,10 @@ struct Db<'a> {
 }
 
 impl<'a> Db<'a> {
-    fn new(index: &'a Index) -> Db<'a> {
-        let pages: Vec<&Page> = index.pages().collect();
+    /// The graph's entities: its pages and `aliases` (pages of their own
+    /// in Logseq's database, [`alias_pages`]), then its blocks.
+    fn new(index: &'a Index, aliases: &'a [Page]) -> Db<'a> {
+        let pages: Vec<&Page> = index.pages().chain(aliases).collect();
         let page_id: HashMap<&str, u32> = pages
             .iter()
             .enumerate()
@@ -210,7 +237,7 @@ impl<'a> Db<'a> {
                     (None, Some(&e)) => e,
                     (None, None) => continue,
                 };
-                let key = index.resolve(&r.target, rel);
+                let key = index.resolve_exact(&r.target, rel);
                 let mut keys = vec![key.clone()];
                 keys.extend(
                     index
@@ -229,6 +256,24 @@ impl<'a> Db<'a> {
                         referred.entry(p).or_default().push(b);
                     }
                 }
+            }
+        }
+        // A page's properties naming its aliases refer to the page too, as
+        // Logseq's pre-block does.
+        for (rel, &e) in &pre {
+            let Some(&p) = index
+                .file(rel)
+                .and_then(|d| index.page(&d.key))
+                .filter(|pg| !pg.aliases.is_empty())
+                .and_then(|pg| page_id.get(pg.key.as_str()))
+            else {
+                continue;
+            };
+            if let Some(v) = refs.get_mut((e - base) as usize)
+                && !v.contains(&p)
+            {
+                v.push(p);
+                referred.entry(p).or_default().push(e);
             }
         }
         Db {
@@ -941,7 +986,8 @@ pub fn run(
     today: Option<Date>,
     current: Option<&str>,
 ) -> Result<Found, String> {
-    let db = Db::new(index);
+    let aliases = alias_pages(index);
+    let db = Db::new(index, &aliases);
     // `[:find … :in … :where …]` or `{:find […] :in […] :where […]}`.
     let mut parts: HashMap<String, Vec<Edn>> = HashMap::new();
     match &a.query {

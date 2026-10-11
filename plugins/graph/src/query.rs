@@ -502,7 +502,7 @@ fn eval(e: &Expr, c: &Ctx<'_>, notes: &mut BTreeSet<String>) -> bool {
                 .flat_map(|(_, v)| scan::split_values(v))
                 .any(|t| tags.iter().any(|w| bare(w) == bare(&t)))
         }),
-        Expr::Page(name) => c.page == c.index.resolve(name, c.rel),
+        Expr::Page(name) => c.page == c.index.resolve_exact(name, c.rel),
         // The namespace's children, not their children: Logseq 0.10.9's.
         Expr::Namespace(ns) => page.is_some_and(|p| {
             let ns = names::key(ns.trim_start_matches("[[").trim_end_matches("]]"));
@@ -532,12 +532,50 @@ fn ref_names<'e>(e: &'e Expr, out: &mut Vec<&'e str>) {
 /// count pages.
 fn by_file(index: &Index, key: &str) -> HashMap<String, (Vec<usize>, bool)> {
     let mut out: HashMap<String, (Vec<usize>, bool)> = HashMap::new();
-    for b in index.backlinks(key) {
+    // The page an alias names, whose backlinks count links by its every
+    // name: here only those by `key`'s (Logseq's queries).
+    let page = index.resolve(key, "");
+    let aliased = index.page(&page).is_some_and(|p| !p.aliases.is_empty());
+    for b in index.backlinks(&page) {
+        if aliased
+            && let Some(d) = index.file(&b.path)
+            && !d.scanned.refs.iter().any(|r| {
+                r.block == b.block && r.line == b.line && !r.kind.to_block() && {
+                    // By this name, or by a page of its namespace.
+                    let to = index.resolve_exact(&r.target, &b.path);
+                    to == key
+                        || (key == page
+                            && index
+                                .namespace_parents(&to, &b.path)
+                                .iter()
+                                .any(|(k, _)| *k == page))
+                }
+            })
+        {
+            continue;
+        }
         match (b.kind.to_block(), b.block) {
             (false, Some(block)) => out.entry(b.path.to_string()).or_default().0.push(block),
             // A page's property naming it.
             (false, None) => out.entry(b.path.to_string()).or_default().1 = true,
             _ => {}
+        }
+    }
+    // An alias named in its own page, which the backlinks leave out (its
+    // `alias::` property among them).
+    if key != page
+        && let Some(rel) = index.page(&page).and_then(|p| p.path.as_deref())
+        && let Some(d) = index.file(rel)
+    {
+        for r in &d.scanned.refs {
+            if r.kind.to_block() || index.resolve_exact(&r.target, rel) != key {
+                continue;
+            }
+            let e = out.entry(rel.to_string()).or_default();
+            match r.block {
+                Some(block) => e.0.push(block),
+                None => e.1 = true,
+            }
         }
     }
     out
@@ -610,7 +648,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
         for (rel, d) in index.files() {
             let mut refs: HashMap<&str, Vec<bool>> = HashMap::new();
             for name in &names {
-                let key = index.resolve(name, rel);
+                let key = index.resolve_exact(name, rel);
                 let files = keyed
                     .entry(key.clone())
                     .or_insert_with(|| by_file(index, &key));

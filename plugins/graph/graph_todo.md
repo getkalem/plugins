@@ -1090,7 +1090,12 @@ user groups; the gaps that code can close, in this order.
   the folder, a namespace's parents named by a link to its pages, a
   query's arguments no references, a page's properties a block of its
   own (pre-block), `(namespace x)` its children only;
-  `tests/logseq_parity.rs` keeps Logseq's answers.
+  `tests/logseq_parity.rs` keeps Logseq's answers. Then (2026-10-11) the
+  same on `corpus/logseq-org`, 28 queries, and both corpora's graph
+  views: an Org headline's tags (`:a:b:`) are references, an Org page's
+  `#+title:` lines a pre-block, and a link to an alias is the alias's
+  own in queries (`[[Editor]]` is not `[[Kalem]]`), as in Logseq, while
+  the backlinks still count it as the page's.
 - [x] GR14e `collapsed:: true` folded when the note opens (K3).
   (Done 2026-10-11: the layer has hidden a folded block's children since
   GR4, Fold Block writes `collapsed::` as Logseq does, and the vertical

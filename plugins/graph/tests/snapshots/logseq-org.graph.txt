@@ -3,7 +3,7 @@ Graph: logseq-org
 
 Kalem  ←3 →4
 Project
-  Plugins  ←2 →2
+  Plugins  ←2 →3
 
 Unlinked mentions (0)  named without a link; Enter lists them
 

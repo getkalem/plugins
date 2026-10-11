@@ -1,9 +1,10 @@
-//! The plugin's answers against Logseq's own on the corpus `logseq-md`:
-//! `tests/logseq/answers-0.10.9.json` holds what Logseq 0.10.9 answered,
-//! read from its database through its API with the corpus open (its
-//! simple and advanced queries, and the pages referring to each page), so
-//! that the plugin finds what Logseq finds, not what this crate assumed
-//! it does.
+//! The plugin's answers against Logseq's own on the corpora `logseq-md`
+//! and `logseq-org`: `tests/logseq/answers-0.10.9.json` and
+//! `answers-org-0.10.9.json` hold what Logseq 0.10.9 answered, read from
+//! its database through its API with the corpus open (its simple and
+//! advanced queries, the pages referring to each page, its graph view),
+//! so that the plugin finds what Logseq finds, not what this crate
+//! assumed it does.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -15,12 +16,39 @@ use kalem_plugin_graph::index::Index;
 use kalem_plugin_graph::query::{self, Hit};
 use kalem_plugin_graph::{datalog, files};
 
-fn corpus() -> String {
+/// The corpora and the files of Logseq's answers on them.
+const CORPORA: [(&str, &str); 2] = [
+    ("logseq-md", "answers-0.10.9.json"),
+    ("logseq-org", "answers-org-0.10.9.json"),
+];
+
+fn corpus(name: &str) -> String {
     files::normalize(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("corpus/logseq-md")
+            .join("corpus")
+            .join(name)
             .to_string_lossy(),
     )
+}
+
+/// Corpus `name` indexed, and Logseq's answers in `file`.
+fn load(name: &str, file: &str) -> (String, Index, serde_json::Value) {
+    let root = corpus(name);
+    let kind = config::kind_of(&Native, &root).unwrap();
+    let i = Index::build(
+        &Native,
+        Graph::load(&Native, &root, kind, &Fallbacks::default()),
+    );
+    let answers = serde_json::from_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/logseq")
+                .join(file),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    (root, i, answers)
 }
 
 /// A hit as the answers write it: its page, and a block's first line.
@@ -28,8 +56,14 @@ fn written(i: &Index, root: &str, h: &Hit) -> Vec<String> {
     let first = |rel: &str, line: usize| {
         let text = std::fs::read_to_string(format!("{root}/{rel}")).unwrap();
         let l = text.lines().nth(line).unwrap_or("").trim();
+        // A Markdown block's bullet, an Org headline's stars.
+        let stars = l.trim_start_matches('*');
         l.strip_prefix("- ")
-            .or_else(|| l.strip_prefix("* "))
+            .or_else(|| {
+                (stars.len() < l.len())
+                    .then(|| stars.strip_prefix(' '))
+                    .flatten()
+            })
             .unwrap_or(l)
             .to_lowercase()
     };
@@ -46,19 +80,25 @@ fn written(i: &Index, root: &str, h: &Hit) -> Vec<String> {
 
 #[test]
 fn queries_and_references_as_logseq_answers() {
-    let root = corpus();
-    let kind = config::kind_of(&Native, &root).unwrap();
-    let i = Index::build(
-        &Native,
-        Graph::load(&Native, &root, kind, &Fallbacks::default()),
+    let mut differ = Vec::new();
+    for (name, file) in CORPORA {
+        differ.extend(
+            queries_and_references(name, file)
+                .into_iter()
+                .map(|d| format!("{name}: {d}")),
+        );
+    }
+    assert!(
+        differ.is_empty(),
+        "differ from Logseq's answers:\n{}",
+        differ.join("\n")
     );
-    let answers: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/logseq/answers-0.10.9.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
+}
+
+/// Where the plugin's queries and references differ from Logseq's on
+/// corpus `name`.
+fn queries_and_references(name: &str, file: &str) -> Vec<String> {
+    let (root, i, answers) = load(name, file);
     // The day the answers were read on: relative days count from it.
     let today = Date::new(2026, 10, 11);
     let mut differ = Vec::new();
@@ -117,28 +157,19 @@ fn queries_and_references_as_logseq_answers() {
             ));
         }
     }
-    assert!(
-        differ.is_empty(),
-        "differ from Logseq's answers:\n{}",
-        differ.join("\n")
-    );
+    differ
 }
 
 #[test]
 fn the_graph_view_as_logseq_draws_it() {
-    let root = corpus();
-    let kind = config::kind_of(&Native, &root).unwrap();
-    let i = Index::build(
-        &Native,
-        Graph::load(&Native, &root, kind, &Fallbacks::default()),
-    );
-    let answers: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/logseq/answers-0.10.9.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
+    for (name, file) in CORPORA {
+        graph_view(name, file);
+    }
+}
+
+/// The plugin's graph view of corpus `name` against Logseq's.
+fn graph_view(name: &str, file: &str) {
+    let (_, i, answers) = load(name, file);
     // Logseq's own, not drawn by the plugin: the pages of the properties'
     // names (`:property-pages/enabled?`), and a page named by the block
     // `{{embed ((uuid))}}` embeds, which Logseq 0.10.9 makes by mistake.
@@ -190,7 +221,7 @@ fn the_graph_view_as_logseq_draws_it() {
             got_nodes.difference(&want_nodes).collect::<Vec<_>>()
         ),
         (Vec::<&String>::new(), Vec::<&String>::new()),
-        "nodes: Logseq's only, the plugin's only"
+        "{name}: nodes: Logseq's only, the plugin's only"
     );
     assert_eq!(
         (
@@ -198,6 +229,6 @@ fn the_graph_view_as_logseq_draws_it() {
             got_links.difference(&want_links).collect::<Vec<_>>()
         ),
         (Vec::new(), Vec::new()),
-        "links: Logseq's only, the plugin's only"
+        "{name}: links: Logseq's only, the plugin's only"
     );
 }

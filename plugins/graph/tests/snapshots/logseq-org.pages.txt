@@ -5,8 +5,9 @@ Pages (2)  by title; s sorts by links
 Kalem               3 links      5 blocks
 Project/Plugins     2 links      3 blocks
 
-Not written yet (4)
+Not written yet (5)
 meeting  1 links
 Org  1 links
+plugins  1 links
 Project  2 links
 software  2 links
