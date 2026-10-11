@@ -1101,6 +1101,8 @@ user groups; the gaps that code can close, in this order.
 - [x] GR14f The graph's menu, as Logseq's left sidebar, behind a Graph
   button (the owner's ask, 2026-10-11): `graph.home`, the documents a
   key away, favorites, recent pages, whiteboards, the other graphs.
+  Released in graph 0.6.0 with GR14d's answers checked against Logseq
+  0.10.9 (`tests/logseq_parity.rs`), for Kalem 0.6.15 and later.
 - [x] GR14g The graph drawn as Logseq's (the owner's ask, 2026-10-11):
   pages grey, every name that fits, none over another (Kalem's side).
 

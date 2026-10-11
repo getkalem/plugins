@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "kalem-plugin-graph"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "kalem-plugin",
  "serde_json",
