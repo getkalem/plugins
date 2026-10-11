@@ -623,7 +623,7 @@ first.
 
 ## PT8. Reconciliation
 
-- [ ] PT8a `pta.reconcile` (`SPC m r`; ledger-mode's `C-c C-r`), in a
+- [~] PT8a `pta.reconcile` (`SPC m r`; ledger-mode's `C-c C-r`), in a
   journal: asks the account (a quick-pick of the asset and liability
   accounts, the one at the cursor first) and the target balance (the
   statement's closing balance; the default the account's last balance
@@ -642,7 +642,29 @@ first.
   (`document-changed`), and the difference moves toward zero. Enter on
   a line opens the journal at that posting. This works with today's
   API; marking from the reconcile document itself is PT8b.
-- [ ] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
+  (Done 2026-10-11 but the pane beside, the refresh 500 ms after a
+  change, one block per commodity; checked in the terminal editor on
+  the corpus. The tool totals: hledger's `balance` with `status:*`,
+  `status:!` and both (`-O json`), Ledger's `--cleared`, `--pending`
+  and `--limit 'cleared|pending'`, Beancount's flags (`!` pending,
+  anything else cleared: Beancount has no unmarked posting); the
+  postings not cleared from hledger's `register status:! status: -O
+  json`, Ledger's `--uncleared`, Beancount's `flag = '!'`. The plugin
+  takes the tool's cleared-and-pending total from the target typed in
+  the journal's style (the tool's total offered), exact decimals
+  (`src/reconcile.rs`); hledger's amounts read from its JSON and
+  written in their style, which the Register now uses too (digit
+  groups, the status). The document: the five figures, the difference
+  green at zero and red otherwise, the postings not cleared; Enter
+  opens the journal at one, `t` the target, `C` finish, `r` again, `q`
+  closes; written again when the journal is saved. Found: Ledger's
+  query language takes parentheses for grouping, so an account and its
+  subaccounts are two terms, `^A$ or ^A:` (the Register's Ledger
+  filter was wrong before, its test now checks the last total). The
+  account picked: the cursor's posting's, else among the asset and
+  liability accounts. Opened as a document, not yet in a pane beside
+  the journal; the commodity the target names, or the first.)
+- [~] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
   the reconcile buffer), in the journal or the reconcile document:
   when the difference is zero, every pending posting of the account
   becomes cleared, and a balance assertion for the target at the
@@ -658,6 +680,18 @@ first.
   document other than the one the command runs in, K3; until then
   Space in the reconcile document opens the journal at the posting,
   where `SPC m c` marks it.
+  (Done 2026-10-11 but Space: Finish asks the statement's date (today
+  offered, smart dates taken), opens the journal the reconciliation
+  started in and runs `pta.finishReconcileWrite` there, queued, since
+  a command edits only the document it runs in (K3): the account's
+  pending marks (a transaction's or a posting's) made `*`, and the
+  assertion written at its date's place, hledger's and Ledger's
+  `DATE * Balance assertion` with `ACCOUNT  0,00 TRY = TARGET`, the
+  zero and the target in the commodity's style, Beancount's `balance`
+  the next day; one undo step. Checked: the corpus's pending Market
+  transaction cleared, the assertion written, `hledger check
+  --strict` passing. Pending marks in an included file are not
+  cleared (only the open journal is edited).)
 - [ ] PT8c The statement beside: `pta.reconcileWith`, in a CSV
   document (Kalem's grid) or from the reconcile document, pairs the
   statement's rows with the account's postings by date and amount

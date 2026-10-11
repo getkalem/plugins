@@ -553,7 +553,7 @@ pub struct Posting {
 }
 
 /// `account` and its subaccounts, as a regular expression.
-fn account_pattern(account: &str) -> String {
+pub(crate) fn account_pattern(account: &str) -> String {
     let mut p = String::from("^");
     for c in account.chars() {
         if "\\.+*?()|[]{}^$".contains(c) {
@@ -565,9 +565,18 @@ fn account_pattern(account: &str) -> String {
     p
 }
 
+/// `account` and its subaccounts as Ledger's query terms: its query
+/// language takes parentheses for grouping, so the two alternatives are
+/// two terms, `^A$ or ^A:`.
+pub(crate) fn ledger_pattern(account: &str) -> Vec<String> {
+    let p = account_pattern(account);
+    let base = p.trim_end_matches("(:|$)");
+    vec![format!("{base}$"), "or".into(), format!("{base}:")]
+}
+
 /// Ledger's register format: fields apart by U+001F, which no payee
 /// holds (`|` may).
-const LEDGER_REGISTER: &str = "%(format_date(date, \"%Y-%m-%d\"))\u{1f}%(state)\u{1f}%(payee)\u{1f}%(scrub(display_amount))\u{1f}%(scrub(display_total))\u{1f}%(filename)\u{1f}%(beg_line)\\n";
+pub(crate) const LEDGER_REGISTER: &str = "%(format_date(date, \"%Y-%m-%d\"))\u{1f}%(state)\u{1f}%(payee)\u{1f}%(scrub(display_amount))\u{1f}%(scrub(display_total))\u{1f}%(filename)\u{1f}%(beg_line)\\n";
 
 /// The tool's register of `account` in `main` within `bounds`.
 pub fn register_command(
@@ -595,7 +604,7 @@ pub fn register_command(
                 main.into(),
                 "register".into(),
                 "-O".into(),
-                "csv".into(),
+                "json".into(),
             ]);
             dates(&mut a);
             a.push(format!("acct:{pattern}"));
@@ -605,7 +614,7 @@ pub fn register_command(
             a.extend(["-f".into(), main.into(), "register".into()]);
             a.extend(["--register-format".into(), LEDGER_REGISTER.into()]);
             dates(&mut a);
-            a.push(pattern);
+            a.extend(ledger_pattern(account));
             ("ledger", a)
         }
         Dialect::Beancount => {
@@ -648,7 +657,10 @@ fn csv_fields(line: &str) -> Vec<String> {
 }
 
 /// hledger's CSV register: `txnidx,date,code,description,account,amount,
-/// total`; no status nor place (the transaction's number finds it).
+/// total`; no status nor place (the transaction's number finds it). The
+/// plugin reads its JSON instead (`crate::reconcile::hledger_register`),
+/// which has the status and the amounts' style; this stays for a
+/// register written as CSV.
 pub fn hledger_register(csv: &str) -> Vec<Posting> {
     csv.lines()
         .skip(1)

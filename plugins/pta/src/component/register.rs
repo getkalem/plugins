@@ -192,7 +192,7 @@ fn gather(key: &(String, String), open: bool) {
             }
         };
         let rows = match tool {
-            Dialect::Hledger => report::hledger_register(&out),
+            Dialect::Hledger => crate::reconcile::hledger_register(&out),
             Dialect::Ledger => report::ledger_register(&out),
             Dialect::Beancount => report::beancount_register(&out),
         };
@@ -283,22 +283,28 @@ pub(super) fn visit() -> Result<String, String> {
     }) else {
         return Ok("null".into());
     };
+    go_to(tool, &key.0, posting);
+    Ok("null".into())
+}
+
+/// The journal at `posting`: its place, or hledger's transaction's,
+/// found in `hledger print -O json` of `main` when asked.
+pub(super) fn go_to(tool: Dialect, main: &str, posting: Posting) {
     if let Some((file, line)) = posting.place {
         go(&file, line);
-        return Ok("null".into());
+        return;
     }
     let Some(n) = posting.transaction else {
-        return Ok("null".into());
+        return;
     };
-    // hledger's: the transaction's place in its print, asked now.
     let args = vec![
         "-f".into(),
-        key.0.clone(),
+        main.to_string(),
         "print".into(),
         "-O".into(),
         "json".into(),
     ];
-    let dir = journal::folder(&key.0).to_string();
+    let dir = journal::folder(main).to_string();
     run(tool.checker(), args, &dir, move |r| {
         let place = r
             .ok()
@@ -312,7 +318,6 @@ pub(super) fn visit() -> Result<String, String> {
             ),
         }
     });
-    Ok("null".into())
 }
 
 fn go(file: &str, line: u32) {

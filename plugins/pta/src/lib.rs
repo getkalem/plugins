@@ -18,7 +18,9 @@
 //!   (PT6).
 //!
 //! - [`report`]: the tool's balance report read and laid out as a tree
-//!   (PT7a).
+//!   (PT7a), and its register (PT7b).
+//!
+//! - [`reconcile`]: an account against a statement, cleared (PT8).
 //!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
@@ -27,6 +29,7 @@ pub mod check;
 #[cfg(target_arch = "wasm32")]
 mod component;
 pub mod journal;
+pub mod reconcile;
 pub mod report;
 pub mod write;
 
@@ -69,6 +72,9 @@ pub const MENU: &[(&str, &str, &str)] = &[
     ("pta.balance", "Balance", "SPC m b"),
     ("pta.register", "Register", "SPC m R"),
     ("-", "", ""),
+    ("pta.reconcile", "Reconcile", "SPC m r"),
+    ("pta.finishReconcile", "Finish Reconciliation", "SPC m C"),
+    ("-", "", ""),
     ("pta.version", "Tool Version", ""),
 ];
 
@@ -76,7 +82,7 @@ pub const MENU: &[(&str, &str, &str)] = &[
 pub const CHECK_KIND: &str = "pta-check";
 
 /// The text types of the plugin's documents: Check, Balance.
-pub const DOCUMENT_KINDS: &[&str] = &[CHECK_KIND, "pta-balance", "pta-register"];
+pub const DOCUMENT_KINDS: &[&str] = &[CHECK_KIND, "pta-balance", "pta-register", "pta-reconcile"];
 
 /// The when-clause of the Journal menu and button: a journal, or one of
 /// the plugin's documents.

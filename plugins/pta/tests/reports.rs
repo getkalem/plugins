@@ -180,7 +180,7 @@ fn each_tools_register() {
             Dialect::Hledger,
             "2026.journal",
             "assets:bank:ziraat",
-            "50000,00 TRY",
+            "50.000,00 TRY",
         ),
         (
             Dialect::Ledger,
@@ -202,12 +202,20 @@ fn each_tools_register() {
             continue;
         };
         let rows = match tool {
-            Dialect::Hledger => report::hledger_register(&out),
+            Dialect::Hledger => kalem_plugin_pta::reconcile::hledger_register(&out),
             Dialect::Ledger => report::ledger_register(&out),
             Dialect::Beancount => report::beancount_register(&out),
         };
         assert!(rows.len() >= 4, "{tool:?}: {rows:?}");
         assert_eq!(rows[0].total, first_total, "{tool:?}");
+        // The account's postings only: its last total is its balance.
+        let last = &rows[rows.len() - 1].total;
+        let want = match tool {
+            Dialect::Hledger => "63.697,25 TRY",
+            Dialect::Ledger => "$11,619.00",
+            Dialect::Beancount => "76857.65 TRY",
+        };
+        assert_eq!(last, want, "{tool:?}");
         let place = match tool {
             Dialect::Hledger => {
                 let json = run(
@@ -230,5 +238,58 @@ fn each_tools_register() {
         let text = std::fs::read_to_string(&f).expect("its file");
         let l = text.lines().nth(line as usize - 1).expect("its line");
         assert!(l.chars().next().is_some(), "{tool:?}: {f}:{line}");
+    }
+}
+
+/// Reconciliation (PT8) as each tool totals it, on the corpus: the
+/// cleared and pending postings' total, the postings not cleared, and
+/// the difference to a target typed in the journal's style.
+#[test]
+fn each_tools_reconciliation() {
+    use kalem_plugin_pta::reconcile::{self, Which};
+    for (tool, file, account, both, open, target, difference) in [
+        (
+            Dialect::Hledger,
+            "2026.journal",
+            "assets:bank:ziraat",
+            "63.697,25 TRY",
+            1,
+            "63.700,00",
+            "2,75 TRY",
+        ),
+        (
+            Dialect::Ledger,
+            "business.ledger",
+            "Assets:Checking",
+            "$11,619.00",
+            1,
+            "$11,600.00",
+            "$-19.00",
+        ),
+        (
+            Dialect::Beancount,
+            "household.beancount",
+            "Liabilities:Card",
+            "-1120.00 TRY",
+            1,
+            "-1120.00",
+            "0.00 TRY",
+        ),
+    ] {
+        let dir = corpus(tool.language());
+        let main = dir.join(file).to_string_lossy().into_owned();
+        let (p, a) = reconcile::total_command(tool, &main, account, Which::Both);
+        let Some(out) = run(p, &a, &dir) else {
+            continue;
+        };
+        let totals = reconcile::total_of(tool, &out);
+        let total = reconcile::matching(target, &totals).expect("a total");
+        assert_eq!(total.written(), both, "{tool:?}");
+        let d = reconcile::difference(target, total).expect("the target reads");
+        assert_eq!(d.written(), difference, "{tool:?}");
+        let (p, a) = reconcile::open_command(tool, &main, account);
+        let postings = reconcile::open_of(tool, &run(p, &a, &dir).expect("ran"));
+        assert_eq!(postings.len(), open, "{tool:?}: {postings:?}");
+        assert!(postings.iter().all(|p| p.status != '*'), "{tool:?}");
     }
 }

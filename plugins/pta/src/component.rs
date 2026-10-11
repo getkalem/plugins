@@ -18,6 +18,7 @@ use kalem_plugin::kalem::{self, Event, EventKind, Plugin, Reply, Scope};
 use kalem_plugin::{documents, editor, process, settings, ui};
 
 mod balance;
+mod reconcile;
 mod register;
 
 use crate::check::{self, Problem};
@@ -39,6 +40,10 @@ const CHECK_ESCAPE_WHEN: &str =
 const BALANCE_WHEN: &str = "textType == pta-balance && (vimCommand || !vimActive)";
 const BALANCE_ESCAPE_WHEN: &str =
     "textType == pta-balance && !hasSelection && (vimCommand || !vimActive)";
+/// Keys in the Reconcile document.
+const RECONCILE_WHEN: &str = "textType == pta-reconcile && (vimCommand || !vimActive)";
+const RECONCILE_ESCAPE_WHEN: &str =
+    "textType == pta-reconcile && !hasSelection && (vimCommand || !vimActive)";
 /// Keys in the Register document.
 const REGISTER_WHEN: &str = "textType == pta-register && (vimCommand || !vimActive)";
 const REGISTER_ESCAPE_WHEN: &str =
@@ -895,7 +900,15 @@ fn insert_transaction() -> Result<String, String> {
 /// (`crate::MENU`) with their keys, or, in the Check document, its own;
 /// the one chosen runs where the pick was asked, once it is answered.
 fn menu() -> Result<String, String> {
-    let entries: Vec<(&str, &str, &str)> = if register::here().is_some() {
+    let entries: Vec<(&str, &str, &str)> = if reconcile::here().is_some() {
+        vec![
+            ("pta.reconcileVisit", "Go to the Posting", "Enter"),
+            ("pta.reconcileTarget", "Statement Balance…", "t"),
+            ("pta.finishReconcile", "Finish Reconciliation", "C"),
+            ("pta.reconcile", "Reconcile Again", "r"),
+            ("pta.reconcileClose", "Close the Reconciliation", "q"),
+        ]
+    } else if register::here().is_some() {
         vec![
             ("pta.registerVisit", "Go to the Posting", "Enter"),
             ("pta.registerPeriod", "Period…", "p"),
@@ -1088,12 +1101,48 @@ impl Plugin for Pta {
         kalem::keymap("q", "pta.registerClose", Some(REGISTER_WHEN))?;
         kalem::keymap("escape", "pta.registerClose", Some(REGISTER_ESCAPE_WHEN))?;
         let mut types = crate::TEXT_TYPES.to_vec();
-        types.extend([CHECK_KIND, balance::KIND, register::KIND]);
+        types.push(reconcile::KIND);
+        command("pta.reconcile", "Reconcile", &types, |_| {
+            reconcile::command()
+        })?;
+        kalem::keymap("space m r", "pta.reconcile", Some(&leader))?;
+        kalem::keymap("r", "pta.reconcile", Some(RECONCILE_WHEN))?;
+        command(
+            "pta.finishReconcile",
+            "Finish Reconciliation",
+            &types,
+            |_| reconcile::finish(),
+        )?;
+        kalem::keymap("space m shift+c", "pta.finishReconcile", Some(&leader))?;
+        kalem::keymap("shift+c", "pta.finishReconcile", Some(RECONCILE_WHEN))?;
+        command(
+            "pta.finishReconcileWrite",
+            "Write the Finished Reconciliation",
+            crate::TEXT_TYPES,
+            |_| reconcile::finish_write(),
+        )?;
+        let k = &[reconcile::KIND];
+        command("pta.reconcileVisit", "Go to the Posting", k, |_| {
+            reconcile::visit()
+        })?;
+        kalem::keymap("enter", "pta.reconcileVisit", Some(RECONCILE_WHEN))?;
+        command("pta.reconcileTarget", "Statement Balance…", k, |_| {
+            reconcile::retarget()
+        })?;
+        kalem::keymap("t", "pta.reconcileTarget", Some(RECONCILE_WHEN))?;
+        command("pta.reconcileClose", "Close the Reconciliation", k, |_| {
+            reconcile::close()
+        })?;
+        kalem::keymap("q", "pta.reconcileClose", Some(RECONCILE_WHEN))?;
+        kalem::keymap("escape", "pta.reconcileClose", Some(RECONCILE_ESCAPE_WHEN))?;
+        let mut types = crate::TEXT_TYPES.to_vec();
+        types.extend([CHECK_KIND, balance::KIND, register::KIND, reconcile::KIND]);
         command("pta.menu", "Commands…", &types, |_| menu())?;
         kalem::keymap("space m m", "pta.menu", Some(&leader))?;
         kalem::keymap("?", "pta.menu", Some(CHECK_WHEN))?;
         kalem::keymap("?", "pta.menu", Some(BALANCE_WHEN))?;
         kalem::keymap("?", "pta.menu", Some(REGISTER_WHEN))?;
+        kalem::keymap("?", "pta.menu", Some(RECONCILE_WHEN))?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
@@ -1118,6 +1167,7 @@ impl Plugin for Pta {
                 });
                 balance::forget(*n);
                 register::forget(*n);
+                reconcile::forget(*n);
                 if CURRENT.with(Cell::get) == Some(*n) {
                     CURRENT.with(|c| c.set(None));
                     refresh(None);
@@ -1148,6 +1198,7 @@ impl Plugin for Pta {
                     resolve(d.path.clone(), dialect, |_, main| {
                         balance::saved(&main.path);
                         register::saved(&main.path);
+                        reconcile::saved(&main.path);
                     });
                 }
             }

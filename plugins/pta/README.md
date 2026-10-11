@@ -2,7 +2,7 @@
 
 hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and checks, checked by the tool you already have, and, as the work list goes on, imported from bank statements, reconciled against them and reported as documents. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance and check; the plugin asks them and shows what they say. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: the spike (PT1), the highlighter (PT2), the servers (PT3), aligning amounts (PT4), checking by the tool (PT5), writing transactions (PT6), and the balance and the register (PT7)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
+**Status: the spike (PT1), the highlighter (PT2), the servers (PT3), aligning amounts (PT4), checking by the tool (PT5), writing transactions (PT6), the balance and the register (PT7), and reconciliation (PT8)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
 
 - **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`). Completion of accounts, payees and tags, diagnostics and formatting come from the servers.
 - **The component**, which runs the journal's tool: a status bar item naming the tool and the main journal of the journal you are in (`hledger · 2026.journal`; its tooltip says why that journal), and one command, *Tool Version* (in the palette under Journal, and the item's click), which asks hledger, Ledger or `bean-check` what it is, or says how to install it.
@@ -46,7 +46,11 @@ The outline is the server's document symbols.
 
 *Balance* (`SPC m b`) opens the main journal's balance as a document: assets, liabilities and equity at the period's end, then income, expenses and the other accounts within the period, as a tree (each parent with its subaccounts' amounts), every amount and total as the tool computes and writes it. Tab, Right and Left fold and unfold an account (kept as you leave it), `p` picks the period (this month, last month, this quarter, this year, last year, all dates), `d` the depth, `r` runs it again, Enter opens the account's register, `q` or Escape closes it. It is written again when the journal is saved.
 
-*Register* (`SPC m R` on a posting's account, or Enter in the balance; else an account to pick) lists the account's postings, its subaccounts' too, with the tool's running total; Enter opens the journal at the posting, `p` picks the period. hledger's register writes its amounts without digit groups and without a posting's status (its CSV); Ledger's and Beancount's as the journal writes them. The last 2,000 postings are shown.
+*Register* (`SPC m R` on a posting's account, or Enter in the balance; else an account to pick) lists the account's postings, its subaccounts' too, with the tool's running total; Enter opens the journal at the posting, `p` picks the period. The amounts are written as the journal writes them. The last 2,000 postings are shown.
+
+## Reconciliation
+
+*Reconcile* (`SPC m r` on a posting of the account, or pick one of your asset and liability accounts) asks the statement's closing balance (the tool's total of the cleared and pending postings offered) and opens a document with the cleared total, the pending total, their sum, the target and the difference, then the postings not cleared yet. Mark postings in the journal as you tick them off the statement (`SPC m c`, pending), save, and the difference moves; `t` changes the target, Enter opens the journal at a posting. When the difference is zero, *Finish Reconciliation* (`C`, or `SPC m C`) asks the statement's date, clears the pending postings and writes a balance assertion for the target (hledger and Ledger: a "Balance assertion" transaction with a zero posting; Beancount: a `balance` directive the day after), one undo step. The totals are the tool's; the plugin only takes them from the target you typed.
 
 ## Checking by the tool
 
