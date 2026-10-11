@@ -45,7 +45,7 @@ fn what_cannot_be_read_is_one_notice() {
     app.settings(
         &Native,
         Settings {
-            graphs: vec![(root.clone(), Kind::Logseq)],
+            graphs: vec![(root.clone(), Some(Kind::Logseq))],
             ..Settings::default()
         },
     );

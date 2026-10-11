@@ -44,7 +44,7 @@
     "graphs": {
       "type": "array",
       "default": [],
-      "description": "Folders that are graphs without Logseq's logseq/config.edn or Obsidian's .obsidian/: a path, or {\"path\": PATH, \"kind\": \"logseq\" or \"obsidian\"}"
+      "description": "Folders that are graphs without Logseq's logseq/config.edn or Obsidian's .obsidian/: a whole path (not ~/…), or {\"path\": PATH, \"kind\": \"logseq\" or \"obsidian\"}; without a kind, a folder with pages/ or journals/ is a Logseq graph, any other a vault"
     },
     "obsidian.daily_notes": {
       "type": "string",

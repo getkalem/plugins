@@ -302,8 +302,9 @@ pub enum Level {
 /// The plugin's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
-    /// Folders that are graphs without a marker: `(path, kind)`.
-    pub graphs: Vec<(String, Kind)>,
+    /// Folders that are graphs without a marker: `(path, kind)`, the kind
+    /// left to what the folder holds when the setting does not say.
+    pub graphs: Vec<(String, Option<Kind>)>,
     /// What stands in for Obsidian's settings files.
     pub fallbacks: Fallbacks,
     /// `unicode` or `ascii`.
@@ -360,8 +361,9 @@ impl Settings {
                     _ => return None,
                 };
                 let kind = match kind.as_deref() {
-                    Some("obsidian") => Kind::Obsidian,
-                    _ => Kind::Logseq,
+                    Some("obsidian") => Some(Kind::Obsidian),
+                    Some("logseq") => Some(Kind::Logseq),
+                    _ => None,
                 };
                 Some((files::normalize(&path), kind))
             })
@@ -701,7 +703,10 @@ impl App {
             return Some(root.clone());
         }
         let mut known = self.known.clone();
-        known.extend(self.settings.graphs.iter().cloned());
+        known.extend(self.settings.graphs.iter().map(|(root, kind)| {
+            let kind = kind.unwrap_or_else(|| config::kind_by_content(files, root));
+            (root.clone(), kind)
+        }));
         // A folder (Kalem's listing of it, `kalem run … FOLDER`) is looked
         // for from itself.
         let from = if files.list(&path).is_ok() {
@@ -833,8 +838,12 @@ impl App {
         out
     }
 
-    /// The settings changed: the graphs are read again.
+    /// The settings read again: when they changed, the graphs are read
+    /// again.
     pub fn settings(&mut self, files: &dyn Files, settings: Settings) -> Vec<Effect> {
+        if settings == self.settings {
+            return Vec::new();
+        }
         self.settings = settings;
         self.not.clear();
         let roots: Vec<(String, Kind)> = self

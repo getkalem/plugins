@@ -180,6 +180,18 @@ pub fn kind_of(files: &dyn Files, dir: &str) -> Option<Kind> {
     is_mirror(files, dir).then_some(Kind::Logseq)
 }
 
+/// The kind of a graph the setting `graphs` names without one: Logseq's
+/// when the folder has Logseq's `pages/` or `journals/`, else a vault, its
+/// notes anywhere in it.
+pub fn kind_by_content(files: &dyn Files, dir: &str) -> Kind {
+    let logseq = files.list(dir).is_ok_and(|entries| {
+        entries
+            .iter()
+            .any(|e| e.ends_with('/') && matches!(files::file_name(e), "pages" | "journals"))
+    });
+    if logseq { Kind::Logseq } else { Kind::Obsidian }
+}
+
 /// Whether `dir` is the Markdown Mirror of a Logseq database graph:
 /// `mirror/markdown/` in the graph's folder, with the mirror's
 /// `.index.edn` (Logseq's ADR 0016). Its notes are Logseq Markdown, read
@@ -249,8 +261,16 @@ impl Graph {
                 g
             }
             Kind::Logseq => {
-                let path = files::join(&root, "logseq/config.edn");
-                let text = files.read(&path);
+                // A folder the setting `graphs` names may have no
+                // `logseq/config.edn`: Logseq's defaults, said nothing of.
+                let has_config = files
+                    .list(&files::join(&root, "logseq"))
+                    .is_ok_and(|l| l.iter().any(|e| files::file_name(e) == "config.edn"));
+                let text = if has_config {
+                    files.read(&files::join(&root, "logseq/config.edn"))
+                } else {
+                    Ok("{}".to_string())
+                };
                 let mut g = Graph::logseq(&root, text.as_deref().unwrap_or("{}"));
                 if let Err(e) = text {
                     g.problems.push(e);

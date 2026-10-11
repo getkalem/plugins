@@ -445,8 +445,8 @@ fn settings_and_paths() {
     assert_eq!(
         s.graphs,
         [
-            ("/a".to_string(), Kind::Logseq),
-            ("/b".to_string(), Kind::Obsidian)
+            ("/a".to_string(), None),
+            ("/b".to_string(), Some(Kind::Obsidian))
         ]
     );
     assert_eq!(s.glyphs, "ascii");
@@ -930,6 +930,55 @@ fn a_graphs_folder_is_its_root() {
     app.random = None;
     let out = app.command(&m, "graph.random", &ctx("/w/notes", "", 0));
     assert_eq!(opens(&out).len(), 1);
+}
+
+#[test]
+fn folders_named_in_the_setting_graphs() {
+    // Neither folder has a marker; the setting names them without a kind.
+    let m = Memory::new(&[
+        (
+            "/w/plain/Intro.md",
+            "# Intro\n\nSee [[Rules]] and [[sub/Extra]].\n",
+        ),
+        ("/w/plain/Rules.md", "- [[Intro]]\n"),
+        ("/w/plain/sub/Extra.md", "# Extra\n"),
+        ("/w/lq/pages/A.md", "- [[B]]\n"),
+        ("/w/lq/pages/B.md", "- b\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    let out = app.command(&m, "graph.pages", &ctx("/w/plain/Intro.md", "", 0));
+    assert!(
+        matches!(&out[..], [Effect::Notify(t, Level::Warning)] if t.contains("setting graphs")),
+        "{out:?}"
+    );
+    let settings = Settings {
+        graphs: vec![("/w/plain".into(), None), ("/w/lq".into(), None)],
+        ..Settings::default()
+    };
+    assert!(app.settings(&m, settings.clone()).is_empty());
+    // The same settings again change nothing.
+    assert!(app.settings(&m, settings).is_empty());
+    // A folder of notes is a vault, its notes anywhere in it.
+    let out = app.command(&m, "graph.pages", &ctx("/w/plain/Intro.md", "", 0));
+    assert!(
+        !out.iter().any(|e| matches!(e, Effect::Notify(..))),
+        "{out:?}"
+    );
+    let (_, key, _, content) = document(&out);
+    assert_eq!(key, "/w/plain");
+    for page in ["Intro", "Rules", "Extra"] {
+        assert!(content.text.contains(page), "{page}: {}", content.text);
+    }
+    // One with Logseq's `pages/` is a Logseq graph, its defaults used
+    // without a word of the missing `logseq/config.edn`.
+    let out = app.command(&m, "graph.pages", &ctx("/w/lq/pages/A.md", "", 0));
+    assert!(
+        !out.iter().any(|e| matches!(e, Effect::Notify(..))),
+        "{out:?}"
+    );
+    let (_, key, _, content) = document(&out);
+    assert_eq!(key, "/w/lq");
+    assert!(content.text.contains("A") && content.text.contains("B"));
 }
 
 #[test]

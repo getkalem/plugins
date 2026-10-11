@@ -140,7 +140,11 @@ profile gets a **Graph** menu with the same commands.
   project is added, the plugin
   looks at each project folder of the workspace: `logseq/config.edn`
   makes it a Logseq graph, `.obsidian/` an Obsidian vault, the
-  setting `graphs` (a list of folders with a kind) forces either; a
+  setting `graphs` (a list of folders with a kind) forces either (a
+  folder named without a kind: Logseq's when it has `pages/` or
+  `journals/`, else a vault, since 2026-10-11, and no word of a missing
+  `logseq/config.edn`; it was always Logseq's, so a folder of notes
+  showed no pages); a
   folder that is both is Logseq's (the owner may want the reverse). A
   graph's root, kind, format (`:preferred-format` of `config.edn`:
   `:markdown` or `:org`; Obsidian is Markdown) and its folders
@@ -1077,6 +1081,36 @@ Each is the plugin's gate or its ask, written for every plugin.
   the file, as `kalem run` starts its plugin, and waiting for what they
   need first (the graph's index). Not blocking: the plugin's tests call
   its completion directly.
+- K17 A plugin's own settings reaching it at start. Found 2026-10-11 in
+  a demo: the setting `graphs` was never seen in `kalem tui` (it was in
+  `kalem run`). `kalem` starts the installed plugins on a thread before
+  the editor reads `settings.toml` (`bundled_plugins` in `main`), a
+  plugin reading its settings as it activates got nothing, and the
+  editor's first `extensions::set_config` told no watch, having no
+  earlier settings to compare. Fixed on Kalem's branch
+  `plugin-settings-at-start` (not merged): until an editor gives its
+  settings a plugin reads Kalem's defaults, the first settings given
+  are a change from them, and `extensions::install` tells the plugins
+  of every setting that differs from its default, for an editor that
+  read its settings while they were starting; tested by
+  `kalem-cli/tests/settings_at_start.rs`. Until a Kalem with it, the
+  plugin reads its settings again before each command (the next graph
+  version).
+- K18 Paths in a plugin's settings written as people write them. The
+  setting `graphs` is compared with the paths the editor gives as they
+  are written: `~/notes` matches nothing (a plugin knows no home
+  folder), nor does `/private/tmp/x` a note opened as `/tmp/x` (a plugin
+  cannot follow links). Asks: Kalem giving a plugin its home folder and
+  a path's real form (an `fs` function), or expanding a leading `~/` in
+  the plugins' settings' strings, for every plugin with a folder
+  setting. Not blocking: the README says to write the path whole.
+- K19 A layer and completers for folders a plugin's setting names. The
+  manifest's layers are found by their markers only, so a folder named
+  in `graphs` gets the commands and documents but not the layer
+  (Logseq's drawing) or the completer, which name the layers. Asks: a
+  plugin adding roots to its layer at run time, for every plugin whose
+  folders are set rather than marked. Until then such a folder can be
+  given an empty `.obsidian/` (or `logseq/config.edn`).
 
 ## Decisions, and what waits in Kalem's repository
 

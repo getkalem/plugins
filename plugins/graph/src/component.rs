@@ -311,7 +311,16 @@ impl Plugin for Graph {
             let id = c.id;
             kalem::command(spec, move |args| {
                 let ctx = context(args);
-                with_app(|app| app.command(&Fs, id, &ctx));
+                // The settings read again: Kalem 0.6.13 and older start the
+                // plugins before the editors read `settings.toml` and say
+                // nothing when they do, so what activation read may be
+                // the defaults.
+                let settings = read_settings();
+                with_app(|app| {
+                    let mut out = app.settings(&Fs, settings);
+                    out.extend(app.command(&Fs, id, &ctx));
+                    out
+                });
                 Ok("null".into())
             })?;
             for k in c.keys {
