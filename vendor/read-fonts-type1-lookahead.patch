@@ -1,0 +1,83 @@
+diff --git a/src/ps/type1.rs b/src/ps/type1.rs
+index f61c4c9..0c48811 100644
+--- a/src/ps/type1.rs
++++ b/src/ps/type1.rs
+@@ -816,12 +816,9 @@ impl<'a> Parser<'a> {
+                             // but Type1 fonts define /RD procs and this
+                             // pattern is used by FreeType.
+                             // <https://gitlab.freedesktop.org/freetype/freetype/-/blob/80a507a6b8e3d2906ad2c8ba69329bd2fb2a85ef/src/type1/t1load.c#L1351>
+-                            if matches!(
+-                                self.peek(),
+-                                Some(Token::Raw(b"RD")) | Some(Token::Raw(b"-|"))
+-                            ) {
++                            if let Some(after) = self.binary_marker_end() {
+                                 // skip the token
+-                                self.next();
++                                self.pos = after;
+                                 // and a single space
+                                 self.pos += 1;
+                                 // read the internal data
+@@ -840,6 +837,35 @@ impl<'a> Parser<'a> {
+         }
+     }
+ 
++    /// Where the next token ends if it is `RD` or `-|`, which mark a
++    /// binary blob. Found by looking at the bytes only: tokenizing ahead
++    /// would recurse into a procedure that follows, and each number in it
++    /// would look ahead in turn, which takes time exponential in the
++    /// unclosed procedures of a broken font.
++    fn binary_marker_end(&self) -> Option<usize> {
++        let mut pos = self.pos;
++        loop {
++            while is_whitespace(*self.data.get(pos)?) {
++                pos += 1;
++            }
++            if self.data.get(pos) != Some(&b'%') {
++                break;
++            }
++            while let Some(&c) = self.data.get(pos) {
++                pos += 1;
++                if c == b'\n' || c == b'\r' {
++                    break;
++                }
++            }
++        }
++        let rest = self.data.get(pos..)?;
++        let len = rest
++            .iter()
++            .position(|&c| is_special_or_whitespace(c))
++            .unwrap_or(rest.len());
++        matches!(&rest[..len], b"RD" | b"-|").then_some(pos + len)
++    }
++
+     fn peek(&self) -> Option<Token<'a>> {
+         self.clone().next()
+     }
+@@ -1712,6 +1738,27 @@ mod tests {
+         )
+     }
+ 
++    #[test]
++    fn parse_binary_blobs_after_comments() {
++        check_tokens(
++            "4 %comment\n RD abcd 3 %a\r%b\n-| xyz 2",
++            &[Token::Binary(b"abcd"), Token::Binary(b"xyz"), Token::Int(2)],
++        )
++    }
++
++    #[test]
++    fn numbers_before_unclosed_procedures() {
++        // Each number looks ahead for `RD`; looking ahead must not tokenize
++        // the procedure that follows, or a broken font with many unclosed
++        // procedures takes time exponential in their count.
++        let mut font = String::from("%!PS-AdobeFont-1.0: X 001\n/Encoding 256 array\n");
++        for i in 0..64 {
++            font.push_str(&format!("dup {i}{{.H#f8 /C put\n"));
++        }
++        font.push_str("readonly def\ncurrentfile eexec\n");
++        assert!(Type1Font::new(font.as_bytes()).is_err());
++    }
++
+     #[test]
+     fn parse_base_dict_prefix() {
+         let dicts = RawDicts::new(font_test_data::type1::NOTO_SERIF_REGULAR_SUBSET_PFA).unwrap();
