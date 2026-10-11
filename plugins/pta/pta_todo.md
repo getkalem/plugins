@@ -42,8 +42,14 @@ a plugin's own has no binding yet (design §11.12). The component half
 through `documents` and `styled-documents`, as the git plugin does with
 git. **The tool does the accounting** (the git plugin's G1): the plugin
 computes no balance in this list; hledger, Ledger and Beancount parse,
-balance and check, and the plugin asks and shows. Whether a Rust engine
-later makes even the tool unnecessary is PT12, a decision for the owner.
+balance and check, and the plugin asks and shows. One plugin, one
+manifest, one install: the user adds the plugin and the hledger,
+Ledger or Beancount they already use, and needs nothing else (no Fava,
+no VS Code, no ledger-mode, no import command in a terminal); the
+language servers, where installed, add completion and their own
+checks. No engine inside makes the tool unnecessary: the owner decided
+so on 2026-10-11 (PT12), the tool being the reference implementation,
+as git is the git plugin's.
 hledger comes first in every task, since the gap is widest there
 (ledger-mode's reconciliation fails with hledger, and Fava is
 Beancount's); Beancount second; Ledger where its syntax differs.
@@ -142,7 +148,7 @@ first.
 
 ## PT2. The highlighter: three dialects, one base
 
-- [ ] PT2 Sublime syntaxes written for the plugin, since none can be
+- [x] PT2 Sublime syntaxes written for the plugin, since none can be
   taken: LedgerTools's `Ledger.sublime-syntax` is CC BY-NC-SA, which
   MIT OR Apache-2.0 cannot carry, and archived (2026-10-01); Ledger3's
   license is unstated; no Beancount or hledger `.sublime-syntax` is
@@ -179,6 +185,48 @@ first.
   (an account containing a space, a commodity with a space in quotes,
   a negative amount in parentheses in Ledger, a comment that is not a
   tag). The syntaxes are licensed as the repository is.
+  (Done 2026-10-11, checked in Kalem 0.6.13's terminal editor with the
+  plugin installed: the three journals, a `.rules` file, and
+  `hledger` and `beancount` source blocks in Org. Five files under
+  `syntaxes/`: `Journal (Base)` (a `syntaxBases` entry, hidden: the
+  header and postings, accounts, amounts, costs, lots, assertions,
+  comments and their tags, the periodic and automated transactions,
+  and the directives hledger and Ledger share, Ledger's that hledger
+  reads and ignores included), `hledger` (payee and note at `|`,
+  `decimal-mark`), `Ledger` (`!` and `@` before a directive, the payee
+  ended only by a `;` after a tab or two spaces as Ledger reads it,
+  `:tag:` lists and `Key: value`, value expressions in parentheses,
+  timeclock lines, `python`), `Beancount` (over the base for postings,
+  amounts and lots; its own `main`: the dated directives, flags,
+  strings, `#tags`, `^links`, metadata, arithmetic, Org headings), and
+  `hledger CSV rules` (standing alone: directives, field assignments
+  and references, `if` blocks, and tables split by the character
+  after `if`). Changed from the plan: the scopes are chosen for
+  Kalem's colors (kalem-highlight's kinds), which have none for
+  `entity.name.namespace` or `entity.name.label`: an account is one
+  `support.type.account` (a type's color; `entity.name.type.account`
+  where declared), its leaf not set apart; dates and amounts are
+  numbers, commodities constants (the same color), descriptions,
+  payees and paths strings, statuses and directives keywords, tag
+  names with their colon tags, a tag's value stays the comment's,
+  queries and the rules' matchers regular expressions. Tags are read
+  only where the tools read them: a comment line of the file's own
+  carries none, nor does a Beancount comment. `tests/syntaxes.rs`
+  loads the files as Kalem does (`kalem_highlight::register`, the
+  languages' ids and extensions as aliases), checks that each id,
+  extension and syntax name finds the plugin's syntax and the base
+  none, parses every corpus file to its end through syntect with
+  `extends` resolved and checks the line after it, checks one
+  transaction of each dialect and the rules file span by span, the
+  easy mistakes (an account with a space, `"FUND A"`, Ledger's
+  `(-$132.00)`, a top-level comment with a colon, Ledger's `;` inside
+  a payee, a posting's status, Ledger's lot price and date), and that
+  the tags and accounts colored in the hledger corpus are those
+  `hledger tags` and `hledger accounts` list. The corpus gained those
+  cases (each tool still passes it) and `statement.csv` with its
+  rules, which `hledger print` reads into the right accounts. Not
+  driven: the graphical editor, which loaded the syntaxes (its log)
+  and colors through the same highlighter.)
 
 ## PT3. The servers: found, in the right root, told their settings
 
@@ -214,7 +262,7 @@ first.
   bean-format's, with `prefix-width`, `num-width` and
   `currency-column` as settings. Measured on the corpus as PT3a.
 - [ ] PT3c The main journal and the tool. Includes make one file the
-  root: the engine, the servers and every report must be given it.
+  root: the tool, the servers and every report must be given it.
   The plugin's setting `journal` (a path relative to the project; the
   default is `LEDGER_FILE` of the environment, else the file the
   command runs in) and `tool` (`auto`, `hledger`, `ledger`,
@@ -476,22 +524,19 @@ first.
   hand and by the frontends' snapshot tests, with the `glyphs`
   setting of the git plugin (`▸ ▾` or `> v`) shared.
 
-## PT12. An engine inside (later; the owner decides)
+## PT12. An engine inside: not built (the owner, 2026-10-11)
 
-- [ ] PT12 A Rust engine for the hledger and Ledger journal (the
-  parser with positions, balancing, the register, the balance report,
-  the checks of PT5, the common directives) inside the component, so
-  that the plugin answers with no tool installed, and rustledger
-  (Rust, Beancount-compatible) weighed for Beancount: whether it
-  builds for `wasm32-unknown-unknown` inside the sandbox, and whether
-  its results match `bean-check` on the corpus. The rule stays the
-  xlsx plugin's with IronCalc: the installed tool is the oracle where
-  it is present (the engine's results compared with the tool's on
-  every report and the differences reported), and the engine answers
-  only where the tool is absent, or for the reconcile document's
-  500 ms refresh where a process round trip is too slow. Weighed
-  against D55's spirit (the tool computes, the plugin shows) and the
-  install friction it removes; the README says which it is.
+- [x] PT12 No Rust engine for the journals inside the component: the
+  tool stays the reference implementation, as git is the git
+  plugin's, in D55's spirit; the plugin answers only where hledger,
+  Ledger or Beancount is installed, and says how to install it where
+  it is not. (Decided 2026-10-11: weighed was a parser, balancing, the
+  register, the balance report and the checks in Rust, and
+  rustledger for Beancount, so that the plugin answered with no tool
+  installed; the owner chose the tool. Its one argument kept for
+  later: the reconcile document's refresh 500 ms after a change
+  (PT8a), if a process round trip proves too slow there, is a
+  question for PT13's measurements, not a reason for an engine.)
 
 ## PT13. Speed, limits and the tests
 
@@ -569,12 +614,11 @@ plugin's section 9 followed).
 - Which dialect first: hledger is proposed (the widest gap, the
   fastest tool, the server with the most to show); the owner may want
   Beancount first for its stricter format and Fava's users.
-- PT12: whether an engine inside the plugin is wanted at all, or the
-  tool stays the only computer, as D55's spirit says.
 - `subprocess:python3` for the Beancount importers (PT9b): a broad
   program to grant; the alternative waits on a permission that names
   a script.
 - `.dat` and `.j` claimed or not; hledger's `timeclock` and `timedot`
   as later languages.
-- The roadmap item (R5.17 proposed) and whether the plugin is bundled
-  (D28) or installed from `index.json` as the git plugin is.
+- The roadmap item (R5.17 proposed). The plugin is installed from
+  `index.json` as the git plugin is, never built in (the owner's rule
+  of 2026-10-10: Kalem builds in Org, Markdown, CSV and LaTeX only).

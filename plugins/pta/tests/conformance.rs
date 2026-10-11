@@ -179,6 +179,10 @@ fn the_corpus_has_what_the_list_names() {
         " = ",
         " == ",
         "; food:",
+        // The highlighter's hard cases (PT2): an account with a space, a
+        // quoted commodity with one.
+        "assets:broker:index fund  ",
+        "\"FUND A\"",
     ] {
         assert!(h.contains(construct), "hledger: {construct:?}");
     }
@@ -192,6 +196,8 @@ fn the_corpus_has_what_the_list_names() {
         "(Budget",
         "check ",
         "assert ",
+        // A negative amount in parentheses, a value expression.
+        "(-$132.00)",
     ] {
         assert!(l.contains(construct), "ledger: {construct:?}");
     }
@@ -221,7 +227,47 @@ fn the_corpus_has_what_the_list_names() {
         "receipt: ",
         "pushtag",
         " txn ",
+        // A sum as an amount.
+        "800.00 + 42.35 TRY",
     ] {
         assert!(b.contains(construct), "beancount: {construct:?}");
     }
+}
+
+/// The bank statement and its CSV rules (`corpus/hledger/statement.csv`
+/// and `.rules`, PT2's highlighting and PT9a's import): hledger reads
+/// each line into the account the rules give it.
+#[test]
+fn the_csv_rules_put_each_line_in_its_account() {
+    let Some(o) = run(
+        "hledger",
+        &["-f", "statement.csv", "print"],
+        &corpus("hledger"),
+    ) else {
+        return;
+    };
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        o.status.success(),
+        "{out}{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let transactions: Vec<&str> = out.split("\n\n").filter(|t| !t.trim().is_empty()).collect();
+    assert_eq!(transactions.len(), 4, "{out}");
+    for (t, account) in transactions.iter().zip([
+        "expenses:food:market",
+        "income:salary",
+        "expenses:food:restaurant",
+        "expenses:unknown",
+    ]) {
+        assert!(
+            t.contains("assets:bank:ziraat") && t.contains(account),
+            "{account}: {t}"
+        );
+    }
+    assert!(
+        transactions[0].contains("shop:migros"),
+        "{}",
+        transactions[0]
+    );
 }

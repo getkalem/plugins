@@ -35,8 +35,8 @@ pushtag #trip
   Liabilities:Card
 poptag #trip
 
-2026-01-15 txn "Market" "Groceries"
-  Expenses:Food:Market        842.35 TRY
+2026-01-15 txn "Market" "Groceries, two receipts"
+  Expenses:Food:Market        800.00 + 42.35 TRY
   Assets:Bank:Ziraat
 
 2026-01-20 * "Broker" "Buy the index fund" ^trade-001

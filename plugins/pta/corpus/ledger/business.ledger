@@ -50,7 +50,7 @@ end apply account
 
 2026/01/20 * Train to Brussels
     Expenses:Travel                 EUR 120.00
-    chk                               $-132.00
+    chk                             (-$132.00)
     (Budget:Travel)                  $-132.00
 
 2026/02/02 * Client A pays

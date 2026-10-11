@@ -34,6 +34,10 @@ include 2025.journal
     assets:cash                      100,00 USD @@ 3.410,00 TRY
     assets:bank:ziraat
 
+2026-01-15 * Broker | index fund units  ; a quoted commodity
+    assets:broker:index fund      10,00 "FUND A" @ 350,00 TRY
+    assets:bank:ziraat
+
 2026-01-31 * Rent
     expenses:rent                 15.000,00 TRY
-    assets:bank:ziraat                      == 67.197,25 TRY
+    assets:bank:ziraat                      == 63.697,25 TRY

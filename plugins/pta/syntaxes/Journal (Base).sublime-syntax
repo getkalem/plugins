@@ -1,0 +1,435 @@
+%YAML 1.2
+---
+# The base the journal syntaxes extend (pta_todo.md PT2): a transaction's
+# header and postings, accounts, amounts with their commodities, costs
+# and balance assertions, comments with their tags, and the directives
+# hledger and Ledger share. hledger, Ledger and Beancount extend it;
+# Beancount replaces `main` with its own directives and keeps the rest.
+# Kalem loads it only as a base (the manifest's `syntaxBases`), never as
+# a language of its own. Written for the plugin, licensed as the
+# repository is (MIT OR Apache-2.0).
+#
+# The scopes are chosen for the colors Kalem gives them
+# (kalem-highlight's kinds): dates, amounts and commodities as numbers
+# and constants, accounts as types, descriptions and paths as strings,
+# directives and statuses as keywords, tag names as tags, queries as
+# regular expressions (strings).
+name: Journal (Base)
+scope: source.journal
+version: 2
+hidden: true
+
+variables:
+  # A full date: 2026-01-05, 2026/01/05, 2026.01.05.
+  full_date: '\d{4}[-/.]\d{1,2}[-/.]\d{1,2}'
+  # A date as hledger and Ledger take it: the year may be left out (the
+  # `Y` directive's year, or the current one).
+  date: '(?:\d{4}[-/.])?\d{1,2}[-/.]\d{1,2}'
+  time: '\d{1,2}:\d{2}(?::\d{2})?'
+  # An account: words separated by single spaces, ended by two spaces, a
+  # tab, a comment or the end of the line, as hledger and Ledger read it.
+  account_char: '[^\s;()\[\]]'
+  account: '{{account_char}}+(?: {{account_char}}+)*'
+  # A number: digits in groups (`1.000,00`, `1,000.00`, `1 000,00`,
+  # `1''000.00`), a fraction, an exponent.
+  number: '(?:\d{1,3}(?: \d{3})+(?:[.,]\d+)?|\d+(?:[.,''\x{2009}\x{202F}_]\d+)*[.,]?|[.,]\d+)(?:[eE][-+]?\d+)?'
+  # A commodity: quoted (`"FUND A"`), or a run of what is neither a
+  # digit, a space nor an operator (`$`, `€`, `TRY`).
+  commodity: '"[^"\n]*"|[^\s\d"\-+.,@*;=(){}\[\]<>|~#!&^/%:''`]+'
+  # Before a directive's name: nothing; Ledger also takes `!` and `@`.
+  directive_prefix: ''
+
+contexts:
+  main:
+    - include: comment-lines
+    - include: posting-comment-lines
+    - include: transactions
+    - include: periodic-transactions
+    - include: auto-transactions
+    - include: directives
+
+  # Comment lines at the top level: no tags, the tools read none there.
+  comment-lines:
+    - match: '^[;#*%|]'
+      scope: punctuation.definition.comment.journal
+      push: comment-line-body
+
+  comment-line-body:
+    - meta_scope: comment.line.journal
+    - match: '$'
+      pop: true
+
+  # A comment after a transaction's description, a posting, or on a line
+  # of its own inside a transaction: its tags are read.
+  comment:
+    - match: ';'
+      scope: punctuation.definition.comment.journal
+      push: comment-body
+
+  comment-body:
+    - meta_scope: comment.line.semicolon.journal
+    - match: '$'
+      pop: true
+    - include: comment-tags
+
+  # hledger's tags (a word and a colon; the value up to a comma), which
+  # are also Ledger's metadata keys. Ledger's `:tag:` adds to it.
+  comment-tags:
+    - match: '(?<![^\s,;])([^\s,:;]+)(:)'
+      captures:
+        1: entity.name.tag.journal
+        2: entity.name.tag.journal punctuation.separator.tag.journal
+
+  ## Transactions
+
+  transactions:
+    - match: '^({{date}})(?:(=)({{date}}))?(?:[ \t]+(?:(\*)|(!)))?(?:[ \t]+(\()([^)\n]*)(\)))?[ \t]*'
+      captures:
+        1: constant.numeric.date.journal
+        2: punctuation.separator.date.journal
+        3: constant.numeric.date.secondary.journal
+        4: keyword.other.status.cleared.journal
+        5: keyword.other.status.pending.journal
+        6: constant.other.code.journal punctuation.definition.code.begin.journal
+        7: constant.other.code.journal
+        8: constant.other.code.journal punctuation.definition.code.end.journal
+      push: [transaction-body, transaction-header]
+
+  # The rest of the header: the description and a comment.
+  transaction-header:
+    - meta_scope: meta.transaction.header.journal
+    - match: '$'
+      pop: true
+    - include: comment
+    - match: '[^;\n]*[^;\s]'
+      scope: string.unquoted.description.journal
+
+  # The postings and comment lines under a header, up to the first line
+  # that is not indented.
+  transaction-body:
+    - meta_content_scope: meta.transaction.journal
+    - match: '^(?![ \t]+\S)'
+      pop: true
+    - include: posting-comment-lines
+    - include: postings
+
+  posting-comment-lines:
+    - match: '^[ \t]+(?=;)'
+      push: posting-comment-line
+
+  posting-comment-line:
+    - match: '$'
+      pop: true
+    - include: comment
+
+  postings:
+    - match: '^[ \t]+(?:(\*)|(!))?[ \t]*(?:(\()({{account}})(\))|(\[)({{account}})(\])|({{account}}))'
+      captures:
+        1: keyword.other.status.cleared.journal
+        2: keyword.other.status.pending.journal
+        3: punctuation.definition.virtual.begin.journal
+        4: support.type.account.virtual.journal
+        5: punctuation.definition.virtual.end.journal
+        6: punctuation.definition.virtual.begin.journal
+        7: support.type.account.virtual.balanced.journal
+        8: punctuation.definition.virtual.end.journal
+        9: support.type.account.journal
+      push: posting-rest
+
+  # After the account: the amount, its cost or lot, a balance assertion,
+  # a comment.
+  posting-rest:
+    - meta_scope: meta.posting.journal
+    - match: '$'
+      pop: true
+    - include: comment
+    - include: amounts
+
+  ## Amounts
+
+  amounts:
+    - include: lots
+    - match: '(\[)({{date}})(\])'
+      captures:
+        1: punctuation.definition.date.begin.journal
+        2: constant.numeric.date.journal
+        3: punctuation.definition.date.end.journal
+    - match: '@@?'
+      scope: keyword.operator.cost.journal
+    - match: '==?\*?'
+      scope: keyword.operator.assertion.journal
+    - include: amount
+
+  # One amount, its commodity on the left or the right.
+  amount:
+    - match: '([-+]?)[ \t]*({{commodity}})[ \t]*([-+]?[ \t]*{{number}})'
+      captures:
+        1: constant.numeric.value.journal
+        2: constant.other.commodity.journal
+        3: constant.numeric.value.journal
+    - match: '([-+]?{{number}})(?:[ \t]*({{commodity}}))?'
+      captures:
+        1: constant.numeric.value.journal
+        2: constant.other.commodity.journal
+    - match: '\*'
+      scope: keyword.operator.arithmetic.journal
+
+  # A lot's cost, `{…}` and `{{…}}`, and Ledger's lot date and note.
+  lots:
+    - match: '\{\{?'
+      scope: punctuation.section.lot.begin.journal
+      push: lot
+
+  lot:
+    - meta_scope: meta.lot.journal
+    - match: '\}\}?'
+      scope: punctuation.section.lot.end.journal
+      pop: true
+    - match: '(?=$)'
+      pop: true
+    - match: '{{full_date}}'
+      scope: constant.numeric.date.journal
+    - match: '"[^"\n]*"'
+      scope: string.quoted.double.journal
+    - match: ','
+      scope: punctuation.separator.journal
+    - match: '\*'
+      scope: keyword.operator.journal
+    - include: amount
+
+  ## Periodic and automated transactions (hledger's and Ledger's)
+
+  # `~ monthly from 2026-01  description`
+  periodic-transactions:
+    - match: '^(~)[ \t]*((?:[^ \t;\n]| (?! ))*)(?:(?:  +|\t)([^;\n]*))?'
+      captures:
+        1: keyword.other.periodic.journal
+        2: constant.other.period.journal
+        3: string.unquoted.description.journal
+      push: [transaction-body, comment-to-eol]
+
+  # `= expenses:food`: the query, then postings whose amounts may be
+  # multipliers (`*-1`).
+  auto-transactions:
+    - match: '^(=)[ \t]*([^;\n]*)'
+      captures:
+        1: keyword.other.auto.journal
+        2: string.regexp.query.journal
+      push: [transaction-body, comment-to-eol]
+
+  comment-to-eol:
+    - match: '$'
+      pop: true
+    - include: comment
+
+  ## Directives (hledger's and Ledger's)
+
+  # hledger reads Ledger's directives too, those it does not use
+  # included (`define`, `check`, `bucket`…), and ignores them.
+  directives:
+    - match: '^{{directive_prefix}}(account)[ \t]+({{account}})'
+      captures:
+        1: keyword.other.directive.journal
+        2: entity.name.type.account.journal
+      push: [subdirectives, comment-to-eol]
+    - match: '^{{directive_prefix}}(commodity)[ \t]+'
+      captures:
+        1: keyword.other.directive.journal
+      push: [subdirectives, directive-amount]
+    - match: '^{{directive_prefix}}(include)[ \t]+([^;\n]*?)[ \t]*(?=;|$)'
+      captures:
+        1: keyword.other.directive.journal
+        2: string.unquoted.path.journal
+      push: comment-to-eol
+    - match: '^{{directive_prefix}}(alias)[ \t]+'
+      captures:
+        1: keyword.other.directive.journal
+      push: alias
+    - match: '^{{directive_prefix}}(apply)[ \t]+(account)[ \t]+({{account}})'
+      captures:
+        1: keyword.other.directive.journal
+        2: keyword.other.directive.journal
+        3: support.type.account.journal
+      push: comment-to-eol
+    - match: '^{{directive_prefix}}(apply)[ \t]+(tag)[ \t]+'
+      captures:
+        1: keyword.other.directive.journal
+        2: keyword.other.directive.journal
+      push: comment-body
+    - match: '^{{directive_prefix}}(apply)[ \t]+(fixed)[ \t]+({{commodity}})'
+      captures:
+        1: keyword.other.directive.journal
+        2: keyword.other.directive.journal
+        3: constant.other.commodity.journal
+      push: directive-amount
+    - match: '^{{directive_prefix}}(apply[ \t]+year|year|Y)[ \t]+(\d+)'
+      captures:
+        1: keyword.other.directive.journal
+        2: constant.numeric.year.journal
+      push: comment-to-eol
+    - match: '^{{directive_prefix}}(?:end(?:[ \t]+(?:apply[ \t]+)?(?:account|tag|year|fixed|aliases))?|endfixed)\b'
+      scope: keyword.other.directive.journal
+      push: comment-to-eol
+    - match: '^{{directive_prefix}}(P)[ \t]+({{date}})(?:[ \t]+({{time}}))?[ \t]+({{commodity}})'
+      captures:
+        1: keyword.other.directive.journal
+        2: constant.numeric.date.journal
+        3: constant.numeric.time.journal
+        4: constant.other.commodity.journal
+      push: directive-amount
+    - match: '^{{directive_prefix}}(D)[ \t]+'
+      captures:
+        1: keyword.other.directive.journal
+      push: directive-amount
+    # `C 1.00 EUR = 1.10 $`: a conversion.
+    - match: '^{{directive_prefix}}(C)[ \t]+'
+      captures:
+        1: keyword.other.directive.journal
+      push: directive-amount
+    - match: '^{{directive_prefix}}(N)[ \t]+({{commodity}})'
+      captures:
+        1: keyword.other.directive.journal
+        2: constant.other.commodity.journal
+      push: comment-to-eol
+    - match: '^{{directive_prefix}}(fixed)[ \t]+({{commodity}})'
+      captures:
+        1: keyword.other.directive.journal
+        2: constant.other.commodity.journal
+      push: directive-amount
+    - match: '^{{directive_prefix}}(payee)[ \t]+([^;\n]*?)[ \t]*(?=;|$)'
+      captures:
+        1: keyword.other.directive.journal
+        2: string.unquoted.payee.journal
+      push: [subdirectives, comment-to-eol]
+    - match: '^{{directive_prefix}}(tag)[ \t]+([^\s;]+)'
+      captures:
+        1: keyword.other.directive.journal
+        2: entity.name.tag.journal
+      push: [subdirectives, comment-to-eol]
+    - match: '^{{directive_prefix}}(bucket|A)[ \t]+({{account}})'
+      captures:
+        1: keyword.other.directive.journal
+        2: support.type.account.journal
+      push: comment-to-eol
+    - match: '^{{directive_prefix}}(capture)[ \t]+({{account}})(?:  +|\t)[ \t]*([^\n]*)'
+      captures:
+        1: keyword.other.directive.journal
+        2: support.type.account.journal
+        3: string.regexp.journal
+    - match: '^{{directive_prefix}}(define|def)[ \t]+([A-Za-z_]\w*)'
+      captures:
+        1: keyword.other.directive.journal
+        2: entity.name.function.journal
+      push: expression-to-eol
+    - match: '^{{directive_prefix}}(check|assert|expr|eval|value)\b'
+      captures:
+        1: keyword.other.directive.journal
+      push: expression-to-eol
+    # Ledger's options in the file: `--input-date-format %Y/%m/%d`.
+    - match: '^(--[A-Za-z][\w-]*)(?:[ \t=]+([^\n]*))?'
+      captures:
+        1: keyword.other.option.journal
+        2: string.unquoted.journal
+    - match: '^{{directive_prefix}}comment\b'
+      scope: keyword.other.directive.journal
+      push: comment-block
+    - match: '^{{directive_prefix}}test\b'
+      scope: keyword.other.directive.journal
+      push: test-block
+
+  # An amount or a commodity's symbol (`commodity TRY`, `D $1,000.00`),
+  # then a comment.
+  directive-amount:
+    - match: '$'
+      pop: true
+    - include: comment
+    - include: amount
+    - match: '{{commodity}}'
+      scope: constant.other.commodity.journal
+
+  # The indented lines under `account`, `commodity`, `payee` and `tag`:
+  # `format`, `note`, `alias`, `check`, `assert`, `default`.
+  subdirectives:
+    - match: '^(?![ \t]+\S)'
+      pop: true
+    - match: '^[ \t]+(?=;)'
+      push: comment-to-eol
+    - match: '^[ \t]+(format)[ \t]+'
+      captures:
+        1: keyword.other.directive.journal
+      push: directive-amount
+    - match: '^[ \t]+(alias)[ \t]+([^;\n]*?)[ \t]*(?=;|$)'
+      captures:
+        1: keyword.other.directive.journal
+        2: support.type.account.journal
+    # An account's payees, by regular expression (Ledger).
+    - match: '^[ \t]+(payee)[ \t]+([^\n]*)'
+      captures:
+        1: keyword.other.directive.journal
+        2: string.regexp.journal
+    - match: '^[ \t]+(note)\b[ \t]*([^\n]*)'
+      captures:
+        1: keyword.other.directive.journal
+        2: string.unquoted.note.journal
+    - match: '^[ \t]+(check|assert|eval|expr)\b'
+      captures:
+        1: keyword.other.directive.journal
+      push: expression-to-eol
+    - match: '^[ \t]+(default|nomarket|generated|uuid)\b[ \t]*([^;\n]*)'
+      captures:
+        1: keyword.other.directive.journal
+        2: string.unquoted.journal
+
+  # `alias OLD = NEW`, OLD an account or a `/regular expression/`.
+  alias:
+    - match: '$'
+      pop: true
+    - match: '(/)((?:[^/\\\n]|\\.)*)(/)'
+      captures:
+        1: punctuation.definition.string.begin.journal
+        2: string.regexp.journal
+        3: punctuation.definition.string.end.journal
+    - match: '='
+      scope: keyword.operator.assignment.journal
+    - match: '[^\s=/][^=\n]*?(?=[ \t]*(?:=|$))'
+      scope: support.type.account.journal
+
+  # A value expression, to the end of the line: Ledger's `check`,
+  # `assert`, `expr`; hledger reads and ignores them.
+  expression-to-eol:
+    - match: '$'
+      pop: true
+    - include: expression
+
+  expression:
+    - match: '"[^"\n]*"'
+      scope: string.quoted.double.journal
+    - match: '(/)((?:[^/\\\n]|\\.)*)(/)'
+      captures:
+        1: punctuation.definition.string.begin.journal
+        2: string.regexp.journal
+        3: punctuation.definition.string.end.journal
+    - match: '\[{{date}}\]'
+      scope: constant.numeric.date.journal
+    - match: '(?:==|!=|=~|<=|>=|&&|\|\||[<>!?:&|+\-*/=])'
+      scope: keyword.operator.journal
+    - match: '\b(?:and|or|not|if|else|true|false)\b'
+      scope: keyword.operator.word.journal
+    - match: '[()]'
+      scope: punctuation.section.group.journal
+    - match: '\b\d+(?:\.\d+)?\b'
+      scope: constant.numeric.value.journal
+
+  # `comment` … `end comment`, `test` … `end test`: the lines between are
+  # comments.
+  comment-block:
+    - meta_content_scope: comment.block.journal
+    - match: '^end[ \t]+comment\b'
+      scope: keyword.other.directive.journal
+      pop: true
+
+  test-block:
+    - meta_content_scope: comment.block.journal
+    - match: '^end[ \t]+test\b'
+      scope: keyword.other.directive.journal
+      pop: true

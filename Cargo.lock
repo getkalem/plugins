@@ -995,8 +995,10 @@ dependencies = [
 name = "kalem-plugin-pta"
 version = "0.0.1"
 dependencies = [
+ "kalem-highlight 0.6.12",
  "kalem-plugin",
  "serde_json",
+ "syntect",
 ]
 
 [[package]]

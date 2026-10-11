@@ -2,12 +2,15 @@
 
 hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and checks, checked by the tool you already have, and, as the work list goes on, imported from bank statements, reconciled against them and reported as documents. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance and check; the plugin asks them and shows what they say. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: the spike (PT1)**, for Kalem 0.6.9. One plugin with two halves in one manifest, both loaded:
+**Status: the spike (PT1) and the highlighter (PT2)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
 
-- **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`). Completion of accounts, payees and tags, diagnostics and formatting come from the servers. No highlighting yet (PT2).
+- **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`). Completion of accounts, payees and tags, diagnostics and formatting come from the servers.
 - **The component**, which runs the journal's tool: for now one command, *Tool Version* (in the palette under Journal), which asks hledger, Ledger or `bean-check` what it is, or says how to install it.
+- **The highlighting**, the plugin's own syntaxes: one base for what the journals share (dates, statuses, descriptions, accounts, amounts and commodities, costs, lots, balance assertions, comments and their tags, periodic and automated transactions, directives), with hledger, Ledger and Beancount over it, and hledger's CSV rules beside them. Journals in Org's source blocks and Markdown's fenced blocks (`hledger`, `ledger`, `beancount`) are colored the same. Dates and amounts take the numbers' color, accounts the types', descriptions and payees the strings', statuses and directives the keywords', tag names the tags'; a tag is colored only where the tool reads one (not in a comment line of the file's own, nor in Beancount's comments).
 
 `.dat` files are not claimed.
+
+Nothing but the tool you already use is needed: the plugin computes no balance and has no engine of its own. hledger, Ledger and Beancount are the reference; the servers, where installed, add completion and their own checks.
 
 ## What it needs
 
@@ -25,4 +28,4 @@ With hledger 1.52.4, Ledger 3.4.1, Beancount 3.2.3 and hledger-lsp 0.7.0 (ptimon
 
 ## Tests
 
-`cargo test -p kalem-plugin-pta`: the manifest's two halves name what exists and agree; and the corpus, one journal per dialect (`corpus/hledger`, three files with `include`; `corpus/ledger`; `corpus/beancount`, two files), each passes its tool's strictest check (`hledger check --strict --auto`, `ledger --pedantic balance`, `bean-check`), and each `errors.*` file fails it at its line. A tool not installed is skipped with a note.
+`cargo test -p kalem-plugin-pta`: the manifest's two halves name what exists and agree; the syntaxes load as Kalem loads them, take the languages' files and source blocks, parse every corpus file to its end, color a transaction of each dialect and the rules file as the tests spell out, and color as tags and accounts what `hledger tags` and `hledger accounts` read; and the corpus, one journal per dialect (`corpus/hledger`, three files with `include`, and a bank statement with its CSV rules, which `hledger print` reads; `corpus/ledger`; `corpus/beancount`, two files), each passes its tool's strictest check (`hledger check --strict --auto`, `ledger --pedantic balance`, `bean-check`), and each `errors.*` file fails it at its line. A tool not installed is skipped with a note.
