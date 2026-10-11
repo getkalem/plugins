@@ -63,6 +63,7 @@
         "hledgerLanguageServer": {},
         "hledger": {}
       },
+      "ignore": ["documentFormattingProvider"],
       "install": "npm install -g hledger-lsp; or juev's, in the plugin's README"
     },
     "beancount-language-server": {
@@ -77,7 +78,7 @@
     "journal": {
       "type": "string",
       "default": "",
-      "description": "The main journal, the one that includes the others: a path, absolute, from ~/, or beside the file; empty for the journal LEDGER_FILE names when it includes the file (hledger), else the file itself"
+      "description": "The main journal, the one that includes the others: a path, absolute, from ~/, or beside the file; empty for the journal LEDGER_FILE names when it includes the file (hledger), or beancount-language-server's journal_file (Beancount), else the file itself"
     },
     "tool": {
       "type": "string",
@@ -104,6 +105,16 @@
       "type": "string",
       "default": "",
       "description": "Where Beancount's bean-query is, when it is not the one on the PATH; empty for the PATH's"
+    },
+    "servers.beancount-language-server.initializationOptions.journal_file": {
+      "type": "string",
+      "default": "",
+      "description": "Beancount's main journal, which beancount-language-server checks and completes from (absolute, from ~/, or beside the file), and the plugin too when journal is empty; empty for the file itself, which checked alone reports the accounts of the other files unknown"
+    },
+    "servers.hledger-lsp.ignore": {
+      "type": "array",
+      "default": ["documentFormattingProvider"],
+      "description": "What of hledger-lsp Kalem leaves unused: its formatting, since ptimoney's 0.7.0 formats a journal into one that means something else; [] for juev's, whose formatting hledger reads as before"
     },
     "settings.hledgerLanguageServer.maxNumberOfProblems": {
       "type": "integer",

@@ -280,7 +280,10 @@ first.
   offers formatting, before the plugin's `commands.format`, and the
   user's `formatters.TYPE = "off"` does not stop it, so nothing keeps
   ptimoney's from harming a journal but the README's warning and undo:
-  K9. `tests/server.rs` talks to each program installed through
+  K9, built in Kalem the same day (branch `server-options`); the
+  manifest's `hledger-lsp` has `"ignore": ["documentFormattingProvider"]`
+  and the setting `servers.hledger-lsp.ignore` describes it, `[]` for
+  juev's. `tests/server.rs` talks to each program installed through
   `kalem-lsp` and checks a formatter by the tool (`hledger print`
   before and after), ptimoney's 0.7.0 checked to still do its harm, so
   that a fixed release is noticed. Ledger has no server; hledger-lsp
@@ -308,7 +311,14 @@ first.
   manifest has `--version`, the Homebrew and Cargo places, a short
   `install`. Open, waiting on Kalem: telling it the main journal and
   its formatting widths, which it reads only from
-  `initializationOptions`, fixed in the manifest today: K8.)
+  `initializationOptions`, fixed in the manifest today: K8.
+  Later the same day: K8 built in Kalem (branch `server-options`), and
+  the manifest describes
+  `servers.beancount-language-server.initializationOptions.journal_file`,
+  which the component takes as Beancount's main journal too while
+  `journal` is empty, so one setting serves both; checked with a
+  Kalem built from the branch: the included file clean, the item
+  `beancount · main.beancount`. Done once that Kalem is released.)
 - [x] PT3c The main journal and the tool. Includes make one file the
   root: the tool, the servers and every report must be given it.
   The plugin's setting `journal` (a path relative to the project; the
@@ -685,7 +695,8 @@ plugin's section 9 followed).
   it (`servers.beancount-language-server.initializationOptions.journal_file`).
   beancount-language-server reads its main journal and its formatting
   widths only there (PT3b); any server configured only at `initialize`
-  needs it.
+  needs it. Built 2026-10-11 on Kalem's branch `server-options`
+  (3e5c45e1, from Kalem 0.6.15), unreleased.
 - K9 A server's feature turned off: a list of the server's
   capabilities Kalem does not use, in the manifest's server
   (`"ignore": ["documentFormattingProvider"]`) and the user's
@@ -693,7 +704,10 @@ plugin's section 9 followed).
   server's formatting too. Kalem formats with a server whenever it
   offers formatting, and ptimoney's hledger-lsp 0.7.0 changes what a
   journal means when it does (PT3a): Format Document would then take
-  the plugin's formatter (PT4) or say there is none.
+  the plugin's formatter (PT4) or say there is none. Built with K8
+  (3e5c45e1): the manifest's `ignore`, the user's in its place (`[]`
+  for all used, so that juev's formatting can be had back), and
+  `formatters.TYPE = "off"` stopping every formatter; unreleased.
 
 ## Open for the owner
 

@@ -241,6 +241,10 @@ pub struct Settings {
     pub journal: String,
     /// `tool`.
     pub tool: String,
+    /// beancount-language-server's main journal
+    /// (`servers.beancount-language-server.initializationOptions.journal_file`),
+    /// which Kalem hands the server as it starts.
+    pub bean_journal: String,
 }
 
 impl Settings {
@@ -252,9 +256,27 @@ impl Settings {
                 .and_then(|v| v.as_str().map(str::to_string))
                 .unwrap_or_default()
         };
+        let servers = own("servers")
+            .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+            .unwrap_or_default();
         Settings {
             journal: text("journal"),
             tool: text("tool"),
+            bean_journal:
+                servers["beancount-language-server"]["initializationOptions"]["journal_file"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+        }
+    }
+
+    /// The main journal set for a journal of `dialect`: `journal`, else,
+    /// for Beancount, the server's, so that one setting serves both.
+    pub fn journal_for(&self, dialect: Dialect) -> &str {
+        if self.journal.trim().is_empty() && dialect == Dialect::Beancount {
+            &self.bean_journal
+        } else {
+            &self.journal
         }
     }
 }
@@ -367,5 +389,17 @@ mod tests {
             ToolChoice::Only(Dialect::Ledger)
         );
         assert_eq!(Settings::read(|_| None), Settings::default());
+        // Beancount's main journal: the server's when `journal` is unset.
+        let s = Settings::read(|k| {
+            match k {
+            "servers" => Some(
+                r#"{"beancount-language-server": {"initializationOptions": {"journal_file": "main.beancount"}}}"#
+                    .into(),
+            ),
+            _ => None,
+        }
+        });
+        assert_eq!(s.journal_for(Dialect::Beancount), "main.beancount");
+        assert_eq!(s.journal_for(Dialect::Hledger), "");
     }
 }

@@ -301,6 +301,26 @@ fn the_servers_and_their_settings() {
             "{key}"
         );
     }
+    // The servers' own settings Kalem merges over the manifest's (the
+    // `ignore` and `initializationOptions` of a server), each of a server
+    // the manifest describes, with the manifest's value as default.
+    for key in settings.keys().filter(|k| k.starts_with("servers.")) {
+        let mut parts = key.splitn(3, '.');
+        let (_, server, field) = (parts.next(), parts.next().unwrap(), parts.next().unwrap());
+        assert!(servers.contains_key(server), "{key}");
+        assert!(
+            field == "ignore" || field.starts_with("initializationOptions."),
+            "{key}"
+        );
+    }
+    assert_eq!(
+        settings["servers.hledger-lsp.ignore"]["default"],
+        servers["hledger-lsp"]["ignore"]
+    );
+    assert_eq!(
+        strings(&servers["hledger-lsp"]["ignore"]),
+        ["documentFormattingProvider"]
+    );
     assert_eq!(settings["journal"]["default"], "");
     let tools = strings(&settings["tool"]["enum"]);
     assert_eq!(tools, ["auto", "hledger", "ledger", "beancount"]);

@@ -21,7 +21,7 @@ Nothing but the tool you already use is needed: the plugin computes no balance a
 
 ## The main journal and the tool
 
-A journal that `include`s others is checked and reported as one: checking an included file alone gives false errors (an account opened in another file is "unknown"). The plugin's setting `journal` names the main journal (absolute, from `~/`, or beside the file). Unset, an hledger journal's main journal is the one `LEDGER_FILE` names when that journal includes the file (`hledger files` says so), else the file itself. Kalem started from the Dock or a launcher may not see the `LEDGER_FILE` of your shell: set `journal` then.
+A journal that `include`s others is checked and reported as one: checking an included file alone gives false errors (an account opened in another file is "unknown"). The plugin's setting `journal` names the main journal (absolute, from `~/`, or beside the file). Unset, an hledger journal's main journal is the one `LEDGER_FILE` names when that journal includes the file (`hledger files` says so), a Beancount journal's the one its server is told (below), else the file itself. Kalem started from the Dock or a launcher may not see the `LEDGER_FILE` of your shell: set `journal` then.
 
 The setting `tool` picks the program for hledger's and Ledger's journals: `auto` takes the file's own, and a `.ledger` file goes to Ledger where Ledger is installed and to hledger where only hledger is (hledger does not read Ledger's value expressions, such as `(-$132.00)`). A Beancount journal is always Beancount's.
 
@@ -39,13 +39,13 @@ On the corpus, through Kalem's client (`kalem lsp ask`, `kalem lsp check`) and a
 | Rename an account | the open file only (7 of 10 places): the declaration and the year before keep the old name | every file but a periodic transaction's posting | every file |
 | Diagnostics | the failed assertion at its line; warns of an automated posting's virtual account, `(budget:food)`, as undeclared | the failed assertion at its line; an error on an automated posting's multiplier, `*-1`, which hledger reads | `bean-check`'s errors; a `!` transaction flagged |
 | Formatting | **changes what the journal means**: drops an automated posting's `*-1` and writes `==` as `=` (undo puts it back) | amounts aligned; hledger reads it as before | amounts aligned; `bean-query` reads it as before |
-| Settings sent | `settings.hledgerLanguageServer.…` | `settings.hledger.…` | none yet: it is told the main journal and its widths only at its start, which Kalem cannot pass from a setting yet |
+| Settings sent | `settings.hledgerLanguageServer.…` | `settings.hledger.…` | its main journal, `servers.beancount-language-server.initializationOptions.journal_file`, read as it starts (from the Kalem after 0.6.15) |
 
 Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting; it does not yet ask for the inlay hints all three give (an elided posting's amount; running balances in juev's), nor for code lenses.
 
-Not wanted: Format Document with ptimoney's 0.7.0, on a journal with automated postings or `==` assertions. Kalem uses a server's formatting whenever the server offers one, and nothing in the plugin can turn it off yet.
+The plugin turns hledger-lsp's formatting off (`servers.hledger-lsp.ignore`, `["documentFormattingProvider"]`), since ptimoney's 0.7.0 formats a journal into one that means something else; with juev's, whose formatting hledger reads as before, set it to `[]`. Kalem leaves a server's capability unused from the release after 0.6.15; Kalem 0.6.15 and earlier format with the server whatever the plugin says, so there, do not use Format Document with ptimoney's 0.7.0 on a journal with automated postings or `==` assertions (undo puts it back).
 
-Without its main journal, beancount-language-server checks an included file alone and reports its accounts as unknown (two false errors on `2026-01.beancount` in a test); the main journal given, the file is clean and completion knows every account of the journal.
+Without its main journal, beancount-language-server checks an included file alone and reports its accounts as unknown (two false errors on `2026-01.beancount` in a test); told the main journal, the file is clean and completion knows every account of the journal. Set `servers.beancount-language-server.initializationOptions.journal_file` (absolute, from `~/`, or beside the file); the plugin takes it as Beancount's main journal too while `journal` is empty. Kalem hands it to the server from the release after 0.6.15.
 
 ## Tests
 

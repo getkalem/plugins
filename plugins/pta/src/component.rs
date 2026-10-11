@@ -168,7 +168,8 @@ fn refresh(path: Option<String>) {
         return;
     }
     let tool = journal::tool(choice, dialect, &path, INSTALLED.with(Cell::get));
-    if tool == Dialect::Hledger && s.journal.trim().is_empty() {
+    let set = s.journal_for(dialect).to_string();
+    if tool == Dialect::Hledger && set.trim().is_empty() {
         // `hledger files` without `-f`: the journal LEDGER_FILE names and
         // its includes.
         run("hledger", vec!["files".into()], &dir, move |r| {
@@ -182,7 +183,7 @@ fn refresh(path: Option<String>) {
         });
         return;
     }
-    show(tool, &journal::main_journal(&s.journal, &path, None));
+    show(tool, &journal::main_journal(&set, &path, None));
 }
 
 /// The cursor is in document `n` now.
