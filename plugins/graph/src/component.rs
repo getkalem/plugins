@@ -471,8 +471,9 @@ impl Plugin for Graph {
             .collect()
     }
 
-    /// The layer's overlays (plugin API 0.2.10).
-    fn overlays(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet {
+    /// The layer's overlays, with lines under lines (plugin API 0.2.13,
+    /// `layer-2`): an embed's blocks, a query's results.
+    fn overlays_2(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet2 {
         use crate::layer::{Effect as E, LineEffect as L};
         use kalem_plugin::layer as api;
         let (o, wanted) = APP
@@ -519,7 +520,7 @@ impl Plugin for Graph {
             }
             f
         };
-        api::OverlaySet {
+        api::OverlaySet2 {
             spans: o
                 .spans
                 .into_iter()
@@ -546,6 +547,28 @@ impl Plugin for Graph {
                         L::Hidden => api::LineEffect::Hidden,
                         L::Folded => api::LineEffect::Folded,
                     },
+                })
+                .collect(),
+            below: o
+                .below
+                .into_iter()
+                .map(|b| api::Below {
+                    at: b.at as u64,
+                    lines: b
+                        .rows
+                        .into_iter()
+                        .map(|r| api::VirtualLine {
+                            indent: r.indent,
+                            pieces: r
+                                .parts
+                                .into_iter()
+                                .map(|(text, l)| api::Piece {
+                                    text,
+                                    style: look(l),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
                 })
                 .collect(),
         }

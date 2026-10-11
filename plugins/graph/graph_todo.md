@@ -1049,9 +1049,17 @@ user groups; the gaps that code can close, in this order.
   edits the note after a question (Insert Link, Insert Block Reference,
   Set Priority, Schedule, Deadline, Rename Page) failed after the answer
   in every release; Kalem's fix queues it as another's.)
-- [ ] GR14c Embeds and queries drawn in their note: the embedded block
+- [x] GR14c Embeds and queries drawn in their note: the embedded block
   or page and a query's results under the line (Kalem's side: lines a
-  layer adds, K2).
+  layer adds, K2). (Done 2026-10-11: Kalem's plugin API 0.2.13, the
+  `layer-2` export, lines a layer draws under a line, drawn by both
+  editors, the cursor stepping over them; the plugin's `src/rows.rs`
+  makes them: an embedded block's children, an embedded page's blocks
+  (or those under an Obsidian heading), a simple or advanced query's
+  results under their pages or its table, 24 rows at most; the query's
+  line then gives its count only. The plugin needs Kalem 0.6.15.)
+  [~] An embed in an embed shows as written, not drawn again; the rows
+  are text, not blocks to edit in place, as Logseq's are.
 - [x] GR14d Logseq and Kalem on one graph at once: a file Logseq writes
   while Kalem holds it, and the other way round, tested; what breaks
   fixed. (Done 2026-10-11, with external writes standing in for Logseq,
@@ -1081,7 +1089,8 @@ Each is the plugin's gate or its ask, written for every plugin.
   layer over that drawing serves where a tree would not.
 - K2 Lines a layer adds under a line, drawn and not part of the text
   (an embed's block in full, a query's results): the editors' virtual
-  lines, beside K6's virtual text. Not blocking.
+  lines, beside K6's virtual text. (Done 2026-10-11: plugin API 0.2.13,
+  `layer-2`, Kalem branch `graph-inline`.)
 - K3 Folds a layer gives (a block with `collapsed:: true` folded on
   open, a callout's `-`): a `folded` effect on lines that the editors'
   folds start from. Not blocking.

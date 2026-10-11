@@ -776,10 +776,14 @@ fn queries_followed_run_and_shown() {
             _ => None,
         })
         .collect();
-    assert!(
-        shown.contains(&"⌕ 1 block: TODO ship [[Kalem]]"),
-        "{shown:?}"
-    );
+    // Its count; its results under its line.
+    assert!(shown.contains(&"⌕ 1 block"), "{shown:?}");
+    let under: Vec<String> = o
+        .below
+        .iter()
+        .flat_map(|b| b.rows.iter().map(crate::rows::Row::text))
+        .collect();
+    assert!(under.iter().any(|t| t == "• TODO ship Kalem"), "{under:?}");
     assert!(
         shown.iter().any(|t| t.contains("advanced query")),
         "{shown:?}"

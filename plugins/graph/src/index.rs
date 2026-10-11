@@ -863,6 +863,11 @@ impl Index {
         Some((rel.as_str(), b))
     }
 
+    /// The file of the block `id` and its place among the file's blocks.
+    pub fn block_place(&self, id: &str) -> Option<(&str, usize)> {
+        self.blocks.get(id).map(|(rel, i)| (rel.as_str(), *i))
+    }
+
     /// Every block that has an id: the id, the file and the block.
     pub fn blocks_with_ids(&self) -> impl Iterator<Item = (&str, &str, &Block)> {
         self.blocks.iter().filter_map(|(id, (rel, i))| {

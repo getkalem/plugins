@@ -594,6 +594,10 @@ const READ_ONLY: &str = "This is the Markdown Mirror of a Logseq database graph:
 /// The separator of a document key's parts.
 const SEP: char = '\u{1f}';
 
+/// What a query shows in its note: its line, and the rows of its results
+/// under it.
+type Shown = std::rc::Rc<(String, Vec<crate::rows::Row>)>;
+
 /// The plugin's state.
 #[derive(Debug)]
 pub struct App {
@@ -637,7 +641,7 @@ pub struct App {
     recent: Vec<String>,
     /// What the `{{query …}}` of the notes show, by graph and query, with
     /// the index's version they were computed from.
-    queries: std::cell::RefCell<BTreeMap<(String, String), (u64, String)>>,
+    queries: std::cell::RefCell<BTreeMap<(String, String), (u64, Shown)>>,
     /// Notes a layer serves whose graph is not indexed, its indexing asked
     /// for (`graph.noteOpened`) and not done yet.
     pub(crate) unindexed: std::cell::RefCell<BTreeSet<String>>,
@@ -977,9 +981,12 @@ impl App {
                     return o;
                 }
                 let current = index.page_of(&rel).map(|p| p.key.clone());
-                crate::layer::queries(o, text, &|q| self.query_summary(index, q), &|q| {
-                    self.advanced_summary(index, q, current.as_deref())
-                })
+                crate::layer::queries(
+                    o,
+                    text,
+                    &|q| (*self.query_summary(index, q)).clone(),
+                    &|q| (*self.advanced_summary(index, q, current.as_deref())).clone(),
+                )
             }
             None => crate::layer::overlays(kind, text, None, path.as_deref().map(files::file_name)),
         }
@@ -987,7 +994,7 @@ impl App {
 
     /// What `{{query q}}` shows in a note of the graph of `index`: kept
     /// until the index changes.
-    fn query_summary(&self, index: &Index, q: &str) -> String {
+    fn query_summary(&self, index: &Index, q: &str) -> Shown {
         let key = (index.graph.root.clone(), q.to_string());
         if let Some((v, s)) = self.queries.borrow().get(&key)
             && *v == index.version()
@@ -999,7 +1006,7 @@ impl App {
         } else {
             "⌕"
         };
-        let s = crate::query::summary(index, q, self.day(), mark);
+        let s = Shown::new(crate::query::shown(index, q, self.day(), mark));
         let mut cache = self.queries.borrow_mut();
         if cache.len() > 256 {
             cache.clear();
@@ -1026,7 +1033,7 @@ impl App {
 
     /// What an advanced query shows in its note: kept until the index
     /// changes, as `query_summary`'s.
-    fn advanced_summary(&self, index: &Index, q: &str, current: Option<&str>) -> String {
+    fn advanced_summary(&self, index: &Index, q: &str, current: Option<&str>) -> Shown {
         let key = (
             index.graph.root.clone(),
             format!("{}\u{1f}{q}", current.unwrap_or("")),
@@ -1041,7 +1048,7 @@ impl App {
         } else {
             "⌕"
         };
-        let s = crate::datalog::summary(index, q, self.day(), current, mark);
+        let s = Shown::new(crate::datalog::shown(index, q, self.day(), current, mark));
         let mut cache = self.queries.borrow_mut();
         if cache.len() > 256 {
             cache.clear();

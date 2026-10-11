@@ -30,6 +30,7 @@ pub mod index;
 pub mod layer;
 pub mod names;
 pub mod query;
+pub mod rows;
 pub mod scan;
 pub mod template;
 pub mod views;

@@ -820,11 +820,35 @@ fn cut(text: &str, n: usize) -> String {
 /// What `{{query …}}` shows in a note away from the cursor: how many
 /// blocks or pages it finds and the first of them; `mark` before it.
 pub fn summary(index: &Index, inner: &str, today: Option<Date>, mark: &str) -> String {
-    let q = match parse(inner) {
-        Ok(q) => q,
-        Err(e) => return format!("{mark} query not read: {e}"),
-    };
-    let a = run(&q, index, today);
+    match parse(inner) {
+        Ok(q) => summary_of(index, &run(&q, index, today), mark, true),
+        Err(e) => format!("{mark} query not read: {e}"),
+    }
+}
+
+/// What `{{query …}}` shows in a note: its results under it (Kalem's API
+/// 0.2.13), ordered as Follow Reference lists them, and its line: how
+/// many it finds, without [`summary`]'s first results when they are
+/// under it.
+pub fn shown(
+    index: &Index,
+    inner: &str,
+    today: Option<Date>,
+    mark: &str,
+) -> (String, Vec<crate::rows::Row>) {
+    match parse(inner) {
+        Ok(q) => {
+            let mut a = run(&q, index, today);
+            sort_hits(index, &mut a.hits);
+            let rows = crate::rows::hits(index, &a);
+            (summary_of(index, &a, mark, rows.is_empty()), rows)
+        }
+        Err(e) => (format!("{mark} query not read: {e}"), Vec::new()),
+    }
+}
+
+/// The line of a query's answer `a`.
+fn summary_of(index: &Index, a: &Answer, mark: &str, first: bool) -> String {
     let n = a.hits.len();
     let what = match (a.pages, n) {
         (true, 1) => "1 page".to_string(),
@@ -837,6 +861,9 @@ pub fn summary(index: &Index, inner: &str, today: Option<Date>, mark: &str) -> S
             Some(note) => format!("{mark} no result: {note}"),
             None => format!("{mark} no result"),
         };
+    }
+    if !first {
+        return format!("{mark} {what}");
     }
     let first: Vec<String> = a
         .hits

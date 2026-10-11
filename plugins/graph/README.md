@@ -20,7 +20,7 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 - **The graph's folder is one of Kalem's projects.** Kalem lets a plugin read only its projects' folders (`fs:read:workspace`). Opening a note of a graph outside the projects, Kalem offers to add its folder (Enter adds it, and the graph is indexed at once; with Kalem before 0.6.15, Projects: Add Project).
 - A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, a Logseq database graph's mirror by its `mirror/markdown/.index.edn`, from the folder of any note opened in it upwards. A folder without any is a graph when the setting `graphs` names it: a Logseq graph when it has `pages/` or `journals/`, else a vault, unless the setting gives its kind.
-- Kalem 0.6.14 or later (plugin API 0.2.12); 0.3.1 runs on Kalem 0.6.13, 0.2.0 on 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
+- Kalem 0.6.15 or later (plugin API 0.2.13); 0.4.0 runs on Kalem 0.6.14, 0.3.1 on 0.6.13, 0.2.0 on 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
 - Room to index a large graph: the plugin asks Kalem for 1 GB and 10 s a call (see Speed and size).
 
 ## Commands and keys
@@ -158,7 +158,7 @@ From Logseq:
 
 - Whiteboards are listed with the pages and their links resolve, but Kalem does not draw them; following one shows the file to open in Logseq. Flashcards, Logseq's plugins and their syntax, and PDF highlights drawn over the PDF are not there; a PDF's highlights page (`hls__…`) is a page like another.
 - Of advanced queries, `:result-transform`, `:view` and `:rules` of one's own (Clojure) are not run, nor functions beyond those above; the query says what it does not run. Of the simple ones, `(sample n)` takes the first n, not n at random; `created-at` and `updated-at` sort by a journal's day only, which file graphs keep; a clause Kalem does not read finds nothing and says so.
-- An embed shows one line, not the block or page in full; a query shows one line in its note and its results as a document (Kalem's layers add no lines yet).
+- An embed shows its block's children or its page's blocks under its line, and a query its results (24 lines at most, then how many more; Follow Reference opens them all), as text in their note's style, not as editable blocks: an embed inside an embed shows as written, and a block is edited where it lives.
 - No real-time sync: Syncthing or git on the folder, as Logseq's file version is used.
 - The database version's graph itself does not open; its Markdown Mirror does, read only.
 - Completion offers no blocks without an id after `((` (Insert Block Reference writes the id), and of `/`'s commands those that write text only (no date picker, template or drawing).

@@ -1047,11 +1047,49 @@ pub fn summary(
         let title = a.title.clone();
         run(&a, index, today, current).map(|f| (title, f))
     });
+    summary_of(index, found, mark, true)
+}
+
+/// What an advanced query shows in the note: [`summary`]'s line, and its
+/// results under the query (Kalem's API 0.2.13): its blocks under their
+/// pages, or its table.
+pub fn shown(
+    index: &Index,
+    text: &str,
+    today: Option<Date>,
+    current: Option<&str>,
+    mark: &str,
+) -> (String, Vec<crate::rows::Row>) {
+    let found = parse(text).and_then(|a| {
+        let title = a.title.clone();
+        run(&a, index, today, current).map(|f| (title, f))
+    });
+    let rows = match &found {
+        Ok((_, Found::Hits(a))) => {
+            let mut a = a.clone();
+            crate::query::sort_hits(index, &mut a.hits);
+            crate::rows::hits(index, &a)
+        }
+        Ok((_, Found::Table(cols, values))) => crate::rows::table(cols, values),
+        Err(_) => Vec::new(),
+    };
+    let first = rows.is_empty();
+    (summary_of(index, found, mark, first), rows)
+}
+
+/// The line of an advanced query's result, its first results named when
+/// `first` (none are under it).
+fn summary_of(
+    index: &Index,
+    found: Result<(Option<String>, Found), String>,
+    mark: &str,
+    first: bool,
+) -> String {
     match found {
         Err(e) => format!("{mark} advanced query not run: {e}"),
         Ok((title, Found::Hits(a))) => {
             let n = a.hits.len();
-            let first: Vec<String> = a
+            let names: Vec<String> = a
                 .hits
                 .iter()
                 .take(2)
@@ -1060,10 +1098,12 @@ pub fn summary(
             let what = if a.pages { "page" } else { "block" };
             let s = if n == 1 { "" } else { "s" };
             let head = title.map_or(String::new(), |t| format!("{t} · "));
-            if first.is_empty() {
+            if names.is_empty() {
                 format!("{mark} {head}no {what}")
+            } else if !first {
+                format!("{mark} {head}{n} {what}{s}")
             } else {
-                format!("{mark} {head}{n} {what}{s}: {}", first.join(" · "))
+                format!("{mark} {head}{n} {what}{s}: {}", names.join(" · "))
             }
         }
         Ok((title, Found::Table(cols, rows))) => {
