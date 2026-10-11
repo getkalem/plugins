@@ -31,6 +31,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 
 | Keys | Command | What it does |
 |---|---|---|
+| `SPC n r m`; the **Graph** button; a click on the status bar item | Menu | The graph's menu, as Logseq's and Obsidian's left sidebar: Journals, Today's journal, Graph view, All pages, Tags, Tasks, Search and Find or create a page, each a key away in it (`j`, `.`, `g`, `p`, `T`, `t`, `/`, `f`) and Enter or a click on its line; then the favorites (Logseq's `:favorites` in `logseq/config.edn`, Obsidian's bookmarks), the pages opened last, the whiteboards or canvases, and the other graphs, each opened by Enter. The Graph button stands in the window's toolbar and at the foot of the terminal's sidebar in a graph's notes and the plugin's documents |
 | `SPC n r r` | Backlinks Panel | The side panel: the page's linked references grouped by page, then its unlinked mentions; a click opens the line |
 | `SPC n r R` | Backlinks | The same as a document, with the references to the page's blocks; Enter on a line opens it |
 | `SPC o l` in a note; Enter (Vim's normal mode) and `SPC m g x` in a Logseq Org note; `Alt+Enter` while typing in Markdown; a Ctrl-click in the window | Open Link | What Follow Reference follows, by the graph's rules (`[[page]]` in Org opens the page, not a heading of the file); any other link as the mode opens it |
@@ -56,7 +57,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r g` | Graph | The pages as a tree of namespaces with their links in and out, then the pages named without a link and how often, then the orphans |
 | `SPC n r s` | Index Again | Reads the graph again |
 
-The status bar shows the graph of the current note and its pages (`⌬ notes · 1,240 pages`); a click lists them.
+The status bar shows the graph of the current note and its pages (`⌬ notes · 1,240 pages`); a click opens the graph's menu.
 
 **Whiteboards and canvases.** A Logseq whiteboard (`whiteboards/*.edn`) and an Obsidian canvas (`*.canvas`) are pages: links to them resolve, and they show in All pages with the application that draws them. Kalem does not draw them. Following one shows the file in the file manager, to be opened there.
 

@@ -1736,3 +1736,76 @@ fn an_advanced_query_followed_from_any_of_its_lines() {
         "{shown:?}"
     );
 }
+
+#[test]
+fn the_graphs_menu() {
+    let m = logseq();
+    m.write(
+        "/w/notes/logseq/config.edn",
+        "{:file/name-format :triple-lowbar :favorites [\"Kalem\" \"Not Written\"]}",
+    )
+    .unwrap();
+    m.write("/w/vault/.obsidian/app.json", "{}").unwrap();
+    m.write("/w/vault/Note.md", "a note\n").unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/vault/Note.md");
+    app.opened(&m, "/w/notes/pages/Other.md");
+    let out = app.command(&m, "graph.home", &ctx("/w/notes/pages/Other.md", "", 0));
+    let (id, key, kind, content) = document(&out);
+    assert_eq!(
+        (id.as_str(), key.as_str(), kind.as_str()),
+        ("graph.home", "/w/notes", "graph-home")
+    );
+    let text = &content.text;
+    for line in [
+        "⌬ notes",
+        "  Journals",
+        "  Graph view",
+        "Favorites",
+        "  • Kalem",
+        "  • Not Written",
+        "Recent",
+        "  • Other",
+        "Other graphs",
+        "  ⌬ vault  /w/vault",
+    ] {
+        assert!(
+            text.lines().any(|l| l.starts_with(line)),
+            "{line:?} in\n{text}"
+        );
+    }
+    let enter = |app: &mut App, starts: &str| {
+        let n = text.lines().position(|l| l.starts_with(starts)).unwrap();
+        let c = Ctx {
+            path: None,
+            text: Some(text.clone()),
+            cursor: line_start(text, n),
+            doc: Some((id.clone(), key.clone())),
+            args: "null".into(),
+        };
+        app.command(&m, "graph.open", &c)
+    };
+    // Enter on an entry runs its command; on a page, opens it (one not
+    // written yet made); on another graph, that graph's menu.
+    let run = |out: Vec<Effect>| match out.as_slice() {
+        [Effect::Run { id, args }] => (id.clone(), args.clone()),
+        o => panic!("{o:?}"),
+    };
+    assert_eq!(
+        run(enter(&mut app, "  Journals")),
+        ("graph.journals".into(), "{}".into())
+    );
+    assert_eq!(
+        run(enter(&mut app, "  • Not Written")),
+        ("graph.openNode".into(), r#"{"node":"not written"}"#.into())
+    );
+    let (cmd, args) = run(enter(&mut app, "  ⌬ vault"));
+    assert_eq!(cmd, "graph.home");
+    let c = Ctx {
+        args,
+        ..ctx("/w/notes/pages/Other.md", "", 0)
+    };
+    let (_, key, _, content) = document(&app.command(&m, "graph.home", &c));
+    assert_eq!(key, "/w/vault");
+    assert!(content.text.contains("Bookmarks"), "{}", content.text);
+}

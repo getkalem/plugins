@@ -817,7 +817,7 @@ pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
             .iter()
             .map(|p| crate::content::DrawnNode {
                 id: p.key.clone(),
-                label: p.title.clone(),
+                label: drawn_label(p),
                 group: group(p),
                 weight: 1 + degree(&p.key) as u32,
             })
@@ -1402,6 +1402,167 @@ pub fn advanced(
     c
 }
 
+/// A page's name in a graph drawn: its title, a PDF's highlights page
+/// (Logseq's `hls__…`) named for its PDF, as All pages names it.
+fn drawn_label(p: &crate::index::Page) -> String {
+    let pdf = p
+        .title
+        .starts_with("hls__")
+        .then(|| p.props.iter().find(|(k, _)| k == "file-path"))
+        .flatten()
+        .map(|(_, v)| files_name(v));
+    match pdf {
+        Some(f) => format!("Highlights of {f}"),
+        None => p.title.clone(),
+    }
+}
+
+/// An entry of the graph's menu: what it says, its key in the menu, and
+/// the command Enter on it runs.
+const MENU: &[(&str, &str, &str)] = &[
+    ("Journals", "j", "graph.journals"),
+    ("Today's journal", ".", "graph.today"),
+    ("Graph view", "g", "graph.graphView"),
+    ("All pages", "p", "graph.pages"),
+    ("Tags", "T", "graph.tags"),
+    ("Tasks", "t", "graph.tasks"),
+    ("Search the graph", "/", "graph.search"),
+    ("Find or create a page", "f", "graph.findPage"),
+];
+
+/// A page of the menu: opened by its key, a page without a file made.
+fn open_node(key: &str) -> Target {
+    Target::Command {
+        id: "graph.openNode".into(),
+        args: serde_json::json!({ "node": key }).to_string(),
+    }
+}
+
+/// A list of pages of the menu, by key and the name to show of one the
+/// graph does not have, each opened by Enter; `none` when there are none.
+fn menu_pages(c: &mut Content, index: &Index, keys: &[(String, String)], none: &str, g: Glyphs) {
+    for (key, name) in keys {
+        let title = index.page(key).map_or(name.as_str(), |p| p.title.as_str());
+        c.line(
+            &[
+                ("  ", Style::Normal),
+                (g.bullet, Style::Muted),
+                (" ", Style::Normal),
+                (title, Style::Link),
+            ],
+            Some(open_node(key)),
+        );
+    }
+    if keys.is_empty() {
+        c.line(&[("  ", Style::Normal), (none, Style::Muted)], None);
+    }
+}
+
+/// "Graph: NAME": the graph's menu, as Logseq's and Obsidian's left
+/// sidebar: its documents, each a key away, then its favorites (Logseq's
+/// `:favorites`, Obsidian's bookmarks), the pages opened last
+/// (`recent`, keys), its whiteboards or canvases, and the other graphs
+/// (`others`: root and name).
+pub fn home(index: &Index, recent: &[String], others: &[(String, String)], g: Glyphs) -> Content {
+    let mut c = Content::new();
+    let gr = &index.graph;
+    c.line(&[("⌬ ", Style::Muted), (gr.name(), Style::Heading)], None);
+    let pages = index.pages().filter(|p| p.path.is_some()).count();
+    let journals = index.journals().len();
+    c.line(
+        &[(
+            &format!(
+                "{} · {} · {pages} pages, {journals} journals",
+                gr.kind.title(),
+                gr.root
+            ),
+            Style::Muted,
+        )],
+        None,
+    );
+    c.blank();
+    for (label, key, command) in MENU {
+        let pad = 26usize.saturating_sub(label.chars().count());
+        c.line(
+            &[
+                ("  ", Style::Normal),
+                (label, Style::Link),
+                (&" ".repeat(pad), Style::Normal),
+                (key, Style::Muted),
+            ],
+            Some(Target::Command {
+                id: (*command).into(),
+                args: "{}".into(),
+            }),
+        );
+    }
+    c.blank();
+    // Favorites: Logseq's by title, Obsidian's by path; those that name no
+    // page are pages to make.
+    let favorites: Vec<(String, String)> = gr
+        .favorites
+        .iter()
+        .map(|f| match gr.kind {
+            Kind::Logseq => (crate::names::key(f), f.clone()),
+            Kind::Obsidian => (f.to_lowercase(), crate::files::file_name(f).to_string()),
+        })
+        .collect();
+    let (title, none) = match gr.kind {
+        Kind::Logseq => ("Favorites", "None: a page's ⋯ › Add to favorites in Logseq"),
+        Kind::Obsidian => ("Bookmarks", "None: Bookmark in Obsidian"),
+    };
+    c.line(&[(title, Style::Heading)], None);
+    menu_pages(&mut c, index, &favorites, none, g);
+    c.blank();
+    c.line(&[("Recent", Style::Heading)], None);
+    let recent: Vec<(String, String)> = recent.iter().map(|k| (k.clone(), k.clone())).collect();
+    menu_pages(
+        &mut c,
+        index,
+        &recent,
+        "None yet: the pages opened in this session",
+        g,
+    );
+    let drawings: Vec<(String, String)> = index
+        .drawings()
+        .filter_map(|rel| index.page_of(rel).map(|p| (p.key.clone(), p.title.clone())))
+        .collect();
+    if !drawings.is_empty() {
+        c.blank();
+        let title = match gr.kind {
+            Kind::Logseq => "Whiteboards",
+            Kind::Obsidian => "Canvases",
+        };
+        c.line(
+            &[
+                (title, Style::Heading),
+                (" (shown in the file manager, to open there)", Style::Muted),
+            ],
+            None,
+        );
+        menu_pages(&mut c, index, &drawings, "", g);
+    }
+    if !others.is_empty() {
+        c.blank();
+        c.line(&[("Other graphs", Style::Heading)], None);
+        for (root, name) in others {
+            c.line(
+                &[
+                    ("  ", Style::Normal),
+                    ("⌬ ", Style::Muted),
+                    (name, Style::Link),
+                    (&format!("  {root}"), Style::Muted),
+                ],
+                Some(Target::Command {
+                    id: "graph.home".into(),
+                    args: serde_json::json!({ "root": root }).to_string(),
+                }),
+            );
+        }
+    }
+    c
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1427,6 +1588,29 @@ mod tests {
             &m,
             Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
         )
+    }
+
+    #[test]
+    fn a_pdfs_highlights_drawn_named_for_its_pdf() {
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            (
+                "/g/pages/hls__paper_1700000000000_0.md",
+                "file:: [paper.pdf](../assets/paper_1700000000000_0.pdf)\nfile-path:: ../assets/paper_1700000000000_0.pdf\n\n- a highlight\n",
+            ),
+            ("/g/pages/Kalem.md", "- An editor\n"),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        let d = drawing(&i, None).drawing.unwrap();
+        let labels: Vec<&str> = d.nodes.iter().map(|n| n.label.as_str()).collect();
+        assert!(
+            labels.contains(&"Highlights of paper_1700000000000_0.pdf"),
+            "{labels:?}"
+        );
+        assert!(labels.contains(&"Kalem"), "{labels:?}");
     }
 
     #[test]

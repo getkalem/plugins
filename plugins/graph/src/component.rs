@@ -69,8 +69,11 @@ fn apply(effect: Effect) {
         Effect::Notify(message, l) => ui::notify(&message, level(l)),
         Effect::Status(Some(text)) => {
             let options = ui::StatusOptions {
-                tooltip: Some("The graph of this note: its pages; a click lists them".into()),
-                command: Some("graph.pages".into()),
+                tooltip: Some(
+                    "The graph of this note: a click opens its menu (journals, pages, the graph drawn, favorites, recent pages)"
+                        .into(),
+                ),
+                command: Some("graph.home".into()),
                 alignment: ui::Alignment::Left,
                 priority: 5,
             };

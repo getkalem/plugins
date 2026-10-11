@@ -36,10 +36,18 @@ pub struct Styled {
     pub style: Style,
 }
 
-/// Where Enter on a line goes: a file (absolute) at a line (from 0), or a
-/// page's backlinks.
+/// Where Enter on a line goes: a file (absolute) at a line (from 0), a
+/// page's backlinks, or a command of the plugin's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
+    /// A command of the plugin's run with its arguments (JSON): an entry
+    /// of the graph's menu.
+    Command {
+        /// `graph.NAME`.
+        id: String,
+        /// Its arguments.
+        args: String,
+    },
     /// A file at a line.
     File {
         /// Absolute.
