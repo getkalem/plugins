@@ -333,3 +333,48 @@ fn the_servers_and_their_settings() {
         );
     }
 }
+
+/// The tool's check as the plugin runs it (PT5), on the corpus: each
+/// error file gives one problem, at its line, in its file; each clean
+/// journal none. A tool not installed is skipped.
+#[test]
+fn the_check_finds_each_error_files_problem() {
+    use kalem_plugin_pta::check;
+    for (d, file, line) in [
+        (Dialect::Hledger, "errors.journal", Some(13)),
+        (Dialect::Ledger, "errors.ledger", Some(9)),
+        (Dialect::Beancount, "errors.beancount", Some(7)),
+        (Dialect::Hledger, "2026.journal", None),
+        (Dialect::Ledger, "business.ledger", None),
+        (Dialect::Beancount, "household.beancount", None),
+    ] {
+        let dir = corpus(d.language());
+        let main = dir.join(file).to_string_lossy().into_owned();
+        let args = check::command(d, &main, &[]);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let Some(o) = run(d.checker(), &args, &dir) else {
+            continue;
+        };
+        let said = if o.stderr.iter().any(|b| !b.is_ascii_whitespace()) {
+            &o.stderr
+        } else {
+            &o.stdout
+        };
+        let problems = check::problems(d, o.status.code(), &String::from_utf8_lossy(said));
+        match line {
+            None => assert!(problems.is_empty(), "{file}: {problems:?}"),
+            Some(line) => {
+                assert_eq!(problems.len(), 1, "{file}: {problems:?}");
+                assert_eq!(problems[0].line, Some(line), "{file}");
+                assert!(
+                    problems[0]
+                        .file
+                        .as_deref()
+                        .is_some_and(|f| f.ends_with(file)),
+                    "{file}: {problems:?}"
+                );
+                assert!(!problems[0].message.is_empty());
+            }
+        }
+    }
+}

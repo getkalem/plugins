@@ -12,9 +12,12 @@
 //!
 //! - [`align`]: amounts aligned at a column, nothing else moved (PT4).
 //!
+//! - [`check`]: the tool's check, its problems and their document (PT5).
+//!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
 pub mod align;
+pub mod check;
 #[cfg(target_arch = "wasm32")]
 mod component;
 pub mod journal;
