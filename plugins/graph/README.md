@@ -1,6 +1,6 @@
 # Note graphs (`graph`)
 
-A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
+A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or runs a command that writes one (see [What it writes](#what-it-writes)). The work list is [`graph_todo.md`](graph_todo.md).
 
 **Status: 0.6.0**, for Kalem 0.6.15 and later (plugin API 0.2.13). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below, the graph drawn among them; it edits a graph as an outliner, runs Logseq's simple and advanced queries and searches the graph; its layer draws a note as Logseq or Obsidian draws it, embeds and query results in place, and its completer offers pages, tags, blocks and properties as the user types (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
 
@@ -35,18 +35,18 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 ## Commands and keys
 
-The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every command is in the palette under **Graph** and in the **Graph** menu.
+The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every command is in the palette under **Graph**, and most are in the **Graph** menu.
 
 | Keys | Command | What it does |
 |---|---|---|
 | `SPC n r m`; the **Graph** button; a click on the status bar item | Menu | The graph's menu, as Logseq's and Obsidian's left sidebar: Journals, Today's journal, Graph view, All pages, Tags, Tasks, Search and Find or create a page, each a key away in it (`j`, `.`, `g`, `p`, `T`, `t`, `/`, `f`) and Enter or a click on its line; then the favorites (Logseq's `:favorites` in `logseq/config.edn`, Obsidian's bookmarks), the pages opened last, the whiteboards or canvases, and the other graphs, each opened by Enter. The Graph button stands in the window's toolbar and at the foot of the terminal's sidebar in a graph's notes and the plugin's documents |
 | `SPC n r r` | Backlinks Panel | The side panel: the page's linked references grouped by page, then its unlinked mentions; a click opens the line |
 | `SPC n r R` | Backlinks | The same as a document, with the references to the page's blocks; Enter on a line opens it |
-| `SPC o l` in a note; Enter (Vim's normal mode) and `SPC m g x` in a Logseq Org note; `Alt+Enter` while typing in Markdown; a Ctrl-click in the window | Open Link | What Follow Reference follows, by the graph's rules (`[[page]]` in Org opens the page, not a heading of the file); any other link as the mode opens it |
+| `SPC o l` in a note; Enter (Vim's normal mode) and `SPC m g x` in a Logseq Org note; `Alt+Enter` while typing in Markdown; a Ctrl-click in the window (Command-click on macOS) | Open Link | What Follow Reference follows, by the graph's rules (`[[page]]` in Org opens the page, not a heading of the file); any other link as the mode opens it |
 | `SPC n r o` | Follow Reference | The `[[page]]`, `#tag`, `((uuid))`, `{{embed}}`, `[[note#Heading]]` or `[[note#^id]]` under the cursor; a page not written yet opens as a new file, written when saved. On a `{{query …}}`'s line, its results (below) |
 | `SPC n r f` | Find Page | Every page by title, aliases in the detail; "Create a page…" first |
 | `SPC n r i` | Insert Link | A link to the chosen page, written as the graph writes links (Logseq's `[[Title]]`; Obsidian's shortest path, or as `.obsidian/app.json` says) |
-| `SPC n r b` | Insert Block Reference | `((uuid))` or `[[note#^id]]` of a block that has an id |
+| `SPC n r b` | Insert Block Reference | `((uuid))` or `[[note#^id]]` of a block: a Logseq block without an id gets one (below); a vault's block needs its `^id` |
 | `SPC n r d t`, `d y`, `d m` | Today's, Yesterday's, Tomorrow's Journal | Opens the journal; one not written yet is made from the graph's journal template (Logseq's `:default-templates {:journals …}`, Obsidian's daily notes template) |
 | `SPC n r d d` | Journal of a Date | `2026-10-03`, `oct 3`, `yesterday`, `-3`, `monday` |
 | `SPC n r d f`, `d b`; `Alt+]`, `Alt+[` in a note | Next, Previous Journal | The next and previous journal that exists (from a page, counting from today). A terminal without the kitty keyboard protocol cannot send `Alt+[` |
@@ -65,7 +65,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r g` | Graph | The pages as a tree of namespaces with their links in and out, then the pages named without a link and how often, then the orphans |
 | `SPC n r s` | Index Again | Reads the graph again |
 
-The status bar shows the graph of the current note and its pages (`⌬ notes · 1,240 pages`); a click opens the graph's menu.
+The status bar shows the graph of the current note and its pages (`⌬ notes · 1240 pages`; `graph:` for `⌬` with the setting `glyphs = "ascii"`); a click opens the graph's menu.
 
 **Whiteboards and canvases.** A Logseq whiteboard (`whiteboards/*.edn`) and an Obsidian canvas (`*.canvas`) are pages: links to them resolve, and they show in All pages with the application that draws them. Kalem does not draw them. Following one shows the file in the file manager, to be opened there.
 
@@ -87,11 +87,11 @@ In a note of a graph (a document the plugin's layer serves, Kalem's when-clause 
 |---|---|---|
 | Enter (typing, in a Logseq note in Markdown) | New Block | As Logseq's Enter: a new block after the block's properties and dates, the first child when its children are shown, the block split at the cursor (its properties staying with the first part), an empty child outdented; elsewhere Markdown's Enter |
 | `SPC m t` in Org, `SPC m t t` in Markdown | Cycle Task | The block's keyword as Logseq cycles it: `TODO` to `DOING`, `LATER` to `NOW`, both to `DONE`, `DONE` to none, and none (or `WAITING`, `CANCELED`) to `LATER` (`TODO` with `:preferred-workflow :todo`); in a vault the check box: none, `[ ]`, `[x]`, none. In Markdown, `SPC m t` is Doom's toggles (`SPC m t x` the check box, `SPC m t m` the markup) |
-| `SPC m p p` | Set Priority | `[#A]`, `[#B]`, `[#C]` or none, after the keyword (Doom's Org key; `SPC m p u` and `SPC m p d` stay Org's) |
-| `SPC m d s`, `SPC m d d` | Schedule, Deadline | `SCHEDULED: <2026-10-12 Mon>` after the block's first line and properties (after an Org headline), replaced where it is, removed when the answer is empty |
+| `SPC m p p` | Set Priority | `[#A]`, `[#B]`, `[#C]` or none, after the keyword (Doom's Org key; `SPC m p u` and `SPC m p d` stay Org's); not in a vault, whose notes have no priorities |
+| `SPC m d s`, `SPC m d d` | Schedule, Deadline | `SCHEDULED: <2026-10-12 Mon>` after the block's first line and properties (after an Org headline), replaced where it is, removed when the answer is empty; not in a vault |
 | `Alt+Shift+Up`, `Alt+Shift+Down` | Move Block Up, Down | The block with the blocks under it past its sibling |
 | `Tab`, `Shift+Tab` (typing, in the Vim profile), `Alt+Shift+Right`, `Alt+Shift+Left` | Indent, Outdent Block | The block with the blocks under it a level deeper (under its previous sibling) or out (the blocks after it at its level becoming its children, as Logseq outdents); a tab or the note's own spaces |
-| `Tab` (Vim's normal mode), `SPC m z` | Fold Block | `collapsed:: true` written or taken away, as Logseq folds; the layer hides the blocks under a folded block until the cursor goes into them |
+| `Tab` (Vim's normal mode), `SPC m z` | Fold Block | In a Logseq note in Markdown, `collapsed:: true` written or taken away, as Logseq folds (elsewhere, Kalem's own fold); the layer hides the blocks under a folded block until the cursor goes into them |
 | | Rename Page | Every reference to the page by its name rewritten in every file of the graph (aliases kept), and the page's file renamed as the application renames it: a vault's note always, a Logseq page named by its file (one named by `title::` keeps its file, its `title::` changed). Kalem's document of the file follows it; a file Kalem holds with unsaved changes stops it before anything is written |
 
 Insert Block Reference offers every block: one without an id gets its `id::` written where Logseq writes it, in its file, or by the editor when it is in the document being edited; a file Kalem holds with unsaved changes is not written. Each command is one undo step.
@@ -103,11 +103,11 @@ Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq a
 | | Logseq | Obsidian |
 |---|---|---|
 | Hidden | a block's `id::`, `collapsed::`, `heading::` and the other properties Logseq hides | a `^id` at a line's end, `%%comments%%` |
-| Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page; `{{query …}}` as `⌕`, how many blocks or pages it finds and the first two; `#+BEGIN_QUERY` marked as not run; `#+BEGIN_NOTE`, `TIP`, `IMPORTANT`, `CAUTION`, `WARNING`, `PINNED` as the admonition's icon and name, its `#+END_` line hidden; a numbered block's bullet (`logseq.order-list-type:: number`) as `1.`, nested `a.` and `I.` | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
+| Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page; `{{query …}}` and `#+BEGIN_QUERY` as `⌕`, how many blocks or pages the query finds, and its results under the line; `#+BEGIN_NOTE`, `TIP`, `IMPORTANT`, `CAUTION`, `WARNING`, `PINNED` as the admonition's icon and name, its `#+END_` line hidden; a numbered block's bullet (`logseq.order-list-type:: number`) as `1.`, nested `a.` and `I.` | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
 | Styled | task keywords and priorities as Org's (in Org notes `LATER`, `NOW`, `DOING`, `WAITING`, `CANCELED` too), dates, `#tags`, `^^highlights^^`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
 | Folded | `:LOGBOOK:` to its first line; the blocks under a block with `collapsed:: true` hidden | a callout with `-` to its first line |
 
-The layer needs plugin API 0.2.10's `layer`, which the plugin is built with (`kalem-plugin`'s feature `completer`, which brings it).
+The layer uses plugin API 0.2.13's `layer-2`, which the plugin is built with (`kalem-plugin`'s feature `layer-2`, which brings `layer` and `completer` too).
 
 ## Completion
 
@@ -134,7 +134,7 @@ The answers are Logseq's: a test (`tests/logseq_parity.rs`) runs simple and adva
 
 The results are grouped by page, journals newest first, with each block's first line; with `query-table:: true` on the query's block they are a table of the columns `query-properties::` names (`[:block :page]` by default), sorted by `query-sort-by::` and `query-sort-desc::`. Enter opens a block, `t` cycles its keyword. The document and the line in the note are computed again when the graph changes.
 
-Advanced queries (`#+BEGIN_QUERY` … `#+END_QUERY`, Datalog) run too, as Logseq's file version runs them: the note shows the query's title, how many it finds and the first two, its EDN hidden until the cursor goes into it, and Follow Reference on it opens the results. The graph is seen as Logseq's schema has it (`:block/name`, `:block/original-name`, `:block/journal?`, `:block/journal-day`, `:block/properties`, `:block/tags`, `:block/alias`, `:block/namespace` of a page; `:block/content`, `:block/marker`, `:block/priority`, `:block/page`, `:block/parent`, `:block/refs`, `:block/path-refs`, `:block/scheduled`, `:block/deadline`, `:block/uuid`, `:block/pre-block?` of a block, a page's pre-block among them). `:where` takes data patterns, `not`, `not-join`, `or`, `or-join`, `and`, the comparisons, `contains?`, `clojure.string/includes?`, `starts-with?`, `ends-with?` and `blank?`, `get`, `get-else`, `missing?`, `str`, and Logseq's rules (`page-ref`, `task`, `priority`, `property`, `page-property`, `page-tags`, `between`, `namespace`, `page`, `block-content`); `:inputs` takes `:today`, `:yesterday`, `:tomorrow`, `:-7d`, `:+7d`, `:7d-before`, `:7d-after` and `:current-page`; `:find` a variable, `(pull ?b [*])` or `(count ?b)`, other values as a table.
+Advanced queries (`#+BEGIN_QUERY` … `#+END_QUERY`, Datalog) run too, as Logseq's file version runs them: the note shows the query's title and how many it finds, its results under it, its EDN hidden until the cursor goes into it, and Follow Reference on it opens the results. The graph is seen as Logseq's schema has it (`:block/name`, `:block/original-name`, `:block/journal?`, `:block/journal-day`, `:block/properties`, `:block/tags`, `:block/alias`, `:block/namespace` of a page; `:block/content`, `:block/marker`, `:block/priority`, `:block/page`, `:block/parent`, `:block/refs`, `:block/path-refs`, `:block/scheduled`, `:block/deadline`, `:block/uuid`, `:block/pre-block?` of a block, a page's pre-block among them). `:where` takes data patterns, `not`, `not-join`, `or`, `or-join`, `and`, the comparisons, `contains?`, `clojure.string/includes?`, `starts-with?`, `ends-with?` and `blank?`, `get`, `get-else`, `missing?`, `str`, and Logseq's rules (`page-ref`, `task`, `priority`, `property`, `page-property`, `page-tags`, `between`, `namespace`, `page`, `block-content`); `:inputs` takes `:today`, `:yesterday`, `:tomorrow`, `:-7d`, `:+7d`, `:7d-before`, `:7d-after` and `:current-page`; `:find` a variable, `(pull ?b [*])` or `(count ?b)`, other values as a table.
 
 ## What is read
 
@@ -211,7 +211,7 @@ The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `
 `cargo test -p kalem-plugin-graph`:
 
 - the library's unit tests;
-- `tests/conformance.rs` over three corpus graphs written for this repository and licensed as it is (`corpus/logseq-md`, `corpus/logseq-org`, `corpus/obsidian`): settings, page names and every resolution rule, blocks, tasks, references, templates, queries, the documents, every corpus file scanned whole, every block folded and unfolded back to the same bytes, and an index kept by saves equal to one built afresh after every kind of edit of every file;
+- `tests/conformance.rs` over four corpus graphs written for this repository and licensed as it is (`corpus/logseq-md`, `corpus/logseq-org`, `corpus/obsidian`, and a database graph's Markdown Mirror, `corpus/logseq-db-mirror`): settings, page names and every resolution rule, blocks, tasks, references, templates, queries, the documents, every corpus file scanned whole, every block folded and unfolded back to the same bytes, and an index kept by saves equal to one built afresh after every kind of edit of every file;
 - `tests/logseq_parity.rs`: the references and the queries against Logseq 0.10.9's own answers on `corpus/logseq-md`, kept in `tests/logseq/answers-0.10.9.json` (26 queries, 21 pages' references);
 - `tests/snapshots.rs`: each document of each corpus as written, the graph's menu among them, against `tests/snapshots/` (`UPDATE_SNAPSHOTS=1` writes them anew); with `KALEM=path/to/kalem`, the ignored `kalem_run_prints_them` compares what `kalem run` prints;
 - `tests/robust.rs`: a configuration that does not parse, a file not in UTF-8 and one over 16 MB give one notice; embeds of themselves; every note of the corpora broken a few thousand ways through the scanner, the layer, the queries and every editing command without a panic (`ROBUST_ROUNDS` and `ROBUST_SEED` search longer);
