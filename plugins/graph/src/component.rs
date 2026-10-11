@@ -107,17 +107,28 @@ fn apply(effect: Effect) {
         } => {
             let styles = styled(&content);
             let open = DOCS.with(|d| d.borrow().get(&(id.clone(), key.clone())).copied());
-            if show {
-                let spec = documents::Spec::new(&id, &key, &title, &kind);
-                match documents::open_styled(&spec, &content.text, None, &styles) {
-                    Ok(n) => DOCS.with(|d| {
-                        d.borrow_mut().insert((id, key), n);
-                    }),
-                    Err(e) => ui::notify(&e, ui::Level::Error),
+            // A graph Kalem draws (plugin API 0.2.12), its text the source.
+            let drawn = content.drawing.as_ref().map(drawing);
+            let written = match (&drawn, open) {
+                _ if show => {
+                    let spec = documents::Spec::new(&id, &key, &title, &kind);
+                    let opened = match &drawn {
+                        Some(g) => kalem_plugin::graph_view::open(&spec, g, &content.text),
+                        None => documents::open_styled(&spec, &content.text, None, &styles),
+                    };
+                    match opened {
+                        Ok(n) => DOCS.with(|d| {
+                            d.borrow_mut().insert((id.clone(), key.clone()), n);
+                        }),
+                        Err(e) => ui::notify(&e, ui::Level::Error),
+                    }
+                    true
                 }
-            } else if let Some(n) = open
-                && documents::set_styled(n, &content.text, None, &styles).is_err()
-            {
+                (Some(g), Some(n)) => kalem_plugin::graph_view::set(n, g, &content.text).is_ok(),
+                (None, Some(n)) => documents::set_styled(n, &content.text, None, &styles).is_ok(),
+                (_, None) => true,
+            };
+            if !written {
                 // The user closed it.
                 DOCS.with(|d| d.borrow_mut().remove(&(id.clone(), key.clone())));
                 APP.with(|a| {
@@ -512,3 +523,25 @@ impl Plugin for Graph {
 }
 
 kalem_plugin::export_plugin!(Graph);
+
+/// A document's drawing as the `graph-view` interface's graph.
+fn drawing(d: &crate::content::Drawing) -> kalem_plugin::graph_view::Graph {
+    use kalem_plugin::graph_view::{Edge, Graph, node};
+    Graph {
+        nodes: d
+            .nodes
+            .iter()
+            .map(|n| node(&n.id, &n.label, &n.group, n.weight))
+            .collect(),
+        edges: d
+            .edges
+            .iter()
+            .map(|(a, b)| Edge {
+                from: a.clone(),
+                to: b.clone(),
+            })
+            .collect(),
+        focus: d.focus.clone(),
+        command: d.command.clone(),
+    }
+}

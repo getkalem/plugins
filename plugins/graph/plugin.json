@@ -9,8 +9,8 @@
   "limits": { "memory_mb": 1024, "time_ms": 10000 },
   "permissions": ["fs:read:workspace", "fs:write:workspace"],
   "layers": [
-    { "id": "logseq", "markers": ["logseq/config.edn", "mirror/markdown/.index.edn"], "modes": ["markdown", "org"] },
-    { "id": "obsidian", "markers": [".obsidian"], "modes": ["markdown"] }
+    { "id": "logseq", "markers": ["logseq/config.edn", "mirror/markdown/.index.edn"], "modes": ["markdown", "org"], "open": "graph.openLink" },
+    { "id": "obsidian", "markers": [".obsidian"], "modes": ["markdown"], "open": "graph.openLink" }
   ],
   "completers": [
     {
@@ -21,7 +21,7 @@
   "menus": [
     {
       "title": "Graph",
-      "when": "textType == markdown || textType == org || textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query",
+      "when": "textType == markdown || textType == org || textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view",
       "items": [
         "graph.today", "graph.yesterday", "graph.tomorrow", "graph.journalOn",
         "graph.previousJournal", "graph.nextJournal",
@@ -35,6 +35,7 @@
         "graph.backlinks", "graph.backlinksDocument", "graph.blockReferences",
         "-",
         "graph.pages", "graph.journals", "graph.tags", "graph.tasks", "graph.graph", "graph.runQuery",
+        "graph.graphView", "graph.localGraph",
         "-",
         "graph.reindex"
       ]

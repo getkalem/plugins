@@ -30,11 +30,12 @@ pub const KINDS: &[&str] = &[
     "graph-tasks",
     "graph-graph",
     "graph-query",
+    "graph-view",
 ];
 /// Where the documents' keys apply.
-pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query) && (vimCommand || !vimActive)";
+pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view) && (vimCommand || !vimActive)";
 /// Where the leader's keys of a graph's notes apply in its documents too.
-pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query) && vimCommand";
+pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view) && vimCommand";
 /// Where `t` cycles a task's keyword: the documents listing tasks.
 pub const TASK_DOC_WHEN: &str =
     "(textType == graph-tasks || textType == graph-query) && (vimCommand || !vimActive)";
@@ -107,6 +108,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         "Open Link",
         &[
             ("space o l", in_note!(" && vimCommand")),
+            // Obsidian's Follow Link, while typing in Markdown (Org's
+            // Alt+Enter makes a heading).
+            (
+                "alt+enter",
+                in_note!(" && editorMode == markdown && !vimCommand"),
+            ),
             (
                 "enter",
                 "editorLayer == graph.logseq && editorMode == org && vimCommand",
@@ -169,6 +176,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         ],
     ),
     c("graph.reindex", "Index Again", &["space n r s"]),
+    // The graph drawn (Kalem's plugin API 0.2.12): all its pages, or the
+    // note's page and the pages two links away.
+    c("graph.graphView", "Graph View", &["space n r v"]),
+    c("graph.localGraph", "Local Graph", &["space n r shift+v"]),
+    // Run by Kalem when a node of a drawn graph is opened.
+    n("graph.openNode", "Open a Node of the Graph", &[]),
     // `s` in All pages: by title, links, blocks.
     n(
         "graph.sortPages",
@@ -1011,6 +1024,22 @@ impl App {
                 )
             }
             "graph.graph" => (format!("Graph: {name}"), "graph-graph", views::graph(index)),
+            "graph.graphView" => (
+                format!("Graph View: {name}"),
+                "graph-view",
+                views::drawing(index, None),
+            ),
+            "graph.localGraph" => {
+                let page = page?;
+                let title = index
+                    .page(page)
+                    .map_or(page.to_string(), |p| p.title.clone());
+                (
+                    format!("Local Graph: {title}"),
+                    "graph-view",
+                    views::drawing(index, Some(page)),
+                )
+            }
             _ => return None,
         };
         self.docs
@@ -1097,8 +1126,25 @@ impl App {
                     Level::Info,
                 )),
             },
-            "graph.pages" | "graph.journals" | "graph.tags" | "graph.graph" => {
+            "graph.pages" | "graph.journals" | "graph.tags" | "graph.graph" | "graph.graphView" => {
                 out.extend(self.render(id, &root, true));
+            }
+            "graph.localGraph" => match ctx.path.as_deref().and_then(|p| self.page_of(p)) {
+                Some((root, key)) => {
+                    out.extend(self.render("graph.localGraph", &format!("{root}{SEP}{key}"), true));
+                }
+                None => out.push(Effect::Notify(
+                    "This document is no page of a graph".into(),
+                    Level::Info,
+                )),
+            },
+            "graph.openNode" => {
+                let key = serde_json::from_str::<serde_json::Value>(&ctx.args)
+                    .ok()
+                    .and_then(|v| v["node"].as_str().map(str::to_string));
+                if let Some(key) = key {
+                    out.extend(self.open_page(files, &root, &key, None, None));
+                }
             }
             "graph.sortPages" => {
                 let sort = self.page_sort.entry(root.clone()).or_default();

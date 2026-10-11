@@ -59,6 +59,33 @@ pub enum Target {
     },
 }
 
+/// A node of a document drawn as a graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrawnNode {
+    /// What opening it hands back (a page's key).
+    pub id: String,
+    /// What is written beside it.
+    pub label: String,
+    /// Its group, which its color follows.
+    pub group: String,
+    /// How large it is drawn, 1 the least.
+    pub weight: u32,
+}
+
+/// A document drawn as a graph by Kalem (plugin API 0.2.12), its text the
+/// source.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Drawing {
+    /// The nodes.
+    pub nodes: Vec<DrawnNode>,
+    /// The edges, by the nodes' ids.
+    pub edges: Vec<(String, String)>,
+    /// The node kept in the middle.
+    pub focus: Option<String>,
+    /// The plugin's command run with `{"node": id}` when one is opened.
+    pub command: String,
+}
+
 /// A document's text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Content {
@@ -68,6 +95,8 @@ pub struct Content {
     pub styles: Vec<Styled>,
     /// Where Enter goes, by line.
     pub targets: Vec<Option<Target>>,
+    /// The graph it is drawn as, when it is one.
+    pub drawing: Option<Drawing>,
 }
 
 impl Content {

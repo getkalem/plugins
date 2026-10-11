@@ -1509,3 +1509,45 @@ fn completion_of_a_vaults_headings_and_blocks() {
         ("A paragraph", "^para1]]")
     );
 }
+
+#[test]
+fn the_graph_drawn_whole_and_around_a_page() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    let other = "/w/notes/pages/Other.md";
+    app.opened(&m, other);
+    let c = ctx(other, "", 0);
+    let (id, key, kind, content) = document(&app.command(&m, "graph.graphView", &c));
+    assert_eq!(
+        (id.as_str(), kind.as_str()),
+        ("graph.graphView", "graph-view")
+    );
+    let d = content.drawing.expect("a drawing");
+    let ids: Vec<&str> = d.nodes.iter().map(|n| n.id.as_str()).collect();
+    // The pages, the most linked first; the journal left out.
+    assert_eq!(ids[0], "kalem");
+    assert!(ids.contains(&"other") && ids.contains(&"org") && ids.contains(&"idea"));
+    assert!(!ids.iter().any(|i| i.starts_with("oct")), "{ids:?}");
+    assert!(
+        d.edges.contains(&("kalem".into(), "other".into())),
+        "{:?}",
+        d.edges
+    );
+    assert_eq!(d.command, "graph.openNode");
+    assert!(content.text.contains("Kalem  "));
+    // Around a page: it in the middle, the journal two links away too.
+    let (_, _, _, content) = document(&app.command(&m, "graph.localGraph", &c));
+    let d = content.drawing.unwrap();
+    assert_eq!(d.focus.as_deref(), Some("other"));
+    let ids: Vec<&str> = d.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert!(
+        ids.contains(&"kalem") && ids.iter().any(|i| i.starts_with("oct")),
+        "{ids:?}"
+    );
+    // A node opened: its page.
+    let mut o = c.clone();
+    o.doc = Some(("graph.graphView".into(), key));
+    o.args = r#"{"node":"kalem"}"#.into();
+    let out = app.command(&m, "graph.openNode", &o);
+    assert_eq!(opens(&out), [("/w/notes/pages/Kalem.md".to_string(), 1)]);
+}

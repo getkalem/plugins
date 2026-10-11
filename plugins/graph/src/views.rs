@@ -698,6 +698,137 @@ pub fn tasks(index: &Index, today: Option<Date>) -> Content {
     c
 }
 
+/// The graph drawn by Kalem (plugin API 0.2.12): its pages and the links
+/// between them (Logseq's journals left out, as Logseq's graph view
+/// leaves them out by default), or with `focus` the page of that key and
+/// the pages two links from it. Its text lists the pages, the most linked
+/// first, each line opening its page.
+pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
+    use std::collections::{BTreeSet, HashMap};
+    // The links, each once, by the pages' keys.
+    let mut links: BTreeSet<(String, String)> = BTreeSet::new();
+    for (rel, d) in index.files() {
+        for r in &d.scanned.refs {
+            if r.kind.to_block() || (index.graph.kind == Kind::Obsidian && r.kind == RefKind::Tag) {
+                continue;
+            }
+            let to = index.resolve(&r.target, rel);
+            if to != d.key && index.page(&to).is_some() {
+                let (a, b) = if d.key < to {
+                    (d.key.clone(), to)
+                } else {
+                    (to, d.key.clone())
+                };
+                links.insert((a, b));
+            }
+        }
+    }
+    let mut near: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (a, b) in &links {
+        near.entry(a).or_default().push(b);
+        near.entry(b).or_default().push(a);
+    }
+    let shown: BTreeSet<String> = match focus {
+        // The page and the pages two links away, journals too.
+        Some(f) => {
+            let mut seen: BTreeSet<String> = BTreeSet::from([f.to_string()]);
+            let mut ring = vec![f.to_string()];
+            for _ in 0..2 {
+                let mut next = Vec::new();
+                for k in &ring {
+                    for n in near.get(k.as_str()).into_iter().flatten() {
+                        if seen.insert(n.to_string()) {
+                            next.push(n.to_string());
+                        }
+                    }
+                }
+                ring = next;
+            }
+            seen
+        }
+        None => index
+            .pages()
+            .filter(|p| {
+                !(index.graph.kind == Kind::Logseq && p.journal.is_some())
+                    && (p.path.is_some() || near.contains_key(p.key.as_str()))
+                    && !p
+                        .path
+                        .as_deref()
+                        .is_some_and(|r| crate::index::drawn_elsewhere(&index.graph, r))
+            })
+            .map(|p| p.key.clone())
+            .collect(),
+    };
+    let degree = |k: &str| near.get(k).map_or(0, Vec::len);
+    let mut pages: Vec<&crate::index::Page> = shown.iter().filter_map(|k| index.page(k)).collect();
+    pages.sort_by_key(|p| (std::cmp::Reverse(degree(&p.key)), p.title.to_lowercase()));
+    let group = |p: &crate::index::Page| {
+        if p.journal.is_some() {
+            "journals".to_string()
+        } else if p.path.is_none() {
+            "not written".to_string()
+        } else {
+            match p.title.split_once('/') {
+                Some((ns, _)) => ns.to_lowercase(),
+                None => "pages".to_string(),
+            }
+        }
+    };
+    let mut c = Content::new();
+    let name = match focus.and_then(|f| index.page(f)) {
+        Some(p) => format!("Local graph: {}", p.title),
+        None => format!("Graph view: {}", index.graph.name()),
+    };
+    c.line(&[(&name, Style::Heading)], None);
+    let edges: Vec<(String, String)> = links
+        .iter()
+        .filter(|(a, b)| shown.contains(a) && shown.contains(b))
+        .cloned()
+        .collect();
+    c.line(
+        &[(
+            &format!("{} pages · {} links", pages.len(), edges.len()),
+            Style::Muted,
+        )],
+        None,
+    );
+    c.blank();
+    for p in &pages {
+        let n = degree(&p.key);
+        c.line(
+            &[
+                (&p.title, Style::Link),
+                (
+                    &format!("  {n} link{}", if n == 1 { "" } else { "s" }),
+                    Style::Muted,
+                ),
+            ],
+            Some(match &p.path {
+                Some(r) => Target::File {
+                    path: index.graph.path(r),
+                    line: 0,
+                },
+                None => Target::Page(p.key.clone()),
+            }),
+        );
+    }
+    c.drawing = Some(crate::content::Drawing {
+        nodes: pages
+            .iter()
+            .map(|p| crate::content::DrawnNode {
+                id: p.key.clone(),
+                label: p.title.clone(),
+                group: group(p),
+                weight: 1 + degree(&p.key) as u32,
+            })
+            .collect(),
+        edges,
+        focus: focus.map(str::to_string),
+        command: "graph.openNode".into(),
+    });
+    c
+}
+
 /// "Graph": the pages as a tree of namespaces, each with the links in and
 /// out, then the pages nothing links to and that link nowhere.
 pub fn graph(index: &Index) -> Content {
