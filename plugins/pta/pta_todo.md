@@ -979,7 +979,7 @@ first.
 
 ## PT14. Release, the README and the Book
 
-- [~] PT14 The README: what it does, the feature table per dialect
+- [x] PT14 The README: what it does, the feature table per dialect
   (what the server gives, what the tool gives, what the plugin
   itself does), the install lines (hledger, Ledger, Beancount and
   Python's `beancount`, the two servers, `bean-price`, `pricehist`),
@@ -1013,7 +1013,12 @@ first.
   transaction, `g b` the Balance; `r`, Doom's report, the Balance until
   Report… comes), the plugin's others on letters Doom leaves free (`=`
   Align Amounts, `g r` Register, `k`, `b`, `y`, `p`, `C`, `m`); the
-  keys the tasks above name are their first letters.)
+  keys the tasks above name are their first letters.
+  The tag `pta-v0.1.0` and its release came the same day, by the git
+  session. The Book's chapter, `book/part-3/plain-text-accounting.org`
+  in Kalem's repository (Part III, where the plugins' chapters are, in
+  the format skeleton's order), is on Kalem's branch `book-pta`
+  (worktree `org-book-pta`), listed after the note graphs.)
 
 ## What Kalem's core must gain
 
