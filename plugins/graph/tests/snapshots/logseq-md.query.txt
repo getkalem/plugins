@@ -1,7 +1,8 @@
 Query: (and [[Project/Plugins]] (task NOW LATER TODO DOING))
-4 blocks
+5 blocks
 
 block                                                      │ page
+NOW Start [[Project/Plugins/Graph]]                        │ Oct 10th, 2026
 TODO [#A] Write the graph plugin [[Project/Plugins/Graph]] │ Project/Plugins
 DOING [#B] The plain-text accounting plugin                │ Project/Plugins
 LATER The Typst mode, after the mode binding               │ Project/Plugins

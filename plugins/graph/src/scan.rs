@@ -380,6 +380,11 @@ fn inline(line: &str, flavor: Flavor) -> Vec<Raw> {
                     None => i + n,
                 };
             }
+            // A query's arguments name no page, as Logseq's references
+            // leave them out.
+            b'{' if line[i..].starts_with("{{query") => {
+                i = line[i..].find("}}").map_or(b.len(), |p| i + p + 2);
+            }
             b'{' if line[i..].starts_with("{{embed") => {
                 let end = line[i..].find("}}").map_or(b.len(), |p| i + p + 2);
                 let inner = &line[i + 7..end.saturating_sub(2).max(i + 7)];
@@ -1650,9 +1655,9 @@ mod tests {
                 (RefKind::Tag, "two words"),
                 (RefKind::Page, "a [[b]]"),
                 (RefKind::Page, "b"),
-                (RefKind::Page, "q"),
             ]
         );
+        // A query's `[[q]]` names no page, as in Logseq.
         assert_eq!(s.blocks.last().unwrap().text, "after");
     }
 

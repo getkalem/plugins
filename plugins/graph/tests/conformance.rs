@@ -406,10 +406,12 @@ fn queries_on_the_corpus() {
         a.hits.iter().map(|h| query::hit_text(&i, h)).collect()
     };
     // The page's open tasks, the corpus's own query, a block reference
-    // shown as its block's text.
+    // shown as its block's text; a task naming a page of its namespace
+    // (`[[Project/Plugins/Graph]]`) is one too, as Logseq 0.10.9 finds.
     assert_eq!(
         found("(and [[Project/Plugins]] (task NOW LATER TODO DOING))"),
         [
+            "NOW Start [[Project/Plugins/Graph]]",
             "TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]",
             "DOING [#B] The plain-text accounting plugin",
             "LATER The Typst mode, after the mode binding",
@@ -449,12 +451,19 @@ fn queries_on_the_corpus() {
         views::Glyphs::new("unicode"),
     );
     let lines: Vec<&str> = c.text.lines().collect();
-    assert_eq!(lines[1], "4 blocks");
+    assert_eq!(lines[1], "5 blocks");
     assert!(lines[3].starts_with("block ") && lines[3].ends_with("│ page"));
+    let row = |start: &str, page: &str| {
+        lines[4..]
+            .iter()
+            .any(|l| l.starts_with(start) && l.ends_with(&format!("│ {page}")))
+    };
     assert!(
-        lines[4].starts_with("TODO [#A] Write the graph plugin")
-            && lines[4].ends_with("│ Project/Plugins")
+        row("TODO [#A] Write the graph plugin", "Project/Plugins"),
+        "{}",
+        c.text
     );
+    assert!(row("NOW Start", "Oct 10th, 2026"), "{}", c.text);
     // Each row opens its block.
     assert!(matches!(
         c.target(4),

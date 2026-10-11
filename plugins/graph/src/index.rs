@@ -576,11 +576,50 @@ impl Index {
                 };
                 self.pages.insert(key.clone(), page);
             }
+            // A link to a page of a namespace names its parents too, as
+            // Logseq's references do (`[[a/b/c]]` refers to `a/b` and `a`).
+            for (parent, title) in self.namespace_parents(&key, rel) {
+                if !self.pages.contains_key(&parent) {
+                    let page = Page {
+                        key: parent.clone(),
+                        title,
+                        path: None,
+                        aliases: Vec::new(),
+                        journal: None,
+                        props: Vec::new(),
+                    };
+                    self.pages.insert(parent.clone(), page);
+                }
+                if parent != d.key {
+                    self.incoming.entry(parent).or_default().push(back.clone());
+                }
+            }
             if key != d.key {
                 self.incoming.entry(key).or_default().push(back);
             }
         }
         self.files.insert(rel.to_string(), d);
+    }
+
+    /// The namespaces above page `key` of a Logseq graph, by key and
+    /// title: `a/b` and `a` above `a/b/c`; none in a vault, whose folders
+    /// are not pages.
+    fn namespace_parents(&self, key: &str, rel: &str) -> Vec<(String, String)> {
+        if self.graph.kind != Kind::Logseq {
+            return Vec::new();
+        }
+        let title = self.pages.get(key).map_or(key, |p| p.title.as_str());
+        let mut out = Vec::new();
+        let mut at = 0;
+        while let Some(p) = title[at..].find('/') {
+            let prefix = &title[..at + p];
+            at += p + 1;
+            if prefix.trim().is_empty() {
+                continue;
+            }
+            out.push((self.resolve(prefix, rel), prefix.to_string()));
+        }
+        out
     }
 
     /// What [`Index::contribute`] added for file `rel` taken away again,
@@ -643,6 +682,12 @@ impl Index {
                 if self.block_incoming.get_mut(&k).is_some_and(drop_mine) {
                     self.block_incoming.remove(&k);
                 }
+            }
+            for (parent, _) in self.namespace_parents(&key, rel) {
+                if self.incoming.get_mut(&parent).is_some_and(drop_mine) {
+                    self.incoming.remove(&parent);
+                }
+                named.insert(parent);
             }
             if self.incoming.get_mut(&key).is_some_and(drop_mine) {
                 self.incoming.remove(&key);
