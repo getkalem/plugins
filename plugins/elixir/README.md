@@ -8,9 +8,9 @@ A language plugin is declarative (Kalem's D57): this folder holds a manifest, `p
 
 | File types | Highlighting | Server |
 |---|---|---|
-| `.ex`, `.exs`, `mix.lock`, `.formatter.exs`, `#!/usr/bin/env elixir` | Elixir, with `~H` sigils as HEEx, `~L` and `~E` as EEx, `~r` as a string, Markdown in `@doc` | yes |
+| `.ex`, `.exs`, `mix.lock`, `.formatter.exs`, `.credo.exs`, `.iex.exs`, `#!/usr/bin/env elixir` (and `iex` or `mix`, served but not colored) | Elixir, with `~H` sigils as HEEx, `~L` as EEx, `~r` as a string, Markdown in `@doc` | yes |
 | `.heex`, `.html.heex` | HTML (HEEx): components (`<.button>`, `<Module.comp>`), `{…}` and `<%= … %>` as Elixir | yes |
-| `.eex`, `.html.eex`, `.leex` | HTML (EEx) | yes |
+| `.eex`, `.html.eex`, `.leex`, `.html.leex` | HTML (EEx) | yes |
 
 With a server running, in either of Kalem's editors:
 
@@ -25,10 +25,12 @@ With a server running, in either of Kalem's editors:
 | Code actions (fixes, refactorings) | `SPC c a` | Ctrl+. | `code.actions` |
 | Problems of the file, of open files | `SPC c x`, `SPC c X` | | `code.problems`, `code.allProblems` |
 | Format the document (`mix format` when no server runs) | `SPC c f` | | `edit.formatDocument` |
-| Problems underlined, the line number colored, the message under the mouse | in the text | in the text | |
+| Problems underlined, the line number colored, the message under the mouse (in the window) | in the text | in the text | |
 | The problem on the cursor's line, the server's progress (Expert's build too) | the status bar | the status bar | |
 
 Diagnostics are the compiler's, and Credo's and dialyzer's where the server runs them. Dialyzer is off by default: its first run builds a large table and takes minutes (turn it on with `dialyzerEnabled`, below). Files changed outside the editor (a checkout, `mix deps.get`) are told to the server, which compiles again.
+
+With Kalem 0.6.12 and later, Run Project (`SPC p R`) runs `mix run`, Test Project (`SPC p T`) runs `mix test`, and Test at Cursor (in the palette) runs `mix test FILE:LINE`, each in the project's root, the output in a document of its own.
 
 ## The server
 
@@ -69,12 +71,11 @@ env = { ELS_INSTALL_PREFIX = "/opt/elixir-ls" }
 
 From Kalem: the Kalem menu's **Install Plugin…**, then `elixir` (or this folder's link, `https://github.com/getkalem/plugins/tree/main/plugins/elixir`). **Browse Plugins** lists it too. Kalem shows what the plugin is and which programs it may run before installing, and the open Elixir files are highlighted and served at once. On the command line: `kalem plugin install elixir`.
 
-To work on the plugin itself, point Kalem at this repository's `plugins/` folder instead: `KALEM_PLUGIN_PATH=$PWD/plugins kalem`. That copy takes the place of an installed one.
+To work on the plugin itself, point Kalem at this repository's `plugins/` folder instead: `KALEM_PLUGIN_PATH=$PWD/plugins kalem`. When the plugin is also installed, the installed copy serves the files: remove it first (`kalem plugin remove org.kalem.elixir`).
 
 ## Not done
 
 - No embedded `iex`. Kalem ships no REPL (its D28); the terminal is one key away.
-- Running tests at the cursor (`mix test FILE:LINE`) and the project's tests: the manifest lists the commands, and the editor runs them when Kalem's project run and test keys land (its tasks T2.7i.8 and T3.8.4).
 - Regular expressions in `~r` are highlighted as strings: the PCRE syntax of the upstream package uses subroutine calls, which the pure-Rust regex engine of Kalem's highlighter does not have.
 
 ## Sources and licenses

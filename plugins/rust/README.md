@@ -13,7 +13,7 @@ Kalem has a Rust syntax built in, from before `async` and `.await` (Rust 1.39, 2
 Known differences, each from Kalem's highlighter or the syntax, not from Rust:
 
 - The names a declaration gives (a struct's, an enum's, a trait's, a constant's or static's, a module's, a loop label) are not colored: the syntax names them (`entity.name.struct`, `entity.name.constant`, …), and Kalem's highlighter gives those scopes no color yet. The built-in syntax colored a constant's name.
-- A type where it is used (`Option`, `Vec`, `String`, an enum's variant) has the keywords' color: the syntax scopes it `storage.type`, which Kalem colors as a keyword.
+- A type where it is used (a type of the project's own, `Self`, a primitive such as `u8`) has the keywords' color: the syntax scopes it `storage.type`, which Kalem colors as a keyword. The standard library's types and variants (`Option`, `Vec`, `String`, `Some`, `None`) are scoped `support.type` and have the types' color.
 - Every variable and field is colored as a variable, not only where it is declared.
 - `$name` is colored as a macro's variable wherever it is, in a comment too, as the syntax does for `macro_rules!`.
 - `safe` in an `unsafe extern` block and `raw` in `&raw const` are plain.
@@ -25,9 +25,9 @@ With rust-analyzer running, in either of Kalem's editors:
 
 | Feature | Vim profile | Word-like profile | Command |
 |---|---|---|---|
-| Completion, with each item's documentation beside the list | as you type, `.`, `:`, `'` and `(` | as you type | |
+| Completion, with each item's documentation beside the list | as you type, and after `.` and `::` | as you type | |
 | A call's signature while typing its arguments | after `(` and `,` | after `(` and `,` | |
-| Documentation at the cursor, rustdoc's Markdown with its code highlighted | `K`, `SPC c k` | | `code.documentation` |
+| Documentation at the cursor: rustdoc's text, plain, its first 20 lines in the window and 16 in the terminal | `K`, `SPC c k` | | `code.documentation` |
 | Go to definition, into the standard library too | `gd`, `SPC c d` | F12 | `code.definition` |
 | Declaration, type definition | `SPC c t` (type) | | `code.declaration`, `code.typeDefinition` |
 | A trait's implementations | `SPC c i` | | `code.implementation` |
@@ -44,7 +44,7 @@ And rust-analyzer's own requests, each through a command of Kalem's that any lan
 
 | Command | rust-analyzer's request |
 |---|---|
-| Expand Macro: the macro call at the cursor expanded, shown as Rust | `rust-analyzer/expandMacro` |
+| Expand Macro: the macro call at the cursor expanded, shown as plain text in the documentation's card | `rust-analyzer/expandMacro` |
 | Open Documentation in the Browser: the item's page on doc.rust-lang.org or docs.rs | `experimental/externalDocs` |
 | Go to Parent Module: the `mod` line of the file's module | `experimental/parentModule` |
 | Go to Project File: the crate's `Cargo.toml` | `experimental/openCargoToml` |
@@ -62,10 +62,10 @@ Known differences:
 - Enter typed on before rust-analyzer answers keeps Kalem's new line: its answer is for the text as it was.
 - A completion does not add its `use`: rust-analyzer offers an item or a trait's method not imported only to an editor that fetches the import when the item is taken (`completionItem/resolve` of `additionalTextEdits`), which Kalem does not do yet (T3.8.2's automatic imports). What is in scope is offered.
 - A rename is one undo step in each file it changes, not one for all of them.
-- The documentation of a standard library item is its whole rustdoc, long in the terminal editor's card.
-- A search of the workspace's symbols (`SPC s I`) waits for Kalem (T3.8.2).
+- The documentation of a standard library item is long: the card shows its first lines only.
+- A search of the workspace's symbols waits for Kalem (T3.8.2); `SPC s I`, Doom's key for it, searches every document's headings for now.
 - Positions go to rust-analyzer as UTF-8, which it offers: a line with an emoji is placed right.
-- A crate added to the workspace, or a `Cargo.toml` changed, is seen without a restart (rust-analyzer watches them); Restart rust-analyzer is there for when it is not.
+- A crate added to the workspace, or a `Cargo.toml` changed, is seen without a restart (rust-analyzer watches them); Restart Language Server (`code.restartServer`) is there for when it is not.
 
 ## The server
 
@@ -137,14 +137,14 @@ A `rust` source block in Org (`#+begin_src rust`) or Markdown (a fenced block ma
 
 ## A file outside a project
 
-rust-analyzer serves only files of a Cargo project it has loaded. A `.rs` file with no `Cargo.toml` above it (a scratch file, a `rust-script`) gets a server that finds no project and answers nothing: no documentation, no completion, no diagnostics. Name the file in rust-analyzer's `linkedProjects` and it is served on its own, against the standard library: documentation, completion and definitions work. A `.kalem/settings.toml` in its folder does it, with paths relative to the folder:
+rust-analyzer serves only files of a Cargo project it has loaded. A `.rs` file with no `Cargo.toml` above it (a scratch file, a `rust-script`) gets a server that finds no project and answers nothing: no documentation, no completion, no diagnostics. Name the file in rust-analyzer's `linkedProjects` and it is served on its own, against the standard library: documentation, completion and definitions work. A `.kalem/settings.toml` in its folder does it, with paths relative to the folder. Kalem reads the `.kalem/settings.toml` above the file it starts with, once, so start Kalem on that file (`kalem scratch.rs`); the setting then holds for every rust-analyzer of the session:
 
 ```toml
 [plugins."org.kalem.rust".settings.rust-analyzer]
 linkedProjects = ["scratch.rs"]
 ```
 
-Such a file gets no diagnostics from `cargo check`, which fails on a file that names no edition; it gets rust-analyzer's own, with a Kalem that asks for them (below). A file inside a project that no `mod` names is not served either; rust-analyzer's "unlinked file" diagnostic says so, and offers to add the `mod`.
+Such a file gets no diagnostics from `cargo check`, which fails on a file that names no edition; it gets rust-analyzer's own, with a Kalem that asks for them (see Diagnostics, above). A file inside a project that no `mod` names is not served either; rust-analyzer's "unlinked file" diagnostic says so, and offers to add the `mod`.
 
 The plugin does not refuse such files a server (`requireRoot`): that would refuse one to a project never built too, which has no `Cargo.lock` yet and is served from its file's folder.
 
@@ -191,7 +191,7 @@ While edits keep coming, rust-analyzer starts its indexing over: typing without 
 
 From Kalem: the Kalem menu's **Install Plugin…**, then `rust` (or this folder's link, `https://github.com/getkalem/plugins/tree/main/plugins/rust`). **Browse Plugins** lists it too. Kalem shows what the plugin is and which programs it may run before installing, and the open Rust files are highlighted and served at once. On the command line: `kalem plugin install rust`. rust-analyzer itself is installed apart (above).
 
-To work on the plugin itself, point Kalem at this repository's `plugins/` folder instead: `KALEM_PLUGIN_PATH=$PWD/plugins kalem`. That copy takes the place of an installed one.
+To work on the plugin itself, point Kalem at this repository's `plugins/` folder instead: `KALEM_PLUGIN_PATH=$PWD/plugins kalem`. When the plugin is also installed, the installed copy serves the files: remove it first (`kalem plugin remove org.kalem.rust`).
 
 ## Not done
 
