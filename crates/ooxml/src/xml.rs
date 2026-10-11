@@ -281,9 +281,16 @@ impl<'a> Reader<'a> {
                 }
                 i += 1;
             }
-            let end = (start + i + 1).min(s.len());
+            // A tag cut off before its `>` (a damaged part) runs to the
+            // end of the text: its last character is not a `>` to drop,
+            // and a lone `<` at the end has nothing inside.
+            let (end, inner_end) = if i < b.len() {
+                (start + i + 1, start + i)
+            } else {
+                (s.len(), s.len())
+            };
             self.pos = end;
-            let inner = &s[start + 1..end - 1];
+            let inner = &s[start + 1..inner_end];
             if let Some(name) = inner.strip_prefix('/') {
                 return Some(Token::End {
                     name: local(name.trim()),
@@ -551,6 +558,24 @@ mod tests {
                 let first = all.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
                 assert_eq!(tag.attr(name), first, "{name} in {t}");
             }
+        }
+    }
+
+    #[test]
+    fn a_tag_cut_off_at_the_end_reads_to_the_end() {
+        for (s, name) in [
+            ("<a><b", "b"),
+            ("<a><", ""),
+            ("<a><bé", "bé"),
+            ("<a><b x=\"1", "b"),
+        ] {
+            let mut r = Reader::new(s);
+            assert!(matches!(r.next_token(), Some(Token::Start(t)) if t.name == "a"));
+            let Some(Token::Start(t)) = r.next_token() else {
+                panic!("{s}")
+            };
+            assert_eq!((t.name, t.span.end), (name, s.len()), "{s}");
+            assert_eq!(r.next_token(), None);
         }
     }
 
