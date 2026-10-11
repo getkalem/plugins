@@ -15,7 +15,7 @@
   "completers": [
     {
       "id": "refs", "types": ["markdown", "org"], "layers": ["logseq", "obsidian"],
-      "triggers": ["[[", "((", "#", "<"], "replaces": ["wiki", "words"], "priority": 12
+      "triggers": ["[[", "((", "#", "<", "::", "/"], "replaces": ["wiki", "words"], "priority": 12
     }
   ],
   "menus": [

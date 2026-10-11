@@ -17,6 +17,42 @@ pub struct Values {
     pub today: Option<Date>,
     /// The day the page is for (a journal's), else today.
     pub date: Option<Date>,
+    /// The local time of day in seconds, when known (Kalem's plugin API
+    /// 0.2.11 gives the time zone's offset).
+    pub time: Option<u32>,
+}
+
+/// The time of day `secs` written in Moment's tokens (`HH:mm`, `h:mm A`,
+/// `HH:mm:ss`); other characters as they are.
+fn time_text(secs: u32, format: &str) -> String {
+    let (h, m, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    let h12 = if h % 12 == 0 { 12 } else { h % 12 };
+    let mut out = String::new();
+    let mut rest = format;
+    while let Some(c) = rest.chars().next() {
+        let tokens: [(&str, String); 9] = [
+            ("HH", format!("{h:02}")),
+            ("H", h.to_string()),
+            ("hh", format!("{h12:02}")),
+            ("h", h12.to_string()),
+            ("mm", format!("{m:02}")),
+            ("m", m.to_string()),
+            ("ss", format!("{s:02}")),
+            ("A", if h < 12 { "AM" } else { "PM" }.to_string()),
+            ("a", if h < 12 { "am" } else { "pm" }.to_string()),
+        ];
+        match tokens.iter().find(|(t, _)| rest.starts_with(t)) {
+            Some((t, v)) => {
+                out.push_str(v);
+                rest = &rest[t.len()..];
+            }
+            None => {
+                out.push(c);
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    out
 }
 
 /// The lines of block `i` of `lines` and of every block under it: from its
@@ -120,9 +156,9 @@ fn logseq_variables(text: &str, index: &Index, v: &Values) -> String {
             "yesterday" => day(v.today.map(|d| d.add_days(-1))),
             "tomorrow" => day(v.today.map(|d| d.add_days(1))),
             "current page" => format!("[[{}]]", v.title),
-            // Kalem's clock gives plugins UTC, not the zone's offset: the
-            // local time is not known.
-            "time" => String::new(),
+            // Logseq's 24-hour `HH:mm`; nothing where the local time
+            // is not known.
+            "time" => v.time.map(|t| time_text(t, "HH:mm")).unwrap_or_default(),
             _ => rest[p..p + q + 2].to_string(),
         };
         out.push_str(&value);
@@ -164,7 +200,10 @@ pub fn obsidian(index: &Index, files: &dyn Files, name: &str, v: &Values) -> Opt
                 .or(v.today)
                 .map(|d| Pattern::new(format.unwrap_or("YYYY-MM-DD"), Dialect::Moment).format(d))
                 .unwrap_or_default(),
-            "time" => String::new(),
+            "time" => v
+                .time
+                .map(|t| time_text(t, format.unwrap_or("HH:mm")))
+                .unwrap_or_default(),
             _ => rest[p..p + q + 2].to_string(),
         };
         out.push_str(&value);
@@ -209,15 +248,20 @@ mod tests {
             &m,
             Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
         );
-        let v = Values {
+        let mut v = Values {
             title: "Oct 10th, 2026".into(),
             today: Date::new(2026, 10, 10),
             date: Date::new(2026, 10, 10),
+            time: None,
         };
         assert_eq!(
             journal(&i, &m, &v).unwrap(),
             "- ## Morning [[Oct 10th, 2026]]\n\t- TODO plan\n- Notes on [[Oct 10th, 2026]] at \n"
         );
+        // With the local time: Logseq's `HH:mm`.
+        v.time = Some(9 * 3600 + 5 * 60 + 7);
+        assert!(journal(&i, &m, &v).unwrap().ends_with(" at 09:05\n"));
+        v.time = None;
         assert_eq!(
             logseq(&i, &m, "Meeting", &v).unwrap(),
             "- Meeting\n  type:: meeting\n\t- agenda\n"
@@ -242,15 +286,27 @@ mod tests {
             &m,
             Graph::load(&m, "/v", Kind::Obsidian, &Fallbacks::default()),
         );
-        let v = Values {
+        let mut v = Values {
             title: "2026-10-10".into(),
             today: Date::new(2026, 10, 10),
             date: Date::new(2026, 10, 10),
+            time: None,
         };
         assert_eq!(
             journal(&i, &m, &v).unwrap(),
             "# 2026-10-10\nCreated 2026-10-10 (Saturday)  {{other}}\n"
         );
+        // Obsidian's `{{time}}`, `HH:mm` unless its format says otherwise.
+        v.time = Some(14 * 3600 + 30 * 60 + 9);
+        assert_eq!(
+            journal(&i, &m, &v).unwrap(),
+            "# 2026-10-10\nCreated 2026-10-10 (Saturday) 14:30 {{other}}\n"
+        );
+        assert_eq!(
+            time_text(14 * 3600 + 30 * 60 + 9, "h:mm:ss A"),
+            "2:30:09 PM"
+        );
+        assert_eq!(time_text(0, "hh:mm a"), "12:00 am");
         assert_eq!(obsidian(&i, &m, "Daily", &v).unwrap().lines().count(), 2);
     }
 }

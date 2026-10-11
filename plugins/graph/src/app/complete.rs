@@ -1,8 +1,14 @@
 //! Completion in a graph's notes (GR8b, Kalem's plugin API 0.2.11): after
 //! `[[` the graph's pages and aliases, written as the graph writes links;
 //! after `#` its tags; after `((` its blocks that have an id (Logseq);
-//! after `<` Logseq's `#+BEGIN_` blocks. From the index only: a graph not
-//! indexed yet offers nothing, and Kalem's own completers answer.
+//! after `<` Logseq's `#+BEGIN_` blocks; after `::` the properties the
+//! graph uses, and after `key::` that property's values; after `/`
+//! Logseq's commands that write text. From the index
+//! only: a graph not indexed yet offers nothing, and Kalem's own
+//! completers answer.
+
+use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use super::App;
 use crate::config::Kind;
@@ -61,6 +67,81 @@ const BLOCKS: &[(&str, &str, &str)] = &[
     ("Comment", "COMMENT", ""),
 ];
 
+/// The properties a graph uses: each key (in lower case) with how often
+/// it is used and its values with theirs.
+#[derive(Debug, Default)]
+pub struct Properties {
+    keys: BTreeMap<String, (usize, BTreeMap<String, usize>)>,
+}
+
+impl Properties {
+    /// Counted over every page's and block's properties, the values of a
+    /// property separated by commas (`tags::`, `alias::`) one by one.
+    fn of(index: &Index) -> Properties {
+        let g = &index.graph;
+        let mut keys: BTreeMap<String, (usize, BTreeMap<String, usize>)> = BTreeMap::new();
+        let mut add = |k: &str, v: &str| {
+            if crate::layer::hidden_property(k, &g.hidden_properties) {
+                return;
+            }
+            let e = keys.entry(k.to_string()).or_default();
+            e.0 += 1;
+            let values: Vec<&str> = if g.comma_properties.iter().any(|c| c == k) {
+                v.split(',').collect()
+            } else {
+                vec![v]
+            };
+            for v in values.into_iter().map(str::trim).filter(|v| !v.is_empty()) {
+                *e.1.entry(v.to_string()).or_default() += 1;
+            }
+        };
+        for (_, d) in index.files() {
+            for (k, v) in &d.scanned.props {
+                add(k, v);
+            }
+            for b in &d.scanned.blocks {
+                for (k, v) in &b.props {
+                    add(k, v);
+                }
+            }
+        }
+        Properties { keys }
+    }
+}
+
+/// Logseq's `/` commands that write text (its `commands-map`): the name,
+/// what is written, where the cursor goes from its end, and whether only
+/// at a block's start (a keyword, a priority, a heading).
+const SLASH: &[(&str, &str, usize, bool)] = &[
+    ("Page reference", "[[]]", 2, false),
+    ("Page embed", "{{embed [[]]}}", 4, false),
+    ("Block reference", "(())", 2, false),
+    ("Block embed", "{{embed (())}}", 4, false),
+    ("Link", "[]()", 3, false),
+    ("Image link", "![]()", 3, false),
+    ("Underline", "<ins></ins>", 6, false),
+    ("h1", "# ", 0, true),
+    ("h2", "## ", 0, true),
+    ("h3", "### ", 0, true),
+    ("h4", "#### ", 0, true),
+    ("h5", "##### ", 0, true),
+    ("h6", "###### ", 0, true),
+    ("LATER", "LATER ", 0, true),
+    ("NOW", "NOW ", 0, true),
+    ("TODO", "TODO ", 0, true),
+    ("DOING", "DOING ", 0, true),
+    ("DONE", "DONE ", 0, true),
+    ("WAITING", "WAITING ", 0, true),
+    ("CANCELED", "CANCELED ", 0, true),
+    ("A", "[#A] ", 0, true),
+    ("B", "[#B] ", 0, true),
+    ("C", "[#C] ", 0, true),
+    ("Query", "{{query }}", 2, false),
+    ("Query function", "{{function }}", 2, false),
+    ("Embed Video URL", "{{video }}", 2, false),
+    ("Embed Twitter tweet", "{{tweet }}", 2, false),
+];
+
 /// How well `name` matches what was typed, `typed` in lower case: a
 /// start first, then anywhere; `None` for no match.
 fn matches(name: &str, typed: &str) -> Option<u8> {
@@ -111,8 +192,15 @@ impl App {
         let org = rel.to_lowercase().ends_with(".org");
         if let Some(open) = line.rfind("[[") {
             let typed = &line[open + 2..];
-            if !typed.contains("]]") && !typed.contains('|') && !typed.contains('#') {
-                return self.pages(index, &rel, typed, cursor, after.starts_with("]]"));
+            if !typed.contains("]]") && !typed.contains('|') {
+                let closed = after.starts_with("]]");
+                match typed.split_once('#') {
+                    None => return self.pages(index, &rel, typed, cursor, closed),
+                    Some((note, part)) if index.graph.kind == Kind::Obsidian => {
+                        return anchors(index, &rel, note, part, cursor, closed);
+                    }
+                    Some(_) => {}
+                }
             }
         }
         if index.graph.kind == Kind::Logseq
@@ -123,6 +211,9 @@ impl App {
                 return blocks(index, typed, cursor, after.starts_with("))"));
             }
         }
+        if !org && let Some(found) = self.properties(index, line, cursor) {
+            return found;
+        }
         if let Some(hash) = line.rfind('#') {
             let typed = &line[hash + 1..];
             let starts = line[..hash]
@@ -132,6 +223,12 @@ impl App {
             if starts && !typed.contains(char::is_whitespace) && !typed.contains(['[', ']', '#']) {
                 return tags(index, typed, cursor);
             }
+        }
+        if index.graph.kind == Kind::Logseq
+            && !org
+            && let Some(found) = self.slash(index, line, cursor)
+        {
+            return found;
         }
         if index.graph.kind == Kind::Logseq
             && !org
@@ -147,6 +244,184 @@ impl App {
             }
         }
         Vec::new()
+    }
+
+    /// After `::` at the start of a block's text or a line of its
+    /// properties, the keys the graph uses, written `key:: `; after
+    /// `key::`, that key's values. `None` when the line is neither.
+    fn properties(&self, index: &Index, line: &str, cursor: usize) -> Option<Vec<Suggestion>> {
+        let content = line.trim_start();
+        let content = content.strip_prefix("- ").unwrap_or(content);
+        let (key, after) = content.split_once("::")?;
+        let is_key = |k: &str| {
+            !k.is_empty()
+                && k.chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+        };
+        let stats = self.property_stats(index);
+        if key.is_empty() {
+            // `::typed`: a key.
+            if !after.is_empty() && !is_key(after) {
+                return None;
+            }
+            let lower = after.to_lowercase();
+            let mut found: Vec<(u8, usize, &String)> = stats
+                .keys
+                .iter()
+                .filter_map(|(k, (n, _))| Some((matches(k, &lower)?, *n, k)))
+                .collect();
+            found.sort_by(|a, b| {
+                (a.0, std::cmp::Reverse(a.1), a.2).cmp(&(b.0, std::cmp::Reverse(b.1), b.2))
+            });
+            found.truncate(MOST);
+            let start = cursor - after.len() - 2;
+            return Some(
+                found
+                    .into_iter()
+                    .map(|(_, n, k)| Suggestion {
+                        label: k.clone(),
+                        insert: format!("{k}:: "),
+                        start,
+                        cursor: None,
+                        what: What::Snippet,
+                        detail: format!("{n} uses"),
+                    })
+                    .collect(),
+            );
+        }
+        let key = key.trim().to_lowercase();
+        if !is_key(&key) || !(after.is_empty() || after.starts_with(' ')) {
+            return None;
+        }
+        // `key:: typed`: a value, after the last comma of a property
+        // separated by commas.
+        let comma = index.graph.comma_properties.contains(&key);
+        let typed = if comma {
+            after.rsplit(',').next().unwrap_or("")
+        } else {
+            after
+        }
+        .trim_start();
+        let (_, values) = stats.keys.get(&key)?;
+        let lower = typed.to_lowercase();
+        let mut found: Vec<(u8, usize, &String)> = values
+            .iter()
+            .filter(|(v, _)| v.as_str() != typed)
+            .filter_map(|(v, n)| Some((matches(v, &lower)?, *n, v)))
+            .collect();
+        found.sort_by(|a, b| {
+            (a.0, std::cmp::Reverse(a.1), a.2).cmp(&(b.0, std::cmp::Reverse(b.1), b.2))
+        });
+        found.truncate(MOST);
+        let start = cursor - typed.len();
+        Some(
+            found
+                .into_iter()
+                .map(|(_, n, v)| Suggestion {
+                    label: v.clone(),
+                    insert: if after.is_empty() {
+                        format!(" {v}")
+                    } else {
+                        v.clone()
+                    },
+                    start,
+                    cursor: None,
+                    what: What::Snippet,
+                    detail: format!("{n} uses"),
+                })
+                .collect(),
+        )
+    }
+
+    /// After a `/` that starts a word, Logseq's commands that write text
+    /// whose name holds what follows it, in place of the `/`. `None`
+    /// when the line has no such `/`.
+    fn slash(&self, index: &Index, line: &str, cursor: usize) -> Option<Vec<Suggestion>> {
+        let at = line.rfind('/')?;
+        let before = &line[..at];
+        if !before.chars().next_back().is_none_or(char::is_whitespace) {
+            return None;
+        }
+        let typed = &line[at + 1..];
+        if typed.len() > 24
+            || typed.contains("  ")
+            || !typed.chars().all(|c| c.is_alphanumeric() || c == ' ')
+        {
+            return None;
+        }
+        let content = before.trim();
+        let at_start = matches!(content, "" | "-");
+        let lead = line.len() - line.trim_start().len();
+        let indent = if content == "-" {
+            format!("{}  ", &line[..lead])
+        } else {
+            line[..lead].to_string()
+        };
+        let journal = |d: Option<crate::date::Date>| {
+            d.map(|d| format!("[[{}]]", index.graph.journal_title.format(d)))
+        };
+        let today = self.known_today();
+        let time = self.local_now.map(|now| {
+            let s = now().rem_euclid(86_400_000) / 1000;
+            format!("{:02}:{:02}", s / 3600, s / 60 % 60)
+        });
+        let mut all: Vec<(String, String, usize)> = SLASH
+            .iter()
+            .filter(|(_, _, _, start)| !start || at_start)
+            .map(|(name, text, back, _)| (name.to_string(), text.to_string(), *back))
+            .collect();
+        for (name, text) in [
+            ("Tomorrow", journal(today.map(|d| d.add_days(1)))),
+            ("Yesterday", journal(today.map(|d| d.add_days(-1)))),
+            ("Today", journal(today)),
+            ("Current time", time),
+        ] {
+            if let Some(t) = text {
+                all.push((name.to_string(), t, 0));
+            }
+        }
+        // The code block, its fences on lines of their own.
+        all.push((
+            "Code block".into(),
+            format!("```\n{indent}```"),
+            4 + indent.len(),
+        ));
+        let lower = typed.trim().to_lowercase();
+        let mut found: Vec<(u8, usize, (String, String, usize))> = all
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, c)| Some((matches(&c.0, &lower)?, i, c)))
+            .collect();
+        found.sort_by_key(|f| (f.0, f.1));
+        let start = cursor - typed.len() - 1;
+        Some(
+            found
+                .into_iter()
+                .map(|(_, _, (name, text, back))| Suggestion {
+                    cursor: (back > 0).then(|| text.len() - back),
+                    detail: text.replace('\n', " "),
+                    label: name,
+                    insert: text,
+                    start,
+                    what: What::Snippet,
+                })
+                .collect(),
+        )
+    }
+
+    /// The graph's properties, counted again when its index changed.
+    fn property_stats(&self, index: &Index) -> Rc<Properties> {
+        let root = &index.graph.root;
+        if let Some((v, p)) = self.properties.borrow().get(root)
+            && *v == index.version()
+        {
+            return p.clone();
+        }
+        let p = Rc::new(Properties::of(index));
+        self.properties
+            .borrow_mut()
+            .insert(root.clone(), (index.version(), p.clone()));
+        p
     }
 
     /// The pages whose title or alias holds `typed`, as links from the
@@ -234,6 +509,72 @@ impl App {
         out.sort_by_key(|(m, journal, s)| (*m, *journal, s.label.len()));
         out.into_iter().map(|(_, _, s)| s).collect()
     }
+}
+
+/// In a vault, after `[[note#` the note's headings, after `[[note#^` its
+/// blocks with an id, written in place of what follows `#`.
+fn anchors(
+    index: &Index,
+    rel: &str,
+    note: &str,
+    part: &str,
+    cursor: usize,
+    closed: bool,
+) -> Vec<Suggestion> {
+    // `[[#Heading]]` is a heading of the note itself.
+    let key = if note.is_empty() {
+        index.page_of(rel).map(|p| p.key.clone())
+    } else {
+        Some(index.resolve(note, rel))
+    };
+    let Some(file) = key
+        .as_deref()
+        .and_then(|k| index.page(k))
+        .and_then(|p| p.path.as_deref())
+        .and_then(|p| index.file(p))
+    else {
+        return Vec::new();
+    };
+    let close = if closed { "" } else { "]]" };
+    let start = cursor - part.len();
+    if let Some(typed) = part.strip_prefix('^') {
+        let lower = typed.to_lowercase();
+        return file
+            .scanned
+            .blocks
+            .iter()
+            .filter_map(|b| {
+                let id = b.id.as_deref()?;
+                let first = b.text.lines().next().unwrap_or("").trim();
+                (id.to_lowercase().contains(&lower) || first.to_lowercase().contains(&lower)).then(
+                    || Suggestion {
+                        label: first.chars().take(80).collect(),
+                        insert: format!("^{id}{close}"),
+                        start,
+                        cursor: None,
+                        what: What::Link,
+                        detail: format!("^{id}"),
+                    },
+                )
+            })
+            .take(MOST)
+            .collect();
+    }
+    let lower = part.to_lowercase();
+    file.scanned
+        .headings
+        .iter()
+        .filter(|h| matches(&h.text, &lower).is_some())
+        .take(MOST)
+        .map(|h| Suggestion {
+            label: h.text.clone(),
+            insert: format!("{}{close}", h.text),
+            start,
+            cursor: None,
+            what: What::Link,
+            detail: "#".repeat(h.level as usize),
+        })
+        .collect()
 }
 
 /// The blocks with an id whose first line holds `typed`, as `((uuid))`

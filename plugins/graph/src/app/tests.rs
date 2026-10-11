@@ -1378,3 +1378,134 @@ fn completion_names_notes_of_the_same_name_by_their_link() {
         [("Note", "[[Note]]"), ("Deep/Note", "[[Deep/Note]]")]
     );
 }
+
+#[test]
+fn completion_of_properties_and_their_values() {
+    let m = Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{}"),
+        (
+            "/w/notes/pages/A.md",
+            "type:: book\ntags:: reading, later\n\n- one\n  status:: open\n",
+        ),
+        (
+            "/w/notes/pages/B.md",
+            "type:: book\n\n- two\n  status:: done\n  id:: 11111111-2222-3333-4444-555555555555\n",
+        ),
+        ("/w/notes/pages/C.md", "type:: person\ntags:: people\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    let c = "/w/notes/pages/C.md";
+    app.opened(&m, c);
+    let complete = |text: &str| app.complete("refs", Some(c), text, 0, text.len());
+    let shown = |found: Vec<crate::app::complete::Suggestion>| -> Vec<(String, String, usize)> {
+        found
+            .into_iter()
+            .map(|s| (s.label, s.insert, s.start))
+            .collect()
+    };
+    // `::` at a block's text: the keys, the most used first; `id` is
+    // Logseq's own, hidden.
+    let keys = shown(complete("- x\n  ::"));
+    let labels: Vec<&str> = keys.iter().map(|k| k.0.as_str()).collect();
+    assert_eq!(labels, ["type", "status", "tags"]);
+    assert_eq!((keys[0].1.as_str(), keys[0].2), ("type:: ", 6));
+    assert_eq!(
+        shown(complete("- ::st")),
+        [("status".into(), "status:: ".into(), 2)]
+    );
+    // `key::`: its values; a value just typed is not offered again.
+    assert_eq!(
+        shown(complete("- status:: op")),
+        [("open".into(), "open".into(), 11)]
+    );
+    let values = shown(complete("type::"));
+    assert_eq!(values[0], ("book".into(), " book".into(), 6));
+    // A property separated by commas: the value after the last comma.
+    assert_eq!(
+        shown(complete("tags:: people, rea")),
+        [("reading".into(), "reading".into(), 15)]
+    );
+    // Not a property line.
+    assert!(complete("- some text:: here").is_empty());
+}
+
+#[test]
+fn completion_of_logseqs_slash_commands() {
+    fn local() -> i64 {
+        // 2026-10-11 at 09:05, local.
+        1_791_590_400_000 + 86_400_000 + (9 * 60 + 5) * 60_000
+    }
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.local_now = Some(local);
+    let other = "/w/notes/pages/Other.md";
+    app.opened(&m, other);
+    let complete = |text: &str| app.complete("refs", Some(other), text, 0, text.len());
+    // At a block's start: keywords, priorities and headings too.
+    let found = complete("- /to");
+    let names: Vec<&str> = found.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(names, ["TODO", "Tomorrow", "Today"]);
+    assert_eq!((found[0].insert.as_str(), found[0].start), ("TODO ", 2));
+    // Inside a block's text: no keywords; dates and the time as written.
+    let found = complete("- see /to");
+    assert_eq!(
+        (found[0].label.as_str(), found[0].insert.as_str()),
+        ("Tomorrow", "[[Oct 12th, 2026]]")
+    );
+    let found = complete("- at /current");
+    assert_eq!(found[0].insert, "09:05");
+    // The cursor inside what is written.
+    let found = complete("- /page emb");
+    assert_eq!(
+        (found[0].insert.as_str(), found[0].cursor),
+        ("{{embed [[]]}}", Some(10))
+    );
+    let found = complete("\t- /code");
+    assert_eq!(
+        (found[0].insert.as_str(), found[0].cursor),
+        ("```\n\t  ```", Some(3))
+    );
+    // A `/` inside a word, a path or a URL: nothing.
+    assert!(complete("- see a/b").is_empty());
+    assert!(complete("- https://x").is_empty());
+}
+
+#[test]
+fn completion_of_a_vaults_headings_and_blocks() {
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        ("/v/Home.md", "x\n"),
+        (
+            "/v/Note.md",
+            "# Intro\n\nA paragraph ^para1\n\n## Usage\n\n## Use cases\n",
+        ),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Home.md");
+    let complete = |text: &str, after: &str| {
+        app.complete(
+            "refs",
+            Some("/v/Home.md"),
+            &format!("{text}{after}"),
+            0,
+            text.len(),
+        )
+    };
+    let found = complete("see [[Note#us", "");
+    let shown: Vec<(&str, &str, usize)> = found
+        .iter()
+        .map(|s| (s.label.as_str(), s.insert.as_str(), s.start))
+        .collect();
+    assert_eq!(
+        shown,
+        [("Usage", "Usage]]", 11), ("Use cases", "Use cases]]", 11)]
+    );
+    // A closing `]]` after the cursor is kept.
+    assert_eq!(complete("[[Note#In", "]]")[0].insert, "Intro");
+    // `#^`: the note's blocks with an id.
+    let found = complete("[[Note#^", "");
+    assert_eq!(
+        (found[0].label.as_str(), found[0].insert.as_str()),
+        ("A paragraph", "^para1]]")
+    );
+}

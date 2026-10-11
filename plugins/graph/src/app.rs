@@ -619,6 +619,9 @@ pub struct App {
     /// What the `{{query …}}` of the notes show, by graph and query, with
     /// the index's version they were computed from.
     queries: std::cell::RefCell<BTreeMap<(String, String), (u64, String)>>,
+    /// The properties of each graph and the values each has, with the
+    /// index's version they were counted from (completion after `::`).
+    properties: std::cell::RefCell<BTreeMap<String, (u64, std::rc::Rc<complete::Properties>)>>,
 }
 
 impl App {
@@ -647,6 +650,7 @@ impl App {
             local_now: None,
             recent: Vec::new(),
             queries: std::cell::RefCell::new(BTreeMap::new()),
+            properties: std::cell::RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -1316,6 +1320,9 @@ impl App {
             title,
             today: self.known_today(),
             date: Some(date),
+            time: self
+                .local_now
+                .map(|now| (now().rem_euclid(86_400_000) / 1000) as u32),
         };
         let text = template::journal(index, files, &values);
         self.create(files, root, &rel, text)

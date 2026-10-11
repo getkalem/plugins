@@ -160,7 +160,7 @@ const HIDDEN: &[&str] = &[
 ];
 
 /// Whether property `key` is one Logseq hides.
-fn hidden_property(key: &str, extra: &[String]) -> bool {
+pub(crate) fn hidden_property(key: &str, extra: &[String]) -> bool {
     HIDDEN.contains(&key) || key.starts_with("logseq.") || extra.iter().any(|e| e == key)
 }
 

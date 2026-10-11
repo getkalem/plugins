@@ -209,6 +209,7 @@ fn a_logseq_graph_in_markdown() {
         title: "Oct 11th, 2026".into(),
         today: Date::new(2026, 10, 11),
         date: Date::new(2026, 10, 11),
+        time: None,
     };
     assert_eq!(
         template::journal(&i, &Native, &v).unwrap(),
@@ -309,6 +310,7 @@ fn an_obsidian_vault() {
         title: "2026-10-11".into(),
         today: Date::new(2026, 10, 11),
         date: Date::new(2026, 10, 11),
+        time: None,
     };
     assert_eq!(
         template::journal(&i, &Native, &v).unwrap(),
