@@ -6,6 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use kalem_ooxml::xml::{Reader, Token};
 
@@ -108,8 +109,8 @@ pub struct Styles {
     pub styles: Vec<Style>,
     by_id: HashMap<String, usize>,
     /// Resolved chains, memoized: a paragraph style's properties.
-    para_cache: RefCell<HashMap<String, (ParaProps, RunProps)>>,
-    char_cache: RefCell<HashMap<String, RunProps>>,
+    para_cache: RefCell<HashMap<String, Arc<(ParaProps, RunProps)>>>,
+    char_cache: RefCell<HashMap<String, Arc<RunProps>>>,
 }
 
 /// How deep a `basedOn` chain is followed (a cycle ends it).
@@ -324,7 +325,7 @@ impl Styles {
 
     /// A paragraph style's paragraph and run properties, its chain laid
     /// root first (no document defaults).
-    pub fn para_style_props(&self, id: &str) -> (ParaProps, RunProps) {
+    pub fn para_style_props(&self, id: &str) -> Arc<(ParaProps, RunProps)> {
         if let Some(hit) = self.para_cache.borrow().get(id) {
             return hit.clone();
         }
@@ -335,14 +336,15 @@ impl Styles {
             r.merge(&s.rpr);
         }
         p.style = None;
+        let props = Arc::new((p, r));
         self.para_cache
             .borrow_mut()
-            .insert(id.to_owned(), (p.clone(), r.clone()));
-        (p, r)
+            .insert(id.to_owned(), props.clone());
+        props
     }
 
     /// A character style's run properties, its chain laid root first.
-    pub fn char_style_props(&self, id: &str) -> RunProps {
+    pub fn char_style_props(&self, id: &str) -> Arc<RunProps> {
         if let Some(hit) = self.char_cache.borrow().get(id) {
             return hit.clone();
         }
@@ -351,6 +353,7 @@ impl Styles {
             r.merge(&s.rpr);
         }
         r.style = None;
+        let r = Arc::new(r);
         self.char_cache
             .borrow_mut()
             .insert(id.to_owned(), r.clone());
@@ -388,20 +391,21 @@ impl Styles {
         table: Option<&RunProps>,
         run: &RunProps,
     ) -> RunProps {
-        let para_rpr = self
-            .para_style(para)
-            .map(|s| self.para_style_props(&s.id).1)
-            .unwrap_or_default();
+        // The cached chains borrowed, not cloned: this runs for every run.
+        let para_props = self.para_style(para).map(|s| self.para_style_props(&s.id));
         let char_rpr = run
             .style
             .as_deref()
             .and_then(|id| self.get_kind(id, StyleKind::Character))
             .or_else(|| self.default_of(StyleKind::Character))
-            .map(|s| self.char_style_props(&s.id))
-            .unwrap_or_default();
+            .map(|s| self.char_style_props(&s.id));
         let empty = RunProps::default();
         let mut out = self.run_defaults.clone();
-        let levels: [&RunProps; 3] = [table.unwrap_or(&empty), &para_rpr, &char_rpr];
+        let levels: [&RunProps; 3] = [
+            table.unwrap_or(&empty),
+            para_props.as_ref().map_or(&empty, |p| &p.1),
+            char_rpr.as_deref().unwrap_or(&empty),
+        ];
         for l in levels {
             out.merge(l);
         }
@@ -418,9 +422,10 @@ impl Styles {
             let v = v.or(self.run_defaults.toggle(t));
             out.set_toggle(t, v);
         }
-        let mut own = run.clone();
-        own.style = None;
-        out.merge(&own);
+        // The run's own properties without its style.
+        let style = out.style.take();
+        out.merge(run);
+        out.style = style;
         out
     }
 
@@ -467,7 +472,8 @@ mod tests {
         assert_eq!(s.default_of(StyleKind::Paragraph).unwrap().id, "Normal");
         let chain: Vec<&str> = s.chain("Heading2").iter().map(|s| s.id.as_str()).collect();
         assert_eq!(chain, ["Normal", "Heading1", "Heading2"]);
-        let (p, r) = s.para_style_props("Heading2");
+        let props = s.para_style_props("Heading2");
+        let (p, r) = (&props.0, &props.1);
         assert_eq!((p.outline, p.space_before), (Some(1), Some(240)));
         assert_eq!((r.size, r.toggle(Toggle::Bold)), (Some(26), Some(true)));
         // A cycle ends the chain instead of looping.

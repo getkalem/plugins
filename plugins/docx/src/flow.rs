@@ -1098,9 +1098,10 @@ impl<'a> Walker<'a> {
         let styles = self.env.styles;
         let style = styles.para_style(p.props.style.as_deref());
         let style_id = style.map(|s| s.id.clone()).unwrap_or_default();
-        let (style_ppr, _) = style
+        let style_props = style
             .map(|s| styles.para_style_props(&s.id))
             .unwrap_or_default();
+        let style_ppr = &style_props.0;
         // The list: the paragraph's own `w:numPr` over its style's.
         let mut num_id = style_ppr.num_id.clone();
         let mut ilvl = style_ppr.ilvl;
@@ -1131,7 +1132,7 @@ impl<'a> Walker<'a> {
         {
             ppr.merge(&l.ppr);
         }
-        ppr.merge(&style_ppr);
+        ppr.merge(style_ppr);
         if let Some(l) = &label
             && direct_num
         {

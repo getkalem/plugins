@@ -337,15 +337,18 @@ impl<'a> Counters<'a> {
         } else {
             format!("abs:{}", abs.id)
         };
-        let levels: Vec<Option<Level>> = (0..9u8)
-            .map(|i| self.numbering.level(num_id, i, self.styles))
-            .collect();
-        let level = levels[usize::from(ilvl)].clone()?;
+        // Borrowed: a paragraph of a list cloned its nine levels.
+        let levels: [Option<&Level>; 9] =
+            std::array::from_fn(|i| match inst.overrides.get(&(i as u8)) {
+                Some((_, Some(l))) => Some(l),
+                _ => abs.levels.get(i)?.as_ref(),
+            });
+        let level = levels[usize::from(ilvl)]?;
         let start_of = |i: usize| -> i64 {
             inst.overrides
                 .get(&(i as u8))
                 .and_then(|(s, l)| s.or(l.as_ref().map(|l| l.start)))
-                .or_else(|| levels[i].as_ref().map(|l| l.start))
+                .or_else(|| levels[i].map(|l| l.start))
                 .unwrap_or(0)
         };
         let counts = self.counts.counts.entry(key.clone()).or_insert([None; 9]);
@@ -371,16 +374,14 @@ impl<'a> Counters<'a> {
             }
         }
         let bullet = level.format == "bullet";
-        let font = level
-            .rpr
-            .fonts
+        let fonts = &level.rpr.fonts;
+        let font = fonts
             .ascii
-            .clone()
-            .or(level.rpr.fonts.h_ansi.clone())
+            .as_deref()
+            .or(fonts.h_ansi.as_deref())
             .unwrap_or_default();
-        let template = level.text.clone().unwrap_or_default();
         let mut text = String::new();
-        let mut chars_iter = template.chars().peekable();
+        let mut chars_iter = level.text.as_deref().unwrap_or_default().chars().peekable();
         while let Some(c) = chars_iter.next() {
             if c == '%'
                 && let Some(d) = chars_iter.peek().and_then(|d| d.to_digit(10))
@@ -389,14 +390,14 @@ impl<'a> Counters<'a> {
                 chars_iter.next();
                 let m = (d - 1) as usize;
                 let n = counts[m].unwrap_or_else(|| start_of(m));
-                let fmt = levels[m].as_ref().map_or("decimal", |l| l.format.as_str());
+                let fmt = levels[m].map_or("decimal", |l| l.format.as_str());
                 let fmt = if level.legal && m < i { "decimal" } else { fmt };
                 if fmt == "bullet" {
                     continue;
                 }
                 text.push_str(&chars::format_number(n, fmt));
             } else if bullet {
-                text.push(chars::symbol(&font, c));
+                text.push(chars::symbol(font, c));
             } else {
                 text.push(c);
             }
@@ -406,8 +407,8 @@ impl<'a> Counters<'a> {
             suffix: level.suffix,
             level: ilvl,
             bullet,
-            ppr: level.ppr,
-            rpr: level.rpr,
+            ppr: level.ppr.clone(),
+            rpr: level.rpr.clone(),
         })
     }
 }
