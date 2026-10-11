@@ -1058,6 +1058,8 @@ user groups; the gaps that code can close, in this order.
   (or those under an Obsidian heading), a simple or advanced query's
   results under their pages or its table, 24 rows at most; the query's
   line then gives its count only. The plugin needs Kalem 0.6.15.)
+  Released in graph 0.5.0 with GR14a, GR14b and GR14d, the manifest's
+  API `^0.2.13`, for Kalem 0.6.15 and later.
   [~] An embed in an embed shows as written, not drawn again; the rows
   are text, not blocks to edit in place, as Logseq's are.
 - [x] GR14d Logseq and Kalem on one graph at once: a file Logseq writes

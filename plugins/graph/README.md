@@ -2,7 +2,9 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or asks for a new journal. The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: 0.4.0**, for Kalem 0.6.14 and later (plugin API 0.2.12). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below, the graph drawn among them; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; its layer draws a note as Logseq or Obsidian draws it, and its completer offers pages, tags, blocks and properties as the user types (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+**Status: 0.5.0**, for Kalem 0.6.15 and later (plugin API 0.2.13). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below, the graph drawn among them; it edits a graph as an outliner, runs Logseq's simple queries and searches the graph; its layer draws a note as Logseq or Obsidian draws it, and its completer offers pages, tags, blocks and properties as the user types (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+
+0.4.0, for Kalem 0.6.14, has everything but what 0.5.0 and plugin API 0.2.13 bring: embeds and query results drawn under their line, Logseq's advanced queries, a graph indexed once its folder is added to the projects, and the files Logseq, Obsidian, a sync or git write read while Kalem is open.
 
 0.3.1, for Kalem 0.6.13, has everything but what 0.4.0 and plugin API 0.2.12 bring: the graph drawn (Graph View, Local Graph), Rename Page renaming the page's file, a Ctrl-click and `Alt+Enter` opening links by the graph's rules, completion after `::`, `/` and a vault's `[[note#`, and the time in journal templates.
 
