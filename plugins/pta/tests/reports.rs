@@ -269,6 +269,29 @@ fn each_tools_register() {
             Dialect::Beancount => "76857.65 TRY",
         };
         assert_eq!(last, want, "{tool:?}");
+        // Within a period from mid-January, the same balance at the end:
+        // the postings before it counted, not left out.
+        let mid = Some((
+            Date {
+                y: 2026,
+                m: 1,
+                d: 15,
+            },
+            Date {
+                y: 2026,
+                m: 12,
+                d: 1,
+            },
+        ));
+        let (p, a) = report::register_command(tool, &main, account, mid);
+        let out = run(p, &a, &dir).expect("ran");
+        let within = match tool {
+            Dialect::Hledger => kalem_plugin_pta::reconcile::hledger_register(&out),
+            Dialect::Ledger => report::ledger_register(&out),
+            Dialect::Beancount => report::beancount_register(&out),
+        };
+        assert!(within.len() < rows.len(), "{tool:?}: {within:?}");
+        assert_eq!(&within[within.len() - 1].total, want, "{tool:?} within");
         let place = match tool {
             Dialect::Hledger => {
                 let json = run(

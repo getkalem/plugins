@@ -625,16 +625,10 @@ pub fn register_command(
 ) -> (&'static str, Vec<String>) {
     let pattern = account_pattern(account);
     let mut a: Vec<String> = Vec::new();
-    let dates = |a: &mut Vec<String>| {
-        if let Some((begin, end)) = bounds {
-            a.extend([
-                "-b".into(),
-                begin.written('-'),
-                "-e".into(),
-                end.written('-'),
-            ]);
-        }
-    };
+    // Within a period the running total is still the account's balance,
+    // the postings before it counted: hledger's `-H`, Ledger's postings
+    // shown by date (`-d`) rather than taken (`-b`), Beancount's opening
+    // balances (`FROM OPEN ON`).
     match tool {
         Dialect::Hledger => {
             a.extend([
@@ -644,26 +638,41 @@ pub fn register_command(
                 "-O".into(),
                 "json".into(),
             ]);
-            dates(&mut a);
+            if let Some((begin, end)) = bounds {
+                a.extend([
+                    "-H".into(),
+                    "-b".into(),
+                    begin.written('-'),
+                    "-e".into(),
+                    end.written('-'),
+                ]);
+            }
             a.push(format!("acct:{pattern}"));
             ("hledger", a)
         }
         Dialect::Ledger => {
             a.extend(["-f".into(), main.into(), "register".into()]);
             a.extend(["--register-format".into(), LEDGER_REGISTER.into()]);
-            dates(&mut a);
+            if let Some((begin, end)) = bounds {
+                a.extend([
+                    "-d".into(),
+                    format!("d>=[{}] & d<[{}]", begin.written('/'), end.written('/')),
+                ]);
+            }
             a.extend(ledger_pattern(account));
             ("ledger", a)
         }
         Dialect::Beancount => {
-            let mut wh = vec![format!("account ~ '{}'", pattern.replace('\'', "\\'"))];
-            if let Some((begin, end)) = bounds {
-                wh.push(format!("date >= {}", begin.written('-')));
-                wh.push(format!("date < {}", end.written('-')));
-            }
+            let from = bounds.map_or(String::new(), |(begin, end)| {
+                format!(
+                    "FROM OPEN ON {} CLOSE ON {} ",
+                    begin.written('-'),
+                    end.written('-')
+                )
+            });
             let q = format!(
-                "SELECT date, flag, payee, narration, position, balance, filename, lineno WHERE {}",
-                wh.join(" AND ")
+                "SELECT date, flag, payee, narration, position, balance, filename, lineno {from}WHERE account ~ '{}'",
+                pattern.replace('\'', "\\'")
             );
             (
                 "bean-query",
