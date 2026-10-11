@@ -817,7 +817,7 @@ pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
             .iter()
             .map(|p| crate::content::DrawnNode {
                 id: p.key.clone(),
-                label: p.title.clone(),
+                label: drawn_label(p),
                 group: group(p),
                 weight: 1 + degree(&p.key) as u32,
             })
@@ -1402,6 +1402,21 @@ pub fn advanced(
     c
 }
 
+/// A page's name in a graph drawn: its title, a PDF's highlights page
+/// (Logseq's `hls__…`) named for its PDF, as All pages names it.
+fn drawn_label(p: &crate::index::Page) -> String {
+    let pdf = p
+        .title
+        .starts_with("hls__")
+        .then(|| p.props.iter().find(|(k, _)| k == "file-path"))
+        .flatten()
+        .map(|(_, v)| files_name(v));
+    match pdf {
+        Some(f) => format!("Highlights of {f}"),
+        None => p.title.clone(),
+    }
+}
+
 /// An entry of the graph's menu: what it says, its key in the menu, and
 /// the command Enter on it runs.
 const MENU: &[(&str, &str, &str)] = &[
@@ -1573,6 +1588,29 @@ mod tests {
             &m,
             Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
         )
+    }
+
+    #[test]
+    fn a_pdfs_highlights_drawn_named_for_its_pdf() {
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            (
+                "/g/pages/hls__paper_1700000000000_0.md",
+                "file:: [paper.pdf](../assets/paper_1700000000000_0.pdf)\nfile-path:: ../assets/paper_1700000000000_0.pdf\n\n- a highlight\n",
+            ),
+            ("/g/pages/Kalem.md", "- An editor\n"),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        let d = drawing(&i, None).drawing.unwrap();
+        let labels: Vec<&str> = d.nodes.iter().map(|n| n.label.as_str()).collect();
+        assert!(
+            labels.contains(&"Highlights of paper_1700000000000_0.pdf"),
+            "{labels:?}"
+        );
+        assert!(labels.contains(&"Kalem"), "{labels:?}");
     }
 
     #[test]
