@@ -181,7 +181,7 @@ impl Dialect {
                 "Ledger is not installed: brew install ledger, or your system's package of ledger"
             }
             Dialect::Beancount => {
-                "Beancount is not installed: pip install beancount (bean-check comes with it)"
+                "Beancount is not installed: pip install beancount beanquery (bean-check, and bean-query for the reports)"
             }
         }
     }

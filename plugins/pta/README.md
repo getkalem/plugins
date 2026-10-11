@@ -21,7 +21,7 @@ Kalem also offers it when you open a journal. Then the tool you use, and, if you
 |---|---|---|---|
 | hledger | `brew install hledger`, or a [release](https://hledger.org/install) | `npm install -g hledger-lsp`, or juev's: `go install github.com/juev/hledger-lsp/cmd/hledger-lsp@latest` (see below) | `pip install pricehist` |
 | Ledger | `brew install ledger`, or your system's package | none exists | `pip install pricehist` |
-| Beancount | `pip install beancount` (`bean-check`, `bean-query`) | `brew install beancount-language-server`, or `cargo install beancount-language-server` | `pip install beanprice` |
+| Beancount | `pip install beancount beanquery` (`bean-check`; `bean-query` for the reports) | `brew install beancount-language-server`, or `cargo install beancount-language-server` | `pip install beanprice` |
 
 - **The journal's folder among your projects** (`projects.toml`, or Projects: Add Project): Kalem runs a plugin's programs in a project's folder only.
 - A program not on the PATH Kalem sees (a virtual environment's `bean-check`, Kalem started from the Dock) is named by the setting `programs.NAME`.

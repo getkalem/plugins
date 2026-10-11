@@ -127,6 +127,12 @@ fn dialect_here() -> Option<(Dialect, Option<String>)> {
 /// The notice for a tool not found: how to install it, and the setting
 /// that names where it is.
 fn missing(d: Dialect) -> String {
+    if d == Dialect::Beancount {
+        return format!(
+            "{}; or give their paths as the settings programs.bean-check and programs.bean-query",
+            d.install()
+        );
+    }
     format!(
         "{}; or give its path as the setting programs.{}",
         d.install(),
