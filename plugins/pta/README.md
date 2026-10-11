@@ -2,10 +2,10 @@
 
 hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and checks, checked by the tool you already have, and, as the work list goes on, imported from bank statements, reconciled against them and reported as documents. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance and check; the plugin asks them and shows what they say. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: the spike (PT1) and the highlighter (PT2)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
+**Status: the spike (PT1), the highlighter (PT2) and the servers (PT3)**, for Kalem 0.6.9 and later. One plugin with two halves in one manifest, both loaded:
 
 - **The languages and their servers**, which Kalem's core runs: hledger (`.journal`, `.hledger`, `.j`, `.hledger.journal`) with [hledger-lsp](https://github.com/ptimoney/hledger-lsp), Ledger (`.ledger`, `.ldg`), Beancount (`.beancount`, `.bean`) with [beancount-language-server](https://github.com/polarmutex/beancount-language-server), and hledger's CSV rules (`.rules`). Completion of accounts, payees and tags, diagnostics and formatting come from the servers.
-- **The component**, which runs the journal's tool: for now one command, *Tool Version* (in the palette under Journal), which asks hledger, Ledger or `bean-check` what it is, or says how to install it.
+- **The component**, which runs the journal's tool: a status bar item naming the tool and the main journal of the journal you are in (`hledger · 2026.journal`; its tooltip says why that journal), and one command, *Tool Version* (in the palette under Journal, and the item's click), which asks hledger, Ledger or `bean-check` what it is, or says how to install it.
 - **The highlighting**, the plugin's own syntaxes: one base for what the journals share (dates, statuses, descriptions, accounts, amounts and commodities, costs, lots, balance assertions, comments and their tags, periodic and automated transactions, directives), with hledger, Ledger and Beancount over it, and hledger's CSV rules beside them. Journals in Org's source blocks and Markdown's fenced blocks (`hledger`, `ledger`, `beancount`) are colored the same. Dates and amounts take the numbers' color, accounts the types', descriptions and payees the strings', statuses and directives the keywords', tag names the tags'; a tag is colored only where the tool reads one (not in a comment line of the file's own, nor in Beancount's comments).
 
 `.dat` files are not claimed.
@@ -15,17 +15,38 @@ Nothing but the tool you already use is needed: the plugin computes no balance a
 ## What it needs
 
 - Kalem 0.6.9 or later. The component starts with the first journal opened.
-- The tools it runs, where you want them: `brew install hledger ledger`; `pip install beancount`. A tool not on the PATH Kalem sees is named by the plugin's setting `programs.NAME` (`programs.bean-check` for a virtual environment's).
-- The servers, for completion and diagnostics: `npm install -g hledger-lsp`; `cargo install beancount-language-server`. `kalem lsp status FILE` says which runs.
+- The tool you use: `brew install hledger ledger`; `pip install beancount`. A tool not on the PATH Kalem sees is named by the plugin's setting `programs.NAME` (`programs.bean-check` for a virtual environment's).
+- The journal's folder among your projects (`projects.toml`): Kalem runs a plugin's programs in a project's folder only.
+- The servers, if you want completion and their checks: one of the two hledger-lsp programs below; `brew install beancount-language-server` (or `cargo install beancount-language-server`). `kalem lsp status FILE` says which runs. Ledger has no server.
 
-## Measured
+## The main journal and the tool
 
-With hledger 1.52.4, Ledger 3.4.1, Beancount 3.2.3 and hledger-lsp 0.7.0 (ptimoney's, from npm), on the corpus:
+A journal that `include`s others is checked and reported as one: checking an included file alone gives false errors (an account opened in another file is "unknown"). The plugin's setting `journal` names the main journal (absolute, from `~/`, or beside the file). Unset, an hledger journal's main journal is the one `LEDGER_FILE` names when that journal includes the file (`hledger files` says so), a Beancount journal's the one its server is told (below), else the file itself. Kalem started from the Dock or a launcher may not see the `LEDGER_FILE` of your shell: set `journal` then.
 
-- Completion after an account's first letter lists the journal's declared accounts, those of its `include`d files too.
-- The deliberate error of `corpus/hledger/errors.journal`, a balance assertion that does not hold, is a diagnostic at its line.
-- hledger-lsp warns that an automated posting's virtual account, `(budget:food)` in `2026.journal`, is not declared, taking the parentheses for its name; hledger itself accepts the file. The server's checks are its own, not hledger's: the tool's check (PT5) is the one to trust.
+The setting `tool` picks the program for hledger's and Ledger's journals: `auto` takes the file's own, and a `.ledger` file goes to Ledger where Ledger is installed and to hledger where only hledger is (hledger does not read Ledger's value expressions, such as `(-$132.00)`). A Beancount journal is always Beancount's.
+
+## The servers, measured
+
+On the corpus, through Kalem's client (`kalem lsp ask`, `kalem lsp check`) and asked directly where Kalem cannot ask yet, with hledger 1.52.4 and Beancount 3.2.3. The server's checks are its own: the tool's check (PT5) is the one to trust.
+
+| | hledger-lsp, ptimoney's 0.7.0 | hledger-lsp, juev's 0.2.64 | beancount-language-server 1.9.2 |
+|---|---|---|---|
+| Install | `npm install -g hledger-lsp` | `go install github.com/juev/hledger-lsp/cmd/hledger-lsp@latest`, or a [release](https://github.com/juev/hledger-lsp/releases) | `brew install beancount-language-server`, or `cargo install beancount-language-server` |
+| Completion | accounts (declared ones by default); none at a payee | accounts (with a balance by default); payees, with their last description | accounts, payees, tags, currencies |
+| Hover on an account | declared, how many postings; its place wrong, as for definition | its balance: wrong where hledger infers an amount (78.697,25 TRY for 63.697,25) | nothing |
+| Definition of an account | the main journal's first line, not its `account` directive | its `account` directive | its `open` directive |
+| References | every file | every file | every file |
+| Rename an account | the open file only (7 of 10 places): the declaration and the year before keep the old name | every file but a periodic transaction's posting | every file |
+| Diagnostics | the failed assertion at its line; warns of an automated posting's virtual account, `(budget:food)`, as undeclared | the failed assertion at its line; an error on an automated posting's multiplier, `*-1`, which hledger reads | `bean-check`'s errors; a `!` transaction flagged |
+| Formatting | **changes what the journal means**: drops an automated posting's `*-1` and writes `==` as `=` (undo puts it back) | amounts aligned; hledger reads it as before | amounts aligned; `bean-query` reads it as before |
+| Settings sent | `settings.hledgerLanguageServer.…` | `settings.hledger.…` | its main journal, `servers.beancount-language-server.initializationOptions.journal_file`, read as it starts (from the Kalem after 0.6.15) |
+
+Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting; it does not yet ask for the inlay hints all three give (an elided posting's amount; running balances in juev's), nor for code lenses.
+
+The plugin turns hledger-lsp's formatting off (`servers.hledger-lsp.ignore`, `["documentFormattingProvider"]`), since ptimoney's 0.7.0 formats a journal into one that means something else; with juev's, whose formatting hledger reads as before, set it to `[]`. Kalem leaves a server's capability unused from the release after 0.6.15; Kalem 0.6.15 and earlier format with the server whatever the plugin says, so there, do not use Format Document with ptimoney's 0.7.0 on a journal with automated postings or `==` assertions (undo puts it back).
+
+Without its main journal, beancount-language-server checks an included file alone and reports its accounts as unknown (two false errors on `2026-01.beancount` in a test); told the main journal, the file is clean and completion knows every account of the journal. Set `servers.beancount-language-server.initializationOptions.journal_file` (absolute, from `~/`, or beside the file); the plugin takes it as Beancount's main journal too while `journal` is empty. Kalem hands it to the server from the release after 0.6.15.
 
 ## Tests
 
-`cargo test -p kalem-plugin-pta`: the manifest's two halves name what exists and agree; the syntaxes load as Kalem loads them, take the languages' files and source blocks, parse every corpus file to its end, color a transaction of each dialect and the rules file as the tests spell out, and color as tags and accounts what `hledger tags` and `hledger accounts` read; and the corpus, one journal per dialect (`corpus/hledger`, three files with `include`, and a bank statement with its CSV rules, which `hledger print` reads; `corpus/ledger`; `corpus/beancount`, two files), each passes its tool's strictest check (`hledger check --strict --auto`, `ledger --pedantic balance`, `bean-check`), and each `errors.*` file fails it at its line. A tool not installed is skipped with a note.
+`cargo test -p kalem-plugin-pta`: the manifest's two halves name what exists and agree, its servers say their versions and how to install them in a line the status bar holds, and their settings are in sections the servers read; the main journal and the tool are worked out as said above (unit tests); the corpus through each server installed (`tests/server.rs`, with `PTA_HLEDGER_LSP` and `PTA_BEANCOUNT_LSP` naming programs, `:` between them): completion, the deliberate errors, and formatting the tool reads as before, ptimoney's 0.7.0 checked to still do the harm above; the syntaxes load as Kalem loads them, take the languages' files and source blocks, parse every corpus file to its end, color a transaction of each dialect and the rules file as the tests spell out, and color as tags and accounts what `hledger tags` and `hledger accounts` read; and the corpus, one journal per dialect (`corpus/hledger`, three files with `include`, and a bank statement with its CSV rules, which `hledger print` reads; `corpus/ledger`; `corpus/beancount`, two files), each passes its tool's strictest check (`hledger check --strict --auto`, `ledger --pedantic balance`, `bean-check`), and each `errors.*` file fails it at its line. A tool not installed is skipped with a note.

@@ -271,3 +271,65 @@ fn the_csv_rules_put_each_line_in_its_account() {
         transactions[0]
     );
 }
+
+/// The servers (PT3) and the settings around them: each server says its
+/// version and how to install it in a line short enough for the status
+/// bar, where Kalem shows it when the server is missing; each server
+/// setting is in a section a server reads (`hledgerLanguageServer`,
+/// ptimoney's hledger-lsp, `hledger`, juev's); the plugin's own `journal`
+/// and `tool` are the component's (PT3c).
+#[test]
+fn the_servers_and_their_settings() {
+    let m = manifest();
+    let servers = m["servers"].as_object().expect("servers");
+    for (key, s) in servers {
+        assert_eq!(strings(&s["version"]), ["--version"], "{key}");
+        let install = s["install"].as_str().expect("install");
+        assert!(
+            install.len() <= 64,
+            "{key}: {install} is too long for the status bar"
+        );
+    }
+    let sections = &servers["hledger-lsp"]["settings"];
+    let settings = m["settings"].as_object().expect("settings");
+    for key in settings.keys().filter(|k| k.starts_with("settings.")) {
+        let section = key.split('.').nth(1).expect("a section");
+        assert!(sections[section].is_object(), "{key}: {section} is sent");
+        let s = &settings[key];
+        assert!(
+            s["default"] != Value::Null && s["description"].is_string(),
+            "{key}"
+        );
+    }
+    // The servers' own settings Kalem merges over the manifest's (the
+    // `ignore` and `initializationOptions` of a server), each of a server
+    // the manifest describes, with the manifest's value as default.
+    for key in settings.keys().filter(|k| k.starts_with("servers.")) {
+        let mut parts = key.splitn(3, '.');
+        let (_, server, field) = (parts.next(), parts.next().unwrap(), parts.next().unwrap());
+        assert!(servers.contains_key(server), "{key}");
+        assert!(
+            field == "ignore" || field.starts_with("initializationOptions."),
+            "{key}"
+        );
+    }
+    assert_eq!(
+        settings["servers.hledger-lsp.ignore"]["default"],
+        servers["hledger-lsp"]["ignore"]
+    );
+    assert_eq!(
+        strings(&servers["hledger-lsp"]["ignore"]),
+        ["documentFormattingProvider"]
+    );
+    assert_eq!(settings["journal"]["default"], "");
+    let tools = strings(&settings["tool"]["enum"]);
+    assert_eq!(tools, ["auto", "hledger", "ledger", "beancount"]);
+    for t in &tools[1..] {
+        assert_eq!(
+            kalem_plugin_pta::journal::ToolChoice::parse(t),
+            kalem_plugin_pta::journal::ToolChoice::Only(
+                Dialect::of_language(t).expect("a dialect")
+            ),
+        );
+    }
+}
