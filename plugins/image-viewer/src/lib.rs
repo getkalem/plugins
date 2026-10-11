@@ -5,7 +5,8 @@
 //!
 //! The only edits are lossless: a JPEG is turned or flipped by rewriting
 //! its EXIF orientation tag ([`jpeg::set_orientation`]); nothing is ever
-//! encoded again, so nothing else is offered.
+//! encoded again, so nothing else is offered. Save As a PNG writes a new
+//! file of a JPEG's pixels, the JPEG left as it is.
 
 pub mod jpeg;
 
@@ -13,7 +14,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use image::metadata::Orientation;
-use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, RgbaImage};
+use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, RgbaImage};
 use kalem_viewer::{
     Bitmap, Detection, Edit, FileHandle, InfoField, RenderRequest, Rendered, Result, SaveOutput,
     Structure, Unit, UnitKind, Viewer, ViewerDocument, ViewerError,
@@ -661,6 +662,73 @@ impl ViewerDocument for ImageDocument {
             losses: Vec::new(),
         })
     }
+
+    /// A JPEG under another of its names (`.jpeg`, `.jpe`, `.jfif`) as
+    /// `save` writes it, its orientation tag alone changed; as a PNG, its
+    /// pixels decoded whole and turned as shown, with its EXIF (upright)
+    /// and its color profile. No other kind, and no other picture.
+    fn save_as(&mut self, extension: &str) -> Result<SaveOutput> {
+        let ext = extension.to_ascii_lowercase();
+        let Some(bytes) = &self.bytes else {
+            return Err(err(NOT_WRITTEN));
+        };
+        if JPEG_NAMES.contains(&ext.as_str()) {
+            return self.save();
+        }
+        if ext != "png" {
+            return Err(err(NOT_WRITTEN));
+        }
+        let (bytes, losses) = png_of(bytes, self.orientation)?;
+        self.saved_orientation = self.orientation;
+        Ok(SaveOutput { bytes, losses })
+    }
+}
+
+/// The names a JPEG file goes by.
+const JPEG_NAMES: &[&str] = &["jpg", "jpeg", "jpe", "jfif"];
+
+/// Why Save As writes nothing.
+const NOT_WRITTEN: &str = "Only a JPEG is saved, as a JPEG or a PNG";
+
+/// The JPEG file `jpeg` as a PNG: its pixels decoded whole (not scaled to
+/// the budget) and turned by `orientation` (EXIF 1 to 8), its EXIF with
+/// the orientation upright, its color profile when it is one of the
+/// PNG's colors; and what the PNG does not keep.
+fn png_of(jpeg: &[u8], orientation: u8) -> Result<(Vec<u8>, Vec<String>)> {
+    let mut reader = image::ImageReader::new(Cursor::new(jpeg));
+    reader.set_format(ImageFormat::Jpeg);
+    reader.limits(limits_big());
+    let mut decoder = reader.into_decoder().map_err(err)?;
+    let icc = decoder.icc_profile().ok().flatten();
+    let mut img = DynamicImage::from_decoder(decoder).map_err(err)?;
+    img.apply_orientation(Orientation::from_exif(orientation).unwrap_or(Orientation::NoTransforms));
+    let mut out = Vec::new();
+    let mut png = image::codecs::png::PngEncoder::new(&mut out);
+    let mut losses = Vec::new();
+    if let Some(icc) = icc {
+        // A CMYK JPEG's profile does not describe the PNG's RGB.
+        let space = icc
+            .get(16..20)
+            .map(|s| String::from_utf8_lossy(s).trim().to_string());
+        let wanted = if img.color().has_color() {
+            "RGB"
+        } else {
+            "GRAY"
+        };
+        if space.as_deref() == Some(wanted) {
+            png.set_icc_profile(icc).map_err(err)?;
+        } else {
+            losses.push(format!(
+                "Its color profile, for {} colors: the PNG is written without one",
+                space.unwrap_or_default()
+            ));
+        }
+    }
+    if let Some(exif) = jpeg::exif_upright(jpeg) {
+        png.set_exif_metadata(exif).map_err(err)?;
+    }
+    img.write_with_encoder(png).map_err(err)?;
+    Ok((out, losses))
 }
 
 impl ImageDocument {

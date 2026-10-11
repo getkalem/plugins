@@ -2,7 +2,7 @@
 //! recording, opened through the contract and compared with the pixels it
 //! was made from.
 
-use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, Rgba, RgbaImage};
 use kalem_plugin_image_viewer::ImageViewer;
 use kalem_viewer::{
     Detection, FileHandle, RenderRequest, Rendered, UnitKind, Viewer, ViewerDocument,
@@ -286,6 +286,97 @@ fn the_exif_orientation_is_honored_and_a_turn_rewrites_the_tag_only() {
             close(&pixels(&mut doc, 0), &want.to_rgba8(), 0),
             "orientation {o}"
         );
+    }
+    std::fs::remove_dir_all(d).ok();
+}
+
+/// Save As (asked by Kalem 0.6.20 for a name of another kind): a JPEG
+/// under another of its names as its save writes it, the tag alone; as a
+/// PNG, turned as shown and its EXIF upright; nothing else, and no other
+/// picture.
+#[test]
+fn a_jpeg_saved_as_another_name_or_as_a_png() {
+    let d = dir("save-as");
+    let rgb = DynamicImage::ImageRgba8(source()).to_rgb8();
+    let mut plain = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut plain, 100)
+        .encode_image(&rgb)
+        .unwrap();
+    // Stored 6 × 4, to be shown turned clockwise; then flipped.
+    let original = kalem_plugin_image_viewer::jpeg::set_orientation(&plain, 6).unwrap();
+    let p = d.join("photo.jpg");
+    std::fs::write(&p, &original).unwrap();
+    let mut doc = open(&p);
+    doc.apply("flip-horizontal").unwrap();
+    let shown = pixels(&mut doc, 0);
+    assert_eq!(shown.dimensions(), (4, 6));
+
+    let saved = doc.save_as("JPEG").unwrap();
+    assert!(saved.losses.is_empty());
+    assert!(!doc.modified());
+    assert_eq!(saved.bytes.len(), original.len());
+    let turned = kalem_plugin_image_viewer::jpeg::orientation(&saved.bytes).unwrap();
+    assert_ne!(turned, 6);
+    assert_eq!(
+        doc.save_as("jfif").unwrap().bytes,
+        saved.bytes,
+        "the same file under any of its names"
+    );
+
+    doc.apply("rotate-right").unwrap();
+    let shown = pixels(&mut doc, 0);
+    let png = doc.save_as("png").unwrap();
+    assert!(png.losses.is_empty(), "{:?}", png.losses);
+    assert!(!doc.modified());
+    let mut decoder =
+        image::codecs::png::PngDecoder::new(std::io::Cursor::new(&png.bytes)).unwrap();
+    assert!(decoder.exif_metadata().unwrap().is_some());
+    assert_eq!(
+        decoder.orientation().unwrap(),
+        image::metadata::Orientation::NoTransforms
+    );
+    let got = image::load_from_memory(&png.bytes).unwrap().to_rgba8();
+    assert!(close(&got, &shown, 0), "the pixels shown");
+
+    let e = doc.save_as("gif").unwrap_err();
+    assert_eq!(e.to_string(), "Only a JPEG is saved, as a JPEG or a PNG");
+    // Not a JPEG: nothing is written.
+    let p = d.join("still.png");
+    source().save(&p).unwrap();
+    assert!(open(&p).save_as("png").is_err());
+    std::fs::remove_dir_all(d).ok();
+}
+
+/// A JPEG's color profile goes into its PNG when it is for RGB; one for
+/// CMYK does not describe the PNG's colors, and is said lost.
+#[test]
+fn a_jpeg_saved_as_a_png_keeps_an_rgb_color_profile() {
+    let d = dir("save-as-icc");
+    let rgb = DynamicImage::ImageRgba8(source()).to_rgb8();
+    for (space, kept) in [(b"RGB ", true), (b"CMYK", false)] {
+        // A profile's header names its colors at bytes 16 to 20.
+        let mut icc = vec![0u8; 132];
+        icc[16..20].copy_from_slice(space);
+        let mut jpeg = Vec::new();
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 100);
+        enc.set_icc_profile(icc.clone()).unwrap();
+        enc.encode_image(&rgb).unwrap();
+        let p = d.join("photo.jpg");
+        std::fs::write(&p, &jpeg).unwrap();
+        let png = open(&p).save_as("png").unwrap();
+        let mut decoder =
+            image::codecs::png::PngDecoder::new(std::io::Cursor::new(&png.bytes)).unwrap();
+        let got = decoder.icc_profile().unwrap();
+        if kept {
+            assert_eq!(got, Some(icc));
+            assert!(png.losses.is_empty());
+        } else {
+            assert_eq!(got, None);
+            assert_eq!(
+                png.losses,
+                ["Its color profile, for CMYK colors: the PNG is written without one"]
+            );
+        }
     }
     std::fs::remove_dir_all(d).ok();
 }
