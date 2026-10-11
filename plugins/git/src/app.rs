@@ -262,8 +262,22 @@ pub const COMMANDS: &[CommandInfo] = &[
         .in_documents(),
 ];
 
-/// What the plugin's settings say (DESIGN.md, section 6), as phase 0 uses
-/// them.
+/// The settings [`Settings::read`] reads, which the component watches:
+/// those of `plugin.json` but `programs.git`, Kalem's own.
+pub const SETTINGS: &[&str] = &[
+    "confirm_discard",
+    "pull",
+    "fetch_prune",
+    "untracked",
+    "signoff",
+    "glyphs",
+    "gutter",
+    "gutter_base",
+    "context_lines",
+    "panel",
+];
+
+/// What the plugin's settings say (DESIGN.md, section 6).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
     /// Reverting asks first.
@@ -282,6 +296,11 @@ pub struct Settings {
     pub gutter: bool,
     /// The marks compare with HEAD rather than the index.
     pub gutter_head: bool,
+    /// Lines of context around each change of a diff, in the status and a
+    /// commit view.
+    pub context_lines: u32,
+    /// The Git side panel is there.
+    pub panel: bool,
 }
 
 impl Default for Settings {
@@ -295,6 +314,8 @@ impl Default for Settings {
             glyphs: Glyphs::Unicode,
             gutter: true,
             gutter_head: false,
+            context_lines: 3,
+            panel: true,
         }
     }
 }
@@ -306,6 +327,11 @@ impl Settings {
         let d = Settings::default();
         let boolean = |k: &str, d: bool| own(k).and_then(|v| v.trim().parse().ok()).unwrap_or(d);
         let text = |k: &str| own(k).map(|v| v.trim().trim_matches('"').to_string());
+        let number = |k: &str, d: u32, most: u32| {
+            own(k)
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .map_or(d, |n| n.min(most))
+        };
         Settings {
             confirm_discard: boolean("confirm_discard", d.confirm_discard),
             pull: text("pull")
@@ -321,6 +347,8 @@ impl Settings {
                 .unwrap_or(d.glyphs),
             gutter: boolean("gutter", d.gutter),
             gutter_head: text("gutter_base").is_some_and(|v| v == "head"),
+            context_lines: number("context_lines", d.context_lines, 20),
+            panel: boolean("panel", d.panel),
         }
     }
 }
@@ -445,8 +473,11 @@ pub enum Effect {
     Notify(String, Level),
     /// Sets the status bar item; `None` takes it away.
     Status(Option<String>),
-    /// Replaces the panel's content.
+    /// Replaces the panel's content; brings the panel back after
+    /// [`Effect::RemovePanel`].
     Panel(Node),
+    /// Takes the panel away (the setting `panel` turned off).
+    RemovePanel,
     /// Shows the panel.
     ShowPanel,
     /// Asks yes or no; the answer comes back with `token`.
@@ -826,7 +857,23 @@ impl App {
             }
             Input::Settings(s) => {
                 let marks = (self.settings.gutter, self.settings.gutter_head);
+                let (context, panel) = (self.settings.context_lines, self.settings.panel);
                 self.settings = s;
+                if panel && !s.panel {
+                    out.push(Effect::RemovePanel);
+                }
+                // The diffs read have the old context: read again.
+                if context != s.context_lines {
+                    let roots: Vec<String> = self
+                        .repos
+                        .iter()
+                        .filter(|(_, s)| s.repo.is_some())
+                        .map(|(r, _)| r.clone())
+                        .collect();
+                    for root in roots {
+                        self.refresh(&mut out, &root, After::Nothing);
+                    }
+                }
                 if !self.settings.gutter && marks.0 {
                     out.push(Effect::ClearGutters);
                 } else if self.settings.gutter && marks != (s.gutter, s.gutter_head) {
@@ -1551,7 +1598,7 @@ impl App {
         };
         let settings = actions::Settings {
             confirm_discard: self.settings.confirm_discard,
-            zero_context: false,
+            zero_context: self.settings.context_lines == 0,
         };
         let target = Target::File {
             section,
@@ -1939,7 +1986,14 @@ impl App {
     /// The status bar item and the panel, as the current repository is.
     fn show(&mut self, out: &mut Vec<Effect>) {
         out.push(Effect::Status(self.status_text()));
-        out.push(Effect::Panel(self.panel()));
+        if let Some(p) = self.shown_panel() {
+            out.push(Effect::Panel(p));
+        }
+    }
+
+    /// The panel, unless the setting `panel` is off.
+    pub fn shown_panel(&self) -> Option<Node> {
+        self.settings.panel.then(|| self.panel())
     }
 
     /// The status bar's text: the branch, ahead and behind, the changed
@@ -2167,12 +2221,22 @@ mod tests {
             "pull" => Some("\"rebase\"".into()),
             "glyphs" => Some("\"ascii\"".into()),
             "untracked" => Some("42".into()),
+            "context_lines" => Some("0".into()),
+            "panel" => Some("false".into()),
             _ => None,
         });
         assert!(!s.confirm_discard);
         assert_eq!(s.pull, PullMode::Rebase);
         assert_eq!(s.glyphs, Glyphs::Ascii);
         assert_eq!(s.untracked, Untracked::Normal);
+        assert_eq!(s.context_lines, 0);
+        assert!(!s.panel);
+        // A count past the most is the most; one of another type, the
+        // default.
+        let lines = |v: &str| Settings::read(|k| (k == "context_lines").then(|| v.into()));
+        assert_eq!(lines("50").context_lines, 20);
+        assert_eq!(lines("-1").context_lines, 3);
+        assert_eq!(lines("\"5\"").context_lines, 3);
     }
 
     #[test]

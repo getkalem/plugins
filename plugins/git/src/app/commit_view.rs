@@ -14,9 +14,6 @@ use crate::refresh::Output;
 use crate::target::{self, Target};
 use crate::views;
 
-/// The lines of context of a commit's diff.
-const CONTEXT: u32 = 3;
-
 /// What a fold key does in a commit view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Op {
@@ -40,7 +37,7 @@ impl App {
         self.run(
             out,
             Some(root.to_string()),
-            cmd::show(hash, CONTEXT),
+            cmd::show(hash, self.settings.context_lines),
             Pending::Show {
                 root: root.to_string(),
                 hash: hash.to_string(),

@@ -171,6 +171,7 @@ impl Kalem {
                     Effect::Notify(m, l) => self.notes.push((m, l)),
                     Effect::Status(s) => self.status = s,
                     Effect::Panel(p) => self.panel = Some(p),
+                    Effect::RemovePanel => self.panel = None,
                     Effect::ShowPanel => self.shown = true,
                     Effect::RunCommand { id, args } => self.commands.push((id, args)),
                     Effect::SetSetting { key, value } => self.set.push((key, value)),
@@ -1195,4 +1196,74 @@ fn the_keys_of_a_commit_view_act_in_it_and_the_repositorys_commands_go_on() {
     );
     k.on_commit("git.close", "commit ");
     assert!(k.commit_key().is_none());
+}
+
+#[test]
+fn context_lines_shape_the_diffs_and_none_still_stages() {
+    let mut k = Kalem::new("context");
+    let long: String = (1..=12).map(|i| format!("line {i}\n")).collect();
+    k.write("a.txt", &long);
+    k.commit_all("First");
+    let changed = long
+        .replace("line 3\n", "line THREE\n")
+        .replace("line 9\n", "line NINE\n");
+    k.write("a.txt", &changed);
+    k.feed(Input::Settings(Settings {
+        context_lines: 0,
+        ..Settings::default()
+    }));
+    k.command("git.status", Some("a.txt"));
+    k.on("git.toggle", " M a.txt");
+    let text = k.doc_text();
+    assert!(
+        text.contains(
+            "\n@@ -3 +3 @@ line 2\n-line 3\n+line THREE\n@@ -9 +9 @@ line 8\n-line 9\n+line NINE\n"
+        ),
+        "{text}"
+    );
+    // A hunk and a line are staged without context.
+    k.on("git.stage", "+line NINE");
+    assert_eq!(k.last_note(), "Staged a hunk of a.txt");
+    assert!(k.index("a.txt").contains("\nline NINE\n"));
+    let text = k.doc_text();
+    let plus = text.find("+line THREE").unwrap();
+    k.in_doc("git.stage", plus, plus + "+line THREE".len());
+    assert!(
+        k.index("a.txt").contains("\nline 3\nline THREE\nline 4\n"),
+        "{}",
+        k.index("a.txt")
+    );
+    // Three again: the diffs are read again, with context.
+    k.feed(Input::Settings(Settings::default()));
+    let text = k.doc_text();
+    assert!(
+        text.contains("\n line 2\n-line 3\n line THREE\n line 4\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_panel_setting_takes_the_panel_away_and_back() {
+    let mut k = Kalem::new("panel");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    let path = k.path("a.txt");
+    k.feed(Input::Opened(path.clone()));
+    assert!(k.panel.is_some());
+    k.feed(Input::Settings(Settings {
+        panel: false,
+        ..Settings::default()
+    }));
+    assert!(k.panel.is_none());
+    // A save leaves it away; the status bar follows.
+    k.write("a.txt", "two\n");
+    k.feed(Input::Saved(path));
+    assert!(k.panel.is_none());
+    assert_eq!(k.status.as_deref(), Some("⎇ main •1"));
+    k.feed(Input::Settings(Settings::default()));
+    assert!(
+        k.texts().iter().any(|t| t == "a.txt — modified  +1 −1"),
+        "{:?}",
+        k.texts()
+    );
 }

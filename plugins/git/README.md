@@ -49,7 +49,7 @@ The marks beside the lines compare with the index (what `s` would stage; the set
 
 The status is read again when it opens, after each save and when a file of the working tree changes. A change inside `.git` alone (a commit or a checkout made in a terminal) shows after `SPC g g`. A commit's message is one line, asked at the bottom (Enter commits, Escape cancels); amend keeps the old message's body.
 
-The other settings: `confirm_discard` (Revert asks first; on), `pull` (`config`, `rebase`, `merge` or `ff-only`; with `config`, a pull of branches that have parted asks which, and writes the answer here), `fetch_prune` (on), `untracked` (`normal`, `all` or `no`), `signoff` (off), `glyphs` and `programs.git`. The settings panel also lists `status_placement`, `context_lines`, `log_graph`, `log_count`, `remote_link` and `panel`, which do nothing yet.
+The other settings: `confirm_discard` (Revert asks first; on), `pull` (`config`, `rebase`, `merge` or `ff-only`; with `config`, a pull of branches that have parted asks which, and writes the answer here), `fetch_prune` (on), `untracked` (`normal`, `all` or `no`), `signoff` (off), `glyphs`, `context_lines` (the lines around each change of a diff, in the status and a commit view; 3, and 0 for none), `panel` (the Git side panel; on) and `programs.git`.
 
 ## Try it
 

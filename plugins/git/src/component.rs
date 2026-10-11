@@ -19,22 +19,12 @@ thread_local! {
     static QUEUE: RefCell<VecDeque<Input>> = const { RefCell::new(VecDeque::new()) };
     static PUMPING: Cell<bool> = const { Cell::new(false) };
     static STATUS: RefCell<Option<kalem::Disposable>> = const { RefCell::new(None) };
+    /// The panel, registered while the setting `panel` is on.
+    static PANEL: RefCell<Option<kalem::Disposable>> = const { RefCell::new(None) };
     /// The documents open, by repository and, for a commit view, the
     /// commit's hash: their numbers.
     static DOCS: RefCell<BTreeMap<(String, Option<String>), u64>> = const { RefCell::new(BTreeMap::new()) };
 }
-
-/// The settings `Settings::read` reads, watched.
-const SETTINGS: &[&str] = &[
-    "gutter",
-    "gutter_base",
-    "confirm_discard",
-    "pull",
-    "fetch_prune",
-    "untracked",
-    "signoff",
-    "glyphs",
-];
 
 /// Hands `input` to the plugin and does what follows, each effect's own
 /// inputs (a run refused at once) after it.
@@ -122,6 +112,12 @@ fn apply(effect: Effect) {
             }
         }
         Effect::Panel(node) => {
+            if PANEL.with(|p| p.borrow().is_none()) {
+                match register_panel() {
+                    Ok(d) => PANEL.with(|p| *p.borrow_mut() = Some(d)),
+                    Err(e) => return ui::notify(&e, ui::Level::Error),
+                }
+            }
             let mut tree = ui::Tree::new(ui::WidgetKind::Column);
             if let Node::Column(children) = node {
                 for n in children {
@@ -131,6 +127,11 @@ fn apply(effect: Effect) {
                 add(&mut tree, ui::Tree::ROOT, node);
             }
             let _ = ui::set_panel(app::PANEL, &tree);
+        }
+        Effect::RemovePanel => {
+            if let Some(d) = PANEL.with(|p| p.borrow_mut().take()) {
+                d.dispose();
+            }
         }
         Effect::ShowPanel => {
             let _ = kalem::run(
@@ -399,6 +400,29 @@ fn read_settings() -> Settings {
     Settings::read(settings::own)
 }
 
+/// The Git panel in Kalem's side panels, its clicks fed to the plugin.
+fn register_panel() -> Result<kalem::Disposable, String> {
+    ui::panel(
+        ui::PanelSpec {
+            id: app::PANEL.into(),
+            title: "Git".into(),
+            placement: ui::Placement::Side,
+        },
+        |key, event| {
+            let event = match event {
+                ui::PanelEvent::Clicked => PanelEvent::Clicked,
+                ui::PanelEvent::Toggled(on) => PanelEvent::Toggled(*on),
+                ui::PanelEvent::Expanded(open) => PanelEvent::Expanded(*open),
+                ui::PanelEvent::Changed(_) | ui::PanelEvent::Submitted(_) => return,
+            };
+            feed(Input::Panel {
+                key: key.to_string(),
+                event,
+            });
+        },
+    )
+}
+
 /// The plugin.
 struct Git;
 
@@ -426,25 +450,6 @@ impl Plugin for Git {
                 kalem::keymap(k, c.id, Some(&when))?;
             }
         }
-        ui::panel(
-            ui::PanelSpec {
-                id: app::PANEL.into(),
-                title: "Git".into(),
-                placement: ui::Placement::Side,
-            },
-            |key, event| {
-                let event = match event {
-                    ui::PanelEvent::Clicked => PanelEvent::Clicked,
-                    ui::PanelEvent::Toggled(on) => PanelEvent::Toggled(*on),
-                    ui::PanelEvent::Expanded(open) => PanelEvent::Expanded(*open),
-                    ui::PanelEvent::Changed(_) | ui::PanelEvent::Submitted(_) => return,
-                };
-                feed(Input::Panel {
-                    key: key.to_string(),
-                    event,
-                });
-            },
-        )?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
@@ -465,11 +470,12 @@ impl Plugin for Git {
             }
             Reply::Proceed
         })?;
-        for key in SETTINGS {
+        for key in app::SETTINGS {
             settings::watch(key, true, |_| feed(Input::Settings(read_settings())))?;
         }
-        // The panel says what it is for before a repository is found.
-        let empty = APP.with(|a| a.borrow().as_ref().map(App::panel));
+        // The panel says what it is for before a repository is found;
+        // without it, the setting `panel` is off.
+        let empty = APP.with(|a| a.borrow().as_ref().and_then(App::shown_panel));
         if let Some(p) = empty {
             apply(Effect::Panel(p));
         }

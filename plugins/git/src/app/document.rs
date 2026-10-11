@@ -15,9 +15,6 @@ use crate::target::{self, Target};
 use crate::views::status::Tab;
 use crate::views::{self, ViewOptions};
 
-/// The lines of context of the status's diffs.
-const CONTEXT: u32 = 3;
-
 /// Where the cursor goes when the status is written again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Keep {
@@ -238,7 +235,7 @@ impl App {
             return false;
         };
         let generation = repo.generation;
-        let missing: Vec<_> = missing_diffs(repo, &state.folds, CONTEXT)
+        let missing: Vec<_> = missing_diffs(repo, &state.folds, self.settings.context_lines)
             .into_iter()
             .filter(|(k, _)| !state.loading.contains(k))
             .collect();
@@ -456,7 +453,7 @@ impl App {
     fn action_settings(&self) -> actions::Settings {
         actions::Settings {
             confirm_discard: self.settings.confirm_discard,
-            zero_context: false,
+            zero_context: self.settings.context_lines == 0,
         }
     }
 
