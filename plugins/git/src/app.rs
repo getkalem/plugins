@@ -150,8 +150,12 @@ pub const COMMANDS: &[CommandInfo] = &[
         .doc(&["f p", "f u", "f a"]),
     CommandInfo::new("git.pull", "Git: Pull").doc(&["p", "shift+f p", "shift+f u"]),
     CommandInfo::new("git.push", "Git: Push").doc(&["shift+p p", "shift+p u"]),
-    CommandInfo::new("git.switchBranch", "Git: Switch Branch").doc(&["b b"]),
-    CommandInfo::new("git.newBranch", "Git: New Branch").doc(&["b c"]),
+    CommandInfo::new("git.switchBranch", "Git: Switch Branch")
+        .keys(&["space g b"])
+        .doc(&["b b"]),
+    CommandInfo::new("git.newBranch", "Git: New Branch")
+        .keys(&["space g c b"])
+        .doc(&["b c"]),
     CommandInfo::new("git.stash", "Git: Stash Changes").doc(&["shift+z z"]),
     CommandInfo::new("git.blameLine", "Git: Blame This Line").keys(&["space g shift+b"]),
     CommandInfo::new("git.refresh", "Git: Refresh"),

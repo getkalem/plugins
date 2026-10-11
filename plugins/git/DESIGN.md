@@ -44,7 +44,7 @@ The plugin keeps magit's shape (status as a document in the editor) and lazygit'
 **Principles.**
 
 1. **Status is a document** (magit's half). The status, a log, a commit, a blame, a file at a revision are read-only documents Kalem shows with its text engine, as Dired's listing is (§2.7, "a read-only text document, so the cursor, search, Vim motions and scrolling work unchanged"). The plugin writes the text and says what each stretch of it stands for; the editor owns the cursor, the selection, search and keys. A document works the same in both frontends (D26) and is read by a screen reader (§7.4).
-2. **Arrows, Enter and Escape move; the leader acts** (the owner's direction). Up and Down move, Right and Left unfold and fold, Enter does the one obvious thing with what is under the cursor (opens the file, shows the commit, offers the choice where there are several), Escape goes back. Every action is a Doom key: `SPC g S` stages the file under the cursor exactly as it stages the file being edited, `SPC g s` the hunk or the selected lines, `SPC g c c` commits, `SPC g b` blames, `SPC g L` shows the log. A git document adds no key of its own. Where Doom has no key, the plugin adds none: the action is in the item's menu (Alt+Enter, or `SPC g /`), in the Git menu, or in the palette.
+2. **Arrows, Enter and Escape move; the leader acts** (the owner's direction). Up and Down move, Right and Left unfold and fold, Enter does the one obvious thing with what is under the cursor (opens the file, shows the commit, offers the choice where there are several), Escape goes back. Every action is a Doom key: `SPC g S` stages the file under the cursor exactly as it stages the file being edited, `SPC g s` the hunk or the selected lines, `SPC g c c` commits, `SPC g B` blames, `SPC g L` shows the log. A git document adds no key of its own. Where Doom has no key, the plugin adds none: the action is in the item's menu (Alt+Enter, or `SPC g /`), in the Git menu, or in the palette.
 3. **The diff is first class.** A file's diff unfolds under the file, hunk by hunk, with the `diff` highlighter's colors. The unit of staging is the file, the hunk, or the selected lines. `Enter` on a diff line opens the file at that line.
 4. **Git does the git** (G1). The plugin runs the `git` program and parses its porcelain output; it holds no git implementation of its own. Hooks, `.gitconfig`, credential helpers, signing, worktrees and submodules behave as they do in a terminal.
 5. **Never a wait.** Every git call is asynchronous (as `net.fetch` is); the editor stays live during a push; a refresh that is overtaken by a newer one is dropped.
@@ -156,7 +156,7 @@ Every action is a command of the `SPC g` map (section 5 has the whole table). In
 | `SPC g c f` | a commit | Makes a fixup commit of the staged changes into that commit (`--fixup`); anywhere else, a quick-pick of the recent commits |
 | `SPC g c r` | anywhere | `git init` in the project's folder, after confirming (where there is no repository yet) |
 | `SPC g F` | anywhere | Fetches (`--prune` by setting) |
-| `SPC g b` | a file | Blames it (2.5) |
+| `SPC g B` | a file | Blames it (2.5) |
 | `SPC g L` | a file; a commit; anywhere | The log of that file; the log from that commit; the branch's log (2.4) |
 | `SPC g t` | a file | The time machine for it (2.5) |
 | `SPC g [`, `SPC g ]` | anywhere | The previous and next hunk in the document |
@@ -217,7 +217,7 @@ e4f5a6b  2026-10-06  Mehmet Sekercioglu  Spreadsheets: sparklines  (origin/main,
 
 ### 2.5 Blame and the time machine
 
-**Blame** (`SPC g b`) opens the current file, or the file under the cursor, as a read-only document of the text type `git-blame`, titled `table.rs (blame)`: each line with its commit's short hash, author and date in a column at the left, the hash shown once per run of lines from one commit, and the file's line after a `│`:
+**Blame** (`SPC g B`) opens the current file, or the file under the cursor, as a read-only document of the text type `git-blame`, titled `table.rs (blame)`: each line with its commit's short hash, author and date in a column at the left, the hash shown once per run of lines from one commit, and the file's line after a `│`:
 
 ```
 a1b2c3d 2026-10-07 Mehmet    │ fn align(columns: &[Column]) -> Vec<usize> {
@@ -229,7 +229,7 @@ The cursor starts on the line the editor's cursor was on. Enter shows the commit
 
 `SPC g B` ("blame this line") shows the line's commit in a notification (hash, author, date, subject) without opening anything; Enter in the notification shows the commit (phase 2: a notification with an action).
 
-Inline blame, as magit draws it over the file itself, comes in phase 2 with the decorations contract (T3.1.9c): the same annotation as virtual text before the first line of each run, toggled by `SPC g b` a second time, the document editable meanwhile.
+Inline blame, as magit draws it over the file itself, comes in phase 2 with the decorations contract (T3.1.9c): the same annotation as virtual text before the first line of each run, toggled by `SPC g B` a second time, the document editable meanwhile.
 
 **The time machine** (`SPC g t`, git-timemachine) opens the current file at its last commit as a read-only document titled `table.rs @ a1b2c3d`, of the file's own language (so it is highlighted) and the text type `git-revision`. **Alt+Left** and **Alt+Right** step to the older and newer commits of the file; the status bar says `3 of 42 · a1b2c3d · 2026-10-01 · Ayşe · Spreadsheets: sparklines`. Enter shows that commit; Alt+Enter offers the diff to the next revision, and copying the hash; Escape goes back to the file. Renames are followed (`--follow`). The same two keys mean the same in blame and in the time machine: Alt+Left is older, Alt+Right is newer.
 
@@ -243,7 +243,7 @@ Inline blame, as magit draws it over the file itself, comes in phase 2 with the 
 
 ### 2.8 Inside a file
 
-The `SPC g` keys of section 5 work in any document inside a repository, without the status open: `SPC g S` and `SPC g U` stage and unstage the file, `SPC g R` restores it to the index's version after confirming, `SPC g s` and `SPC g r` stage and discard the hunk at the cursor (phase 2), `SPC g [` and `SPC g ]` move over the changed hunks (the core's motions over the gutter marks, phase 2), `SPC g c c` commits, `SPC g b` blames, `SPC g L` shows the file's log, `SPC g t` opens the time machine, `SPC g o o` and `SPC g y` reach the remote, `SPC g .` is the file's menu and `SPC g /` every command; `SPC t d` toggles the gutter marks.
+The `SPC g` keys of section 5 work in any document inside a repository, without the status open: `SPC g S` and `SPC g U` stage and unstage the file, `SPC g R` restores it to the index's version after confirming, `SPC g s` and `SPC g r` stage and discard the hunk at the cursor (phase 2), `SPC g [` and `SPC g ]` move over the changed hunks (the core's motions over the gutter marks, phase 2), `SPC g c c` commits, `SPC g B` blames, `SPC g L` shows the file's log, `SPC g t` opens the time machine, `SPC g o o` and `SPC g y` reach the remote, `SPC g .` is the file's menu and `SPC g /` every command; `SPC t d` toggles the gutter marks.
 
 **Gutter marks** (phase 2, decorations): a saved file under git shows, in the gutter of both editors, a mark on each added line, changed line, and between lines where lines were removed, against the index by default (what `SPC g s` would stage; `gutter_base = "head"` compares with the last commit instead). They refresh on save, and while typing in the active document (3.5).
 
@@ -372,8 +372,9 @@ The keys of `tests/keys/doom-leader.toml` as the owner listed them, bound with `
 | `SPC g c f` | `git.fixup` | Git: Fixup | A quick-pick of recent commits | Into the commit under the cursor | Doom |
 | `SPC g c r` | `git.init` | Git: Init | `git init` here, after confirming | | Doom |
 | `SPC g F` | `git.fetch` | Git: Fetch | Fetches | The same | Doom |
-| `SPC g b` | `git.blame` | Git: Blame | Blames this file | Blames the file under the cursor | table |
-| `SPC g B` | `git.blameLine` | Git: Blame This Line | The line's commit, as a notification | | table |
+| `SPC g b` | `git.switchBranch` | Git: Switch Branch | A quick-pick of the branches | The same | table |
+| `SPC g c b` | `git.newBranch` | Git: New Branch | Asks the name | The same | Doom |
+| `SPC g B` | `git.blame` | Git: Blame | Blames this file (until it comes, `git.blameLine`: the line's commit, as a notification) | Blames the file under the cursor | table |
 | `SPC g L` | `git.log` | Git: Log | The log of this file | Of the file, from the commit, or of the branch | table |
 | `SPC g t` | `git.timeMachine` | Git: Time Machine | This file through its commits | The file under the cursor | table |
 | `SPC g [`, `SPC g ]` | the core's previous-change and next-change (names the core's) | | Over the gutter marks (phase 2) | The plugin's: the previous and next hunk in the document | table |
@@ -383,7 +384,7 @@ The keys of `tests/keys/doom-leader.toml` as the owner listed them, bound with `
 | `SPC g .` | `git.fileMenu` | Git: This File | This file's menu | The file under the cursor's menu | Doom |
 | `SPC t d` | `git.toggleGutter` | Toggle Diff Marks | Shows or hides the gutter marks (phase 2) | | table |
 
-Doom's `SPC g f`, `SPC g l`, `SPC g o`, `SPC g c` prefixes are honored as prefixes (`o o`, `c c`, `c f`, `c r`; the others of `f` and `l` are forge's or magit's listings and stay unbound). A note for the owner: in Doom, `SPC g b` is "switch branch" and `SPC g B` is blame; the table in `tests/keys/doom-leader.toml` has blame and blame-this-line, and the plugin follows the table. Should the owner want push and pull on keys, `SPC g p` and `SPC g P` are free in Doom's map; this document does not take them (rule 3).
+Doom's `SPC g f`, `SPC g l`, `SPC g o`, `SPC g c` prefixes are honored as prefixes (`o o`, `c c`, `c f`, `c r`; the others of `f` and `l` are forge's or magit's listings and stay unbound). In Doom, `SPC g b` is "switch branch" and `SPC g B` is blame (`magit-blame-addition`); Kalem's table follows Doom there since 2026-10-11, so `SPC g b` and `SPC g c b` (Doom's "branch" under create) switch to a branch and make one, and `SPC g B` blames (this line's commit until the file's blame comes). Should the owner want push and pull on keys, `SPC g p` and `SPC g P` are free in Doom's map; this document does not take them (rule 3).
 
 Scope: every command is `all` with the when-clause `hasFile` where a file on disk is needed; inside a git document the "current file" is the file under the cursor, as Dired's is the entry at the cursor. In the status and the other git documents the leader commands work as the table's last column says.
 

@@ -41,6 +41,7 @@ The letters are magit's (as Doom's evil-collection has them: `x` discards) and a
 | `SPC g R`, `SPC g D` | Revert the file; delete it (asks first) |
 | `SPC g c c`, `SPC g c a`, `SPC g c e`, `SPC g c w` | Commit, amend, extend, reword |
 | `SPC g F` | Fetch |
+| `SPC g b`, `SPC g c b` | Switch to a branch; a new branch |
 | `SPC g ]`, `SPC g [` | The next and previous change of the file (Alt+F5, Shift+Alt+F5) |
 | `SPC g B` | This line's commit |
 | `SPC g /`, `SPC g .` | Every git command; this file's |
