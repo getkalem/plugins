@@ -1685,3 +1685,54 @@ fn files_changed_on_disk_are_read_together() {
         BTreeSet::from(["journals/2026_10_03.md", "pages/B.md"])
     );
 }
+
+#[test]
+fn an_advanced_query_followed_from_any_of_its_lines() {
+    let m = logseq();
+    // `ı` before it and in it: its capital `I` is a byte shorter, so a
+    // copy in capitals has its places elsewhere.
+    let note = "- Bugün ıııı\n- #+BEGIN_QUERY\n  {:title \"Yapılacaklar ıııı\" :query [:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]]}\n  #+END_QUERY\n- sonra\n";
+    m.write("/w/notes/pages/Plan.md", note).unwrap();
+    m.write("/w/notes/pages/Work.md", "- TODO ship [[Kalem]]\n")
+        .unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Plan.md");
+    let follow = |app: &mut App, line: usize| {
+        let at = line_start(note, line) + 1;
+        app.command(&m, "graph.follow", &ctx("/w/notes/pages/Plan.md", note, at))
+    };
+    // From its first line (the one showing its summary), its body and its
+    // last: its results.
+    for line in [1, 2, 3] {
+        let (id, _, _, content) = document(&follow(&mut app, line));
+        assert_eq!(id, "graph.advancedQuery", "line {line}");
+        assert!(
+            content.text.contains("TODO ship [[Kalem]]"),
+            "line {line}: {}",
+            content.text
+        );
+    }
+    // Before it and after it: not it.
+    for line in [0, 4] {
+        let out = follow(&mut app, line);
+        assert!(
+            !out.iter()
+                .any(|e| matches!(e, Effect::Document { id, .. } if id == "graph.advancedQuery")),
+            "line {line}: {out:?}"
+        );
+    }
+    // In the note, run on the whole query (the template's TODO too).
+    let o = app.overlays("logseq", Some("/w/notes/pages/Plan.md"), note);
+    let shown: Vec<&str> = o
+        .spans
+        .iter()
+        .filter_map(|s| match &s.effect {
+            crate::layer::Effect::Replace(t, _) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        shown.contains(&"⌕ Yapılacaklar ıııı · 2 blocks"),
+        "{shown:?}"
+    );
+}

@@ -191,6 +191,55 @@ struct Raw {
     end: usize,
 }
 
+/// The bytes of `hay` matching `needle` at `start`, letters in either
+/// case (compared lower-cased, a character at a time); none when it does
+/// not match there or ends inside a character's lower case.
+fn match_ci(hay: &str, start: usize, needle: &[char]) -> Option<std::ops::Range<usize>> {
+    let mut want = needle.iter();
+    let mut end = start;
+    for c in hay[start..].chars() {
+        let mut lower = c.to_lowercase().peekable();
+        while lower.peek().is_some() {
+            match want.next() {
+                Some(w) if lower.next() == Some(*w) => {}
+                Some(_) => return None,
+                // The needle ended inside this character's lower case.
+                None => return None,
+            }
+        }
+        end += c.len_utf8();
+        if want.as_slice().is_empty() {
+            return Some(start..end);
+        }
+    }
+    None
+}
+
+/// The first place of `needle` in `hay`, letters in either case: the
+/// bytes of `hay` it covers. Searching a copy of `hay` in another case
+/// gives places in the copy, which are not `hay`'s where a letter's other
+/// case is of another length (Turkish `ı` and `I`, `İ` and `i̇`).
+pub fn find_ci(hay: &str, needle: &str) -> Option<std::ops::Range<usize>> {
+    let want: Vec<char> = needle.chars().flat_map(char::to_lowercase).collect();
+    if want.is_empty() {
+        return Some(0..0);
+    }
+    hay.char_indices()
+        .find_map(|(i, _)| match_ci(hay, i, &want))
+}
+
+/// The last place of `needle` in `hay`, letters in either case, as
+/// [`find_ci`] gives the first.
+pub fn rfind_ci(hay: &str, needle: &str) -> Option<std::ops::Range<usize>> {
+    let want: Vec<char> = needle.chars().flat_map(char::to_lowercase).collect();
+    if want.is_empty() {
+        return Some(hay.len()..hay.len());
+    }
+    hay.char_indices()
+        .rev()
+        .find_map(|(i, _)| match_ci(hay, i, &want))
+}
+
 /// 8-4-4-4-12 hexadecimal digits.
 pub fn is_uuid(s: &str) -> bool {
     let parts: Vec<&str> = s.split('-').collect();
@@ -1516,6 +1565,28 @@ mod tests {
 
     fn targets(s: &Scanned) -> Vec<(RefKind, &str)> {
         s.refs.iter().map(|r| (r.kind, r.target.as_str())).collect()
+    }
+
+    #[test]
+    fn found_in_either_case_in_the_text_itself() {
+        // `ı` is two bytes and its capital one: the places are the
+        // text's, not those of a copy in capitals.
+        let t = "ııı #+begin_query ıı #+End_Query ı";
+        let open = find_ci(t, "#+BEGIN_QUERY").unwrap();
+        assert_eq!(&t[open.clone()], "#+begin_query");
+        let close = find_ci(&t[open.start..], "#+END_QUERY").unwrap();
+        assert_eq!(&t[open.start..][close], "#+End_Query");
+        assert_eq!(
+            rfind_ci("#+begin_query a #+BEGIN_QUERY b", "#+begin_query"),
+            Some(16..29)
+        );
+        // A name in another case, as long as it is in the text.
+        let t = "[[İSTANBUL]]";
+        assert_eq!(find_ci(t, "İstanbul"), Some(2..11));
+        assert_eq!(find_ci("ab", "abc"), None);
+        assert_eq!(find_ci("abc", ""), Some(0..0));
+        // A needle ending inside a character's lower case (`İ` is `i̇`).
+        assert_eq!(find_ci("İ", "i"), None);
     }
 
     #[test]

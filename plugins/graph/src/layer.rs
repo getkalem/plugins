@@ -1027,15 +1027,11 @@ pub fn queries(
             src = true;
             continue;
         }
-        if let Some(p) = line
-            .find("#+BEGIN_QUERY")
-            .or_else(|| line.find("#+begin_query"))
-        {
-            let open = start + p;
-            let close = text[open..]
-                .to_uppercase()
-                .find("#+END_QUERY")
-                .map(|q| open + q + "#+END_QUERY".len());
+        if let Some(p) = scan::find_ci(line, "#+BEGIN_QUERY") {
+            let open = start + p.start;
+            // In the text itself: a copy in capitals is not as long where
+            // a letter's capital is not (`ı`, `İ`).
+            let close = scan::find_ci(&text[open..], "#+END_QUERY").map(|q| open + q.end);
             let Some(close) = close else {
                 continue;
             };

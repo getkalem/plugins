@@ -71,17 +71,16 @@ impl App {
         text: &str,
         start: usize,
     ) -> Option<Vec<Effect>> {
-        let before = &text[..start];
+        // The last query opened up to the end of the cursor's line (which
+        // may be its first line), searched in the text itself: a copy in
+        // capitals is not as long where a letter's capital is not (`ı`).
         let end = text[start..].find('\n').map_or(text.len(), |p| start + p);
-        let upto = &text[..end];
-        let open = upto.to_uppercase().rfind("#+BEGIN_QUERY")?;
-        if before[open..].to_uppercase().contains("#+END_QUERY") {
+        let open = scan::rfind_ci(&text[..end], "#+BEGIN_QUERY")?.start;
+        // Closed before the cursor's line: not the one the cursor is in.
+        if open < start && scan::find_ci(&text[open..start], "#+END_QUERY").is_some() {
             return None;
         }
-        let close = text[open..]
-            .to_uppercase()
-            .find("#+END_QUERY")
-            .map(|q| open + q + "#+END_QUERY".len())?;
+        let close = scan::find_ci(&text[open..], "#+END_QUERY").map(|q| open + q.end)?;
         let current = self
             .indexes
             .get(root)
