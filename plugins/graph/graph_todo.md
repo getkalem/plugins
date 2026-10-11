@@ -1023,6 +1023,31 @@ below replace the earlier GR4a to GR4d.
   is pushed with API 0.2.12, and the tag `graph-v0.4.0` after Kalem
   0.6.14's release.
 
+## GR14. Before a launch to Logseq's users
+
+The owner asked (2026-10-11) what is missing for a launch in Logseq's
+user groups; the gaps that code can close, in this order.
+
+- [x] GR14a Advanced queries. Logseq's `#+BEGIN_QUERY` dashboards are
+  what its power users keep; GR9a had left them out (Datascript as a
+  non-goal). (Done 2026-10-11, `src/datalog.rs`: a Datalog evaluator
+  over the index with Logseq's schema and rules, the attributes, the
+  clauses, the inputs and the finds the README lists; the note shows
+  the title, the count and the first two results, the EDN hidden away
+  from the cursor; Follow Reference opens them grouped as a simple
+  query's, values as a table. `:result-transform`, `:view` and custom
+  `:rules` are named as not run.)
+- [ ] GR14b A graph's folder one step from being a project: opening a
+  note of a Logseq graph or an Obsidian vault outside Kalem's projects
+  offers to add its folder (Kalem's side: a layer's marker folder).
+- [ ] GR14c Embeds and queries drawn in their note: the embedded block
+  or page and a query's results under the line (Kalem's side: lines a
+  layer adds, K2).
+- [ ] GR14d Logseq and Kalem on one graph at once: a file Logseq writes
+  while Kalem holds it, and the other way round, tested; what breaks
+  fixed.
+- [ ] GR14e `collapsed:: true` folded when the note opens (K3).
+
 ## What Kalem's core must gain
 
 Each is the plugin's gate or its ask, written for every plugin.

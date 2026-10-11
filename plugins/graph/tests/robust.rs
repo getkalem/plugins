@@ -331,7 +331,12 @@ fn broken_notes_never_panic() {
                 for k in [Kind::Logseq, Kind::Obsidian] {
                     let o = layer::overlays(k, &text, Some(&index), Some(&rel));
                     check(&text, &o);
-                    let o = layer::queries(o, &text, &|q| query::summary(&index, q, None, "⌕"));
+                    let o = layer::queries(
+                        o,
+                        &text,
+                        &|q| query::summary(&index, q, None, "⌕"),
+                        &|q| kalem_plugin_graph::datalog::summary(&index, q, None, None, "⌕"),
+                    );
                     check(&text, &o);
                 }
                 for line in text.lines() {

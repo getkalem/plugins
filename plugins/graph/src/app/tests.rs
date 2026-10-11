@@ -737,12 +737,17 @@ fn queries_followed_run_and_shown() {
         "{}",
         content.text
     );
-    // An advanced query is explained.
+    // An advanced query: its results, or why it does not run.
     let at = line_start(note, 5) + 3;
     let out = app.command(&m, "graph.follow", &ctx("/w/notes/pages/Plan.md", note, at));
+    let (id, _, _, content) = document(&out);
+    assert_eq!(id, "graph.advancedQuery");
     assert!(
-        matches!(&out[0], Effect::Notify(t, _) if t.contains("not run by Kalem")),
-        "{out:?}"
+        content
+            .text
+            .contains("Not run: ?b is bound by no clause of :where"),
+        "{}",
+        content.text
     );
     // Run from the palette: a list.
     let out = app.command(

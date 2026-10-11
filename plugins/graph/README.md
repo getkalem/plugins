@@ -121,6 +121,8 @@ Logseq's simple queries run over the index: `[[page]]` and `#tag` (the page's bl
 
 The results are grouped by page, journals newest first, with each block's first line; with `query-table:: true` on the query's block they are a table of the columns `query-properties::` names (`[:block :page]` by default), sorted by `query-sort-by::` and `query-sort-desc::`. Enter opens a block, `t` cycles its keyword. The document and the line in the note are computed again when the graph changes.
 
+Advanced queries (`#+BEGIN_QUERY` … `#+END_QUERY`, Datalog) run too, as Logseq's file version runs them: the note shows the query's title, how many it finds and the first two, its EDN hidden until the cursor goes into it, and Follow Reference on it opens the results. The graph is seen as Logseq's schema has it (`:block/name`, `:block/original-name`, `:block/journal?`, `:block/journal-day`, `:block/properties`, `:block/tags`, `:block/alias`, `:block/namespace` of a page; `:block/content`, `:block/marker`, `:block/priority`, `:block/page`, `:block/parent`, `:block/refs`, `:block/path-refs`, `:block/scheduled`, `:block/deadline`, `:block/uuid` of a block). `:where` takes data patterns, `not`, `not-join`, `or`, `or-join`, `and`, the comparisons, `contains?`, `clojure.string/includes?`, `starts-with?`, `ends-with?` and `blank?`, `get`, `get-else`, `missing?`, `str`, and Logseq's rules (`page-ref`, `task`, `priority`, `property`, `page-property`, `page-tags`, `between`, `namespace`, `page`, `block-content`); `:inputs` takes `:today`, `:yesterday`, `:tomorrow`, `:-7d`, `:+7d`, `:7d-before`, `:7d-after` and `:current-page`; `:find` a variable, `(pull ?b [*])` or `(count ?b)`, other values as a table.
+
 ## What is read
 
 | | Logseq | Obsidian |
@@ -155,7 +157,7 @@ With `fs:write:workspace`: a new journal made from a template, and only when no 
 From Logseq:
 
 - Whiteboards are listed with the pages and their links resolve, but Kalem does not draw them; following one shows the file to open in Logseq. Flashcards, Logseq's plugins and their syntax, and PDF highlights drawn over the PDF are not there; a PDF's highlights page (`hls__…`) is a page like another.
-- Advanced queries (`#+BEGIN_QUERY`, Datalog) are not run. Of the simple ones, `(sample n)` takes the first n, not n at random; `created-at` and `updated-at` sort by a journal's day only, which file graphs keep; a clause Kalem does not read finds nothing and says so.
+- Of advanced queries, `:result-transform`, `:view` and `:rules` of one's own (Clojure) are not run, nor functions beyond those above; the query says what it does not run. Of the simple ones, `(sample n)` takes the first n, not n at random; `created-at` and `updated-at` sort by a journal's day only, which file graphs keep; a clause Kalem does not read finds nothing and says so.
 - An embed shows one line, not the block or page in full; a query shows one line in its note and its results as a document (Kalem's layers add no lines yet).
 - No real-time sync: Syncthing or git on the folder, as Logseq's file version is used.
 - The database version's graph itself does not open; its Markdown Mirror does, read only.

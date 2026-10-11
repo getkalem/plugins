@@ -927,7 +927,10 @@ impl App {
                 if index.graph.kind == Kind::Obsidian {
                     return o;
                 }
-                crate::layer::queries(o, text, &|q| self.query_summary(index, q))
+                let current = index.page_of(&rel).map(|p| p.key.clone());
+                crate::layer::queries(o, text, &|q| self.query_summary(index, q), &|q| {
+                    self.advanced_summary(index, q, current.as_deref())
+                })
             }
             None => crate::layer::overlays(kind, text, None, path.as_deref().map(files::file_name)),
         }
@@ -948,6 +951,32 @@ impl App {
             "⌕"
         };
         let s = crate::query::summary(index, q, self.day(), mark);
+        let mut cache = self.queries.borrow_mut();
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(key, (index.version(), s.clone()));
+        s
+    }
+
+    /// What an advanced query shows in its note: kept until the index
+    /// changes, as `query_summary`'s.
+    fn advanced_summary(&self, index: &Index, q: &str, current: Option<&str>) -> String {
+        let key = (
+            index.graph.root.clone(),
+            format!("{}\u{1f}{q}", current.unwrap_or("")),
+        );
+        if let Some((v, s)) = self.queries.borrow().get(&key)
+            && *v == index.version()
+        {
+            return s.clone();
+        }
+        let mark = if self.settings.glyphs == "ascii" {
+            "query:"
+        } else {
+            "⌕"
+        };
+        let s = crate::datalog::summary(index, q, self.day(), current, mark);
         let mut cache = self.queries.borrow_mut();
         if cache.len() > 256 {
             cache.clear();
@@ -1024,6 +1053,19 @@ impl App {
                 )
             }
             "graph.graph" => (format!("Graph: {name}"), "graph-graph", views::graph(index)),
+            "graph.advancedQuery" => {
+                let current = page.filter(|p| !p.is_empty());
+                let text = parts.next()?;
+                let title = crate::datalog::parse(text)
+                    .ok()
+                    .and_then(|a| a.title)
+                    .unwrap_or_else(|| "an advanced query".into());
+                (
+                    format!("Query: {title}"),
+                    "graph-query",
+                    views::advanced(index, text, self.day(), current, g),
+                )
+            }
             "graph.graphView" => (
                 format!("Graph View: {name}"),
                 "graph-view",

@@ -612,28 +612,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
             }
         }
     }
-    // Journals newest first, then pages by title, a page's blocks in
-    // order; a sort asked for goes over it.
-    let order = |h: &Hit| {
-        let (page, line) = match h {
-            Hit::Page(k) => (index.page(k), 0),
-            Hit::Block { rel, block } => (
-                index.page_of(rel),
-                index
-                    .file(rel)
-                    .and_then(|d| d.scanned.blocks.get(*block))
-                    .map_or(0, |b| b.line),
-            ),
-        };
-        let journal = page.and_then(|p| p.journal);
-        (
-            journal.is_none(),
-            std::cmp::Reverse(journal),
-            page.map_or(String::new(), |p| p.title.to_lowercase()),
-            line,
-        )
-    };
-    hits.sort_by_cached_key(order);
+    sort_hits(index, &mut hits);
     if let Some((key, desc)) = &q.sort {
         let sort_key = |h: &Hit| -> (Option<Date>, String) {
             let (page, block) = match h {
@@ -676,6 +655,31 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
         pages,
         notes: notes.into_iter().collect(),
     }
+}
+
+/// Journals newest first, then pages by title, a page's blocks in order:
+/// how a query's results are listed unless it sorts them.
+pub fn sort_hits(index: &Index, hits: &mut [Hit]) {
+    let order = |h: &Hit| {
+        let (page, line) = match h {
+            Hit::Page(k) => (index.page(k), 0),
+            Hit::Block { rel, block } => (
+                index.page_of(rel),
+                index
+                    .file(rel)
+                    .and_then(|d| d.scanned.blocks.get(*block))
+                    .map_or(0, |b| b.line),
+            ),
+        };
+        let journal = page.and_then(|p| p.journal);
+        (
+            journal.is_none(),
+            std::cmp::Reverse(journal),
+            page.map_or(String::new(), |p| p.title.to_lowercase()),
+            line,
+        )
+    };
+    hits.sort_by_cached_key(order);
 }
 
 /// How a query's answer is shown, from the properties of the block that

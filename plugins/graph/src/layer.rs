@@ -955,14 +955,26 @@ pub fn overlays(kind: Kind, text: &str, index: Option<&Index>, rel: Option<&str>
 }
 
 /// The `{{query …}}` macros of a Logseq note shown as what `summary`
-/// says of each (away from the cursor), and an advanced query's
-/// `#+BEGIN_QUERY` marked as one Kalem does not run; over what the
-/// note's layer gave.
-pub fn queries(mut o: Overlays, text: &str, summary: &dyn Fn(&str) -> String) -> Overlays {
+/// says of each, and an advanced query (`#+BEGIN_QUERY` … `#+END_QUERY`)
+/// as what `advanced` says of it, its lines hidden (away from the
+/// cursor, as Logseq shows a query's results until it is clicked); over
+/// what the note's layer gave.
+pub fn queries(
+    mut o: Overlays,
+    text: &str,
+    summary: &dyn Fn(&str) -> String,
+    advanced: &dyn Fn(&str) -> String,
+) -> Overlays {
     let mut fence = false;
     let mut src = false;
     let mut added = false;
+    // The end of the advanced query being skipped.
+    let mut inside: Option<usize> = None;
     for (start, line) in lines(text) {
+        if inside.is_some_and(|e| start < e) {
+            continue;
+        }
+        inside = None;
         let trimmed = line.trim();
         let upper = trimmed.to_uppercase();
         if fence {
@@ -986,18 +998,37 @@ pub fn queries(mut o: Overlays, text: &str, summary: &dyn Fn(&str) -> String) ->
             .find("#+BEGIN_QUERY")
             .or_else(|| line.find("#+begin_query"))
         {
-            let end = start + p + "#+BEGIN_QUERY".len();
+            let open = start + p;
+            let close = text[open..]
+                .to_uppercase()
+                .find("#+END_QUERY")
+                .map(|q| open + q + "#+END_QUERY".len());
+            let Some(close) = close else {
+                continue;
+            };
+            let block_end = text[close..]
+                .find('\n')
+                .map_or(text.len(), |n| close + n + 1);
             o.put(
-                start + p,
-                end,
+                open,
+                open + "#+BEGIN_QUERY".len(),
                 Effect::Replace(
-                    "#+BEGIN_QUERY · an advanced query, not run by Kalem".into(),
+                    advanced(&text[open..close]),
                     Look {
-                        dim: true,
+                        link: true,
                         ..Look::default()
                     },
                 ),
             );
+            let body = line_end(text, start, line);
+            if body < block_end {
+                o.lines.push(Lines {
+                    start: body,
+                    end: block_end,
+                    effect: LineEffect::Hidden,
+                });
+            }
+            inside = Some(block_end);
             added = true;
             continue;
         }
@@ -1098,6 +1129,15 @@ mod tests {
             .map(|s| &org[s.start..s.end])
             .collect();
         assert_eq!(styled, ["LATER", "NOW"]);
+    }
+
+    #[test]
+    fn an_advanced_query_shown_as_its_results() {
+        let text = "- before\n- #+BEGIN_QUERY\n  {:query [:find ?b]}\n  #+END_QUERY\n- after\n";
+        let o = queries(Overlays::default(), text, &|_| String::new(), &|q| {
+            format!("⌕ {} bytes", q.len())
+        });
+        assert_eq!(shown(text, &o), "- before\n- ⌕ 49 bytes\n- after\n");
     }
 
     #[test]
