@@ -98,6 +98,17 @@
       "default": true,
       "description": "Enter on a posting aligns its amount first, as ledger-mode does (not in Vim's insert mode, where SPC m a in normal mode does it)"
     },
+    "check_on_save": {
+      "type": "boolean",
+      "default": true,
+      "description": "Check the main journal with its tool each time a journal is saved: the status bar item shows ✓ or the problems' count, and the Check document, when open, is written again"
+    },
+    "checks": {
+      "type": "array",
+      "examples": [["ordereddates"], ["ordereddates", "payees"], ["recentassertions", "uniqueleafnames"]],
+      "default": [],
+      "description": "hledger's checks added to hledger check --strict: ordereddates, payees, recentassertions, tags, uniqueleafnames (hledger's own names; Ledger and Beancount have none)"
+    },
     "programs.hledger": {
       "type": "string",
       "default": "",

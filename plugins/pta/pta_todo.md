@@ -412,7 +412,7 @@ first.
 
 ## PT5. Checked by the tool
 
-- [ ] PT5 `pta.check` (`SPC m k`; the status bar item's click; on save
+- [x] PT5 `pta.check` (`SPC m k`; the status bar item's click; on save
   when the setting `check_on_save` is on, the default): `hledger check
   --strict` with the checks the setting `checks` adds
   (`ordereddates`, `payees`, `recentassertions`, `uniqueleafnames`,
@@ -432,6 +432,32 @@ first.
   file gives one entry at the right line; a clean file gives none and
   the item shows ✓; a tool not installed gives one notice naming the
   install line and nothing else.
+  (Done 2026-10-11, checked in Kalem's terminal editor: Check Journal
+  (`SPC m k`, the palette, the status bar item's click, `r` in the
+  document) on the main journal of PT3c; the document "Check:
+  errors.journal" with the tool's check line, each problem's place
+  (beside the main journal by its name), its message and the lines
+  the tool quoted, muted; Enter on a problem opens its file at its
+  line and column (`file.open`'s column a byte from 0: the tools'
+  less one, exact on an ASCII line), `q` and Escape close it; on save
+  (`check_on_save`) the item gets `✓` or `1 problem`, and an open
+  document is written again; a tool missing: one notice with its
+  install line, once a session on save, each time asked; Kalem's
+  refusal (no project) said when asked. `src/check.rs`: the commands
+  (`hledger … check --strict` and the setting `checks`, names only;
+  `ledger … --pedantic --explicit balance`; `bean-check`), each tool's
+  error form parsed from its standard error (hledger's one problem,
+  its quoted lines, its message; Ledger's every `While parsing file
+  …`/`Error:`; bean-check's every `FILE:LINE: message`, sorted by
+  line), and the report. Measured: hledger stops at its first
+  problem, Ledger and bean-check report them all (bean-check not in
+  line order). Tests: unit tests on recorded output of each tool (one
+  problem, two, none, a failure without a place, one in no known
+  form) and the report; the conformance test runs each tool's check as
+  the plugin does on the corpus: each error file one problem at its
+  line (hledger 13, Ledger 9, Beancount 7), each clean journal none.
+  K2 stands: `diagnostics` is a plugin's panic report, and
+  `decorations` marks only a diff's lines.)
 
 ## PT6. Writing transactions
 
