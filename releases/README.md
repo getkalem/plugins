@@ -1,1 +1,1 @@
-One file per published component, `NAME-vX.Y.Z.sha256`, holding the SHA-256 of the release asset. The release workflow writes them; `tools/build-index.py` reads them.
+One file per published release, `NAME-vX.Y.Z.sha256`, holding the SHA-256 of the release asset: a component's `.wasm`, or a language plugin's `.tar.gz`. The release workflow writes them; `tools/build-index.py` reads them.

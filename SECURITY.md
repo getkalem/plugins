@@ -1,8 +1,9 @@
 # Security
 
-The plugins here run in Kalem's sandbox with the permissions their
+The components here run in Kalem's sandbox with the permissions their
 manifests declare, and a release is signed and listed in `index.json`
-with its SHA-256. A plugin that reaches past its sandbox or its
+with its SHA-256. Language servers, and the programs a plugin may run
+(the `subprocess` permissions), run outside the sandbox, as the user. A plugin that reaches past its sandbox or its
 permissions, a file that makes one run code or write where it should
 not, or a flaw in how releases are built, signed or listed is a
 security problem.
