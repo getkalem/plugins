@@ -30,7 +30,7 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 | `Z z` | Stash the changes |
 | Escape, `q` | Close the status |
 
-Enter on a commit shows it as magit does: `git show`'s header (hash, author, committer, dates, the message), the stat, then its diff, highlighted as a diff with its hunks. In that view Tab, Right and Left fold the files and hunks, Alt+Up and Alt+Down step between them, Enter on a line of the diff opens the file at that line, Escape closes it; nothing is staged from it.
+Enter on a commit shows it as magit does: `git show`'s header (hash, author, committer, dates, the message), the stat, then its diff, highlighted as a diff with its hunks. In that view Tab, Right and Left fold the files and hunks, Alt+Up and Alt+Down step between them, Enter on a line of the diff opens the file at that line, Escape or `q` closes it; nothing is staged from it, its other letters are Vim's, and the repository's commands (commit, fetch, branches) act on the commit's repository.
 
 The letters are magit's (as Doom's evil-collection has them: `x` discards) and apply in the status only, in Vim's command mode and with the Word-like keys. Doom's `SPC g` keys work in it and in a file:
 

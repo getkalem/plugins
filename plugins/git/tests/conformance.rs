@@ -163,7 +163,10 @@ fn the_menus_hold_the_plugins_commands_outside_the_status() {
                 continue;
             }
             let c = command_info(item).unwrap_or_else(|| panic!("`{item}` is no command"));
-            assert!(!c.in_status_only, "`{item}` acts in the status only");
+            assert!(
+                !c.in_documents_only(),
+                "`{item}` acts in the documents only"
+            );
         }
     }
 }

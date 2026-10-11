@@ -406,12 +406,8 @@ impl Plugin for Git {
     fn activate() -> Result<(), String> {
         APP.with(|a| *a.borrow_mut() = Some(App::new(read_settings())));
         for c in app::COMMANDS {
-            let (leader, other) = app::split_leader_keys(c.keys);
-            let scope = if c.in_status_only {
-                Scope::only(&[app::STATUS_KIND])
-            } else {
-                Scope::all()
-            };
+            let (_, other) = app::split_leader_keys(c.keys);
+            let scope = c.scope().map_or_else(Scope::all, Scope::only);
             let mut spec = kalem::spec(c.id, c.title, scope);
             spec.category = "Git".into();
             spec.keys = other.iter().map(|k| k.to_string()).collect();
@@ -424,18 +420,10 @@ impl Plugin for Git {
                 Ok("null".into())
             })?;
             // Doom's keys in Vim's command mode only, as Kalem's own leader
-            // keys: in insert mode Space types a space.
-            for k in leader {
-                kalem::keymap(k, c.id, Some(app::LEADER_WHEN))?;
-            }
-            // In the status document: magit's keys and the arrows.
-            for k in c.doc_keys {
-                let when = if *k == "escape" {
-                    app::DOC_ESCAPE_WHEN
-                } else {
-                    app::DOC_WHEN
-                };
-                kalem::keymap(k, c.id, Some(when))?;
+            // keys (in insert mode Space types a space); in the documents,
+            // magit's keys and the arrows.
+            for (k, when) in c.bindings() {
+                kalem::keymap(k, c.id, Some(&when))?;
             }
         }
         ui::panel(

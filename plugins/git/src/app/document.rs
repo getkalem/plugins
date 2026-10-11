@@ -310,7 +310,7 @@ impl App {
         let Some(content) = self.repos.get(root).and_then(|s| s.content.clone()) else {
             // Not written by this plugin yet (it started again): written
             // anew.
-            if command_info(id).is_some_and(|c| c.in_status_only) || id == "git.status" {
+            if command_info(id).is_some_and(CommandInfo::in_documents_only) || id == "git.status" {
                 self.refresh(out, root, After::Show);
                 return true;
             }
