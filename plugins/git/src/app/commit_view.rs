@@ -2,10 +2,10 @@
 //! status runs `git show` and writes its header, stat and diff as a
 //! read-only document of the kind `git-commit-view`, highlighted as
 //! `diff`. The arrows and Tab fold its files and hunks, Enter on a diff
-//! line opens the file at that line, Escape closes it; nothing is staged
-//! from it.
+//! line opens the file at that line, Escape and q close it; nothing is
+//! staged from it.
 
-use super::{App, Doc, Effect, Level, Pending, ShownCommit};
+use super::{App, CommandInfo, Doc, Effect, Level, Pending, ShownCommit, command_info};
 use crate::content::{Content, Region};
 use crate::git::cmd;
 use crate::git::diff::{self, LineKind};
@@ -13,9 +13,6 @@ use crate::model::Folds;
 use crate::refresh::Output;
 use crate::target::{self, Target};
 use crate::views;
-
-/// The lines of context of a commit's diff.
-const CONTEXT: u32 = 3;
 
 /// What a fold key does in a commit view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +37,7 @@ impl App {
         self.run(
             out,
             Some(root.to_string()),
-            cmd::show(hash, CONTEXT),
+            cmd::show(hash, self.settings.context_lines),
             Pending::Show {
                 root: root.to_string(),
                 hash: hash.to_string(),
@@ -135,7 +132,8 @@ impl App {
     }
 
     /// A command run in the view of commit `hash`; whether the view took
-    /// it (the status's own commands go on to the status).
+    /// it. The commands of every text type but the menu go on, acting on
+    /// the commit's repository as anywhere (a file's say it needs one).
     pub(super) fn commit_command(
         &mut self,
         out: &mut Vec<Effect>,
@@ -144,10 +142,10 @@ impl App {
         id: &str,
         doc: &Doc,
     ) -> bool {
-        if matches!(id, "git.status" | "git.refresh") {
+        self.current = Some(root.to_string());
+        if id != "git.dispatch" && !command_info(id).is_some_and(CommandInfo::in_documents_only) {
             return false;
         }
-        self.current = Some(root.to_string());
         let Some(content) = self
             .repos
             .get(root)
@@ -190,7 +188,7 @@ impl App {
                 }
             }
             "git.dispatch" | "git.cycle" => out.push(Effect::Notify(
-                "In a commit: Enter opens the file at the line, Tab, Right and Left fold, Escape closes"
+                "In a commit: Enter opens the file at the line, Tab, Right and Left fold, Alt+Up and Alt+Down step, Escape or q closes"
                     .into(),
                 Level::Info,
             )),

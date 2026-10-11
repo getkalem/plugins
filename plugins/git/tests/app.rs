@@ -7,7 +7,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use kalem_plugin_git::app::{Answer, App, Doc, Effect, Input, Level, PanelEvent, Settings};
+use kalem_plugin_git::app::{
+    Answer, App, COMMANDS, COMMIT_KIND, Doc, Effect, Input, Level, PanelEvent, STATUS_KIND,
+    Settings,
+};
 use kalem_plugin_git::git::cmd::GitCommand;
 use kalem_plugin_git::gutter::Mark;
 use kalem_plugin_git::native::NativeRunner;
@@ -168,6 +171,7 @@ impl Kalem {
                     Effect::Notify(m, l) => self.notes.push((m, l)),
                     Effect::Status(s) => self.status = s,
                     Effect::Panel(p) => self.panel = Some(p),
+                    Effect::RemovePanel => self.panel = None,
                     Effect::ShowPanel => self.shown = true,
                     Effect::RunCommand { id, args } => self.commands.push((id, args)),
                     Effect::SetSetting { key, value } => self.set.push((key, value)),
@@ -962,4 +966,304 @@ fn enter_on_a_commit_shows_it_as_magit_does() {
     k.on_commit("git.close", "commit ");
     assert!(k.commit_key().is_none());
     assert!(k.doc_text().contains("Second line changed"));
+}
+
+/// Whether when-clause `when` holds in a document of `text_type` with
+/// `flags` set, as Kalem's `WhenClause` reads the plugin's clauses:
+/// `textType == X`, flags, `!`, `&&`, `||` and parentheses.
+fn holds(when: &str, text_type: &str, flags: &[&str]) -> bool {
+    struct Reader<'a> {
+        tokens: Vec<&'a str>,
+        at: usize,
+        text_type: &'a str,
+        flags: &'a [&'a str],
+    }
+    impl<'a> Reader<'a> {
+        fn next(&mut self) -> &'a str {
+            self.at += 1;
+            self.tokens.get(self.at - 1).copied().unwrap_or_default()
+        }
+        fn peek(&self) -> &'a str {
+            self.tokens.get(self.at).copied().unwrap_or_default()
+        }
+        fn or(&mut self) -> bool {
+            let mut v = self.and();
+            while self.peek() == "||" {
+                self.next();
+                v |= self.and();
+            }
+            v
+        }
+        fn and(&mut self) -> bool {
+            let mut v = self.not();
+            while self.peek() == "&&" {
+                self.next();
+                v &= self.not();
+            }
+            v
+        }
+        fn not(&mut self) -> bool {
+            match self.next() {
+                "!" => !self.not(),
+                "(" => {
+                    let v = self.or();
+                    assert_eq!(self.next(), ")");
+                    v
+                }
+                "textType" => {
+                    assert_eq!(self.next(), "==");
+                    self.next() == self.text_type
+                }
+                flag => self.flags.contains(&flag),
+            }
+        }
+    }
+    assert!(!when.contains("!="), "{when}");
+    let spaced = when
+        .replace('(', " ( ")
+        .replace(')', " ) ")
+        .replace('!', " ! ");
+    let mut r = Reader {
+        tokens: spaced.split_whitespace().collect(),
+        at: 0,
+        text_type,
+        flags,
+    };
+    let v = r.or();
+    assert_eq!(r.at, r.tokens.len(), "{when}");
+    v
+}
+
+/// The commands Kalem runs for `keys` in a document of `text_type` with
+/// `flags`: the bindings the component hands its keymap, each binding's
+/// when-clause ANDed with its command's scope, as Kalem's keymap does.
+fn resolve(keys: &str, text_type: &str, flags: &[&str]) -> Vec<&'static str> {
+    COMMANDS
+        .iter()
+        .filter(|c| c.scope().is_none_or(|kinds| kinds.contains(&text_type)))
+        .filter(|c| {
+            c.bindings()
+                .iter()
+                .any(|(k, when)| *k == keys && holds(when, text_type, flags))
+        })
+        .map(|c| c.id)
+        .collect()
+}
+
+/// Every key the plugin binds, once.
+fn bound_keys() -> Vec<&'static str> {
+    let mut keys: Vec<&str> = COMMANDS
+        .iter()
+        .flat_map(|c| c.bindings())
+        .map(|(k, _)| k)
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}
+
+/// The keys of a commit view reached it: Kalem ANDs a command's scope with
+/// its keys' when-clauses, and the folds' commands were scoped to the
+/// status alone, so their keys, bound in both documents, ran in neither
+/// view of a commit.
+#[test]
+fn every_key_runs_its_command_where_kalem_looks_it_up() {
+    const VIM: &[&str] = &["vimCommand", "vimActive"];
+    const WORD: &[&str] = &[];
+    let (leader, doc): (Vec<&str>, Vec<&str>) = bound_keys()
+        .into_iter()
+        .partition(|k| k.starts_with("space "));
+    for flags in [VIM, WORD] {
+        // A commit view: the movement, the folds, Enter and closing; the
+        // letters are Vim's.
+        let found: Vec<(&str, &str)> = doc
+            .iter()
+            .flat_map(|k| {
+                resolve(k, COMMIT_KIND, flags)
+                    .into_iter()
+                    .map(move |c| (*k, c))
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("alt+down", "git.next"),
+                ("alt+up", "git.previous"),
+                ("enter", "git.visit"),
+                ("escape", "git.close"),
+                ("left", "git.fold"),
+                ("q", "git.close"),
+                ("right", "git.unfold"),
+                ("tab", "git.toggle"),
+            ],
+            "with {flags:?}"
+        );
+        // The leader's keys, in Vim's command mode.
+        for k in &leader {
+            let runs = !resolve(k, COMMIT_KIND, flags).is_empty();
+            assert_eq!(runs, flags == VIM, "`{k}` with {flags:?}");
+        }
+        // The status: each document key runs its own command, and only it.
+        for c in COMMANDS {
+            for k in c.doc_keys {
+                assert_eq!(
+                    resolve(k, STATUS_KIND, flags),
+                    [c.id],
+                    "`{k}` in the status"
+                );
+            }
+        }
+    }
+    // In a file only the leader's keys act, in Vim's command mode.
+    for k in bound_keys() {
+        let leader = k.starts_with("space ");
+        assert_eq!(
+            !resolve(k, "org", VIM).is_empty(),
+            leader,
+            "`{k}` in a file"
+        );
+        assert!(resolve(k, "org", WORD).is_empty(), "`{k}` in a file");
+    }
+    // Escape clears a selection first; in insert mode the letters type.
+    let selected = &["vimCommand", "vimActive", "hasSelection"];
+    assert!(resolve("escape", COMMIT_KIND, selected).is_empty());
+    assert!(resolve("q", COMMIT_KIND, &["vimActive"]).is_empty());
+}
+
+#[test]
+fn the_keys_of_a_commit_view_act_in_it_and_the_repositorys_commands_go_on() {
+    let mut k = Kalem::new("commit-view-keys");
+    k.write("a.txt", "one\ntwo\n");
+    k.write("b.txt", "x\n");
+    k.commit_all("First");
+    k.write("a.txt", "one\nTWO\n");
+    k.write("b.txt", "y\n");
+    k.commit_all("Both changed");
+    k.command("git.status", Some("a.txt"));
+    k.on("git.tabCommits", "repo → main");
+    let short = k
+        .git_ok(&["rev-parse", "--short", "HEAD"])
+        .trim()
+        .to_string();
+    k.on("git.visit", &short);
+    assert!(k.commit_text().contains("diff --git a/b.txt"));
+    // Alt+Down steps from a file to its hunk, then to the next file.
+    k.on_commit("git.next", "diff --git a/a.txt");
+    let (text, at) = k.docs[&k.commit_key().unwrap()].clone();
+    assert!(text[at..].starts_with("@@ -1,2 +1,2 @@"), "{}", &text[at..]);
+    k.on_commit("git.next", "@@ -1,2 +1,2 @@");
+    let (text, at) = k.docs[&k.commit_key().unwrap()].clone();
+    assert!(
+        text[at..].starts_with("diff --git a/b.txt"),
+        "{}",
+        &text[at..]
+    );
+    // Each of its keys Kalem runs in a commit view acts there.
+    let mut ids: Vec<&str> = bound_keys()
+        .into_iter()
+        .filter(|key| !key.starts_with("space "))
+        .flat_map(|key| resolve(key, COMMIT_KIND, &["vimCommand", "vimActive"]))
+        .filter(|id| *id != "git.close")
+        .collect();
+    ids.dedup();
+    for id in ids {
+        let notes = k.notes.len();
+        k.on_commit(id, "diff --git a/a.txt");
+        let refused = k.notes[notes..].iter().any(|(n, _)| {
+            n.starts_with("Nothing is staged from a commit") || n.starts_with("This acts in")
+        });
+        assert!(!refused, "{id}: {:?}", &k.notes[notes..]);
+        assert!(k.commit_key().is_some(), "{id} closed the view");
+    }
+    // The commands of every text type act on the commit's repository: a
+    // new branch, not "Nothing is staged"; a file's needs a file.
+    k.answers.push_back(Answer::Text(Some("topic".into())));
+    k.on_commit("git.newBranch", "commit ");
+    assert_eq!(k.last_note(), "Made the branch topic, and switched to it");
+    assert_eq!(k.git_ok(&["branch", "--show-current"]).trim(), "topic");
+    k.on_commit("git.blameLine", "commit ");
+    assert!(
+        k.last_note().contains("acts on a file"),
+        "{}",
+        k.last_note()
+    );
+    // The status's own are not the view's.
+    k.on_commit("git.stage", "commit ");
+    assert!(
+        k.last_note().starts_with("Nothing is staged from a commit"),
+        "{}",
+        k.last_note()
+    );
+    k.on_commit("git.close", "commit ");
+    assert!(k.commit_key().is_none());
+}
+
+#[test]
+fn context_lines_shape_the_diffs_and_none_still_stages() {
+    let mut k = Kalem::new("context");
+    let long: String = (1..=12).map(|i| format!("line {i}\n")).collect();
+    k.write("a.txt", &long);
+    k.commit_all("First");
+    let changed = long
+        .replace("line 3\n", "line THREE\n")
+        .replace("line 9\n", "line NINE\n");
+    k.write("a.txt", &changed);
+    k.feed(Input::Settings(Settings {
+        context_lines: 0,
+        ..Settings::default()
+    }));
+    k.command("git.status", Some("a.txt"));
+    k.on("git.toggle", " M a.txt");
+    let text = k.doc_text();
+    assert!(
+        text.contains(
+            "\n@@ -3 +3 @@ line 2\n-line 3\n+line THREE\n@@ -9 +9 @@ line 8\n-line 9\n+line NINE\n"
+        ),
+        "{text}"
+    );
+    // A hunk and a line are staged without context.
+    k.on("git.stage", "+line NINE");
+    assert_eq!(k.last_note(), "Staged a hunk of a.txt");
+    assert!(k.index("a.txt").contains("\nline NINE\n"));
+    let text = k.doc_text();
+    let plus = text.find("+line THREE").unwrap();
+    k.in_doc("git.stage", plus, plus + "+line THREE".len());
+    assert!(
+        k.index("a.txt").contains("\nline 3\nline THREE\nline 4\n"),
+        "{}",
+        k.index("a.txt")
+    );
+    // Three again: the diffs are read again, with context.
+    k.feed(Input::Settings(Settings::default()));
+    let text = k.doc_text();
+    assert!(
+        text.contains("\n line 2\n-line 3\n line THREE\n line 4\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_panel_setting_takes_the_panel_away_and_back() {
+    let mut k = Kalem::new("panel");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    let path = k.path("a.txt");
+    k.feed(Input::Opened(path.clone()));
+    assert!(k.panel.is_some());
+    k.feed(Input::Settings(Settings {
+        panel: false,
+        ..Settings::default()
+    }));
+    assert!(k.panel.is_none());
+    // A save leaves it away; the status bar follows.
+    k.write("a.txt", "two\n");
+    k.feed(Input::Saved(path));
+    assert!(k.panel.is_none());
+    assert_eq!(k.status.as_deref(), Some("⎇ main •1"));
+    k.feed(Input::Settings(Settings::default()));
+    assert!(
+        k.texts().iter().any(|t| t == "a.txt — modified  +1 −1"),
+        "{:?}",
+        k.texts()
+    );
 }

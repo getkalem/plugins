@@ -123,6 +123,36 @@ fn settings_are_described_and_their_defaults_typed() {
     }
 }
 
+/// The settings panel lists what the manifest declares: each is read and
+/// watched, and nothing else is (`programs.git` is Kalem's). Six declared
+/// for later features once sat there doing nothing.
+#[test]
+fn every_setting_declared_is_read_and_watched() {
+    use kalem_plugin_git::app::{SETTINGS, Settings};
+    use std::cell::RefCell;
+    let m = manifest();
+    let mut declared: Vec<&str> = m["settings"]
+        .as_object()
+        .expect("settings")
+        .keys()
+        .map(String::as_str)
+        .filter(|k| *k != "programs.git")
+        .collect();
+    declared.sort_unstable();
+    let read = RefCell::new(Vec::new());
+    Settings::read(|k| {
+        read.borrow_mut().push(k.to_string());
+        None
+    });
+    let mut read = read.into_inner();
+    read.sort_unstable();
+    read.dedup();
+    assert_eq!(read, declared, "read");
+    let mut watched = SETTINGS.to_vec();
+    watched.sort_unstable();
+    assert_eq!(watched, declared, "watched");
+}
+
 #[test]
 fn the_library_reads_every_choice_of_its_settings() {
     use kalem_plugin_git::git::cmd::{PullMode, Untracked};
@@ -163,7 +193,10 @@ fn the_menus_hold_the_plugins_commands_outside_the_status() {
                 continue;
             }
             let c = command_info(item).unwrap_or_else(|| panic!("`{item}` is no command"));
-            assert!(!c.in_status_only, "`{item}` acts in the status only");
+            assert!(
+                !c.in_documents_only(),
+                "`{item}` acts in the documents only"
+            );
         }
     }
 }

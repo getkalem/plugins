@@ -51,16 +51,6 @@ pub const COMMIT_DOC: &str = "git.commit";
 /// A commit view's kind: the text type its keys are scoped to.
 pub const COMMIT_KIND: &str = "git-commit-view";
 
-/// The when-clause of the keys of the status document and of a commit
-/// view: in one of them, in Vim's command mode or without Vim, so that
-/// their letters do not type (they are read-only) and come before Vim's.
-pub const DOC_WHEN: &str =
-    "(textType == git-status || textType == git-commit-view) && (vimCommand || !vimActive)";
-
-/// Escape's: with a selection Escape clears it first (Vim leaves visual
-/// mode).
-pub const DOC_ESCAPE_WHEN: &str = "(textType == git-status || textType == git-commit-view) && !hasSelection && (vimCommand || !vimActive)";
-
 /// A command of the plugin: its ID, title, keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandInfo {
@@ -71,12 +61,13 @@ pub struct CommandInfo {
     /// Its keys everywhere, as `keymap.json` writes them: Doom's under the
     /// leader (`space g g`, bound in Vim's command mode) and others.
     pub keys: &'static [&'static str],
-    /// Its keys in the status document (magit's and lazygit's), bound with
-    /// [`DOC_WHEN`].
+    /// Its keys in the documents it acts in (magit's and lazygit's), or in
+    /// the status when it acts everywhere: see [`CommandInfo::bindings`].
     pub doc_keys: &'static [&'static str],
-    /// It acts in the status document only, and the palette offers it
-    /// there only.
-    pub in_status_only: bool,
+    /// The kinds of document it acts in only, its scope: the palette
+    /// offers it there only, and Kalem runs its keys there only. Empty for
+    /// every text type.
+    pub kinds: &'static [&'static str],
 }
 
 impl CommandInfo {
@@ -86,7 +77,7 @@ impl CommandInfo {
             title,
             keys: &[],
             doc_keys: &[],
-            in_status_only: false,
+            kinds: &[],
         }
     }
 
@@ -101,9 +92,58 @@ impl CommandInfo {
     }
 
     const fn status_only(mut self) -> CommandInfo {
-        self.in_status_only = true;
+        self.kinds = &[STATUS_KIND];
         self
     }
+
+    /// It acts in the status and in a commit view: the movement and the
+    /// folding.
+    const fn in_documents(mut self) -> CommandInfo {
+        self.kinds = &[STATUS_KIND, COMMIT_KIND];
+        self
+    }
+
+    /// It acts in the plugin's documents only, not in a file.
+    pub fn in_documents_only(&self) -> bool {
+        !self.kinds.is_empty()
+    }
+
+    /// Its scope: the text types it serves (Kalem's `Scope::only`), or
+    /// `None` for every type.
+    pub fn scope(&self) -> Option<&'static [&'static str]> {
+        self.in_documents_only().then_some(self.kinds)
+    }
+
+    /// Its keys bound in Kalem's keymap, each with its when-clause, which
+    /// Kalem ANDs with the scope ([`CommandInfo::scope`]): the leader's in
+    /// Vim's command mode; the document keys in the documents it acts in,
+    /// or in the status alone when it acts everywhere (magit's letters,
+    /// which a commit view leaves to Vim). Its other keys are its default
+    /// keys.
+    pub fn bindings(&self) -> Vec<(&'static str, String)> {
+        let (leader, _) = split_leader_keys(self.keys);
+        let kinds = self.scope().unwrap_or(&[STATUS_KIND]);
+        let leader = leader.into_iter().map(|k| (k, LEADER_WHEN.to_string()));
+        let doc = self.doc_keys.iter().map(|k| (*k, doc_when(kinds, k)));
+        leader.chain(doc).collect()
+    }
+}
+
+/// The when-clause of document key `key` in the documents of `kinds`: in
+/// Vim's command mode or without Vim, so that letters do not type (the
+/// documents are read-only) and come before Vim's; Escape's without a
+/// selection too, which Escape clears first (Vim leaves visual mode).
+fn doc_when(kinds: &[&str], key: &str) -> String {
+    let kinds: Vec<String> = kinds.iter().map(|k| format!("textType == {k}")).collect();
+    let selection = if key == "escape" {
+        " && !hasSelection"
+    } else {
+        ""
+    };
+    format!(
+        "({}){selection} && (vimCommand || !vimActive)",
+        kinds.join(" || ")
+    )
 }
 
 /// The command `id`.
@@ -163,28 +203,28 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo::new("git.dispatch", "Git: Commands")
         .keys(&["space g /"])
         .doc(&["alt+enter", "?"]),
-    // The status document's own.
+    // The status document's and a commit view's own.
     CommandInfo::new("git.visit", "Git: Open")
         .doc(&["enter"])
-        .status_only(),
+        .in_documents(),
     CommandInfo::new("git.toggle", "Git: Fold or Unfold")
         .doc(&["tab"])
-        .status_only(),
+        .in_documents(),
     CommandInfo::new("git.cycle", "Git: Fold Everything, Step by Step")
         .doc(&["shift+tab"])
         .status_only(),
     CommandInfo::new("git.unfold", "Git: Unfold")
         .doc(&["right"])
-        .status_only(),
+        .in_documents(),
     CommandInfo::new("git.fold", "Git: Fold, or Go to the Parent")
         .doc(&["left"])
-        .status_only(),
+        .in_documents(),
     CommandInfo::new("git.next", "Git: Next Item")
         .doc(&["alt+down"])
-        .status_only(),
+        .in_documents(),
     CommandInfo::new("git.previous", "Git: Previous Item")
         .doc(&["alt+up"])
-        .status_only(),
+        .in_documents(),
     CommandInfo::new("git.stage", "Git: Stage")
         .doc(&["s"])
         .status_only(),
@@ -221,13 +261,27 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo::new("git.previousTab", "Git: Previous Tab")
         .doc(&["["])
         .status_only(),
-    CommandInfo::new("git.close", "Git: Close the Status")
+    CommandInfo::new("git.close", "Git: Close")
         .doc(&["escape", "q"])
-        .status_only(),
+        .in_documents(),
 ];
 
-/// What the plugin's settings say (DESIGN.md, section 6), as phase 0 uses
-/// them.
+/// The settings [`Settings::read`] reads, which the component watches:
+/// those of `plugin.json` but `programs.git`, Kalem's own.
+pub const SETTINGS: &[&str] = &[
+    "confirm_discard",
+    "pull",
+    "fetch_prune",
+    "untracked",
+    "signoff",
+    "glyphs",
+    "gutter",
+    "gutter_base",
+    "context_lines",
+    "panel",
+];
+
+/// What the plugin's settings say (DESIGN.md, section 6).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
     /// Reverting asks first.
@@ -246,6 +300,11 @@ pub struct Settings {
     pub gutter: bool,
     /// The marks compare with HEAD rather than the index.
     pub gutter_head: bool,
+    /// Lines of context around each change of a diff, in the status and a
+    /// commit view.
+    pub context_lines: u32,
+    /// The Git side panel is there.
+    pub panel: bool,
 }
 
 impl Default for Settings {
@@ -259,6 +318,8 @@ impl Default for Settings {
             glyphs: Glyphs::Unicode,
             gutter: true,
             gutter_head: false,
+            context_lines: 3,
+            panel: true,
         }
     }
 }
@@ -270,6 +331,11 @@ impl Settings {
         let d = Settings::default();
         let boolean = |k: &str, d: bool| own(k).and_then(|v| v.trim().parse().ok()).unwrap_or(d);
         let text = |k: &str| own(k).map(|v| v.trim().trim_matches('"').to_string());
+        let number = |k: &str, d: u32, most: u32| {
+            own(k)
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .map_or(d, |n| n.min(most))
+        };
         Settings {
             confirm_discard: boolean("confirm_discard", d.confirm_discard),
             pull: text("pull")
@@ -285,6 +351,8 @@ impl Settings {
                 .unwrap_or(d.glyphs),
             gutter: boolean("gutter", d.gutter),
             gutter_head: text("gutter_base").is_some_and(|v| v == "head"),
+            context_lines: number("context_lines", d.context_lines, 20),
+            panel: boolean("panel", d.panel),
         }
     }
 }
@@ -409,8 +477,11 @@ pub enum Effect {
     Notify(String, Level),
     /// Sets the status bar item; `None` takes it away.
     Status(Option<String>),
-    /// Replaces the panel's content.
+    /// Replaces the panel's content; brings the panel back after
+    /// [`Effect::RemovePanel`].
     Panel(Node),
+    /// Takes the panel away (the setting `panel` turned off).
+    RemovePanel,
     /// Shows the panel.
     ShowPanel,
     /// Asks yes or no; the answer comes back with `token`.
@@ -790,7 +861,23 @@ impl App {
             }
             Input::Settings(s) => {
                 let marks = (self.settings.gutter, self.settings.gutter_head);
+                let (context, panel) = (self.settings.context_lines, self.settings.panel);
                 self.settings = s;
+                if panel && !s.panel {
+                    out.push(Effect::RemovePanel);
+                }
+                // The diffs read have the old context: read again.
+                if context != s.context_lines {
+                    let roots: Vec<String> = self
+                        .repos
+                        .iter()
+                        .filter(|(_, s)| s.repo.is_some())
+                        .map(|(r, _)| r.clone())
+                        .collect();
+                    for root in roots {
+                        self.refresh(&mut out, &root, After::Nothing);
+                    }
+                }
                 if !self.settings.gutter && marks.0 {
                     out.push(Effect::ClearGutters);
                 } else if self.settings.gutter && marks != (s.gutter, s.gutter_head) {
@@ -843,7 +930,7 @@ impl App {
         {
             return;
         }
-        if command_info(id).is_some_and(|c| c.in_status_only) {
+        if command_info(id).is_some_and(CommandInfo::in_documents_only) {
             out.push(Effect::Notify(
                 "This acts in the status document: open it with SPC g g".into(),
                 Level::Warning,
@@ -910,7 +997,7 @@ impl App {
             "git.dispatch" => {
                 let ids: Vec<&'static str> = COMMANDS
                     .iter()
-                    .filter(|c| !c.in_status_only && c.id != "git.dispatch")
+                    .filter(|c| !c.in_documents_only() && c.id != "git.dispatch")
                     .map(|c| c.id)
                     .collect();
                 let items = ids
@@ -1515,7 +1602,7 @@ impl App {
         };
         let settings = actions::Settings {
             confirm_discard: self.settings.confirm_discard,
-            zero_context: false,
+            zero_context: self.settings.context_lines == 0,
         };
         let target = Target::File {
             section,
@@ -1903,7 +1990,14 @@ impl App {
     /// The status bar item and the panel, as the current repository is.
     fn show(&mut self, out: &mut Vec<Effect>) {
         out.push(Effect::Status(self.status_text()));
-        out.push(Effect::Panel(self.panel()));
+        if let Some(p) = self.shown_panel() {
+            out.push(Effect::Panel(p));
+        }
+    }
+
+    /// The panel, unless the setting `panel` is off.
+    pub fn shown_panel(&self) -> Option<Node> {
+        self.settings.panel.then(|| self.panel())
     }
 
     /// The status bar's text: the branch, ahead and behind, the changed
@@ -2131,12 +2225,22 @@ mod tests {
             "pull" => Some("\"rebase\"".into()),
             "glyphs" => Some("\"ascii\"".into()),
             "untracked" => Some("42".into()),
+            "context_lines" => Some("0".into()),
+            "panel" => Some("false".into()),
             _ => None,
         });
         assert!(!s.confirm_discard);
         assert_eq!(s.pull, PullMode::Rebase);
         assert_eq!(s.glyphs, Glyphs::Ascii);
         assert_eq!(s.untracked, Untracked::Normal);
+        assert_eq!(s.context_lines, 0);
+        assert!(!s.panel);
+        // A count past the most is the most; one of another type, the
+        // default.
+        let lines = |v: &str| Settings::read(|k| (k == "context_lines").then(|| v.into()));
+        assert_eq!(lines("50").context_lines, 20);
+        assert_eq!(lines("-1").context_lines, 3);
+        assert_eq!(lines("\"5\"").context_lines, 3);
     }
 
     #[test]

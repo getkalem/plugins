@@ -1,10 +1,10 @@
 {
   "id": "org.kalem.git",
   "name": "Git",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "The repository's status as a document, lazygit's panels in magit's form: changed files with their diffs under them (Tab), staged by file, hunk or line with magit's keys, committed, pushed and pulled; branches and stashes; changed lines marked beside the lines; on Doom's SPC g keys, with the arrows, Enter and Escape",
   "main": "dist/git.wasm",
-  "api": "^0.2.6",
+  "api": "^0.2.13",
   "activation": ["onStartup"],
   "permissions": ["subprocess:git"],
   "menus": [
@@ -39,18 +39,12 @@
       "default": "",
       "description": "Where git is, when it is not the one on the PATH: a full path; empty for the PATH's"
     },
-    "status_placement": {
-      "type": "string",
-      "enum": ["here", "split"],
-      "default": "here",
-      "description": "Where the status opens: in the current pane (Escape returns), or in a pane beside it"
-    },
     "context_lines": {
       "type": "integer",
       "minimum": 0,
       "maximum": 20,
       "default": 3,
-      "description": "Lines of context around each change of a diff"
+      "description": "Lines of context around each change of a diff, in the status and a commit view; 0 for none"
     },
     "untracked": {
       "type": "string",
@@ -68,24 +62,6 @@
       "type": "boolean",
       "default": true,
       "description": "Fetch removes the remote branches that are gone from the remote"
-    },
-    "log_graph": {
-      "type": "boolean",
-      "default": false,
-      "description": "The log draws its branches' graph at the left"
-    },
-    "log_count": {
-      "type": "integer",
-      "minimum": 20,
-      "maximum": 5000,
-      "default": 200,
-      "description": "Commits a log loads at a time"
-    },
-    "remote_link": {
-      "type": "string",
-      "enum": ["branch", "commit"],
-      "default": "branch",
-      "description": "What a link to the remote names: the branch, or the commit"
     },
     "gutter": {
       "type": "boolean",
