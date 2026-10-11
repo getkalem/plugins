@@ -121,6 +121,7 @@ fn kalem_run_prints_them() {
             "backlinks",
             root.join("pages/Kalem.md"),
         ),
+        ("graph.graphView", "drawing", root.clone()),
     ] {
         let out = std::process::Command::new(&kalem)
             .args(["run", "graph", command])
