@@ -287,6 +287,38 @@ fn finding_and_inserting() {
 }
 
 #[test]
+fn a_page_opened_before_its_file_is_written_has_its_backlinks() {
+    // Follow Reference on `[[Org]]` opens `pages/Org.md`, not written yet.
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let org = "/w/notes/pages/Org.md";
+    app.opened(&m, org);
+    let (_, _, _, content) =
+        document(&app.command(&m, "graph.backlinksDocument", &ctx(org, "", 0)));
+    assert!(
+        content.text.starts_with("Backlinks: Org"),
+        "{}",
+        content.text
+    );
+    assert!(
+        content.text.contains("An editor of [[Org]] files"),
+        "{}",
+        content.text
+    );
+    let out = app.command(&m, "graph.localGraph", &ctx(org, "", 0));
+    let (_, _, _, content) = document(&out);
+    assert_eq!(content.drawing.unwrap().focus.as_deref(), Some("org"));
+    // A file no link names is no page yet.
+    let out = app.command(
+        &m,
+        "graph.backlinksDocument",
+        &ctx("/w/notes/pages/Nothing.md", "", 0),
+    );
+    assert!(matches!(&out[..], [Effect::Notify(..)]), "{out:?}");
+}
+
+#[test]
 fn documents_and_enter() {
     let m = logseq();
     let mut app = App::new(Settings::default());

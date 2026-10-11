@@ -902,6 +902,24 @@ impl Index {
         }
     }
 
+    /// The page a file not written yet will hold, when a link names it
+    /// (Follow Reference opens it as a new document, written when saved):
+    /// its backlinks are known before the file is.
+    pub fn page_to_be(&self, rel: &str) -> Option<&Page> {
+        if self.files.contains_key(rel) {
+            return None;
+        }
+        let (stem, ext) = files::stem_ext(rel);
+        let key = match self.graph.kind {
+            Kind::Logseq if ext == "md" || ext == "org" => {
+                self.resolve(&names::file_to_title(stem, self.graph.file_names), rel)
+            }
+            Kind::Obsidian if ext == "md" => rel.strip_suffix(".md")?.to_lowercase(),
+            _ => return None,
+        };
+        self.pages.get(&key).filter(|p| p.path.is_none())
+    }
+
     /// A file's data.
     pub fn file(&self, rel: &str) -> Option<&FileData> {
         self.files.get(rel)

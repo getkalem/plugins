@@ -829,7 +829,9 @@ impl App {
             .max_by_key(|r| r.len())?;
         let index = &self.indexes[root];
         let rel = files::relative(root, &path)?;
-        Some((root.clone(), index.page_of(rel)?.key.clone()))
+        // A page opened before its file is written: its backlinks too.
+        let page = index.page_of(rel).or_else(|| index.page_to_be(rel))?;
+        Some((root.clone(), page.key.clone()))
     }
 
     fn panel_effects(&mut self) -> Vec<Effect> {
