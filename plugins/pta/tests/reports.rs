@@ -269,6 +269,29 @@ fn each_tools_register() {
             Dialect::Beancount => "76857.65 TRY",
         };
         assert_eq!(last, want, "{tool:?}");
+        // Within a period from mid-January, the same balance at the end:
+        // the postings before it counted, not left out.
+        let mid = Some((
+            Date {
+                y: 2026,
+                m: 1,
+                d: 15,
+            },
+            Date {
+                y: 2026,
+                m: 12,
+                d: 1,
+            },
+        ));
+        let (p, a) = report::register_command(tool, &main, account, mid);
+        let out = run(p, &a, &dir).expect("ran");
+        let within = match tool {
+            Dialect::Hledger => kalem_plugin_pta::reconcile::hledger_register(&out),
+            Dialect::Ledger => report::ledger_register(&out),
+            Dialect::Beancount => report::beancount_register(&out),
+        };
+        assert!(within.len() < rows.len(), "{tool:?}: {within:?}");
+        assert_eq!(&within[within.len() - 1].total, want, "{tool:?} within");
         let place = match tool {
             Dialect::Hledger => {
                 let json = run(
@@ -344,5 +367,73 @@ fn each_tools_reconciliation() {
         let postings = reconcile::open_of(tool, &run(p, &a, &dir).expect("ran"));
         assert_eq!(postings.len(), open, "{tool:?}: {postings:?}");
         assert!(postings.iter().all(|p| p.status != '*'), "{tool:?}");
+    }
+}
+
+/// A statement beside the reconciliation (PT8c): its lines paired with
+/// the account's postings the tool lists in the statement's days.
+#[test]
+fn a_statement_paired() {
+    use kalem_plugin_pta::statement;
+    let csv = "Date,Description,Amount\n2026-01-03,MIGROS,-842.35\n2026-01-31,KIRA,-15000.00\n2026-01-02,MAAS,45000.00\n2026-01-20,UNKNOWN FEE,-5.00\n";
+    let lines = statement::lines(csv).expect("lines");
+    let span = statement::span(&lines, 3);
+    let dir = corpus("hledger");
+    let main = dir.join("2026.journal").to_string_lossy().into_owned();
+    let (p, a) = report::register_command(Dialect::Hledger, &main, "assets:bank:ziraat", span);
+    let Some(out) = run(p, &a, &dir) else {
+        return;
+    };
+    let rows = kalem_plugin_pta::reconcile::hledger_register(&out);
+    let paired = statement::pair(&lines, &rows, 3);
+    assert_eq!(paired.found.len(), 3, "{rows:?}");
+    assert_eq!(paired.alone.len(), 1);
+    assert_eq!(paired.alone[0].description, "UNKNOWN FEE");
+    let market = rows
+        .iter()
+        .find(|r| r.amount == "-842,35 TRY")
+        .expect("the market");
+    assert!(paired.found.contains(&statement::key(market)));
+}
+
+/// The register narrowed by each tool's own query (PT7b's `/`).
+#[test]
+fn a_narrowed_register() {
+    for (tool, file, account, query, payee) in [
+        (
+            Dialect::Hledger,
+            "2026.journal",
+            "assets:bank:ziraat",
+            "desc:rent",
+            "Rent",
+        ),
+        (
+            Dialect::Ledger,
+            "business.ledger",
+            "Assets:Checking",
+            "payee Client",
+            "Client A pays",
+        ),
+        (
+            Dialect::Beancount,
+            "household.beancount",
+            "Assets:Bank:Ziraat",
+            "payee ~ 'Market'",
+            "Market",
+        ),
+    ] {
+        let dir = corpus(tool.language());
+        let main = dir.join(file).to_string_lossy().into_owned();
+        let (p, a) = report::narrowed_register(tool, &main, account, None, query);
+        let Some(out) = run(p, &a, &dir) else {
+            continue;
+        };
+        let rows = match tool {
+            Dialect::Hledger => kalem_plugin_pta::reconcile::hledger_register(&out),
+            Dialect::Ledger => report::ledger_register(&out),
+            Dialect::Beancount => report::beancount_register(&out),
+        };
+        assert_eq!(rows.len(), 1, "{tool:?}: {rows:?}");
+        assert!(rows[0].description.starts_with(payee), "{tool:?}: {rows:?}");
     }
 }

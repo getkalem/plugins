@@ -1,7 +1,7 @@
 {
   "id": "org.kalem.pta",
   "name": "Plain text accounting",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "hledger, Ledger and Beancount journals in Kalem: checked, reported, reconciled, imported and priced by the tool you already have, completed by their language servers",
   "main": "dist/pta.wasm",
   "api": "^0.2.13",
@@ -25,7 +25,7 @@
         "pta.previousTransaction", "pta.nextTransaction", "pta.dateEarlier", "pta.dateLater", "-",
         "pta.check", "pta.balance", "pta.register", "pta.report", "-",
         "pta.reconcile", "pta.finishReconcile", "pta.prices", "-",
-        "pta.version", "-",
+        "pta.setup", "pta.version", "-",
         "pta.menu"
       ]
     }
@@ -116,12 +116,12 @@
       "minimum": 0,
       "maximum": 400,
       "default": 52,
-      "description": "Align Amounts (SPC m a) puts the amounts' last digits at this column, as ledger-mode does; 0 for as near the accounts as the longest posting allows"
+      "description": "Align Amounts (SPC m =) puts the amounts' last digits at this column, as ledger-mode does; 0 for as near the accounts as the longest posting allows"
     },
     "align_on_enter": {
       "type": "boolean",
       "default": true,
-      "description": "Enter on a posting aligns its amount first, as ledger-mode does (not in Vim's insert mode, where SPC m a in normal mode does it)"
+      "description": "Enter on a posting aligns its amount first, as ledger-mode does (not in Vim's insert mode, where SPC m = in normal mode does it)"
     },
     "check_on_save": {
       "type": "boolean",
@@ -167,11 +167,16 @@
       "default": "unicode",
       "description": "The Balance's fold marks and a passed check's mark as ▾ ▸ ✓, or as v > ok for a terminal font without them"
     },
+    "match_days": {
+      "type": "integer",
+      "default": 3,
+      "description": "Pair with the Reconciliation (SPC m r in a statement): how many days a statement's line and its posting may be apart"
+    },
     "reports": {
       "type": "array",
       "default": [],
       "examples": [["Food by month: balance expenses:food -M"], ["Big spending: register expenses amt:>1000"], ["Cash: SELECT account, sum(position) WHERE account ~ 'Cash' GROUP BY account"]],
-      "description": "Reports of your own, first in Report… (SPC m o): NAME: ARGUMENTS, the tool's arguments after the journal's (hledger balance expenses -M), or a Beancount query"
+      "description": "Reports of your own, first in Report… (SPC m r): NAME: ARGUMENTS, the tool's arguments after the journal's (hledger balance expenses -M), or a Beancount query"
     },
     "prices": {
       "type": "string",

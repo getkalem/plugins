@@ -2,7 +2,7 @@
 //! closing balance. The tool's totals (cleared, pending, both) and its
 //! postings not cleared (`crate::reconcile`), the difference to the
 //! target the user typed, written again on the journal's save; the
-//! journal stays where postings are marked (`SPC m c`). Finish clears
+//! journal stays where postings are marked (`SPC m t`). Finish clears
 //! the pending postings and writes the target as a balance assertion,
 //! in the journal, once the difference is zero.
 
@@ -15,6 +15,7 @@ use crate::Dialect;
 use crate::journal::{self, Main};
 use crate::reconcile::{self, Figures, Which};
 use crate::report::{self, Posting};
+use crate::statement::{self, Line, Paired};
 use crate::write::Date;
 
 use super::{NotRun, resolve, run, today};
@@ -32,6 +33,9 @@ struct Reconciliation {
     target: String,
     figures: Figures,
     postings: Vec<Posting>,
+    /// The statement beside (PT8c): its file, its lines, and how they
+    /// pair with the account's postings.
+    statement: Option<(String, Vec<Line>, Paired)>,
     shown: report::Document,
     run: u64,
 }
@@ -63,7 +67,7 @@ pub(super) fn here() -> Option<(String, String)> {
     })
 }
 
-/// Reconcile (`SPC m r`): in a journal, the account of the posting at
+/// Reconcile (`SPC m R`): in a journal, the account of the posting at
 /// the cursor (else one picked), its target asked (the tool's total of
 /// the cleared and pending postings offered); in the document, run
 /// again.
@@ -179,6 +183,7 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                 );
             }
             Err(NotRun::Missing) => return ui::notify(&super::missing(tool), ui::Level::Warning),
+            Err(NotRun::TooLong) => return,
             Err(NotRun::Refused(why)) => {
                 return ui::notify(&format!("{}: {why}", tool.checker()), ui::Level::Warning);
             }
@@ -204,6 +209,7 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                         target: String::new(),
                         figures: Figures::default(),
                         postings: Vec::new(),
+                        statement: None,
                         shown: report::Document::default(),
                         run: 0,
                     });
@@ -296,9 +302,140 @@ fn gather(key: &(String, String), open: bool) {
                         }
                     });
                     write(&k3, open);
+                    pair(&k3);
                 });
             });
         });
+    });
+}
+
+/// The days a statement's line and its posting may be apart: the
+/// setting `match_days`, 3.
+fn match_days() -> i64 {
+    kalem_plugin::settings::own("match_days")
+        .and_then(|v| serde_json::from_str::<i64>(&v).ok())
+        .unwrap_or(3)
+        .clamp(0, 31)
+}
+
+/// Pair with the Statement (`SPC m r` in a CSV statement): its lines
+/// against the postings of the reconciliation open (one picked where
+/// several are), shown in its document and kept until another statement
+/// is paired, paired again whenever the reconciliation is written again.
+pub(super) fn with_statement() -> Result<String, String> {
+    let Some(path) = editor::document().and_then(|d| d.path) else {
+        return Ok("null".into());
+    };
+    let lines = match statement::lines(&editor::text(None)) {
+        Ok(l) => l,
+        Err(why) => {
+            ui::notify(&why, ui::Level::Warning);
+            return Ok("null".into());
+        }
+    };
+    let open: Vec<(String, String)> = RECONCILES.with(|r| {
+        r.borrow()
+            .iter()
+            .filter(|(_, e)| e.doc.is_some())
+            .map(|(k, _)| k.clone())
+            .collect()
+    });
+    let take = move |key: (String, String), path: String, lines: Vec<Line>| {
+        RECONCILES.with(|r| {
+            if let Some(e) = r.borrow_mut().get_mut(&key) {
+                e.statement = Some((path, lines, Paired::default()));
+            }
+        });
+        pair(&key);
+    };
+    match open.len() {
+        0 => ui::notify(
+            "No reconciliation open: Reconcile in the journal first (SPC m R)",
+            ui::Level::Info,
+        ),
+        1 => take(open[0].clone(), path, lines),
+        _ => {
+            let items: Vec<ui::PickItem> = open
+                .iter()
+                .map(|(m, a)| ui::PickItem {
+                    label: a.clone(),
+                    detail: Some(journal::name(m).to_string()),
+                })
+                .collect();
+            ui::quick_pick(
+                &items,
+                &ui::PickOptions {
+                    title: Some("The reconciliation this statement is for".into()),
+                    placeholder: None,
+                    many: false,
+                },
+                move |picked| {
+                    if let Some(k) = picked.first().and_then(|&i| open.get(i as usize)) {
+                        take(k.clone(), path, lines);
+                    }
+                },
+            );
+        }
+    }
+    Ok("null".into())
+}
+
+/// Pairs `key`'s statement, when it has one, with the account's postings
+/// in the statement's days (the tool's register), then writes the
+/// document again.
+fn pair(key: &(String, String)) {
+    let Some((tool, lines)) = RECONCILES.with(|r| {
+        let r = r.borrow();
+        let e = r.get(key)?;
+        Some((e.tool, e.statement.as_ref()?.1.clone()))
+    }) else {
+        return;
+    };
+    let days = match_days();
+    let Some(span) = statement::span(&lines, days) else {
+        return;
+    };
+    let (program, args) = report::register_command(tool, &key.0, &key.1, Some(span));
+    let dir = journal::folder(&key.0).to_string();
+    let key = key.clone();
+    run(program, args, &dir, move |r| {
+        let Ok(e) = r else { return };
+        if e.status != Some(0) {
+            return;
+        }
+        let out = String::from_utf8_lossy(&e.stdout);
+        let rows = match tool {
+            Dialect::Hledger => reconcile::hledger_register(&out),
+            Dialect::Ledger => report::ledger_register(&out),
+            Dialect::Beancount => report::beancount_register(&out),
+        };
+        let paired = statement::pair(&lines, &rows, days);
+        let said = format!(
+            "{} of the statement's {} lines found in the journal{}",
+            lines.len() - paired.alone.len(),
+            lines.len(),
+            if paired.flipped {
+                ", its amounts the other way round"
+            } else {
+                ""
+            }
+        );
+        let changed = RECONCILES.with(|m| {
+            let mut m = m.borrow_mut();
+            let Some(e) = m.get_mut(&key) else {
+                return false;
+            };
+            let Some(s) = e.statement.as_mut() else {
+                return false;
+            };
+            let changed = s.2 != paired;
+            s.2 = paired;
+            changed
+        });
+        if changed {
+            ui::notify(&said, ui::Level::Info);
+            write(&key, false);
+        }
     });
 }
 
@@ -308,8 +445,14 @@ fn write(key: &(String, String), open: bool) {
         let mut r = r.borrow_mut();
         let e = r.get_mut(key)?;
         let header = format!("Reconcile: {} · {} · {}", key.1, journal::name(&key.0), e.tool.language());
-        let hint = "Enter the posting · t target · C finish · r again · q close; mark postings in the journal (SPC m c), then save";
-        e.shown = reconcile::layout(&header, hint, &e.figures, &e.postings);
+        let hint = "Enter the posting · t target · C finish · r again · q close; mark postings in the journal (SPC m t), then save";
+        e.shown = reconcile::layout(
+            &header,
+            hint,
+            &e.figures,
+            &e.postings,
+            e.statement.as_ref().map(|(_, _, p)| p),
+        );
         Some((e.doc, e.shown.text.clone(), super::balance::styles(&e.shown)))
     }) else {
         return;
@@ -410,7 +553,7 @@ pub(super) fn finish() -> Result<String, String> {
     });
     let Some(key) = key else {
         ui::notify(
-            "No reconciliation of this journal: Reconcile first (SPC m r)",
+            "No reconciliation of this journal: Reconcile first (SPC m R)",
             ui::Level::Info,
         );
         return Ok("null".into());

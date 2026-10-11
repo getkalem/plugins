@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use kalem_plugin::{documents, editor, ui};
 
@@ -157,6 +158,8 @@ fn gather(main: Main, open: bool) {
                             });
                             write(&path, open, None);
                         }
+                        // An empty reason was told already (`run`).
+                        (Err(why), _) | (_, Err(why)) if why.is_empty() => {}
                         (Err(why), _) | (_, Err(why)) => ui::notify(&why, ui::Level::Warning),
                     }
                 },
@@ -213,61 +216,90 @@ fn section(
         });
         return;
     }
-    levels(main, s, bounds, depth, dir, 1, Vec::new(), done);
+    levels(main, s, bounds, depth, dir, done);
 }
 
-/// Beancount's levels from `level` on, until one adds no account (or the
-/// depth), then the total.
-#[allow(clippy::too_many_arguments)]
+/// What Beancount's balance is done with.
+type Done = Box<dyn FnOnce(Result<Part, String>)>;
+
+/// Beancount's levels as they come, and what is done with them.
+struct Gathered {
+    outs: Vec<Option<Result<String, String>>>,
+    done: Option<Done>,
+}
+
+/// Beancount's tree: its accounts whole first (the deepest level, which
+/// says how deep the tree goes, or the depth asked), then every level
+/// above and the total at once, side by side: `bean-query` reads the
+/// whole journal for each (some 7 s for 200,000 transactions).
 fn levels(
     main: String,
     s: Section,
     bounds: Option<(crate::write::Date, crate::write::Date)>,
     depth: usize,
     dir: String,
-    level: usize,
-    mut got: Vec<Vec<Row>>,
     done: impl FnOnce(Result<Part, String>) + 'static,
 ) {
-    let (program, mut args) = report::command(Dialect::Beancount, &main, s, bounds, depth, level);
-    if valued(&main) {
-        args = report::value_args(tool_or(&main), &mut args);
-    }
+    let command = move |main: &str, level: usize| {
+        let (program, mut args) =
+            report::command(Dialect::Beancount, main, s, bounds, depth, level);
+        if valued(main) {
+            args = report::value_args(tool_or(main), &mut args);
+        }
+        (program, args)
+    };
+    let deepest = if depth > 0 { depth } else { 12 };
+    let (program, args) = command(&main, deepest);
     let d = dir.clone();
     run(program, args, &dir, move |r| {
-        let rows = match read(Dialect::Beancount, r) {
+        let whole = match read(Dialect::Beancount, r) {
             Ok(out) => report::beancount_rows(&out),
             Err(why) => return done(Err(why)),
         };
-        let names = |rows: &[Row]| {
-            rows.iter()
-                .map(|r| r.account.clone())
-                .collect::<BTreeSet<_>>()
-        };
-        let same = got.last().is_some_and(|last| names(last) == names(&rows));
-        let last = same || rows.is_empty() || level >= 12 || (depth > 0 && level >= depth);
-        if !same {
-            got.push(rows);
-        }
-        if !last {
-            return levels(main, s, bounds, depth, d, level + 1, got, done);
-        }
-        let (program, mut args) = report::command(Dialect::Beancount, &main, s, bounds, depth, 0);
-        if valued(&main) {
-            args = report::value_args(tool_or(&main), &mut args);
-        }
-        run(program, args, &d, move |r| {
-            done(read(Dialect::Beancount, r).map(|out| {
-                Part {
-                    rows: report::beancount_tree(&got),
-                    total: report::beancount_rows(&out)
-                        .into_iter()
-                        .next()
-                        .map(|r| r.amounts)
-                        .unwrap_or_default(),
+        let max = whole
+            .iter()
+            .map(|r| r.account.split(':').count())
+            .max()
+            .unwrap_or(0);
+        // The levels above the deepest, then the total (level 0).
+        let wanted: Vec<usize> = (1..max.min(deepest)).chain([0]).collect();
+        // Each level's output as it comes, and what to do with them all.
+        let outs: Vec<Option<Result<String, String>>> = vec![None; wanted.len()];
+        let done: Done = Box::new(done);
+        let state = Rc::new(RefCell::new(Gathered {
+            outs,
+            done: Some(done),
+        }));
+        for (i, &level) in wanted.iter().enumerate() {
+            let (program, args) = command(&main, level);
+            let state = state.clone();
+            let whole = whole.clone();
+            run(program, args, &d, move |r| {
+                let mut st = state.borrow_mut();
+                st.outs[i] = Some(read(Dialect::Beancount, r));
+                if st.outs.iter().any(Option::is_none) {
+                    return;
                 }
-            }));
-        });
+                let Some(done) = st.done.take() else { return };
+                let outs: Result<Vec<String>, String> =
+                    st.outs.iter_mut().filter_map(Option::take).collect();
+                drop(st);
+                done(outs.map(|mut outs| {
+                    let total = outs.pop().unwrap_or_default();
+                    let mut got: Vec<Vec<Row>> =
+                        outs.iter().map(|o| report::beancount_rows(o)).collect();
+                    got.push(whole);
+                    Part {
+                        rows: report::beancount_tree(&got),
+                        total: report::beancount_rows(&total)
+                            .into_iter()
+                            .next()
+                            .map(|r| r.amounts)
+                            .unwrap_or_default(),
+                    }
+                }));
+            });
+        }
     });
 }
 
@@ -287,6 +319,8 @@ fn read(tool: Dialect, r: Result<kalem_plugin::process::Exit, NotRun>) -> Result
         }
         Err(NotRun::Missing) => Err(super::missing(tool)),
         Err(NotRun::Refused(why)) => Err(format!("{}: {why}", tool.checker())),
+        // Told by `run`.
+        Err(NotRun::TooLong) => Err(String::new()),
     }
 }
 
@@ -367,6 +401,7 @@ pub(super) fn styles(d: &report::Document) -> Vec<documents::StyledSpan> {
                 report::Style::Hint | report::Style::Mark => TextStyle::color(Color::Muted),
                 report::Style::Negative => TextStyle::color(Color::Red),
                 report::Style::Total => TextStyle::color(Color::Default).bold(),
+                report::Style::Warning => TextStyle::color(Color::Yellow),
             },
         })
         .collect()

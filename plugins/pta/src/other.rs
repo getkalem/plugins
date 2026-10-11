@@ -321,6 +321,12 @@ pub fn header(tool: Dialect, r: &Report) -> Option<&'static str> {
 /// The rows of CSV `text`: fields split at commas outside quotes, `""`
 /// a quote, a line feed inside quotes kept.
 pub fn csv_rows(text: &str) -> Vec<Vec<String>> {
+    csv_rows_with(text, ',')
+}
+
+/// The rows of `text` with fields split at `sep` (`;` and tabs too, as
+/// bank statements have them).
+pub fn csv_rows_with(text: &str, sep: char) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
     let mut row = Vec::new();
     let mut field = String::new();
@@ -335,7 +341,7 @@ pub fn csv_rows(text: &str) -> Vec<Vec<String>> {
             (true, '"') => quoted = false,
             (true, c) => field.push(c),
             (false, '"') => quoted = true,
-            (false, ',') => row.push(std::mem::take(&mut field)),
+            (false, c) if c == sep => row.push(std::mem::take(&mut field)),
             (false, '\r') => {}
             (false, '\n') => {
                 row.push(std::mem::take(&mut field));

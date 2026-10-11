@@ -74,6 +74,22 @@ pub fn drafted(tool: Dialect, stdout: &str) -> (usize, String) {
     (count, text)
 }
 
+/// The `k`-th last transaction of hledger's `print -O json` by its
+/// number (`tindex`): the first of the last `k` appended.
+pub fn nth_last(print_json: &str, k: usize) -> Option<usize> {
+    let all: serde_json::Value = serde_json::from_str(print_json).ok()?;
+    let mut n: Vec<u64> = all
+        .as_array()?
+        .iter()
+        .filter_map(|t| t["tindex"].as_u64())
+        .collect();
+    n.sort_unstable();
+    n.len()
+        .checked_sub(k.max(1))
+        .and_then(|i| n.get(i))
+        .map(|&t| t as usize)
+}
+
 /// The rules file hledger said is missing, from its error.
 pub fn missing_rules(stderr: &str) -> Option<String> {
     let at = stderr.find(".rules: openFile: does not exist")?;
@@ -85,7 +101,7 @@ pub fn missing_rules(stderr: &str) -> Option<String> {
 /// meaning (`Date`, `Tarih` → `date`; `Description`, `Açıklama`,
 /// `Payee` → `description`; `Amount`, `Tutar` → `amount`; `Balance`,
 /// `Bakiye` → `balance`), another in lower case with `_` for blanks.
-fn field(header: &str) -> String {
+pub(crate) fn field(header: &str) -> String {
     let h = header.trim().trim_matches('"').to_lowercase();
     let is = |words: &[&str]| words.iter().any(|w| h == *w || h.starts_with(w));
     if is(&["date", "tarih", "datum", "fecha"]) {
@@ -118,7 +134,7 @@ fn field(header: &str) -> String {
 /// `03.02.2026`, `03/02/2026`, `2/3/2026`): day first where the first
 /// part is above 12, or the separator is a dot; month first for a slash
 /// whose second part is above 12.
-fn date_format(date: &str) -> String {
+pub(crate) fn date_format(date: &str) -> String {
     let d = date.trim().trim_matches('"');
     let sep = d.chars().find(|c| !c.is_ascii_digit()).unwrap_or('-');
     let parts: Vec<&str> = d.split(sep).collect();
@@ -249,6 +265,10 @@ mod tests {
             Some("/s/other.csv.rules")
         );
         assert_eq!(missing_rules("hledger: Error: something else"), None);
+        let printed = r#"[{"tindex": 7}, {"tindex": 40}, {"tindex": 41}]"#;
+        assert_eq!(nth_last(printed, 2), Some(40));
+        assert_eq!(nth_last(printed, 1), Some(41));
+        assert_eq!(nth_last(printed, 4), None);
     }
 
     #[test]

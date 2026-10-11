@@ -527,8 +527,16 @@ pub struct Figures {
 }
 
 /// The Reconcile document: the figures, then the postings not cleared,
-/// each line's posting's index (as text) in `lines`.
-pub fn layout(header: &str, hint: &str, f: &Figures, postings: &[Posting]) -> Document {
+/// each line's posting's index (as text) in `lines`; with a statement
+/// beside (PT8c), each posting said to be on it (muted) or not (yellow),
+/// then the statement's lines without a posting (red).
+pub fn layout(
+    header: &str,
+    hint: &str,
+    f: &Figures,
+    postings: &[Posting],
+    statement: Option<&crate::statement::Paired>,
+) -> Document {
     let mut doc = Document::default();
     let push = |doc: &mut Document, s: String, style: Option<Style>, at: Option<String>| {
         let start = doc.text.len();
@@ -621,7 +629,56 @@ pub fn layout(header: &str, hint: &str, f: &Figures, postings: &[Posting]) -> Do
                 Style::Negative,
             ));
         }
+        let line = match statement {
+            Some(s) if s.found.contains(&crate::statement::key(p)) => {
+                let mark = "  on the statement";
+                doc.styles.push((
+                    start + line.len()..start + line.len() + mark.len(),
+                    Style::Hint,
+                ));
+                format!("{line}{mark}")
+            }
+            Some(_) => {
+                let mark = "  not on the statement";
+                doc.styles.push((
+                    start + line.len()..start + line.len() + mark.len(),
+                    Style::Warning,
+                ));
+                format!("{line}{mark}")
+            }
+            None => line,
+        };
         push(&mut doc, line, None, Some(i.to_string()));
+    }
+    if let Some(s) = statement {
+        push(&mut doc, String::new(), None, None);
+        push(
+            &mut doc,
+            format!("On the statement alone: {}", s.alone.len()),
+            Some(Style::Section),
+            None,
+        );
+        if !s.alone.is_empty() {
+            push(
+                &mut doc,
+                "Not in the journal: Import in the statement (SPC m i) takes them".into(),
+                Some(Style::Hint),
+                None,
+            );
+        }
+        for l in &s.alone {
+            push(
+                &mut doc,
+                format!(
+                    "  {}  {}  {}",
+                    l.date.written('-'),
+                    l.description,
+                    l.written
+                ),
+                Some(Style::Negative),
+                None,
+            );
+        }
     }
     doc
 }

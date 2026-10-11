@@ -27,6 +27,8 @@ struct Register {
     period: Period,
     /// Market values (`v`).
     valued: bool,
+    /// The tool's query narrowing it (`/`), empty for none.
+    query: String,
     rows: Vec<Posting>,
     shown: report::Document,
     run: u64,
@@ -144,6 +146,7 @@ fn open(tool: Dialect, main: String, account: String, period: Option<Period>) {
             doc: None,
             period: Period::All,
             valued: false,
+            query: String::new(),
             rows: Vec::new(),
             shown: report::Document::default(),
             run: 0,
@@ -171,16 +174,16 @@ pub(super) fn saved(main: &str) {
 
 /// Runs the tool's register and writes the document.
 fn gather(key: &(String, String), open: bool) {
-    let Some((tool, period, valued, run_no)) = REGISTERS.with(|r| {
+    let Some((tool, period, valued, query, run_no)) = REGISTERS.with(|r| {
         let mut r = r.borrow_mut();
         let e = r.get_mut(key)?;
         e.run += 1;
-        Some((e.tool, e.period, e.valued, e.run))
+        Some((e.tool, e.period, e.valued, e.query.clone(), e.run))
     }) else {
         return;
     };
     let (program, mut args) =
-        report::register_command(tool, &key.0, &key.1, period.bounds(today()));
+        report::narrowed_register(tool, &key.0, &key.1, period.bounds(today()), &query);
     if valued {
         args = report::value_args(tool, &mut args);
     }
@@ -202,6 +205,7 @@ fn gather(key: &(String, String), open: bool) {
                 return ui::notify(&format!("{}: {first}", tool.checker()), ui::Level::Warning);
             }
             Err(NotRun::Missing) => return ui::notify(&super::missing(tool), ui::Level::Warning),
+            Err(NotRun::TooLong) => return,
             Err(NotRun::Refused(why)) => {
                 return ui::notify(&format!("{}: {why}", tool.checker()), ui::Level::Warning);
             }
@@ -226,7 +230,7 @@ fn write(key: &(String, String), open: bool) {
     let Some((doc, text, styles, last)) = REGISTERS.with(|r| {
         let mut r = r.borrow_mut();
         let e = r.get_mut(key)?;
-        let header = format!(
+        let mut header = format!(
             "Register: {} · {} · {} · {}{}",
             e.account,
             journal::name(&e.main),
@@ -234,7 +238,11 @@ fn write(key: &(String, String), open: bool) {
             e.period.name(),
             if e.valued { " · market value" } else { "" }
         );
-        let hint = "Enter the posting · p period · v value · r again · q close";
+        if !e.query.is_empty() {
+            header.push_str(" · ");
+            header.push_str(&e.query);
+        }
+        let hint = "Enter the posting · p period · v value · / narrow · r again · q close";
         e.shown = report::register_layout(&header, hint, &e.rows);
         let last = e.shown.lines.iter().rposition(Option::is_some).map(|n| {
             e.shown
@@ -304,7 +312,8 @@ pub(super) fn visit() -> Result<String, String> {
 }
 
 /// The journal at `posting`: its place, or hledger's transaction's,
-/// found in `hledger print -O json` of `main` when asked.
+/// found in `hledger print -O json` of `main` for the posting's day (the
+/// whole journal's may pass 16 MB) when asked.
 pub(super) fn go_to(tool: Dialect, main: &str, posting: Posting) {
     if let Some((file, line)) = posting.place {
         go(&file, line);
@@ -313,13 +322,21 @@ pub(super) fn go_to(tool: Dialect, main: &str, posting: Posting) {
     let Some(n) = posting.transaction else {
         return;
     };
-    let args = vec![
+    let mut args = vec![
         "-f".into(),
         main.to_string(),
         "print".into(),
         "-O".into(),
         "json".into(),
     ];
+    if let Some((day, _, _)) = crate::write::date_at(&posting.date) {
+        args.extend([
+            "-b".into(),
+            day.written('-'),
+            "-e".into(),
+            day.plus(1).written('-'),
+        ]);
+    }
     let dir = journal::folder(main).to_string();
     run(tool.checker(), args, &dir, move |r| {
         let place = r
@@ -370,6 +387,46 @@ pub(super) fn pick_period() -> Result<String, String> {
             REGISTERS.with(|r| {
                 if let Some(e) = r.borrow_mut().get_mut(&key) {
                     e.period = p;
+                }
+            });
+            gather(&key, false);
+        },
+    );
+    Ok("null".into())
+}
+
+/// `/`: the register narrowed by the tool's own query (hledger's
+/// `desc:market amt:>100`, Ledger's `payee market`, a Beancount
+/// condition such as `narration ~ 'Market'`); empty for all of it.
+pub(super) fn narrow() -> Result<String, String> {
+    let Some(key) = here() else {
+        return Ok("null".into());
+    };
+    let Some((tool, now)) =
+        REGISTERS.with(|r| r.borrow().get(&key).map(|e| (e.tool, e.query.clone())))
+    else {
+        return Ok("null".into());
+    };
+    let example = match tool {
+        Dialect::Hledger => "desc:market amt:>100",
+        Dialect::Ledger => "payee market",
+        Dialect::Beancount => "narration ~ 'Market'",
+    };
+    ui::prompt(
+        &format!(
+            "Narrow the register ({}'s query, empty for all)",
+            tool.language()
+        ),
+        &ui::PromptOptions {
+            value: Some(now),
+            placeholder: Some(example.into()),
+            password: false,
+        },
+        move |answer| {
+            let Some(q) = answer else { return };
+            REGISTERS.with(|r| {
+                if let Some(e) = r.borrow_mut().get_mut(&key) {
+                    e.query = q.trim().to_string();
                 }
             });
             gather(&key, false);

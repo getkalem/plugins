@@ -50,6 +50,7 @@ fn not_run(program: &str, install: &str, why: NotRun) {
             "{program} is not installed: {install}; or give its path as the setting programs.{program}"
         ),
         NotRun::Refused(why) => format!("{program}: {why}"),
+        NotRun::TooLong => return,
     };
     ui::notify(&said, ui::Level::Warning);
 }

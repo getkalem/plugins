@@ -165,6 +165,7 @@ fn gather(tool: Dialect, main: String, doc: String, markup: Markup, r: Report, p
                 return ui::notify(&format!("{program}: {first}"), ui::Level::Warning);
             }
             Err(NotRun::Missing) => return ui::notify(&super::missing(tool), ui::Level::Warning),
+            Err(NotRun::TooLong) => return,
             Err(NotRun::Refused(why)) => {
                 return ui::notify(&format!("{program}: {why}"), ui::Level::Warning);
             }

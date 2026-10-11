@@ -265,6 +265,7 @@ fn gather(key: &(String, String), open: bool) {
                 };
                 return ui::notify(&said, ui::Level::Warning);
             }
+            Err(NotRun::TooLong) => return,
             Err(NotRun::Refused(why)) => {
                 return ui::notify(&format!("{program}: {why}"), ui::Level::Warning);
             }

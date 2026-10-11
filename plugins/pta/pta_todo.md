@@ -289,7 +289,7 @@ first.
   that a fixed release is noticed. Ledger has no server; hledger-lsp
   is not given Ledger's files, since hledger cannot read their value
   expressions.)
-- [~] PT3b beancount-language-server (Rust, `cargo install
+- [x] PT3b beancount-language-server (Rust, `cargo install
   beancount-language-server` or Homebrew, 1.9.x): `command`
   `["beancount-language-server"]`, `candidates` it and
   `~/.cargo/bin/beancount-language-server`; it must be told the main
@@ -318,7 +318,8 @@ first.
   which the component takes as Beancount's main journal too while
   `journal` is empty, so one setting serves both; checked with a
   Kalem built from the branch: the included file clean, the item
-  `beancount · main.beancount`. Done once that Kalem is released.)
+  `beancount · main.beancount`. Done once that Kalem is released.
+  Kalem 0.6.16 released it, 2026-10-11.)
 - [x] PT3c The main journal and the tool. Includes make one file the
   root: the tool, the servers and every report must be given it.
   The plugin's setting `journal` (a path relative to the project; the
@@ -580,7 +581,7 @@ first.
   `tests/reports.rs` runs each tool on the corpus (a subtotal, a
   section's accounts, a period's change against the balance at its
   end).)
-- [~] PT7b `pta.register` (`SPC m R`; Enter on an account in PT7a; the
+- [x] PT7b `pta.register` (`SPC m R`; Enter on an account in PT7a; the
   account at the cursor in a journal, else asked): "Register:
   Expenses:Market" (kind `pta-register`), one line per posting: date,
   status, description, the other account, the amount, the running
@@ -595,7 +596,12 @@ first.
   the earlier ones by period, since `process` cuts output at 16 MB and
   a document of a million lines helps no one.
   (Done 2026-10-11 but the typed query (`SPC m /`); checked in the
-  terminal editor: from the Balance's Enter, `SPC m R` on a posting's
+  terminal editor. The typed query came later the same day: `/` in the
+  Register asks the tool's own query (hledger's terms, Ledger's, a
+  Beancount condition), added to the account's (`report::
+  narrowed_register`; Ledger's in parentheses with `and`), the header
+  naming it; a test narrows each tool's. From the Balance's Enter,
+  `SPC m R` on a posting's
   account (`write::account_at`), or an account picked from the tool's
   (`hledger accounts`, `ledger accounts`, `bean-query`'s); the account
   with its subaccounts (`^ACCOUNT(:|$)`); hledger's `register -O csv`
@@ -711,7 +717,7 @@ first.
   transaction cleared, the assertion written, `hledger check
   --strict` passing. Pending marks in an included file are not
   cleared (only the open journal is edited).)
-- [ ] PT8c The statement beside: `pta.reconcileWith`, in a CSV
+- [x] PT8c The statement beside: `pta.reconcileWith`, in a CSV
   document (Kalem's grid) or from the reconcile document, pairs the
   statement's rows with the account's postings by date and amount
   (the date within the setting `match_days`, 3; the amount exact
@@ -721,6 +727,24 @@ first.
   PT9 offered for them). No tool does this; the plugin reads the CSV
   through `editor.text` when the command runs there, or through `fs`
   (`fs:read:workspace`) when it runs from the reconcile document.
+  (Done 2026-10-11 from the CSV document, checked in the terminal
+  editor: Pair with the Reconciliation (`SPC m r` in a statement) reads
+  its lines (`src/statement.rs`: the date, description and amount
+  columns, or money in and out, by their headers as the import's rules
+  template names them; the date format of the first; the decimal mark
+  most amounts have; `;` or tab separated too), asks the tool for the
+  account's register in the statement's days widened by `match_days`
+  (3), and pairs line and posting by the same amount, the nearest
+  date first, the statement's signs as written or turned (a card's
+  charges above zero), whichever pairs more. The Reconcile document
+  then says of each posting not cleared "on the statement" (muted) or
+  "not on the statement" (yellow), and lists the statement's lines
+  without a posting in red, Import named for them. Kept with the
+  reconciliation and paired again each time it is written (the
+  journal saved). Not done: from the Reconcile document (it would need
+  `fs:read:workspace` for the file, a permission the plugin does not
+  ask yet), and the rules' own sign conventions (the turned signs
+  cover a card).)
 
 ## PT9. Import from bank statements
 
@@ -853,9 +877,11 @@ first.
   document suits its commands, which act on no note). Checked in the
   terminal editor: F10 lists "Journal › …" with the keys, `SPC m m`'s
   pick runs Toggle Status on the journal. The which-key group under
-  `SPC m` is named by Kalem from the commands' category. Open: the
-  tool and the journal through a pick (the settings page has them);
-  the window's toolbar not looked at.)
+  `SPC m` is named by Kalem from the commands' category. Later the
+  same day: Main Journal and Tool… (`pta.setup`, in the menu and the
+  pick) sets `journal` (this file, another typed, none) and `tool`
+  from a pick, through `settings.set`, the status bar item following.
+  Open: the window's toolbar not looked at.)
 - [~] PT11b Org: `pta.insertAsTable` in an Org document, the report of
   PT7c chosen as an Org table (`hledger … -O csv`, `bean-query -f
   csv`, converted as Kalem converts CSV to an Org table and inserted
@@ -917,7 +943,7 @@ first.
 
 ## PT13. Speed, limits and the tests
 
-- [ ] PT13 The accountant's journal: 200,000 transactions over ten
+- [x] PT13 The accountant's journal: 200,000 transactions over ten
   files. Every tool call asynchronous (`process` never waits), the
   status bar item showing the running one; the documents of PT7
   paged by period as said; outputs over `process`'s 16 MB refused
@@ -934,10 +960,34 @@ first.
   fixtures, so they run without the tools; snapshot tests of every
   document kind in both frontends; the byte-for-byte tests of PT4 and
   PT6 on every corpus file.
+  (Done 2026-10-11, measured by `tests/large.rs` (ignored, run by hand:
+  it writes the journal for hledger and Ledger, one syntax, and for
+  Beancount, in `PTA_LARGE`) and `tests/server.rs`'s ignored
+  `the_servers_on_the_large_journal`; the numbers in the README. Every
+  call was asynchronous already; the status bar item now names the
+  program running. An output Kalem cut at 16 MB (`truncated`) is
+  refused in `run` with a notice naming a shorter period (`NotRun::
+  TooLong`), never shown cut: hledger's JSON register, some 1.3 KB a
+  posting, passes it beyond some 12,000 postings in the period (184 MB
+  for the busiest account's 140,000), Ledger's and Beancount's at some
+  150,000. hledger's `print -O json` for a posting's place (Enter in
+  the Register, the first transaction imported) asked for its day
+  only, not the whole journal. `hledger files` (LEDGER_FILE's journal),
+  some 9 s of a processor on this journal, asked once and kept until a
+  journal is saved, its askers waiting together. Beancount's Balance
+  asks its accounts whole first, then the levels above and the total
+  side by side, not one after another. The JSON of 140,000 postings is
+  parsed in 1.1 s natively (14,000 in 0.1 s), within the component's
+  budget since no more than 16 MB arrives. Tests on recorded fixtures
+  were there for each tool's output (balance rows, registers, checks,
+  hledger's JSON); snapshot tests of the frontends are Kalem's. Times
+  vary with the machine's load: measured while other sessions built;
+  hledger's own parsing (some 8 to 10 s of a processor a call) is the
+  floor.)
 
 ## PT14. Release, the README and the Book
 
-- [~] PT14 The README: what it does, the feature table per dialect
+- [x] PT14 The README: what it does, the feature table per dialect
   (what the server gives, what the tool gives, what the plugin
   itself does), the install lines (hledger, Ledger, Beancount and
   Python's `beancount`, the two servers, `bean-price`, `pricehist`),
@@ -971,7 +1021,17 @@ first.
   transaction, `g b` the Balance; `r`, Doom's report, the Balance until
   Report… comes), the plugin's others on letters Doom leaves free (`=`
   Align Amounts, `g r` Register, `k`, `b`, `y`, `p`, `C`, `m`); the
-  keys the tasks above name are their first letters.)
+  keys the tasks above name are their first letters.
+  The tag `pta-v0.1.0` and its release came the same day, by the git
+  session. The Book's chapter, `book/part-3/plain-text-accounting.org`
+  in Kalem's repository (Part III, where the plugins' chapters are, in
+  the format skeleton's order), is on Kalem's branch `book-pta`
+  (worktree `org-book-pta`), listed after the note graphs.
+  0.2.0 prepared the same evening, for Kalem 0.6.18 (K13 and K14 in
+  it, and the Book's chapter): PT7c, PT8c, PT11b, PT11c, PT13, the
+  Register's narrowing and historical totals, Main Journal and Tool…;
+  `api` still `^0.2.13`, every interface the component imports being
+  at 0.2.13.)
 
 ## What Kalem's core must gain
 
@@ -1042,6 +1102,19 @@ plugin's section 9 followed).
   command as a language's formatter: one `commands.format` serves all
   of a plugin's languages (`bean-format` would run on an hledger
   journal), and Align Amounts cannot be Format Document's in a journal.
+- K14 A component installed from the index by its name gets the files
+  its manifest names: Kalem 0.6.16 and 0.6.17 write only the released
+  component and `plugin.json` (`plugin_store::released_component`), so
+  pta 0.1.0 installed as `kalem plugin install pta` (or from Browse
+  Plugins) has no syntaxes, and Kalem loads none of its languages
+  (`languages::load_plugin` fails on the first syntax file missing):
+  no highlighting, no servers, the commands only. Found by the
+  documentation session, 2026-10-11. Done the same day on the Kalem
+  branch `released-files` (worktree `org-released-files`): the
+  manifest's `syntaxes` and `syntaxBases` fetched from the folder at
+  the release's tag, as the manifest is. Until that Kalem is released,
+  the plugin's folder link installs it whole (the folder at the tag,
+  the component from the release).
 - K13 `kalem run` waiting for a plugin's programs and requests: batch
   mode stopped as soon as the command returned, so a command whose
   document is written once its program ends (every one of this

@@ -1,7 +1,7 @@
 [package]
 name = "kalem-plugin-pta"
 description = "Plain text accounting for Kalem: hledger, Ledger and Beancount journals written, checked, imported, reconciled and reported"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -37,7 +37,7 @@ kalem-highlight = { git = "https://github.com/getkalem/kalem", rev = "dec56dcbcb
 kalem-lsp = { git = "https://github.com/getkalem/kalem", rev = "dec56dcbcbbf138af17a2651833e094cf1bd3583" }
 
 # The component: Kalem's `extension` world with its `process` interface
-# (plugin API 0.2.9).
+# (plugin API 0.2.13).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main" }
 

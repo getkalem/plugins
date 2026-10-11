@@ -387,6 +387,8 @@ pub enum Style {
     Mark,
     Negative,
     Total,
+    /// To look at: a posting the statement does not have.
+    Warning,
 }
 
 /// The balance document: its text, styles, and the account of each line
@@ -623,18 +625,27 @@ pub fn register_command(
     account: &str,
     bounds: Option<(Date, Date)>,
 ) -> (&'static str, Vec<String>) {
+    narrowed_register(tool, main, account, bounds, "")
+}
+
+/// The register narrowed by `query` in the tool's own query language:
+/// hledger's terms (`desc:market amt:>100`), Ledger's (`payee market`),
+/// a Beancount condition (`narration ~ 'Market'`); all of them and the
+/// account's.
+pub fn narrowed_register(
+    tool: Dialect,
+    main: &str,
+    account: &str,
+    bounds: Option<(Date, Date)>,
+    query: &str,
+) -> (&'static str, Vec<String>) {
+    let query = query.trim();
     let pattern = account_pattern(account);
     let mut a: Vec<String> = Vec::new();
-    let dates = |a: &mut Vec<String>| {
-        if let Some((begin, end)) = bounds {
-            a.extend([
-                "-b".into(),
-                begin.written('-'),
-                "-e".into(),
-                end.written('-'),
-            ]);
-        }
-    };
+    // Within a period the running total is still the account's balance,
+    // the postings before it counted: hledger's `-H`, Ledger's postings
+    // shown by date (`-d`) rather than taken (`-b`), Beancount's opening
+    // balances (`FROM OPEN ON`).
     match tool {
         Dialect::Hledger => {
             a.extend([
@@ -644,26 +655,55 @@ pub fn register_command(
                 "-O".into(),
                 "json".into(),
             ]);
-            dates(&mut a);
+            if let Some((begin, end)) = bounds {
+                a.extend([
+                    "-H".into(),
+                    "-b".into(),
+                    begin.written('-'),
+                    "-e".into(),
+                    end.written('-'),
+                ]);
+            }
             a.push(format!("acct:{pattern}"));
+            a.extend(crate::other::words(query));
             ("hledger", a)
         }
         Dialect::Ledger => {
             a.extend(["-f".into(), main.into(), "register".into()]);
             a.extend(["--register-format".into(), LEDGER_REGISTER.into()]);
-            dates(&mut a);
-            a.extend(ledger_pattern(account));
+            if let Some((begin, end)) = bounds {
+                a.extend([
+                    "-d".into(),
+                    format!("d>=[{}] & d<[{}]", begin.written('/'), end.written('/')),
+                ]);
+            }
+            if query.is_empty() {
+                a.extend(ledger_pattern(account));
+            } else {
+                a.push("(".into());
+                a.extend(ledger_pattern(account));
+                a.extend([")".into(), "and".into(), "(".into()]);
+                a.extend(crate::other::words(query));
+                a.push(")".into());
+            }
             ("ledger", a)
         }
         Dialect::Beancount => {
-            let mut wh = vec![format!("account ~ '{}'", pattern.replace('\'', "\\'"))];
-            if let Some((begin, end)) = bounds {
-                wh.push(format!("date >= {}", begin.written('-')));
-                wh.push(format!("date < {}", end.written('-')));
-            }
+            let from = bounds.map_or(String::new(), |(begin, end)| {
+                format!(
+                    "FROM OPEN ON {} CLOSE ON {} ",
+                    begin.written('-'),
+                    end.written('-')
+                )
+            });
+            let and = if query.is_empty() {
+                String::new()
+            } else {
+                format!(" AND ({query})")
+            };
             let q = format!(
-                "SELECT date, flag, payee, narration, position, balance, filename, lineno WHERE {}",
-                wh.join(" AND ")
+                "SELECT date, flag, payee, narration, position, balance, filename, lineno {from}WHERE account ~ '{}'{and}",
+                pattern.replace('\'', "\\'")
             );
             (
                 "bean-query",
