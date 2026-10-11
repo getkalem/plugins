@@ -44,6 +44,42 @@ pub const TEXT_TYPES: &[&str] = &[
     "bean",
 ];
 
+/// The journal's commands as the Journal menu, the Journal button's
+/// pick (`pta.menu`) and the manifest's `menus` list them: the command,
+/// its title (the palette adds the category, Journal) and its keys in
+/// Vim's command mode; `-` separates groups.
+pub const MENU: &[(&str, &str, &str)] = &[
+    ("pta.newTransaction", "New Transaction", "SPC m t"),
+    ("pta.copyTransaction", "Copy Transaction", "SPC m y"),
+    ("pta.toggleStatus", "Toggle Status", "SPC m c"),
+    ("-", "", ""),
+    ("pta.align", "Align Amounts", "SPC m a"),
+    ("pta.sort", "Sort Transactions", "SPC m s"),
+    ("-", "", ""),
+    ("pta.previousTransaction", "Previous Transaction", "Alt+Up"),
+    ("pta.nextTransaction", "Next Transaction", "Alt+Down"),
+    ("pta.dateEarlier", "Date a Day Earlier", "Ctrl+Shift+H"),
+    ("pta.dateLater", "Date a Day Later", "Ctrl+Shift+L"),
+    ("-", "", ""),
+    ("pta.check", "Check Journal", "SPC m k"),
+    ("-", "", ""),
+    ("pta.version", "Tool Version", ""),
+];
+
+/// The text type of the plugin's Check document.
+pub const CHECK_KIND: &str = "pta-check";
+
+/// The when-clause of the Journal menu and button: a journal, or the
+/// plugin's Check document.
+pub fn menu_when() -> String {
+    let types: Vec<String> = TEXT_TYPES
+        .iter()
+        .chain(std::iter::once(&CHECK_KIND))
+        .map(|t| format!("textType == {t}"))
+        .collect();
+    types.join(" || ")
+}
+
 /// The when-clause of a journal: its text type is one of [`TEXT_TYPES`].
 pub fn journal_when() -> String {
     let types: Vec<String> = TEXT_TYPES

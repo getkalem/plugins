@@ -681,7 +681,7 @@ first.
 
 ## PT11. The rest of Kalem
 
-- [ ] PT11a A **Journal** menu in the menu bar and the F10 list while
+- [~] PT11a A **Journal** menu in the menu bar and the F10 list while
   the current file is a journal or one of the plugin's documents
   (`when` `textType == hledger || textType == ledger || textType ==
   beancount || textType == pta-…`): New transaction, Toggle status,
@@ -690,6 +690,22 @@ first.
   through a quick-pick); the leader table's `SPC m` rows named for
   which-key, as the git plugin's `+git` rows are. A toolbar button
   "Journal" beside Git, opening the balance.
+  (Done 2026-10-11 at the owner's asking, after the git plugin's Git
+  menu and button and the graph plugin's: the manifest's `menus` (the
+  menu bar's and F10's "Journal", the journal's commands in
+  `kalem_plugin_pta::MENU`'s order with its separators, then
+  Commands…) and `buttons` ("Journal", the window's toolbar and the
+  foot of the terminal's sidebar), both where a journal or the Check
+  document is; the button runs `pta.menu` (Commands…, `SPC m m`, `?` in
+  the Check document), a pick of the journal's commands with their
+  keys, run in the journal once chosen, since a button runs a command
+  and most of the journal's act at the cursor (the graph plugin's menu
+  document suits its commands, which act on no note). Checked in the
+  terminal editor: F10 lists "Journal › …" with the keys, `SPC m m`'s
+  pick runs Toggle Status on the journal. The which-key group under
+  `SPC m` is named by Kalem from the commands' category. Open: the
+  tool and the journal through a pick (the settings page has them);
+  the window's toolbar not looked at.)
 - [ ] PT11b Org: `pta.insertAsTable` in an Org document, the report of
   PT7c chosen as an Org table (`hledger … -O csv`, `bean-query -f
   csv`, converted as Kalem converts CSV to an Org table and inserted

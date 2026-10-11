@@ -25,6 +25,10 @@ A journal that `include`s others is checked and reported as one: checking an inc
 
 The setting `tool` picks the program for hledger's and Ledger's journals: `auto` takes the file's own, and a `.ledger` file goes to Ledger where Ledger is installed and to hledger where only hledger is (hledger does not read Ledger's value expressions, such as `(-$132.00)`). A Beancount journal is always Beancount's.
 
+## The Journal menu
+
+In a journal and in the Check document, the menu bar (F10 in the terminal) has a **Journal** menu with the commands below, and the toolbar (the foot of the terminal's sidebar) a **Journal** button; the button, `SPC m m` and `?` in the Check document offer the journal's commands as a list to pick from, each with its keys, and run the one picked where you were.
+
 ## Writing transactions
 
 In a journal, under `SPC m` in Vim's command mode and in the palette's Journal group, each one undo step:

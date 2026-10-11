@@ -378,3 +378,45 @@ fn the_check_finds_each_error_files_problem() {
         }
     }
 }
+
+/// The Journal menu and button (PT11a), as the git plugin's: the menu
+/// bar's and the F10 list's "Journal" lists the journal's commands
+/// (`kalem_plugin_pta::MENU`) in its order, its separators kept, then
+/// the pick itself; the button runs the pick (`pta.menu`); both where a
+/// journal or the Check document is. Kalem drops an item that is not the
+/// plugin's (`pta.`), so each is; and each title is the one the
+/// component registers, which the menu shows.
+#[test]
+fn the_journal_menu_and_button() {
+    let m = manifest();
+    let menus = m["menus"].as_array().expect("menus");
+    assert_eq!(menus.len(), 1);
+    let menu = &menus[0];
+    assert_eq!(menu["title"], "Journal");
+    assert_eq!(menu["when"], kalem_plugin_pta::menu_when().as_str());
+    let mut want: Vec<String> = kalem_plugin_pta::MENU
+        .iter()
+        .map(|(id, ..)| id.to_string())
+        .collect();
+    want.extend(["-".to_string(), "pta.menu".to_string()]);
+    assert_eq!(strings(&menu["items"]), want);
+    let buttons = m["buttons"].as_array().expect("buttons");
+    assert_eq!(buttons.len(), 1);
+    assert_eq!(buttons[0]["title"], "Journal");
+    assert_eq!(buttons[0]["command"], "pta.menu");
+    assert_eq!(buttons[0]["when"], menu["when"]);
+    // The component registers each with the title the table gives.
+    let source: String = include_str!("../src/component.rs")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for (id, title, _) in kalem_plugin_pta::MENU.iter().filter(|(id, ..)| *id != "-") {
+        assert!(id.starts_with("pta."), "{id}");
+        assert!(
+            source.contains(&format!("command( \"{id}\", \"{title}\""))
+                || source.contains(&format!("command(\"{id}\", \"{title}\"")),
+            "{id} is registered as {title:?}"
+        );
+    }
+    assert!(source.contains("command(\"pta.menu\", \"Commands…\""));
+}

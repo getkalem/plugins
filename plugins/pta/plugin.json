@@ -12,6 +12,27 @@
     "subprocess:bean-check",
     "subprocess:bean-query"
   ],
+  "menus": [
+    {
+      "title": "Journal",
+      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check",
+      "items": [
+        "pta.newTransaction", "pta.copyTransaction", "pta.toggleStatus", "-",
+        "pta.align", "pta.sort", "-",
+        "pta.previousTransaction", "pta.nextTransaction", "pta.dateEarlier", "pta.dateLater", "-",
+        "pta.check", "-",
+        "pta.version", "-",
+        "pta.menu"
+      ]
+    }
+  ],
+  "buttons": [
+    {
+      "title": "Journal",
+      "command": "pta.menu",
+      "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check"
+    }
+  ],
   "syntaxes": [
     "syntaxes/hledger.sublime-syntax",
     "syntaxes/Ledger.sublime-syntax",

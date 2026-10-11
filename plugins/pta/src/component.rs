@@ -26,7 +26,7 @@ use crate::{Dialect, align};
 const STATUS: &str = "pta.journal";
 /// The check document's id and kind.
 const CHECK_DOC: &str = "pta.check";
-const CHECK_KIND: &str = "pta-check";
+const CHECK_KIND: &str = crate::CHECK_KIND;
 /// Keys in the check document: Vim's command mode, or the Word-like
 /// profile.
 const CHECK_WHEN: &str = "textType == pta-check && (vimCommand || !vimActive)";
@@ -880,6 +880,49 @@ fn insert_transaction() -> Result<String, String> {
     Ok("null".into())
 }
 
+/// The Journal button's and `SPC m m`'s pick: the journal's commands
+/// (`crate::MENU`) with their keys, or, in the Check document, its own;
+/// the one chosen runs where the pick was asked, once it is answered.
+fn menu() -> Result<String, String> {
+    let entries: Vec<(&str, &str, &str)> = if checked_here().is_some() {
+        vec![
+            ("pta.checkOpen", "Open the Problem's Place", "Enter"),
+            ("pta.check", "Check Again", "r"),
+            ("pta.checkClose", "Close the Check", "q"),
+        ]
+    } else {
+        crate::MENU
+            .iter()
+            .copied()
+            .filter(|(id, ..)| *id != "-")
+            .collect()
+    };
+    let items: Vec<ui::PickItem> = entries
+        .iter()
+        .map(|(_, title, keys)| ui::PickItem {
+            label: (*title).to_string(),
+            detail: (!keys.is_empty()).then(|| (*keys).to_string()),
+        })
+        .collect();
+    let ids: Vec<String> = entries.iter().map(|(id, ..)| (*id).to_string()).collect();
+    ui::quick_pick(
+        &items,
+        &ui::PickOptions {
+            title: Some("Journal".into()),
+            placeholder: None,
+            many: false,
+        },
+        move |picked| {
+            if let Some(id) = picked.first().and_then(|&i| ids.get(i as usize))
+                && let Err(why) = kalem::run(id, "{}")
+            {
+                ui::notify(&why, ui::Level::Warning);
+            }
+        },
+    );
+    Ok("null".into())
+}
+
 /// Registers command `id`, in the palette's Journal group, where `types`
 /// are.
 fn command(
@@ -970,6 +1013,11 @@ impl Plugin for Pta {
         })?;
         kalem::keymap("ctrl+shift+l", "pta.dateLater", Some(&leader))?;
         kalem::keymap("ctrl+shift+h", "pta.dateEarlier", Some(&leader))?;
+        let mut types = crate::TEXT_TYPES.to_vec();
+        types.push(CHECK_KIND);
+        command("pta.menu", "Commands…", &types, |_| menu())?;
+        kalem::keymap("space m m", "pta.menu", Some(&leader))?;
+        kalem::keymap("?", "pta.menu", Some(CHECK_WHEN))?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
