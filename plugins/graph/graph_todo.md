@@ -1113,7 +1113,7 @@ user groups; the gaps that code can close, in this order.
   graph view on the corpus, built from its database as its
   `build-global-graph` builds it (`tests/logseq_parity.rs`). Left out:
   the pages Logseq makes of properties' names, and the page it makes by
-  mistake of a block an embed names.
+  mistake of a block an embed names. Released in graph 0.7.0.
 - [x] GR14i The first contact (2026-10-11): a Logseq user without the
   plugin opens a note, Kalem suggests the plugin, Install Suggested
   Plugin installs it. Tried in a fresh configuration through a terminal:

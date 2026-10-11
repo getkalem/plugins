@@ -4,13 +4,13 @@
     {
       "id": "org.kalem.docx",
       "name": "Word documents",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "description": "Opens Word documents (.docx, .docm, .dotx, .dotm) as themselves, laid out by Kalem: styles, lists, tables, pictures, notes, comments and tracked changes read; text edited and formatted (marks, typefaces, sizes, colors, paragraph styles, alignment, indents, spacing, lists), tracked changes accepted and rejected, comments added, answered, edited, resolved and deleted, every other part kept byte for byte",
-      "api": "^0.2.8",
+      "api": "^0.2.13",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/docx",
-      "download": "https://github.com/getkalem/plugins/releases/download/docx-v0.0.6/docx.wasm",
-      "sha256": "15d3a5fa2f3888cb15ac539882cf181d4297ea0b0e3c2c7ef23444d4f8118785",
+      "download": null,
+      "sha256": null,
       "opens": [
         ".docx",
         ".docm",
@@ -84,7 +84,7 @@
     {
       "id": "org.kalem.graph",
       "name": "Note graphs",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags, tasks and queries, edited as an outliner, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
       "api": "^0.2.13",
       "permissions": [
@@ -92,8 +92,8 @@
         "fs:write:workspace"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
-      "download": "https://github.com/getkalem/plugins/releases/download/graph-v0.6.0/graph.wasm",
-      "sha256": "243ade0afdb2e5f9ba2b34e63aacf3ee2cf052287303a5df31848c3a5714aec7",
+      "download": null,
+      "sha256": null,
       "layers": [
         {
           "id": "logseq",
@@ -249,13 +249,13 @@
     {
       "id": "org.kalem.xlsx",
       "name": "Excel workbooks",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "description": "Opens, edits and saves Excel workbooks (.xlsx, .xlsm) as themselves: only the edited cells change, charts, pivot tables and macros are kept byte for byte",
-      "api": "^0.2.8",
+      "api": "^0.2.13",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/xlsx",
-      "download": "https://github.com/getkalem/plugins/releases/download/xlsx-v0.0.10/xlsx.wasm",
-      "sha256": "57b379ae6c66986a597fcdb437b757433c6637ad4e9750b9ad20082bef97c2b7",
+      "download": null,
+      "sha256": null,
       "opens": [
         ".xlsx",
         ".xlsm",

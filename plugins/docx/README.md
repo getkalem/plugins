@@ -2,7 +2,7 @@
 
 Opens, edits and saves Word documents (WordprocessingML, ECMA-376 part 1: `.docx`, `.docm`, `.dotx`, `.dotm`) **as themselves**. Nothing is converted: the file is a ZIP package of XML parts, and the plugin reads and writes those parts through the Office layer it shares with the workbook plugin (`crates/ooxml`). Kalem's task T3.7.5; decisions D54 and D55 of its design document. The work list is [`docx_todo.md`](docx_todo.md).
 
-**Status: early.** The plugin is a `flow-viewer` component of plugin API 0.2.8 or later (Kalem 0.6.5 and later; pictures drawn, and typing at its fastest, from Kalem 0.6.8): Kalem lays a document's paragraphs out itself through the `flow` interface and edits them as text, and reviews its comments and tracked changes through the `annotations` interface. Both interfaces are Kalem's, written for every plugin of flowing documents and of review markup, not for this one alone.
+**Status: early.** The plugin is a `flow-viewer` component of plugin API 0.2.13 or later (Kalem 0.6.15 and later; 0.0.6, the release before, runs on Kalem 0.6.5 and later): Kalem lays a document's paragraphs out itself through the `flow` interface and edits them as text, and reviews its comments and tracked changes through the `annotations` interface. Both interfaces are Kalem's, written for every plugin of flowing documents and of review markup, not for this one alone.
 
 ## What it does
 
