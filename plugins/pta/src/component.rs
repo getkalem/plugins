@@ -21,6 +21,7 @@ use kalem_plugin::{documents, editor, process, settings, ui};
 
 mod balance;
 mod import;
+mod other;
 mod prices;
 mod reconcile;
 mod register;
@@ -53,6 +54,10 @@ const IMPORT_WHEN: &str = "textType == pta-import && (vimCommand || !vimActive)"
 const IMPORT_ESCAPE_WHEN: &str =
     "textType == pta-import && !hasSelection && (vimCommand || !vimActive)";
 const CSV_LEADER_WHEN: &str = "textType == csv && vimCommand";
+/// Keys in a Report document.
+const REPORT_WHEN: &str = "textType == pta-report && (vimCommand || !vimActive)";
+const REPORT_ESCAPE_WHEN: &str =
+    "textType == pta-report && !hasSelection && (vimCommand || !vimActive)";
 /// Keys in the Register document.
 const REGISTER_WHEN: &str = "textType == pta-register && (vimCommand || !vimActive)";
 const REGISTER_ESCAPE_WHEN: &str =
@@ -1000,6 +1005,13 @@ fn menu() -> Result<String, String> {
             ("pta.reconcile", "Reconcile Again", "r"),
             ("pta.reconcileClose", "Close the Reconciliation", "q"),
         ]
+    } else if other::here().is_some() {
+        vec![
+            ("pta.reportPeriod", "Period…", "p"),
+            ("pta.report", "Another Report…", "o"),
+            ("pta.reportAgain", "Report Again", "r"),
+            ("pta.reportClose", "Close the Report", "q"),
+        ]
     } else if register::here().is_some() {
         vec![
             ("pta.registerVisit", "Go to the Posting", "Enter"),
@@ -1157,8 +1169,6 @@ impl Plugin for Pta {
         types.push(balance::KIND);
         command("pta.balance", "Balance", &types, |_| balance::command())?;
         kalem::keymap("space m b", "pta.balance", Some(&leader))?;
-        // Doom's `SPC m r` is its report; the Balance is 0.1.0's one.
-        kalem::keymap("space m r", "pta.balance", Some(&leader))?;
         kalem::keymap("space m g b", "pta.balance", Some(&leader))?;
         kalem::keymap("r", "pta.balance", Some(BALANCE_WHEN))?;
         let b = &[balance::KIND];
@@ -1211,6 +1221,20 @@ impl Plugin for Pta {
         })?;
         kalem::keymap("q", "pta.registerClose", Some(REGISTER_WHEN))?;
         kalem::keymap("escape", "pta.registerClose", Some(REGISTER_ESCAPE_WHEN))?;
+        let mut types = crate::TEXT_TYPES.to_vec();
+        types.extend([balance::KIND, other::KIND]);
+        command("pta.report", "Report…", &types, |_| other::command())?;
+        // Doom's `SPC m r`, ledger-report.
+        kalem::keymap("space m r", "pta.report", Some(&leader))?;
+        kalem::keymap("o", "pta.report", Some(REPORT_WHEN))?;
+        let o = &[other::KIND];
+        command("pta.reportAgain", "Report Again", o, |_| other::again())?;
+        kalem::keymap("r", "pta.reportAgain", Some(REPORT_WHEN))?;
+        command("pta.reportPeriod", "Period…", o, |_| other::pick_period())?;
+        kalem::keymap("p", "pta.reportPeriod", Some(REPORT_WHEN))?;
+        command("pta.reportClose", "Close the Report", o, |_| other::close())?;
+        kalem::keymap("q", "pta.reportClose", Some(REPORT_WHEN))?;
+        kalem::keymap("escape", "pta.reportClose", Some(REPORT_ESCAPE_WHEN))?;
         let mut types = crate::TEXT_TYPES.to_vec();
         types.push(reconcile::KIND);
         command("pta.reconcile", "Reconcile", &types, |_| {
@@ -1294,6 +1318,7 @@ impl Plugin for Pta {
             register::KIND,
             reconcile::KIND,
             import::KIND,
+            other::KIND,
         ]);
         command("pta.menu", "Commands…", &types, |_| menu())?;
         kalem::keymap("space m m", "pta.menu", Some(&leader))?;
@@ -1302,6 +1327,7 @@ impl Plugin for Pta {
         kalem::keymap("?", "pta.menu", Some(REGISTER_WHEN))?;
         kalem::keymap("?", "pta.menu", Some(RECONCILE_WHEN))?;
         kalem::keymap("?", "pta.menu", Some(IMPORT_WHEN))?;
+        kalem::keymap("?", "pta.menu", Some(REPORT_WHEN))?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
@@ -1329,6 +1355,7 @@ impl Plugin for Pta {
                 register::forget(*n);
                 reconcile::forget(*n);
                 import::forget(*n);
+                other::forget(*n);
                 if CURRENT.with(Cell::get) == Some(*n) {
                     CURRENT.with(|c| c.set(None));
                     refresh(None);
@@ -1360,6 +1387,7 @@ impl Plugin for Pta {
                         balance::saved(&main.path);
                         register::saved(&main.path);
                         reconcile::saved(&main.path);
+                        other::saved(&main.path);
                     });
                 }
             }

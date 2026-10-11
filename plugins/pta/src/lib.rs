@@ -24,6 +24,8 @@
 //!
 //! - [`import`]: a bank statement imported by the tool (PT9).
 //!
+//! - [`other`]: the tool's other reports, one pick (PT7c).
+//!
 //! - [`prices`]: prices fetched by the user's price programs (PT10).
 //!
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
@@ -34,6 +36,7 @@ pub mod check;
 mod component;
 pub mod import;
 pub mod journal;
+pub mod other;
 pub mod prices;
 pub mod reconcile;
 pub mod report;
@@ -78,6 +81,7 @@ pub const MENU: &[(&str, &str, &str)] = &[
     ("pta.check", "Check Journal", "SPC m k"),
     ("pta.balance", "Balance", "SPC m b"),
     ("pta.register", "Register", "SPC m g r"),
+    ("pta.report", "Report…", "SPC m r"),
     ("-", "", ""),
     ("pta.reconcile", "Reconcile", "SPC m R"),
     ("pta.finishReconcile", "Finish Reconciliation", "SPC m C"),
@@ -89,8 +93,16 @@ pub const MENU: &[(&str, &str, &str)] = &[
 /// The text type of the plugin's Check document.
 pub const CHECK_KIND: &str = "pta-check";
 
-/// The text types of the plugin's documents: Check, Balance.
-pub const DOCUMENT_KINDS: &[&str] = &[CHECK_KIND, "pta-balance", "pta-register", "pta-reconcile"];
+/// The text types of the plugin's documents: Check, Balance, Register,
+/// Reconcile, Import, Report.
+pub const DOCUMENT_KINDS: &[&str] = &[
+    CHECK_KIND,
+    "pta-balance",
+    "pta-register",
+    "pta-reconcile",
+    "pta-import",
+    "pta-report",
+];
 
 /// The when-clause of the Journal menu and button: a journal, or one of
 /// the plugin's documents.
