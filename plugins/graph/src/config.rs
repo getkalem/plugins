@@ -157,8 +157,72 @@ pub struct Graph {
     /// The pages the user marked: Logseq's `:favorites` (titles),
     /// Obsidian's bookmarked notes (paths without `.md`), in their order.
     pub favorites: Vec<String>,
+    /// What the graph view shows of the whole graph.
+    pub graph_view: GraphView,
     /// What could not be read, for one notice.
     pub problems: Vec<String>,
+}
+
+/// What the graph view shows of the whole graph, as the graph's own app
+/// is set to show it: Logseq's `:graph/settings`, Obsidian's
+/// `.obsidian/graph.json`, each with its defaults. A page's local graph
+/// shows all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphView {
+    /// Journals and their links (Logseq's `:journal?`, off; Obsidian's
+    /// daily notes are notes).
+    pub journals: bool,
+    /// Pages linked to no other shown (`:orphan-pages?`, `showOrphans`,
+    /// on).
+    pub orphans: bool,
+    /// Logseq's own pages: the task keywords, the priorities A to C,
+    /// Contents, Favorites and card (`:builtin-pages?`, off).
+    pub builtin: bool,
+    /// Pages with `exclude-from-graph-view:: true` (`:excluded-pages?`,
+    /// off).
+    pub excluded: bool,
+    /// Pages only linked to, with no file (Obsidian's `hideUnresolved`,
+    /// off).
+    pub unresolved: bool,
+}
+
+impl GraphView {
+    /// Logseq's, from `:graph/settings` (Logseq's defaults where it has
+    /// none).
+    fn logseq(settings: Option<&Value>) -> GraphView {
+        let flag = |k: &str, default: bool| {
+            settings
+                .and_then(|s| s.get(k))
+                .and_then(Value::as_bool)
+                .unwrap_or(default)
+        };
+        GraphView {
+            journals: flag("journal?", false),
+            orphans: flag("orphan-pages?", true),
+            builtin: flag("builtin-pages?", false),
+            excluded: flag("excluded-pages?", false),
+            unresolved: true,
+        }
+    }
+
+    /// Obsidian's, from the text of `.obsidian/graph.json`.
+    fn obsidian(json: Option<&str>) -> GraphView {
+        let v = json
+            .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
+            .unwrap_or_default();
+        let flag = |k: &str, default: bool| {
+            v.get(k)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(default)
+        };
+        GraphView {
+            journals: true,
+            orphans: flag("showOrphans", true),
+            builtin: true,
+            excluded: true,
+            unresolved: !flag("hideUnresolved", false),
+        }
+    }
 }
 
 /// The notes Obsidian's Bookmarks keep (`.obsidian/bookmarks.json`), in
@@ -317,6 +381,7 @@ impl Graph {
                     fallbacks,
                 );
                 g.favorites = bookmarks(read("bookmarks.json").as_deref());
+                g.graph_view = GraphView::obsidian(read("graph.json").as_deref());
                 g
             }
         }
@@ -405,6 +470,7 @@ impl Graph {
             ),
             read_only: false,
             favorites: c.get("favorites").map(Value::strings).unwrap_or_default(),
+            graph_view: GraphView::logseq(c.get("graph/settings")),
             problems,
         }
     }
@@ -490,6 +556,7 @@ impl Graph {
             whiteboards_dir: None,
             read_only: false,
             favorites: Vec::new(),
+            graph_view: GraphView::obsidian(None),
             problems,
         }
     }

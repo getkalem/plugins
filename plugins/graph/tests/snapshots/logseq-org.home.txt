@@ -1,0 +1,20 @@
+⌬ logseq-org
+Logseq · corpus/logseq-org · 4 pages, 2 journals
+
+  Journals                  j
+  Today's journal           .
+  Graph view                g
+  All pages                 p
+  Tags                      T
+  Tasks                     t
+  Search the graph          /
+  Find or create a page     f
+
+Favorites
+  None: a page's ⋯ › Add to favorites in Logseq
+
+Recent
+  • Kalem
+
+Other graphs
+  ⌬ other  /notes/other

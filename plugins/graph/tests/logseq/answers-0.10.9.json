@@ -769,5 +769,139 @@
    "project/plugins/graph"
   ],
   "pages/contents.md": []
+ },
+ "graph_view": {
+  "about": "The global graph view with the corpus's :graph/settings (orphans shown; journals, Logseq's own pages and excluded pages left out), as frontend.handler.graph/build-global-graph builds it: its nodes, and the links between them (get-pages-relation without journals, get-all-tagged-pages, get-all-namespace-relation), read with datascript_query and filtered as that function filters.",
+  "nodes": [
+   "6512c0de-0001-4000-8000-000000000001",
+   "a [[nested]] link",
+   "design",
+   "editor",
+   "file",
+   "file-path",
+   "hls__paper_1700000000000_0",
+   "kalem",
+   "markdown",
+   "meeting",
+   "nested",
+   "note graphs",
+   "org",
+   "program",
+   "project",
+   "project/plugins",
+   "project/plugins/graph",
+   "queries",
+   "questions?",
+   "read from assets",
+   "readme",
+   "related",
+   "software",
+   "templates",
+   "the editor",
+   "type",
+   "writing"
+  ],
+  "links": [
+   [
+    "6512c0de-0001-4000-8000-000000000001",
+    "project/plugins/graph"
+   ],
+   [
+    "a [[nested]] link",
+    "queries"
+   ],
+   [
+    "design",
+    "project/plugins/graph"
+   ],
+   [
+    "editor",
+    "kalem"
+   ],
+   [
+    "file",
+    "hls__paper_1700000000000_0"
+   ],
+   [
+    "file-path",
+    "hls__paper_1700000000000_0"
+   ],
+   [
+    "kalem",
+    "markdown"
+   ],
+   [
+    "kalem",
+    "org"
+   ],
+   [
+    "kalem",
+    "program"
+   ],
+   [
+    "kalem",
+    "project"
+   ],
+   [
+    "kalem",
+    "project/plugins"
+   ],
+   [
+    "kalem",
+    "project/plugins/graph"
+   ],
+   [
+    "kalem",
+    "queries"
+   ],
+   [
+    "kalem",
+    "related"
+   ],
+   [
+    "kalem",
+    "software"
+   ],
+   [
+    "kalem",
+    "the editor"
+   ],
+   [
+    "kalem",
+    "type"
+   ],
+   [
+    "kalem",
+    "writing"
+   ],
+   [
+    "nested",
+    "queries"
+   ],
+   [
+    "note graphs",
+    "queries"
+   ],
+   [
+    "project",
+    "project/plugins"
+   ],
+   [
+    "project",
+    "project/plugins/graph"
+   ],
+   [
+    "project/plugins",
+    "project/plugins/graph"
+   ],
+   [
+    "read from assets",
+    "readme"
+   ],
+   [
+    "templates",
+    "type"
+   ]
+  ]
  }
 }

@@ -14,11 +14,17 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 0.1.0, for Kalem 0.6.8 to 0.6.10, has everything but what plugin API 0.2.10 brings: with 0.1.0 the notes show as they are written (Logseq's `id::` and `collapsed::` lines, a bare `((uuid))`, `{{embed …}}` and `{{query …}}` as text, an Obsidian callout as a quote), the outliner's commands run from the Graph menu and the palette rather than from keys in a note, Search the Graph searches `logseq/` and `.obsidian/` too, a whiteboard or canvas is named in a notice rather than shown in the file manager, and today's date is asked once a session.
 
+## Getting started
+
+1. Open a page of the graph in Kalem: `kalem gui ~/notes/pages/Kalem.md`, or File › Open. Without the plugin, Kalem says in the status bar that the Note graphs plugin serves the folder; **Plugins: Install Suggested Plugin** in the palette installs it (or the Kalem menu's Browse Plugins, or `kalem plugin install graph` in a terminal). With Kalem 0.6.18 and later it starts at once, the note drawn as Logseq or Obsidian draws it; with an earlier Kalem, start Kalem again.
+2. Kalem offers the graph's folder as a project, since the plugin reads only projects: Enter adds it, and the graph is indexed (the status bar says `⌬ notes · 20 pages`).
+3. The **Graph** button, `SPC n r m` or a click on that status bar item opens the graph's menu, as Logseq's left sidebar: the journals, today's journal, the graph drawn, all pages, tags, tasks, search, the favorites and the pages opened last, each a key away. The rest is under **Graph** in the palette and the menu bar, and below.
+
 ## Moving over
 
 - **From Logseq (the file version, "OG").** Add the graph's folder as a project of Kalem's and open any page: nothing is converted, and `logseq/` is never written. Keep Logseq installed for as long as you like: both read and write the same files, and each reads again a file the other saved (save in one before editing the same page in the other). Kalem hears every file Logseq writes, renames or removes in the graph while both are open (Kalem 0.6.15 and later; before, a page Logseq made was seen once Kalem started again or after Index Again); a page open in Kalem is read again when it has no changes of Kalem's; with unsaved changes, Logseq's are merged in when they are to other blocks (Kalem 0.6.17 and later), and Kalem asks which to keep only when both changed the same lines. Tested with Logseq 0.10.9 open on the same graph, both ways: blocks, pages made, renamed (by either) and folded, task keywords, priorities and block references written by Kalem, typing in both at once. Logseq writes a file again in its own way after another program renames a page it names (no line feed at the end, tabs before nested blocks), and keeps a block folded that another program unfolded until the graph is indexed again. Sync stays as it was: Syncthing, git or iCloud on the folder.
 - **From Logseq's database version.** Its SQLite database does not open in Kalem. Its Markdown Mirror does: turn it on in Logseq's settings (the desktop app), and the folder `mirror/markdown/` in the graph's folder opens as a graph, read only: pages, journals, links, tags, tasks, properties (written there as `* key:: value`), queries and search. Logseq writes the mirror from its database and writes over any change, so Kalem never writes it and its editing commands say so.
-- **From Obsidian.** Add the vault's folder as a project and open a note. Of `.obsidian/`, only `daily-notes.json`, `app.json` and `templates.json` are read, for the daily notes, where new notes go, how links are written and the templates' folder; nothing under it is written.
+- **From Obsidian.** Add the vault's folder as a project and open a note. Of `.obsidian/`, only `daily-notes.json`, `app.json`, `templates.json`, `bookmarks.json` and `graph.json` are read, for the daily notes, where new notes go, how links are written, the templates' folder, the bookmarks in the graph's menu and what the graph view shows; nothing under it is written.
 
 ## What it needs
 
@@ -134,7 +140,7 @@ Advanced queries (`#+BEGIN_QUERY` … `#+END_QUERY`, Datalog) run too, as Logseq
 
 | | Logseq | Obsidian |
 |---|---|---|
-| Settings | `logseq/config.edn`: format, workflow, folders, journal file and title formats, file name format, hidden folders, journal template, hidden and comma properties | `.obsidian/daily-notes.json`, `app.json`, `templates.json`, read-only; the plugin's settings and then Obsidian's defaults when they are missing |
+| Settings | `logseq/config.edn`: format, workflow, folders, journal file and title formats, file name format, hidden folders, journal template, hidden and comma properties, `:favorites`, `:graph/settings` | `.obsidian/daily-notes.json`, `app.json`, `templates.json`, `bookmarks.json`, `graph.json` (`showOrphans`, `hideUnresolved`), read-only; the plugin's settings and then Obsidian's defaults when they are missing |
 | Notes | Every `.md` and `.org` in the graph's folder, as Logseq reads them (a note in `assets/` too), but `logseq/`, hidden folders, `node_modules` and `:hidden`; journals by their folder | Every `.md` but `.obsidian/`, `.trash/`, hidden folders and `node_modules` |
 | Pages | Title from `title::` (or `#+title:`), else the file name decoded (`a___b` is `a/b`, `%3F` is `?`); journals by date; aliases resolve to the page; names compare ignoring case | A note per file, named by its path; `[[Name]]` resolves to the note in the linking note's folder first, else the shortest path; aliases name the note but link nowhere, as in Obsidian |
 | Blocks | Every `- ` bullet (every headline in Org) with its depth, `id::`, `collapsed::`, task keyword, priority, `SCHEDULED:` and `DEADLINE:`, properties | Paragraphs, list items and headings; `^id` at a line's end; check boxes as tasks; Dataview's `key:: value` |
@@ -169,14 +175,14 @@ From Logseq:
 - No real-time sync: Syncthing or git on the folder, as Logseq's file version is used.
 - The database version's graph itself does not open; its Markdown Mirror does, read only.
 - Completion offers no blocks without an id after `((` (Insert Block Reference writes the id), and of `/`'s commands those that write text only (no date picker, template or drawing).
-- The graph view has no filters, groups of one's own or forces to set, as Logseq's and Obsidian's have; journals are in the local graph only.
+- The graph view draws the pages and links Logseq's draws, aliases, whiteboards and a namespace's pages linked to their parent among them, checked against Logseq 0.10.9 on the corpus (`tests/logseq_parity.rs`), and shows what Logseq's `:graph/settings` says, as Logseq's toggles set it: journals (`:journal?`), pages linked to no other (`:orphan-pages?`), Logseq's own pages such as TODO and A (`:builtin-pages?`), and pages with `exclude-from-graph-view:: true` (`:excluded-pages?`), Logseq's defaults where it says nothing (orphans only). It leaves out the pages Logseq makes of properties' names (`type`, `related`), and the page Logseq 0.10.9 makes by mistake of a block `{{embed ((…))}}` embeds. It has no toggles of its own, groups of one's own or forces to set; a page's local graph shows all.
 - The index follows saves, changes on disk (any file of the graph, written by Logseq, Obsidian, a sync or git, with Kalem 0.6.15 and later; the files Kalem holds open before) and, when a command runs in a note, its unsaved text; the panel and the documents are written again after a save. Recent Pages remembers this session's pages only.
 
 From Obsidian:
 
 - Canvases are listed with the notes and their links resolve; following one shows the file to open in Obsidian.
 - Community plugins' syntax is not read, but Dataview's inline fields (`key:: value`), whose keys are dimmed.
-- `.obsidian/` is read for three files only (above), never written.
+- `.obsidian/` is read for five files only (above), never written. The graph view hides orphans and notes not written as `graph.json` says, and has no groups, tags as nodes or forces to set.
 
 Both:
 
@@ -206,6 +212,7 @@ The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `
 
 - the library's unit tests;
 - `tests/conformance.rs` over three corpus graphs written for this repository and licensed as it is (`corpus/logseq-md`, `corpus/logseq-org`, `corpus/obsidian`): settings, page names and every resolution rule, blocks, tasks, references, templates, queries, the documents, every corpus file scanned whole, every block folded and unfolded back to the same bytes, and an index kept by saves equal to one built afresh after every kind of edit of every file;
-- `tests/snapshots.rs`: each document of each corpus as written, against `tests/snapshots/` (`UPDATE_SNAPSHOTS=1` writes them anew); with `KALEM=path/to/kalem`, the ignored `kalem_run_prints_them` compares what `kalem run` prints;
+- `tests/logseq_parity.rs`: the references and the queries against Logseq 0.10.9's own answers on `corpus/logseq-md`, kept in `tests/logseq/answers-0.10.9.json` (26 queries, 21 pages' references);
+- `tests/snapshots.rs`: each document of each corpus as written, the graph's menu among them, against `tests/snapshots/` (`UPDATE_SNAPSHOTS=1` writes them anew); with `KALEM=path/to/kalem`, the ignored `kalem_run_prints_them` compares what `kalem run` prints;
 - `tests/robust.rs`: a configuration that does not parse, a file not in UTF-8 and one over 16 MB give one notice; embeds of themselves; every note of the corpora broken a few thousand ways through the scanner, the layer, the queries and every editing command without a panic (`ROBUST_ROUNDS` and `ROBUST_SEED` search longer);
 - `tests/large.rs`, ignored: the measurements above, `cargo test --release -p kalem-plugin-graph --test large -- --ignored --nocapture`; `GRAPH_DIR=DIR` with `write_the_large_graph` writes the graph for Kalem.

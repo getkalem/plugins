@@ -40,7 +40,21 @@ fn documents(name: &str) -> Vec<(&'static str, String)> {
         ("tags", views::tags(&i).text),
         ("tasks", views::tasks(&i, Date::new(2026, 10, 10)).text),
         ("graph", views::graph(&i).text),
+        ("drawing", views::drawing(&i, None).text),
         ("backlinks", views::backlinks(&i, "kalem", g).text),
+        // The menu, its folder written as the corpus's name: a page opened
+        // and another graph known, so that each part shows.
+        (
+            "home",
+            views::home(
+                &i,
+                &["kalem".into()],
+                &[("/notes/other".into(), "other".into())],
+                g,
+            )
+            .text
+            .replace(&i.graph.root, &format!("corpus/{name}")),
+        ),
     ];
     if name == "logseq-md" {
         let shape = query::Shape::of(&[
