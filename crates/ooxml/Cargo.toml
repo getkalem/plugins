@@ -14,7 +14,7 @@ publish = false
 # Office files with a password to open (MS-OFFCRYPTO): the compound
 # file, AES, SHA-512, and SHA-1 for the Standard encryption of 2007.
 cfb = "0.15.0"
-aes = "0.8"
+aes = "0.9"
 sha1 = "0.10"
 sha2 = "0.10"
 crc32fast = "1.5.2"
