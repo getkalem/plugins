@@ -385,8 +385,10 @@ fn document(command: &str) -> Option<Doc> {
         Some((root, Some(hash))) => (None, Some((root, hash))),
         None => (None, None),
     };
+    let directory = info.mode == "directory";
     Some(Doc {
         path: info.path,
+        directory,
         line,
         text,
         status,

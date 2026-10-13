@@ -395,6 +395,9 @@ pub enum PanelEvent {
 pub struct Doc {
     /// Its file, absolute.
     pub path: Option<String>,
+    /// Its path is a folder shown by Kalem's file manager, rather than a
+    /// file in that folder.
+    pub directory: bool,
     /// The cursor's line, from 1.
     pub line: u32,
     /// Its text, for a command that reads it (a line's blame).
@@ -940,6 +943,7 @@ impl App {
         let status_root = doc.as_ref().and_then(|d| d.status.clone());
         let path = doc.as_ref().and_then(|d| d.path.clone());
         let (folder, file) = match &path {
+            Some(p) if doc.as_ref().is_some_and(|d| d.directory) => (Some(p.clone()), None),
             Some(p) => {
                 let (f, n) = parent(p);
                 (Some(f), Some(n))
@@ -2338,6 +2342,34 @@ mod tests {
             command.args,
             ["rev-parse", "--show-toplevel", "--show-prefix"]
         );
+        // In the file manager, the document's path is the folder itself:
+        // find its repository from there, rather than from its parent.
+        let out = app.handle(Input::Command {
+            id: "git.status".into(),
+            doc: Some(Doc {
+                path: Some("/r".into()),
+                directory: true,
+                ..Doc::default()
+            }),
+        });
+        let [Effect::Run { cwd, command, .. }] = &out[..] else {
+            panic!("{out:?}")
+        };
+        assert_eq!(cwd.as_deref(), Some("/r"));
+        assert_eq!(
+            command.args,
+            ["rev-parse", "--show-toplevel", "--show-prefix"]
+        );
+        // A file command in a directory still asks for a file.
+        let out = app.handle(Input::Command {
+            id: "git.stageFile".into(),
+            doc: Some(Doc {
+                path: Some("/r".into()),
+                directory: true,
+                ..Doc::default()
+            }),
+        });
+        assert!(matches!(&out[..], [Effect::Notify(_, Level::Warning)]));
         // Without a document, a file command says why it cannot act.
         let out = app.handle(Input::Command {
             id: "git.stageFile".into(),

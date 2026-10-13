@@ -6,7 +6,7 @@ The repository's status as a document in Kalem: the changed files with their dif
 
 A **Git menu** stands in the menu bar (and in the F10 list of both editors) while the current file is in a git repository, and in the status: Status (the same as `SPC g g`), commit, amend, push, pull, fetch, branches, stash, and the file's stage, unstage, revert, delete and the blame of its line. Without a file (a new document, the projects view) the first project's folder counts.
 
-A **Git button** stands beside File Manager and Projects, on the window's toolbar and in the terminal's list of open files, in the same places; a click opens the status, as `SPC g g` does, and it is pressed while the status shows. It needs Kalem 0.5.2.
+A **Git button** stands beside File Manager and Projects, on the window's toolbar and in the terminal's list of open files, in the same places; a click opens the status, as `SPC g g` does, and it is pressed while the status shows. In the file manager, Git commands use the folder being listed, including a repository nested directly under another project folder. It needs Kalem 0.5.2.
 
 ## Keys
 
