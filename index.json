@@ -71,15 +71,15 @@
     {
       "id": "org.kalem.git",
       "name": "Git",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "description": "The repository's status as a document, lazygit's panels in magit's form: changed files with their diffs under them (Tab), staged by file, hunk or line with magit's keys, committed, pushed and pulled; branches and stashes; changed lines marked beside the lines; on Doom's SPC g keys, with the arrows, Enter and Escape",
       "api": "^0.2.13",
       "permissions": [
         "subprocess:git"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/git",
-      "download": "https://github.com/getkalem/plugins/releases/download/git-v0.0.10/git.wasm",
-      "sha256": "ea51d5dd80c5304b4f73e09d389279b9599fe58531d32d08ec57ab865d1e6d30"
+      "download": null,
+      "sha256": null
     },
     {
       "id": "org.kalem.graph",
