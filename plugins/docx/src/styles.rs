@@ -98,6 +98,10 @@ pub struct Style {
     pub conditions: Vec<(String, TableFormat)>,
 }
 
+/// Runs' properties but their own, by the paragraph's style and the
+/// character style ([`Styles::resolve_run`]).
+type RunBases = Vec<(Option<String>, Option<String>, Arc<RunProps>)>;
+
 /// The document defaults and the styles.
 #[derive(Debug, Default)]
 pub struct Styles {
@@ -111,6 +115,9 @@ pub struct Styles {
     /// Resolved chains, memoized: a paragraph style's properties.
     para_cache: RefCell<HashMap<String, Arc<(ParaProps, RunProps)>>>,
     char_cache: RefCell<HashMap<String, Arc<RunProps>>>,
+    /// A run's properties but its own, outside tables, by its paragraph's
+    /// style and its character style: most runs have no more.
+    run_cache: RefCell<RunBases>,
 }
 
 /// How deep a `basedOn` chain is followed (a cycle ends it).
@@ -390,12 +397,57 @@ impl Styles {
         para: Option<&str>,
         table: Option<&RunProps>,
         run: &RunProps,
+    ) -> Arc<RunProps> {
+        let base = match table {
+            None => self.run_base_kept(para, run.style.as_deref()),
+            Some(_) => Arc::new(self.run_base(para, table, run.style.as_deref())),
+        };
+        // Most runs have nothing of their own: their styles' look, shared.
+        if run.only_style() {
+            return base;
+        }
+        // The run's own properties without its style.
+        let mut out = Arc::unwrap_or_clone(base);
+        let style = out.style.take();
+        out.merge(run);
+        out.style = style;
+        Arc::new(out)
+    }
+
+    /// [`Self::run_base`] outside tables, kept by the paragraph's style and
+    /// the character style.
+    fn run_base_kept(&self, para: Option<&str>, char_style: Option<&str>) -> Arc<RunProps> {
+        let kept = self
+            .run_cache
+            .borrow()
+            .iter()
+            .find(|(p, c, _)| p.as_deref() == para && c.as_deref() == char_style)
+            .map(|(_, _, base)| base.clone());
+        if let Some(base) = kept {
+            return base;
+        }
+        let base = Arc::new(self.run_base(para, None, char_style));
+        let mut cache = self.run_cache.borrow_mut();
+        // A document of a few styles has a few of them.
+        if cache.len() < 1024 {
+            let key = (para.map(str::to_owned), char_style.map(str::to_owned));
+            cache.push((key.0, key.1, base.clone()));
+        }
+        base
+    }
+
+    /// A run's properties but its own: the document's defaults, the table
+    /// style's, the paragraph style's chain and the character style's
+    /// (`char_style`, else the default one), the toggles combined.
+    fn run_base(
+        &self,
+        para: Option<&str>,
+        table: Option<&RunProps>,
+        char_style: Option<&str>,
     ) -> RunProps {
         // The cached chains borrowed, not cloned: this runs for every run.
         let para_props = self.para_style(para).map(|s| self.para_style_props(&s.id));
-        let char_rpr = run
-            .style
-            .as_deref()
+        let char_rpr = char_style
             .and_then(|id| self.get_kind(id, StyleKind::Character))
             .or_else(|| self.default_of(StyleKind::Character))
             .map(|s| self.char_style_props(&s.id));
@@ -422,10 +474,6 @@ impl Styles {
             let v = v.or(self.run_defaults.toggle(t));
             out.set_toggle(t, v);
         }
-        // The run's own properties without its style.
-        let style = out.style.take();
-        out.merge(run);
-        out.style = style;
         out
     }
 

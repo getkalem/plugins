@@ -1144,7 +1144,8 @@ impl<'a> Walker<'a> {
         let table_rpr = cell.map(|c| &c.format.rpr);
         let list_level = label.as_ref().map(|l| l.level);
         let label = label.map(|l| {
-            let mut rp = styles.resolve_run(Some(&style_id), table_rpr, &p.mark);
+            let mut rp =
+                Arc::unwrap_or_clone(styles.resolve_run(Some(&style_id), table_rpr, &p.mark));
             rp.merge(&l.rpr);
             (l.text, l.suffix, self.look(&rp))
         });
