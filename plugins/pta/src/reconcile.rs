@@ -467,6 +467,35 @@ pub fn open_command(tool: Dialect, main: &str, account: &str) -> (&'static str, 
     }
 }
 
+/// The arguments of a run of the tool on `main` made to read the
+/// journal from the standard input (`-f -`) instead: the text as typed,
+/// unsaved, its includes still found from its folder, where the tool
+/// runs.
+pub fn from_input(args: Vec<String>, main: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(args.len());
+    for a in args {
+        let after_f = out.last().is_some_and(|l| l == "-f");
+        out.push(if after_f && a == main {
+            "-".to_string()
+        } else {
+            a
+        });
+    }
+    out
+}
+
+/// The postings a tool read from the standard input, their places put
+/// back in `main`: hledger names its input `-`, Ledger nothing.
+pub fn placed_in(postings: &mut [Posting], main: &str) {
+    for p in postings {
+        if let Some((file, _)) = &mut p.place
+            && (file.is_empty() || file == "-" || file == "/dev/stdin")
+        {
+            *file = main.to_string();
+        }
+    }
+}
+
 /// The postings not cleared, as the tool printed them.
 pub fn open_of(tool: Dialect, out: &str) -> Vec<Posting> {
     match tool {
@@ -585,13 +614,14 @@ pub fn blocks(
         .collect()
 }
 
-/// The Reconcile document: the figures, then the postings not cleared,
+/// The Reconcile document (with `note` under its hint when given): the figures, then the postings not cleared,
 /// each line's posting's index (as text) in `lines`; with a statement
 /// beside (PT8c), each posting said to be on it (muted) or not (yellow),
 /// then the statement's lines without a posting (red).
 pub fn layout(
     header: &str,
     hint: &str,
+    note: Option<&str>,
     figures: &[Figures],
     postings: &[Posting],
     statement: Option<&crate::statement::Paired>,
@@ -608,6 +638,10 @@ pub fn layout(
     };
     push(&mut doc, header.to_string(), Some(Style::Header), None);
     push(&mut doc, hint.to_string(), Some(Style::Hint), None);
+    // A word on the figures themselves (the journal as typed not read).
+    if let Some(n) = note {
+        push(&mut doc, n.to_string(), Some(Style::Warning), None);
+    }
     push(&mut doc, String::new(), None, None);
     for (k, f) in figures.iter().enumerate() {
         // An account of several commodities: a block for each.
@@ -1070,10 +1104,20 @@ mod tests {
             std::slice::from_ref(&usd),
         );
         assert_eq!(one[0].commodity, "");
-        let doc = layout("h", "k", &b, &[], None);
+        let doc = layout("h", "k", None, &b, &[], None);
         assert!(doc.text.contains("\nEUR\nCleared"), "{}", doc.text);
         assert!(doc.text.contains("\n\n$\nCleared"), "{}", doc.text);
-        assert!(!layout("h", "k", &one, &[], None).text.contains("\n$\n"));
+        assert!(
+            !layout("h", "k", None, &one, &[], None)
+                .text
+                .contains("\n$\n")
+        );
+        // A note under the hint (the journal as typed did not read).
+        assert!(
+            layout("h", "k", Some("As typed"), &one, &[], None)
+                .text
+                .starts_with("h\nk\nAs typed\n\n")
+        );
         // Finish asserts each commodity.
         let text = "2026-01-01 * Opening\n    assets:cash  200.00 EUR\n    assets:cash  $100.00\n    equity:opening\n";
         let targets = [
@@ -1136,5 +1180,37 @@ mod tests {
             [d(7)]
         );
         assert!(unmarked_by(text, Dialect::Beancount, "assets:wallet", d(31)).is_empty());
+    }
+
+    #[test]
+    fn read_from_the_input() {
+        let (_, args) = total_command(Dialect::Hledger, "/j/m.journal", "assets:bank", Which::Both);
+        let live = from_input(args.clone(), "/j/m.journal");
+        assert_eq!(live.len(), args.len());
+        let at = args.iter().position(|a| a == "/j/m.journal").unwrap();
+        assert_eq!(live[at], "-");
+        assert_eq!(live[at - 1], "-f");
+        // An argument equal to the path elsewhere stays.
+        let other = from_input(vec!["print".into(), "/j/m.journal".into()], "/j/m.journal");
+        assert_eq!(other, ["print", "/j/m.journal"]);
+        let p = |file: &str| Posting {
+            date: "2026-01-03".into(),
+            status: ' ',
+            description: "x".into(),
+            amount: "1 EUR".into(),
+            total: String::new(),
+            place: Some((file.into(), 7)),
+            transaction: None,
+        };
+        let mut list = [p("-"), p(""), p("/j/accounts.journal")];
+        placed_in(&mut list, "/j/m.journal");
+        let files: Vec<&str> = list
+            .iter()
+            .map(|p| p.place.as_ref().unwrap().0.as_str())
+            .collect();
+        assert_eq!(
+            files,
+            ["/j/m.journal", "/j/m.journal", "/j/accounts.journal"]
+        );
     }
 }

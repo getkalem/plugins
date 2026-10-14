@@ -12,7 +12,7 @@ use crate::Dialect;
 use crate::journal::{self, Main};
 use crate::report::{self, Period, Posting};
 
-use super::{NotRun, resolve, run, today};
+use super::{NotRun, resolve, run, run_input, today};
 
 const DOC: &str = "pta.register";
 pub(super) const KIND: &str = "pta-register";
@@ -322,7 +322,18 @@ pub(super) fn visit() -> Result<String, String> {
 
 /// The journal at `posting`: its place, or hledger's transaction's.
 pub(super) fn go_to(tool: Dialect, main: &str, posting: Posting) {
-    place_of(tool, main, posting, |place| match place {
+    go_to_in(tool, main, posting, None);
+}
+
+/// [`go_to`] for a posting read from `input`, the journal's text as
+/// typed, which the tool reads again for its place.
+pub(super) fn go_to_in(
+    tool: Dialect,
+    main: &str,
+    posting: Posting,
+    input: Option<std::rc::Rc<Vec<u8>>>,
+) {
+    place_of(tool, main, posting, input, |place| match place {
         Some((file, line)) => go(&file, line),
         None => ui::notify(
             "hledger did not say where the transaction is",
@@ -338,6 +349,7 @@ pub(super) fn place_of(
     tool: Dialect,
     main: &str,
     posting: Posting,
+    input: Option<std::rc::Rc<Vec<u8>>>,
     done: impl FnOnce(Option<(String, u32)>) + 'static,
 ) {
     if let Some(place) = posting.place {
@@ -362,13 +374,31 @@ pub(super) fn place_of(
         ]);
     }
     let dir = journal::folder(main).to_string();
-    run(tool.checker(), args, &dir, move |r| {
-        let place = r
-            .ok()
-            .filter(|e| e.status == Some(0))
-            .and_then(|e| report::hledger_place(&String::from_utf8_lossy(&e.stdout), n));
-        done(place);
-    });
+    // The text as typed: read again from the input, `-` its name.
+    if input.is_some() {
+        args = crate::reconcile::from_input(args, main);
+    }
+    let main = main.to_string();
+    run_input(
+        tool.checker(),
+        args,
+        &dir,
+        input.map(|t| t.to_vec()),
+        move |r| {
+            let place = r
+                .ok()
+                .filter(|e| e.status == Some(0))
+                .and_then(|e| report::hledger_place(&String::from_utf8_lossy(&e.stdout), n))
+                .map(|(file, line)| {
+                    if file == "-" {
+                        (main, line)
+                    } else {
+                        (file, line)
+                    }
+                });
+            done(place);
+        },
+    );
 }
 
 fn go(file: &str, line: u32) {
