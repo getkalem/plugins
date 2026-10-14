@@ -58,6 +58,7 @@ In a journal, under `SPC m` in Vim's command mode, where Doom Emacs's `:lang led
 | `SPC m t` | Toggle Status |
 | `SPC m d` | Delete Transaction |
 | `SPC m =` | Align Amounts |
+| `SPC m x` | In an Org document's journal block: Run the Journal Block |
 | `SPC m s` | Sort Transactions |
 | `[[`, `]]` (Vim's command mode), `Alt+Up`, `Alt+Down` (both profiles) | Previous, Next Transaction |
 | `Ctrl+Shift+H`, `Ctrl+Shift+L` (Vim's command mode) | Date a Day Earlier, Later |
@@ -107,12 +108,11 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 Waiting on Kalem:
 
 - **The statement in a pane beside.** The Reconcile and Import documents open as documents of their own, not in a pane beside the journal.
-- The tool's problems in the gutter beside the server's (K2); the servers' running balances and elided amounts as inlay hints (K4); `hledger` and `beancount` source blocks run by Org's Babel (K6); Enter aligning in Vim's insert mode.
+- The tool's problems in the gutter beside the server's (K2); the servers' running balances and elided amounts as inlay hints (K4); Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
 
 Not done yet:
 
 - **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds. hledger's `roi`, which asks for its accounts, is not offered (pin it in `reports`).
-- `hledger` and `beancount` source blocks run by Babel (PT11b, K6), and journals of 200,000 transactions measured (PT13).
 
 ## Beside ledger-mode and Fava
 
@@ -161,7 +161,7 @@ The setting `reports` puts reports of your own before the tool's (after the Bala
 
 ## Reports in notes
 
-In an Org or Markdown document, *Insert a Report as a Table* (the palette's Journal group) offers the reports the tool writes as CSV (hledger's balance reports, register and `print`; Ledger's balance, register and `print`; Beancount's queries, its saved ones too), asks the period where the report takes one, and writes the table under the cursor's line with a caption naming the report, the journal and the period, one undo step: a monthly note keeps its figures. The journal is the setting `journal` (beside the note when relative), else `LEDGER_FILE`'s, else the journal you last opened. A source block run by Babel (`#+begin_src hledger`) waits on Kalem.
+In an Org or Markdown document, *Insert a Report as a Table* (the palette's Journal group) offers the reports the tool writes as CSV (hledger's balance reports, register and `print`; Ledger's balance, register and `print`; Beancount's queries, its saved ones too), asks the period where the report takes one, and writes the table under the cursor's line with a caption naming the report, the journal and the period, one undo step: a monthly note keeps its figures. The journal is the setting `journal` (beside the note when relative), else `LEDGER_FILE`'s, else the journal you last opened. *Run the Journal Block* (`SPC m x` in Vim's command mode, or the palette), with the cursor in an Org document's `hledger`, `ledger` or `beancount` source block, gives the block's text to its tool on standard input with the block's `:cmdline` (ob-ledger's header argument; `:cmd` too; for Beancount, a query, `BALANCES` without one) and writes the output under the block as `#+RESULTS:` in fixed-width lines, replacing the results of the last run. Kalem's Babel does not run plugins' languages yet; this is the plugin's own command.
 
 ## From the command line
 

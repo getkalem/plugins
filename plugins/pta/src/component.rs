@@ -111,6 +111,9 @@ thread_local! {
     /// document: Kalem opens a file `file.open` asks for after the
     /// commands queued with it have run.
     static WAITING: RefCell<Vec<(String, &'static str)>> = const { RefCell::new(Vec::new()) };
+    /// A journal block's output, waiting for the command that writes it:
+    /// the document's file, the block's start, the output.
+    static BLOCK: RefCell<Option<(Option<String>, usize, String)>> = const { RefCell::new(None) };
     /// The programs running, in their order.
     static RUNNING: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
     /// What the status bar item shows: the tool and the main journal.
@@ -192,6 +195,17 @@ fn run(
     dir: &str,
     done: impl FnOnce(Result<process::Exit, NotRun>) + 'static,
 ) {
+    run_input(program, args, dir, None, done);
+}
+
+/// [`run`], `input` given on the program's standard input.
+fn run_input(
+    program: &'static str,
+    args: Vec<String>,
+    dir: &str,
+    input: Option<Vec<u8>>,
+    done: impl FnOnce(Result<process::Exit, NotRun>) + 'static,
+) {
     let done = Rc::new(RefCell::new(Some(done)));
     running(program, true);
     let finish = move |r: Result<process::Exit, NotRun>| {
@@ -200,14 +214,18 @@ fn run(
             f(r);
         }
     };
-    let here = process::Command::new(program).args(args.clone()).cwd(dir);
+    let with_input = |c: process::Command| match &input {
+        Some(i) => c.stdin(i.clone()),
+        None => c,
+    };
+    let here = with_input(process::Command::new(program).args(args.clone()).cwd(dir));
     let first = finish.clone();
     let taken = move |r: Result<process::Exit, String>| {
         r.map_err(|_| NotRun::Missing)
             .and_then(|e| whole(program, e))
     };
     if process::run(&here, move |r| first(taken(r))).is_err() {
-        let anywhere = process::Command::new(program).args(args);
+        let anywhere = with_input(process::Command::new(program).args(args));
         let second = finish.clone();
         if let Err(why) = process::run(&anywhere, move |r| second(taken(r))) {
             finish(Err(NotRun::Refused(why)));
@@ -1270,6 +1288,77 @@ fn arrived(path: &str) {
     }
 }
 
+/// Run the Journal Block (`SPC m x` in an Org document's `hledger`,
+/// `ledger` or `beancount` block): its text given to its tool with its
+/// `:cmdline`, the output written under it as `#+RESULTS:`.
+fn run_block() -> Result<String, String> {
+    let doc = editor::document();
+    let path = doc.as_ref().and_then(|d| d.path.clone());
+    let is_org = doc.as_ref().is_some_and(|d| d.mode == "org");
+    let text = editor::text(None);
+    let at = editor::selected().head as usize;
+    let Some(b) = is_org.then(|| crate::blocks::block_at(&text, at)).flatten() else {
+        ui::notify(
+            "Run the Journal Block runs in an Org document's hledger, ledger or beancount source block",
+            ui::Level::Info,
+        );
+        return Ok("null".into());
+    };
+    let (program, args) = crate::blocks::command(&b);
+    let input = text[b.body.clone()].as_bytes().to_vec();
+    let dir = path
+        .as_deref()
+        .map(journal::folder)
+        .unwrap_or("")
+        .to_string();
+    let start = b.start;
+    run_input(program, args, &dir, Some(input), move |r| {
+        let said = match r {
+            Ok(e) if e.status == Some(0) => String::from_utf8_lossy(&e.stdout).into_owned(),
+            Ok(e) => String::from_utf8_lossy(&e.stderr).into_owned(),
+            Err(NotRun::Missing) => {
+                return ui::notify(&missing(b.dialect), ui::Level::Warning);
+            }
+            Err(NotRun::Refused(why)) => {
+                return ui::notify(&format!("{program}: {why}"), ui::Level::Warning);
+            }
+            Err(NotRun::TooLong) => return,
+        };
+        BLOCK.with(|r| *r.borrow_mut() = Some((path, start, said)));
+        if let Err(why) = kalem::run("pta.runBlockWrite", "{}") {
+            ui::notify(&why, ui::Level::Warning);
+        }
+    });
+    Ok("null".into())
+}
+
+/// Writes the block's results [`run_block`] keeps, in its document.
+fn write_block() -> Result<String, String> {
+    let Some((path, start, said)) = BLOCK.with(|r| r.borrow_mut().take()) else {
+        return Ok("null".into());
+    };
+    let here = editor::document().and_then(|d| d.path);
+    if path.is_some()
+        && !here
+            .zip(path.as_ref())
+            .is_some_and(|(h, p)| journal::same_file(&h, p))
+    {
+        ui::notify(
+            "The block's document is no longer the current one",
+            ui::Level::Warning,
+        );
+        return Ok("null".into());
+    }
+    let text = editor::text(None);
+    // The block where it was: its `#+begin_src` line's start, or after.
+    let Some(b) = crate::blocks::block_at(&text, start.min(text.len())) else {
+        return Ok("null".into());
+    };
+    let (range, ins) = crate::blocks::write(&text, &b, &said);
+    edit(&[(range, ins)], "Run the Journal Block");
+    Ok("null".into())
+}
+
 /// Appends `text` at the end of `path`, opened for it, as one undo step
 /// named `title`: the plugin's command `pta.append` writes it, the editor
 /// being reached only while a command runs.
@@ -1689,6 +1778,18 @@ impl Plugin for Pta {
             |_| import::insert_rules(),
         )?;
         command("pta.prices", "Fetch Prices", t, |_| prices::command())?;
+        command("pta.runBlock", "Run the Journal Block", t, |_| run_block())?;
+        kalem::keymap(
+            "space m x",
+            "pta.runBlock",
+            Some(&format!("{journal} && editorMode == org && vimCommand")),
+        )?;
+        command(
+            "pta.runBlockWrite",
+            "Write the Journal Block's Results",
+            t,
+            |_| write_block(),
+        )?;
         kalem::keymap("space m p", "pta.prices", Some(&leader))?;
         let mut types = crate::TEXT_TYPES.to_vec();
         types.push("text");

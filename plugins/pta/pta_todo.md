@@ -912,7 +912,7 @@ first.
   pick) sets `journal` (this file, another typed, none) and `tool`
   from a pick, through `settings.set`, the status bar item following.
   Open: the window's toolbar not looked at.)
-- [~] PT11b Org: `pta.insertAsTable` in an Org document, the report of
+- [x] PT11b Org: `pta.insertAsTable` in an Org document, the report of
   PT7c chosen as an Org table (`hledger … -O csv`, `bean-query -f
   csv`, converted as Kalem converts CSV to an Org table and inserted
   at the cursor through `editor.insert`), so that a monthly note holds
@@ -937,7 +937,15 @@ first.
   field's line feeds as `, `, `|` as `\vert{}`). The journal: the
   setting `journal` beside the note, else `LEDGER_FILE`'s, else the
   journal last opened. A test turns every table report of each tool
-  on the corpus into an aligned table. Waits on Kalem: Babel (K6).)
+  on the corpus into an aligned table. Waits on Kalem: Babel (K6).
+  The blocks run on 2026-10-14 without Kalem's Babel (K6 still open):
+  Run the Journal Block (`pta.runBlock`, `SPC m x` where the text type
+  is a journal's inside an Org document) gives the block's text to its
+  tool on standard input (`hledger -f -`, `ledger -f -`, `bean-query
+  /dev/stdin`) with its `:cmdline` (ob-ledger's; `:cmd`), and writes
+  `#+RESULTS:` in fixed-width lines under it, the last run's replaced
+  (`src/blocks.rs`); checked in the terminal editor with an hledger and
+  a Beancount block, run twice.)
 - [x] PT11c Batch and the terminal: `kalem run pta.balance FILE`,
   `pta.register FILE ACCOUNT`, `pta.check FILE` print their documents;
   every document and key the same in the terminal editor, checked by

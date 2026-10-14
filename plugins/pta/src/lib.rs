@@ -34,6 +34,7 @@
 //! - `component` (built for WebAssembly only): Kalem's `extension` world.
 
 pub mod align;
+pub mod blocks;
 pub mod check;
 #[cfg(target_arch = "wasm32")]
 mod component;
