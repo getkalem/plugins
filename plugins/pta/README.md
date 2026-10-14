@@ -108,7 +108,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 
 Waiting on Kalem:
 
-- The servers' running balances and elided amounts as inlay hints (K4); Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
+- Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
 
 Not done yet:
 
@@ -237,7 +237,7 @@ On the corpus, through Kalem's client (`kalem lsp ask`, `kalem lsp check`) and a
 | Formatting | **changes what the journal means**: drops an automated posting's `*-1` and writes `==` as `=` (undo puts it back) | amounts aligned; hledger reads it as before | amounts aligned; `bean-query` reads it as before |
 | Settings sent | `settings.hledgerLanguageServer.…` | `settings.hledger.…` | its main journal, `servers.beancount-language-server.initializationOptions.journal_file`, read as it starts |
 
-Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting; it does not yet ask for the inlay hints all three give (an elided posting's amount; running balances in juev's), nor for code lenses.
+Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting, and from the Kalem release after 0.6.21 the servers' inlay hints, dimmed at the end of a posting: an elided posting's amount (both hledger servers, seen in Kalem's terminal editor), and running balances from ptimoney's once its setting is on, in `settings.toml`: `[plugins."org.kalem.pta".settings.hledgerLanguageServer.inlayHints]` with `showRunningBalances = true`. Kalem's `editor.inlay_hints` (on) and Toggle Inlay Hints show or hide them all. It does not yet ask for code lenses.
 
 The plugin turns hledger-lsp's formatting off (`servers.hledger-lsp.ignore`, `["documentFormattingProvider"]`), since ptimoney's 0.7.0 formats a journal into one that means something else; with juev's, whose formatting hledger reads as before, set it to `[]`.
 

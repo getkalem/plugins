@@ -1111,7 +1111,11 @@ plugin's section 9 followed).
   journal, PT8b; an import appended to the journal, PT9b): `editor`
   reaching a named document, or the editable generated documents with
   a `saved(text)` event the git design planned (its 9.2 and 9.8).
-- K4 Running balances in the margin: inlay hints from the language
+- K4 (done, 2026-10-14: Kalem branch `lsp-inlay-hints`, the language
+  server client's inlay hints in both editors; checked with ptimoney's
+  hledger-lsp on the corpus, elided amounts by default and running
+  balances with `inlayHints.showRunningBalances`) Running balances in
+  the margin: inlay hints from the language
   server client (both servers give them; `client.rs` asks for none),
   or virtual text in `decorations` (planned in the git design's 9.3,
   not built).
