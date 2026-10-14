@@ -164,7 +164,9 @@ impl App {
             .sum::<usize>();
         let flavor = self.flavor_in(&root, &rel);
         let cycle = index.graph.todo_cycle();
-        let Some(change) = edit::cycle_todo(&note, flavor, cycle, offset) else {
+        let now = self.clock_now(&root);
+        let Some(change) = edit::cycle_todo_clocked(&note, flavor, cycle, offset, now.as_ref())
+        else {
             return none();
         };
         if let Err(e) = files.write(&path, &edit::apply(&note, &change.edits)) {

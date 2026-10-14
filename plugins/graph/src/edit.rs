@@ -324,6 +324,181 @@ pub fn cycle_todo(text: &str, flavor: Flavor, cycle: [&str; 3], cursor: usize) -
     })
 }
 
+/// The local moment a task's clock is read at: its stamp as Logseq
+/// writes it (`2026-10-14 Wed 16:20:11`), and its seconds since 1970.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Now {
+    /// `2026-10-14 Wed 16:20:11`.
+    pub stamp: String,
+    /// Seconds since 1970, of the local time.
+    pub secs: i64,
+}
+
+impl Now {
+    /// The moment `ms` milliseconds after 1970, in local time.
+    pub fn at(ms: i64) -> Now {
+        const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        let secs = ms.div_euclid(1000);
+        let d = Date::from_days(secs.div_euclid(86_400));
+        let t = secs.rem_euclid(86_400);
+        Now {
+            stamp: format!(
+                "{} {} {:02}:{:02}:{:02}",
+                d.iso(),
+                DAYS[usize::from(d.weekday())],
+                t / 3600,
+                t / 60 % 60,
+                t % 60
+            ),
+            secs,
+        }
+    }
+}
+
+/// The seconds since 1970 of a clock's stamp (`2026-10-14 Wed 16:20:11`,
+/// or without seconds, as older Logseqs wrote it).
+fn stamp_secs(stamp: &str) -> Option<i64> {
+    let d = Date::parse_iso(stamp.get(..10)?)?;
+    let mut hms = stamp.split_whitespace().last()?.split(':');
+    let h: i64 = hms.next()?.parse().ok()?;
+    let m: i64 = hms.next()?.parse().ok()?;
+    let s: i64 = hms.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    Some(d.to_days() * 86_400 + h * 3600 + m * 60 + s)
+}
+
+/// Logseq's clock (`:feature/enable-timetracking?`) for the block at
+/// line `line` whose keyword goes from `old` to `new` at `now`, as Logseq
+/// 0.10.9 keeps it: a task started (to NOW or DOING) gets a `CLOCK:` line
+/// in its `:LOGBOOK:` (the drawer made after its properties and dates),
+/// one stopped (to DONE, or back to LATER or TODO) its open clock closed
+/// with the time it ran. `None` when the clock does not change.
+pub fn clock(
+    text: &str,
+    flavor: Flavor,
+    line: u32,
+    old: Option<&str>,
+    new: Option<&str>,
+    now: &Now,
+) -> Option<Edit> {
+    let s = scan::scan(text, flavor, &scan::Options::default());
+    let st = starts(text);
+    let b = s.blocks.iter().find(|b| b.line == line)?;
+    let line_text = |n: u32| {
+        let a = line_start(&st, text, n);
+        let e = line_start(&st, text, n + 1);
+        text[a..e].trim_end_matches(['\n', '\r'])
+    };
+    let is = |m: Option<&str>, w: &str| m.is_some_and(|m| m.eq_ignore_ascii_case(w));
+    let started = |m: Option<&str>| is(m, "NOW") || is(m, "DOING");
+    // The block's logbook: its first and last lines.
+    let logbook = (b.line + 1..b.end)
+        .find(|n| line_text(*n).trim().eq_ignore_ascii_case(":LOGBOOK:"))
+        .and_then(|first| {
+            (first + 1..b.end)
+                .find(|n| line_text(*n).trim().eq_ignore_ascii_case(":END:"))
+                .map(|last| (first, last))
+        });
+    let same = old.zip(new).is_some_and(|(o, n)| o.eq_ignore_ascii_case(n));
+    let clock_in = (old.is_none() && started(new))
+        || (is(old, "TODO") && is(new, "DOING"))
+        || (is(old, "LATER") && is(new, "NOW"))
+        || (started(new) && same && logbook.is_none());
+    let clock_out = (is(old, "DOING") && is(new, "TODO"))
+        || (is(old, "NOW") && is(new, "LATER"))
+        || (started(old) && is(new, "DONE"));
+    let indent = continuation(text, &st, b, flavor);
+    if clock_in {
+        let clock = format!("{indent}CLOCK: [{}]\n", now.stamp);
+        if let Some((_, last)) = logbook {
+            let at = line_start(&st, text, last);
+            return Some(Edit {
+                start: at,
+                end: at,
+                text: clock,
+            });
+        }
+        // After the block's properties (Org's drawer) and dates.
+        let mut n = b.line + 1;
+        let mut drawer = false;
+        while n < b.end {
+            let t = line_text(n).trim();
+            if t.eq_ignore_ascii_case(":PROPERTIES:") {
+                drawer = true;
+            } else if drawer {
+                drawer = !t.eq_ignore_ascii_case(":END:");
+            } else {
+                let property = t.find("::").is_some_and(|p| p > 0 && !t[..p].contains(' '));
+                if !(property || t.starts_with("SCHEDULED:") || t.starts_with("DEADLINE:")) {
+                    break;
+                }
+            }
+            n += 1;
+        }
+        let at = line_start(&st, text, n);
+        let made = format!("{indent}:LOGBOOK:\n{clock}{indent}:END:\n");
+        let bare = at == text.len() && !text.is_empty() && !text.ends_with('\n');
+        return Some(Edit {
+            start: at,
+            end: at,
+            text: if bare {
+                format!("\n{}", made.trim_end_matches('\n'))
+            } else {
+                made
+            },
+        });
+    }
+    if clock_out {
+        let (first, last) = logbook?;
+        // The logbook's last clock, when still open.
+        let n = (first + 1..last)
+            .rev()
+            .find(|n| line_text(*n).trim().starts_with("CLOCK:"))?;
+        let whole = line_text(n);
+        let t = whole.trim();
+        if t.contains("--") {
+            return None;
+        }
+        let begun = t.strip_prefix("CLOCK: [")?.strip_suffix(']')?;
+        let span = (now.secs - stamp_secs(begun)?).max(0);
+        let lead = &whole[..whole.len() - whole.trim_start().len()];
+        let a = line_start(&st, text, n);
+        return Some(Edit {
+            start: a,
+            end: a + whole.len(),
+            text: format!(
+                "{lead}CLOCK: [{begun}]--[{}] =>  {:02}:{:02}:{:02}",
+                now.stamp,
+                span / 3600,
+                span / 60 % 60,
+                span % 60
+            ),
+        });
+    }
+    None
+}
+
+/// [`cycle_todo`], and Logseq's clock kept as it does when `now` is given
+/// (the graph tracks time): a task started or stopped clocked
+/// ([`clock`]).
+pub fn cycle_todo_clocked(
+    text: &str,
+    flavor: Flavor,
+    cycle: [&str; 3],
+    cursor: usize,
+    now: Option<&Now>,
+) -> Option<Change> {
+    let mut change = cycle_todo(text, flavor, cycle, cursor)?;
+    if let Some(now) = now.filter(|_| flavor != Flavor::Obsidian) {
+        let (s, _, i) = at(text, flavor, cursor)?;
+        let b = &s.blocks[i];
+        let new = next_marker(b.marker, cycle);
+        if let Some(e) = clock(text, flavor, b.line, b.marker, new, now) {
+            change.edits.push(e);
+        }
+    }
+    Some(change)
+}
+
 /// The priority of the block at `cursor` set (`None` removes it): `[#A]`
 /// after the task keyword.
 pub fn set_priority(
@@ -995,5 +1170,49 @@ mod tests {
         assert_eq!(block_at(&s, 1), Some(0));
         assert_eq!(block_at(&s, 2), Some(1));
         assert_eq!(subtree(&s.blocks, 0), (0, 3));
+    }
+
+    #[test]
+    fn logseqs_clock_on_a_task_started_and_done() {
+        let start = Now::at(1_792_000_000_000);
+        assert_eq!(start.stamp, "2026-10-14 Wed 17:46:40");
+        let later = Now::at(1_792_000_000_000 + 3_929_000);
+        let cycled = |t: &str, now: &Now, flavor: Flavor| {
+            let c = cycle_todo_clocked(t, flavor, NOW, 2, Some(now)).unwrap();
+            apply(t, &c.edits)
+        };
+        // Started: a logbook after its properties and dates.
+        let t = "- LATER read\n  id:: 1\n  SCHEDULED: <2026-10-14 Tue>\n  a note\n- next\n";
+        let started = cycled(t, &start, Flavor::LogseqMarkdown);
+        assert_eq!(
+            started,
+            "- NOW read\n  id:: 1\n  SCHEDULED: <2026-10-14 Tue>\n  :LOGBOOK:\n  CLOCK: [2026-10-14 Wed 17:46:40]\n  :END:\n  a note\n- next\n"
+        );
+        // Done: its clock closed with the time it ran.
+        assert_eq!(
+            cycled(&started, &later, Flavor::LogseqMarkdown),
+            "- DONE read\n  id:: 1\n  SCHEDULED: <2026-10-14 Tue>\n  :LOGBOOK:\n  CLOCK: [2026-10-14 Wed 17:46:40]--[2026-10-14 Wed 18:52:09] =>  01:05:29\n  :END:\n  a note\n- next\n"
+        );
+        // Started again: another clock in the same logbook.
+        let again = "\t- LATER x\n\t  :LOGBOOK:\n\t  CLOCK: [2026-10-13 Mon 09:00:00]--[2026-10-13 Mon 09:30:00] =>  00:30:00\n\t  :END:\n";
+        let c = cycle_todo_clocked(again, Flavor::LogseqMarkdown, NOW, 4, Some(&start)).unwrap();
+        assert_eq!(
+            apply(again, &c.edits),
+            "\t- NOW x\n\t  :LOGBOOK:\n\t  CLOCK: [2026-10-13 Mon 09:00:00]--[2026-10-13 Mon 09:30:00] =>  00:30:00\n\t  CLOCK: [2026-10-14 Wed 17:46:40]\n\t  :END:\n"
+        );
+        // A file's last block without a line feed; Org, after its drawer.
+        assert_eq!(
+            cycled("- TODO y", &start, Flavor::LogseqMarkdown),
+            "- DOING y\n  :LOGBOOK:\n  CLOCK: [2026-10-14 Wed 17:46:40]\n  :END:"
+        );
+        let org = "* TODO z\n:PROPERTIES:\n:ID: 1\n:END:\nbody\n";
+        let c = cycle_todo_clocked(org, Flavor::LogseqOrg, TODO, 3, Some(&start)).unwrap();
+        assert_eq!(
+            apply(org, &c.edits),
+            "* DOING z\n:PROPERTIES:\n:ID: 1\n:END:\n:LOGBOOK:\nCLOCK: [2026-10-14 Wed 17:46:40]\n:END:\nbody\n"
+        );
+        // Without a clock (a graph that does not track time): the keyword only.
+        let c = cycle_todo_clocked(t, Flavor::LogseqMarkdown, NOW, 2, None).unwrap();
+        assert_eq!(c.edits.len(), 1);
     }
 }

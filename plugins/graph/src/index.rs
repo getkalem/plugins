@@ -41,6 +41,18 @@ pub struct FileData {
     pub scanned: Scanned,
 }
 
+impl FileData {
+    /// Block `i`'s text: its first line, and the lines of text after it
+    /// (Logseq's whole block), where unlinked mentions are looked for.
+    pub fn block_text(&self, i: usize) -> std::borrow::Cow<'_, str> {
+        let first = self.scanned.blocks[i].text.as_str();
+        match self.scanned.more.binary_search_by_key(&i, |(j, _)| *j) {
+            Ok(k) => format!("{first}\n{}", self.scanned.more[k].1).into(),
+            Err(_) => first.into(),
+        }
+    }
+}
+
 /// A reference to a page or a block, where it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackRef {
@@ -1203,8 +1215,8 @@ impl Index {
         }
         let mut out: BTreeMap<String, usize> = BTreeMap::new();
         for (rel, d) in &self.files {
-            for (i, b) in d.scanned.blocks.iter().enumerate() {
-                let text = b.text.to_lowercase();
+            for i in 0..d.scanned.blocks.len() {
+                let text = d.block_text(i).to_lowercase();
                 let mut here: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
                 let mut prev: Option<char> = None;
                 for (at, ch) in text.char_indices() {
@@ -1275,7 +1287,7 @@ impl Index {
                 continue;
             }
             for (i, b) in d.scanned.blocks.iter().enumerate() {
-                let text = b.text.to_lowercase();
+                let text = d.block_text(i).to_lowercase();
                 let linked = d
                     .scanned
                     .refs
@@ -1507,6 +1519,31 @@ mod tests {
         );
         assert!(i.page("home").is_some());
         assert!(i.page_of(".trash/Old.md").is_none());
+    }
+
+    #[test]
+    fn unlinked_mentions_in_a_blocks_every_line() {
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            ("/g/pages/Kalem.md", "- An editor\n"),
+            (
+                "/g/pages/Notes.md",
+                "- first line\n  id:: 11111111-2222-3333-4444-555555555555\n  then kalem is named\n- kalem in a first line\n- ```\n  kalem in code\n  ```\n",
+            ),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        // Named in a block's second line, as Logseq's whole block; not in
+        // code, nor in a property.
+        let lines: Vec<u32> = i.unlinked("kalem").iter().map(|b| b.line).collect();
+        assert_eq!(lines, [0, 3]);
+        assert_eq!(
+            i.file("pages/Notes.md").unwrap().block_text(0),
+            "first line\nthen kalem is named"
+        );
+        assert_eq!(i.unlinked_counts().get("kalem"), Some(&2));
     }
 
     #[test]

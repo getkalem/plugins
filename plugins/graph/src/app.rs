@@ -280,6 +280,16 @@ pub const COMMANDS: &[CommandInfo] = &[
         "Deadline",
         &[("space m d d", in_note!(" && vimCommand"))],
     ),
+    // Logseq's date picker: a day typed (`today`, `fri`, `+3`, `oct 12`),
+    // its journal's link written. Org has `SPC m d t` of its own.
+    n(
+        "graph.insertDate",
+        "Insert Date",
+        &[(
+            "space m d t",
+            in_note!(" && vimCommand && editorMode == markdown"),
+        )],
+    ),
     n(
         "graph.moveBlockUp",
         "Move Block Up",
@@ -585,6 +595,9 @@ enum Pending {
     Date {
         key: &'static str,
     },
+    InsertDate {
+        root: String,
+    },
     Priority,
     Rename {
         root: String,
@@ -616,6 +629,7 @@ const WRITES: &[&str] = &[
     "graph.setPriority",
     "graph.schedule",
     "graph.deadline",
+    "graph.insertDate",
     "graph.moveBlockUp",
     "graph.moveBlockDown",
     "graph.indent",
@@ -730,6 +744,15 @@ impl App {
             unindexed: std::cell::RefCell::new(BTreeSet::new()),
             changed: BTreeSet::new(),
         }
+    }
+
+    /// The local moment Logseq's clock is read at, when graph `root`
+    /// tracks time (`:feature/enable-timetracking?`, Logseq's default)
+    /// and Kalem gives the local time.
+    fn clock_now(&self, root: &str) -> Option<crate::edit::Now> {
+        let tracking = self.indexes.get(root).is_some_and(|i| i.graph.timetracking);
+        let now = self.local_now?;
+        tracking.then(|| crate::edit::Now::at(now()))
     }
 
     /// Today: the day the user gave, else the local clock's (API 0.2.11);
@@ -1559,6 +1582,7 @@ impl App {
             | "graph.setDateNow"
             | "graph.setPriorityNow"
             | "graph.renameNow"
+            | "graph.insertDate"
             | "graph.refBlockNow" => {
                 out.extend(self.outline_command(files, id, &root, rel.as_deref(), ctx));
             }
@@ -2003,6 +2027,26 @@ impl App {
                     args: serde_json::json!({ "key": key, "date": date.map(Date::iso) })
                         .to_string(),
                 }]
+            }
+            Pending::InsertDate { root } => {
+                let Some(t) = text(&answer) else {
+                    return Vec::new();
+                };
+                let date = Date::parse_iso(&t)
+                    .or_else(|| self.known_today().and_then(|d| date::parse_input(&t, d)));
+                match (date, self.indexes.get(&root)) {
+                    (Some(d), Some(index)) => vec![Effect::Run {
+                        id: "graph.insertText".into(),
+                        args: serde_json::json!({
+                            "text": format!("[[{}]]", index.graph.journal_title.format(d))
+                        })
+                        .to_string(),
+                    }],
+                    _ => vec![Effect::Notify(
+                        format!("{t} is no date: write it as 2026-10-12, oct 12, +3 or friday"),
+                        Level::Warning,
+                    )],
+                }
             }
             Pending::Priority => {
                 let p = match picked(&answer) {

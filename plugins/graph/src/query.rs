@@ -745,8 +745,34 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
             hits.reverse();
         }
     }
-    if let Some(n) = q.sample {
-        hits.truncate(n);
+    if let Some(n) = q.sample
+        && hits.len() > n
+    {
+        // n at random, as Logseq picks them; the same n through a day (a
+        // query drawn again as the user types keeps them), others the
+        // next, and for another query. Kept in the query's order.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let day = today.map_or(0, Date::to_days).to_le_bytes();
+        for b in format!("{:?}", q.expr).bytes().chain(day) {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        let mut next = || {
+            // xorshift64.
+            h ^= h << 13;
+            h ^= h >> 7;
+            h ^= h << 17;
+            h
+        };
+        let mut order: Vec<usize> = (0..hits.len()).collect();
+        for i in 0..n {
+            let j = i + (next() % (order.len() - i) as u64) as usize;
+            order.swap(i, j);
+        }
+        let mut keep: Vec<usize> = order[..n].to_vec();
+        keep.sort_unstable();
+        let mut all: Vec<Option<Hit>> = hits.into_iter().map(Some).collect();
+        hits = keep.into_iter().filter_map(|i| all[i].take()).collect();
     }
     Answer {
         hits,
@@ -1029,6 +1055,27 @@ mod tests {
         let mut t = texts(i, &run(&parse(s).unwrap(), i, Date::new(2026, 10, 10)));
         t.sort();
         t
+    }
+
+    #[test]
+    fn sample_picks_at_random_and_keeps_them_through_the_day() {
+        let i = index();
+        let all = q(&i, "[[Kalem]]");
+        let day = |d: u8| {
+            let a = run(
+                &parse("(and [[Kalem]] (sample 3))").unwrap(),
+                &i,
+                Date::new(2026, 10, d),
+            );
+            texts(&i, &a)
+        };
+        let a = day(10);
+        assert_eq!(a.len(), 3);
+        assert!(a.iter().all(|t| all.contains(t)), "{a:?}");
+        // The same through the day; not always the first three.
+        assert_eq!(day(10), a);
+        let firsts: Vec<Vec<String>> = (1..=28).map(day).collect();
+        assert!(firsts.iter().any(|f| *f != firsts[0]), "{firsts:?}");
     }
 
     #[test]

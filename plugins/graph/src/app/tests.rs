@@ -2071,3 +2071,30 @@ fn the_graph_views_toggles() {
     assert!(!without.contains(&"templates".to_string()), "{without:?}");
     assert!(without.iter().any(|k| k.starts_with("oct")), "{without:?}");
 }
+
+#[test]
+fn a_date_typed_written_as_its_journals_link() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.today = Date::new(2026, 10, 10);
+    let other = "/w/notes/pages/Other.md";
+    app.opened(&m, other);
+    let c = ctx(other, "- x\n", 3);
+    let out = app.command(&m, "graph.insertDate", &c);
+    let Effect::Prompt { token, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    // Logseq's date picker: `+3`, `friday`, `oct 12` as well.
+    let out = app.answer(&m, *token, Answer::Text(Some("+3".into())));
+    let Effect::Run { id, args } = &out[0] else {
+        panic!("{out:?}")
+    };
+    assert_eq!(id, "graph.insertText");
+    assert_eq!(args, r#"{"text":"[[Oct 13th, 2026]]"}"#);
+    let out = app.command(&m, "graph.insertDate", &c);
+    let Effect::Prompt { token, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let out = app.answer(&m, *token, Answer::Text(Some("someday".into())));
+    assert!(matches!(&out[..], [Effect::Notify(..)]), "{out:?}");
+}

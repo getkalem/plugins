@@ -388,7 +388,13 @@ impl App {
         };
         match id {
             "graph.cycleTodo" => done(
-                edit::cycle_todo(text, flavor, cycle, cursor),
+                edit::cycle_todo_clocked(
+                    text,
+                    flavor,
+                    cycle,
+                    cursor,
+                    self.clock_now(root).as_ref(),
+                ),
                 "Cycle Task",
                 "No block at the cursor",
             ),
@@ -444,6 +450,17 @@ impl App {
                     ),
                     value: None,
                     placeholder: Some("2026-10-12, oct 12, +3, friday".into()),
+                }]
+            }
+            "graph.insertDate" => {
+                let t = self.token(Pending::InsertDate {
+                    root: root.to_string(),
+                });
+                vec![Effect::Prompt {
+                    token: t,
+                    title: "Insert a link to the journal of".into(),
+                    value: None,
+                    placeholder: Some("today, friday, +3, oct 12, 2026-10-20".into()),
                 }]
             }
             "graph.setDateNow" => {
