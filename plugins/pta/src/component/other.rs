@@ -288,7 +288,7 @@ fn write(key: &(String, String), said: &str, open: bool) {
         );
         if e.report.dated {
             header.push_str(" · ");
-            header.push_str(e.period.name());
+            header.push_str(&e.period.name());
         }
         let hint = if e.report.dated {
             "p period · o another report · r again · q close"
@@ -364,7 +364,7 @@ pub(super) fn again() -> Result<String, String> {
     Ok("null".into())
 }
 
-/// `p` in a Report: the period, picked; the report run again.
+/// `p` in a Report: the period, picked or typed; the report run again.
 pub(super) fn pick_period() -> Result<String, String> {
     let Some(key) = here() else {
         return Ok("null".into());
@@ -374,24 +374,11 @@ pub(super) fn pick_period() -> Result<String, String> {
         ui::notify("This report takes no period", ui::Level::Info);
         return Ok("null".into());
     }
-    let items: Vec<ui::PickItem> = Period::ALL
-        .iter()
-        .map(|p| ui::PickItem {
-            label: p.name().to_string(),
-            detail: None,
-        })
-        .collect();
-    ui::quick_pick(
-        &items,
-        &ui::PickOptions {
-            title: Some("Period of the report".into()),
-            placeholder: None,
-            many: false,
-        },
-        move |picked| {
-            let Some(&p) = picked.first().and_then(|&i| Period::ALL.get(i as usize)) else {
-                return;
-            };
+    let now = REPORTS.with(|r| r.borrow().get(&key).map(|e| e.period));
+    super::pick_period(
+        "Period of the report",
+        now.unwrap_or(Period::All),
+        move |p| {
             REPORTS.with(|r| {
                 if let Some(e) = r.borrow_mut().get_mut(&key) {
                     e.period = p;

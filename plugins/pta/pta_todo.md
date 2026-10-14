@@ -550,7 +550,7 @@ first.
 
 ## PT7. The balance and the register as documents
 
-- [~] PT7a `pta.balance` (`SPC m b`): the balance sheet of the main
+- [x] PT7a `pta.balance` (`SPC m b`): the balance sheet of the main
   journal as a document "Balance: 2026.journal" (kind `pta-balance`),
   written as the git plugin writes its status: a header line with the
   tool, the period and the depth; the account tree with `▸` and `▾`
@@ -587,13 +587,21 @@ first.
   month, this quarter, this year, last year, all dates), `d` the depth,
   `r` again, `q` and Escape close, `?` the pick; written again on the
   journal's save. Changed: the period and depth keys are `p` and `d` in
-  the document, not `SPC m p`; a typed period waits (Ledger and
+  the document, not `SPC m p`; a typed period waited (Ledger and
   Beancount would need it parsed). Styled: the header, the sections and
   totals bold, marks muted, amounts below zero red. Tests: unit tests
   of each tool's rows, the tree, the folds, the periods, the commands;
   `tests/reports.rs` runs each tool on the corpus (a subtotal, a
   section's accounts, a period's change against the balance at its
-  end).)
+  end).
+  Typed dates came on 2026-10-14: `p`'s pick ends with Dates…, which
+  takes a year, a quarter, a month or a day (`2026`, `2026-Q1`,
+  `2026-03`, `2026-03-05`) or a range of them (`2026-01..2026-03`, the
+  whole of its second part; an open side), parsed by the plugin into
+  the same first and last days the named periods give, so each tool
+  gets its dates as before (`report::Period::typed`, `Dates`); the
+  Register, Report… and Insert a Report as a Table take them too, and
+  `kalem run`'s `period`.)
 - [x] PT7b `pta.register` (`SPC m R`; Enter on an account in PT7a; the
   account at the cursor in a journal, else asked): "Register:
   Expenses:Market" (kind `pta-register`), one line per posting: date,

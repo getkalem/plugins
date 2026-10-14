@@ -34,6 +34,121 @@ pub enum Period {
     ThisQuarter,
     ThisYear,
     LastYear,
+    /// Dates typed: from the first, up to (not with) the second.
+    Dates(Date, Date),
+}
+
+/// The first day of an open start, and the end of an open end.
+pub const EARLIEST: Date = Date {
+    y: 1900,
+    m: 1,
+    d: 1,
+};
+pub const LATEST: Date = Date {
+    y: 9999,
+    m: 12,
+    d: 31,
+};
+
+/// The first day of the month after month `m` of year `y`.
+fn month_after(y: i32, m: u32) -> Date {
+    if m >= 12 {
+        Date {
+            y: y + 1,
+            m: 1,
+            d: 1,
+        }
+    } else {
+        Date { y, m: m + 1, d: 1 }
+    }
+}
+
+/// The days of a year, a quarter, a month or a day written alone
+/// (`2026`, `2026-Q1`, `2026-03`, `2026-03-05`): its first, and the one
+/// after its last.
+fn unit(s: &str) -> Option<(Date, Date)> {
+    let s = s.trim();
+    if let Some((day, len, _)) = crate::write::date_at(s)
+        && len == s.len()
+    {
+        return Some((day, day.plus(1)));
+    }
+    let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    if digits != 4 {
+        return None;
+    }
+    let y: i32 = s[..4].parse().ok()?;
+    let rest = &s[4..];
+    if rest.is_empty() {
+        return Some((
+            Date { y, m: 1, d: 1 },
+            Date {
+                y: y + 1,
+                m: 1,
+                d: 1,
+            },
+        ));
+    }
+    let rest = rest.strip_prefix(['-', '/', '.']).unwrap_or(rest);
+    if let Some(q) = rest.strip_prefix(['q', 'Q']) {
+        let q: u32 = q.parse().ok().filter(|q| (1..=4).contains(q))?;
+        let m = (q - 1) * 3 + 1;
+        return Some((Date { y, m, d: 1 }, month_after(y, m + 2)));
+    }
+    let m: u32 = rest.parse().ok().filter(|m| (1..=12).contains(m))?;
+    Some((Date { y, m, d: 1 }, month_after(y, m)))
+}
+
+/// Typed dates' name, as they can be typed again: a year, a quarter, a
+/// month or a day alone, else a range of months or of days.
+fn dates_name(begin: Date, end: Date) -> String {
+    let month = |d: Date| format!("{:04}-{:02}", d.y, d.m);
+    let whole_months = (begin == EARLIEST || begin.d == 1) && (end == LATEST || end.d == 1);
+    let one = |a: Date, b: Date| -> Option<String> {
+        if a.d == 1
+            && a.m == 1
+            && b == (Date {
+                y: a.y + 1,
+                m: 1,
+                d: 1,
+            })
+        {
+            return Some(format!("{:04}", a.y));
+        }
+        if a.d == 1 && (a.m - 1).is_multiple_of(3) && b == month_after(a.y, a.m + 2) {
+            return Some(format!("{:04}-Q{}", a.y, (a.m - 1) / 3 + 1));
+        }
+        if a.d == 1 && b == month_after(a.y, a.m) {
+            return Some(month(a));
+        }
+        (b == a.plus(1)).then(|| a.written('-'))
+    };
+    if begin != EARLIEST
+        && end != LATEST
+        && let Some(n) = one(begin, end)
+    {
+        return n;
+    }
+    let side = |d: Date, first: bool| {
+        if whole_months {
+            if first { month(d) } else { month(d.plus(-1)) }
+        } else if first {
+            d.written('-')
+        } else {
+            d.plus(-1).written('-')
+        }
+    };
+    let from = if begin == EARLIEST {
+        String::new()
+    } else {
+        side(begin, true)
+    };
+    let to = if end == LATEST {
+        String::new()
+    } else {
+        side(end, false)
+    };
+    format!("{from}..{to}")
 }
 
 impl Period {
@@ -56,15 +171,43 @@ impl Period {
         Period::ALL.into_iter().find(|p| p.name() == n)
     }
 
-    /// Its name in the pick and the header.
-    pub fn name(self) -> &'static str {
+    /// The period typed: a name of the pick, or dates: a year (`2026`), a
+    /// month (`2026-03`), a quarter (`2026-Q1`), a day (`2026-03-05`), or
+    /// a range of them (`2026-01..2026-03`, `from 2026-01-15 to
+    /// 2026-02-14`), which takes the whole of its second part; either side
+    /// of `..` may be left out.
+    pub fn typed(text: &str) -> Option<Period> {
+        if let Some(p) = Period::named(text) {
+            return Some(p);
+        }
+        let t = text.trim().to_lowercase();
+        let t = t.strip_prefix("from ").unwrap_or(&t);
+        let (begin, end) = match t.split_once("..").or_else(|| t.split_once(" to ")) {
+            None => unit(t)?,
+            Some((a, b)) => {
+                let (a, b) = (a.trim(), b.trim());
+                if a.is_empty() && b.is_empty() {
+                    return None;
+                }
+                let begin = if a.is_empty() { EARLIEST } else { unit(a)?.0 };
+                let end = if b.is_empty() { LATEST } else { unit(b)?.1 };
+                (begin, end)
+            }
+        };
+        (begin < end).then_some(Period::Dates(begin, end))
+    }
+
+    /// Its name in the pick and the header; typed dates as they can be
+    /// typed again.
+    pub fn name(self) -> String {
         match self {
-            Period::All => "all dates",
-            Period::ThisMonth => "this month",
-            Period::LastMonth => "last month",
-            Period::ThisQuarter => "this quarter",
-            Period::ThisYear => "this year",
-            Period::LastYear => "last year",
+            Period::All => "all dates".into(),
+            Period::ThisMonth => "this month".into(),
+            Period::LastMonth => "last month".into(),
+            Period::ThisQuarter => "this quarter".into(),
+            Period::ThisYear => "this year".into(),
+            Period::LastYear => "last year".into(),
+            Period::Dates(begin, end) => dates_name(begin, end),
         }
     }
 
@@ -89,6 +232,7 @@ impl Period {
             }
             Period::ThisYear => (month(today.y, 1), month(today.y + 1, 1)),
             Period::LastYear => (month(today.y - 1, 1), month(today.y, 1)),
+            Period::Dates(begin, end) => (begin, end),
         })
     }
 }
@@ -1020,6 +1164,55 @@ mod tests {
             Some((d(2025, 12, 1), d(2026, 1, 1)))
         );
         assert_eq!(Period::All.bounds(today), None);
+    }
+
+    #[test]
+    fn dates_typed() {
+        let d = |y, m, d| Date { y, m, d };
+        let t = |s: &str| Period::typed(s).and_then(|p| p.bounds(d(2026, 10, 14)));
+        assert_eq!(t("2026"), Some((d(2026, 1, 1), d(2027, 1, 1))));
+        assert_eq!(t("2026-03"), Some((d(2026, 3, 1), d(2026, 4, 1))));
+        assert_eq!(t("2026/12"), Some((d(2026, 12, 1), d(2027, 1, 1))));
+        assert_eq!(t("2026-Q4"), Some((d(2026, 10, 1), d(2027, 1, 1))));
+        assert_eq!(t("2026q1"), Some((d(2026, 1, 1), d(2026, 4, 1))));
+        assert_eq!(t("2026-03-05"), Some((d(2026, 3, 5), d(2026, 3, 6))));
+        // A range takes the whole of its second part.
+        assert_eq!(t("2026-01..2026-03"), Some((d(2026, 1, 1), d(2026, 4, 1))));
+        assert_eq!(Period::typed("2026-01..2026-03").unwrap().name(), "2026-Q1");
+        assert_eq!(
+            t("from 2026-01-15 to 2026-02-14"),
+            Some((d(2026, 1, 15), d(2026, 2, 15)))
+        );
+        assert_eq!(t("2026-03.."), Some((d(2026, 3, 1), LATEST)));
+        assert_eq!(t("..2025"), Some((EARLIEST, d(2026, 1, 1))));
+        assert_eq!(t("last year"), Some((d(2025, 1, 1), d(2026, 1, 1))));
+        for bad in [
+            "",
+            "26",
+            "2026-13",
+            "2026-Q5",
+            "2026-02-30",
+            "2026-03..2026-01",
+            "soon",
+        ] {
+            assert_eq!(Period::typed(bad), None, "{bad}");
+        }
+        // Named as typed, so that the name typed again gives the same.
+        for s in [
+            "2026",
+            "2026-03",
+            "2026-Q2",
+            "2026-03-05",
+            "2026-01..2026-02",
+            "2026-01-15..2026-02-14",
+            "2026-03..",
+            "..2025-06",
+        ] {
+            let p = Period::typed(s).unwrap();
+            assert_eq!(p.name(), s);
+            assert_eq!(Period::typed(&p.name()), Some(p));
+        }
+        assert_eq!(Period::ThisMonth.name(), "this month");
     }
 
     #[test]
