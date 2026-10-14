@@ -631,9 +631,10 @@ fn blocks(index: &Index, typed: &str, cursor: usize, closed: bool) -> Vec<Sugges
     };
     let mut found: Vec<(u8, &str, Option<&str>, &str, &crate::scan::Block)> = Vec::new();
     for (rel, d) in index.files() {
-        let markdown = rel.ends_with(".md");
+        // An id written as the note writes one: Markdown's, Org's.
+        let writable = rel.ends_with(".md") || rel.ends_with(".org");
         for b in &d.scanned.blocks {
-            if b.id.is_none() && (typed_.is_empty() || !markdown) {
+            if b.id.is_none() && (typed_.is_empty() || !writable) {
                 continue;
             }
             let first = b.text.lines().next().unwrap_or("").trim();

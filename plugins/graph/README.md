@@ -124,7 +124,7 @@ As the user types in a note of a graph, Kalem's completion menu offers (plugin A
 |---|---|---|
 | `[[` | The pages and aliases whose title holds what is typed, journals last | The link as the graph writes links (Logseq's `[[Title]]`, Org's `file:` form when `config.edn` asks for it; Obsidian's shortest path, or as `.obsidian/app.json` says), closed unless `]]` follows |
 | `#` (after a space or at a line's start) | Logseq's pages, the most used first; Obsidian's tags | `#name`, `#[[two words]]` |
-| `((`, in a Logseq graph | The blocks that have an id, by their text; once something is typed, as Logseq offers them, every block of a Markdown note holding it too, those with an id first | `((uuid))`; a block without an id is given one, written into its file as `id::` when the note with the reference is saved (a file Kalem holds with unsaved changes, at its own save) |
+| `((`, in a Logseq graph | The blocks that have an id, by their text; once something is typed, as Logseq offers them, every block holding it too, those with an id first | `((uuid))`; a block without an id is given one, written into its file as Logseq writes one (`id::` in Markdown, `:ID:` in an Org headline's `:PROPERTIES:` drawer) when the note with the reference is saved (a file Kalem holds with unsaved changes, at its own save) |
 | `<`, in a Logseq note in Markdown | Logseq's blocks: Quote, Src, Query, Note, Tip, Important, Caution, Pinned, Warning, Example, Export, Verse, Center, Comment… | `#+BEGIN_NOTE` … `#+END_NOTE` with the block's indentation, the cursor inside |
 | `::` at a block's start | The properties the graph uses, the most used first | `key:: ` |
 | `key::` | The values that property has, one by one for `tags::`, `alias::` and the comma properties | the value |

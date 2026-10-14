@@ -2098,3 +2098,99 @@ fn a_date_typed_written_as_its_journals_link() {
     let out = app.answer(&m, *token, Answer::Text(Some("someday".into())));
     assert!(matches!(&out[..], [Effect::Notify(..)]), "{out:?}");
 }
+
+#[test]
+fn an_org_blocks_id_written_in_its_drawer() {
+    let m = Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{:preferred-format :org}"),
+        (
+            "/w/notes/pages/Kalem.org",
+            "* An editor\n:PROPERTIES:\n:type: program\n:END:\n* Plans for the release\nSCHEDULED: <2026-10-20 Tue>\n",
+        ),
+        ("/w/notes/pages/Other.org", "* x\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    let other = "/w/notes/pages/Other.org";
+    app.opened(&m, other);
+    // `((` in an Org note: the id written as Org writes it, after the
+    // headline's dates.
+    let text = "* see ((plans";
+    let found = app.complete(&m, "refs", Some(other), text, 0, text.len());
+    let id = found
+        .iter()
+        .find(|s| s.label == "Plans for the release")
+        .expect("the block")
+        .insert
+        .strip_suffix("))")
+        .unwrap()
+        .to_string();
+    m.write(other, &format!("* see (({id}))\n")).unwrap();
+    app.saved(&m, other);
+    let kalem = m.get("/w/notes/pages/Kalem.org").unwrap();
+    assert_eq!(
+        kalem,
+        format!(
+            "* An editor\n:PROPERTIES:\n:type: program\n:END:\n* Plans for the release\nSCHEDULED: <2026-10-20 Tue>\n:PROPERTIES:\n:ID: {id}\n:END:\n"
+        )
+    );
+    // A block with a drawer: the id in it, not Markdown's `id::`.
+    let found = app.complete(&m, "refs", Some(other), "* ((an ed", 0, 9);
+    let id2 = found
+        .iter()
+        .find(|s| s.label == "An editor")
+        .expect("the block")
+        .insert
+        .strip_suffix("))")
+        .unwrap()
+        .to_string();
+    m.write(other, &format!("* see (({id2}))\n")).unwrap();
+    app.saved(&m, other);
+    let kalem = m.get("/w/notes/pages/Kalem.org").unwrap();
+    assert!(
+        kalem.starts_with(&format!(
+            "* An editor\n:PROPERTIES:\n:type: program\n:ID: {id2}\n:END:\n"
+        )),
+        "{kalem}"
+    );
+    assert!(!kalem.contains("id::"), "{kalem}");
+}
+
+#[test]
+fn insert_block_reference_in_an_org_graph_writes_orgs_id() {
+    let m = Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{:preferred-format :org}"),
+        ("/w/notes/pages/Kalem.org", "* An editor\n* Plans\n"),
+        ("/w/notes/pages/Other.org", "* x\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Other.org");
+    let out = app.command(
+        &m,
+        "graph.insertBlockRef",
+        &ctx("/w/notes/pages/Other.org", "* x\n", 3),
+    );
+    let Effect::Pick { token, items, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let i = items
+        .iter()
+        .position(|(t, _)| t == "Plans")
+        .expect("the block");
+    let out = app.answer(&m, *token, Answer::Picked(Some(vec![i as u32])));
+    let id = m
+        .get("/w/notes/pages/Kalem.org")
+        .unwrap()
+        .split(":ID: ")
+        .nth(1)
+        .map(|s| s[..36].to_string())
+        .expect("Org's id written");
+    assert_eq!(
+        m.get("/w/notes/pages/Kalem.org").unwrap(),
+        format!("* An editor\n* Plans\n:PROPERTIES:\n:ID: {id}\n:END:\n")
+    );
+    assert!(
+        out.iter()
+            .any(|e| matches!(e, Effect::Run { args, .. } if args.contains(&format!("(({id}))")))),
+        "{out:?}"
+    );
+}

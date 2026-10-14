@@ -888,6 +888,55 @@ pub fn add_property(text: &str, line: u32, key: &str, value: &str) -> Option<Edi
     })
 }
 
+/// A block's id written as its note writes one: `id:: …` after a
+/// Markdown block's first line and properties, `:ID: …` in an Org
+/// headline's `:PROPERTIES:` drawer (made after its dates when it has
+/// none), as Logseq writes them.
+pub fn add_id(text: &str, flavor: Flavor, line: u32, id: &str) -> Option<Edit> {
+    if flavor != Flavor::LogseqOrg {
+        return add_property(text, line, "id", id);
+    }
+    let s = scan::scan(text, flavor, &scan::Options::default());
+    let st = starts(text);
+    let b = s.blocks.iter().find(|b| b.line == line)?;
+    let line_text = |n: u32| {
+        let a = line_start(&st, text, n);
+        let e = line_start(&st, text, n + 1);
+        text[a..e].trim()
+    };
+    // Its drawer, when it has one.
+    let drawer = (b.line + 1..b.end)
+        .find(|n| line_text(*n).eq_ignore_ascii_case(":PROPERTIES:"))
+        .and_then(|first| (first + 1..b.end).find(|n| line_text(*n).eq_ignore_ascii_case(":END:")));
+    if let Some(end) = drawer {
+        let at = line_start(&st, text, end);
+        return Some(Edit {
+            start: at,
+            end: at,
+            text: format!(":ID: {id}\n"),
+        });
+    }
+    let mut n = b.line + 1;
+    while n < b.end && {
+        let t = line_text(n);
+        t.starts_with("SCHEDULED:") || t.starts_with("DEADLINE:") || t.starts_with("CLOSED:")
+    } {
+        n += 1;
+    }
+    let at = line_start(&st, text, n);
+    let made = format!(":PROPERTIES:\n:ID: {id}\n:END:\n");
+    let bare = at == text.len() && !text.is_empty() && !text.ends_with('\n');
+    Some(Edit {
+        start: at,
+        end: at,
+        text: if bare {
+            format!("\n{}", made.trim_end_matches('\n'))
+        } else {
+            made
+        },
+    })
+}
+
 /// `text` with `edits` applied (for the tests and for files written).
 pub fn apply(text: &str, edits: &[Edit]) -> String {
     let mut out = String::with_capacity(text.len());

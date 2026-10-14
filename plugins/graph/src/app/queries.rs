@@ -148,7 +148,8 @@ impl App {
                 Level::Error,
             )];
         };
-        let Some(at) = super::outline::find_block(&note, line, &was) else {
+        let flavor = self.flavor_in(&root, &rel);
+        let Some(at) = super::outline::find_block_in(&note, line, &was, flavor) else {
             return vec![Effect::Notify(
                 format!(
                     "The block is no longer in {}: index again",
@@ -162,7 +163,6 @@ impl App {
             .take(at as usize)
             .map(str::len)
             .sum::<usize>();
-        let flavor = self.flavor_in(&root, &rel);
         let cycle = index.graph.todo_cycle();
         let now = self.clock_now(&root);
         let Some(change) = edit::cycle_todo_clocked(&note, flavor, cycle, offset, now.as_ref())
