@@ -774,6 +774,13 @@ pub struct App {
     /// The same in the user's local time, when Kalem gives the plugin
     /// its time zone's offset (API 0.2.11).
     pub local_now: Option<fn() -> i64>,
+    /// A file's text, when Kalem gives the plugin its files (`fs`): a
+    /// row's block as its file holds it, typed into in place (Kalem's
+    /// plugin API 0.2.15).
+    pub read: Option<fn(&str) -> Option<String>>,
+    /// The files read for rows' blocks, by path, with the index's version
+    /// they were read at.
+    texts: std::cell::RefCell<BTreeMap<String, (u64, std::rc::Rc<str>)>>,
     /// The pages opened last, newest first, absolute.
     recent: Vec<String>,
     /// What the `{{query …}}` of the notes show, by graph and query, with
@@ -818,6 +825,8 @@ impl App {
             random: None,
             now: None,
             local_now: None,
+            read: None,
+            texts: std::cell::RefCell::new(BTreeMap::new()),
             recent: Vec::new(),
             queries: std::cell::RefCell::new(BTreeMap::new()),
             properties: std::cell::RefCell::new(BTreeMap::new()),
@@ -1146,18 +1155,58 @@ impl App {
                 if let Some(line) = path.as_ref().and_then(|p| self.zoomed.get(p)) {
                     crate::layer::unfold(&mut o, text, *line);
                 }
-                if index.graph.kind == Kind::Obsidian {
-                    return o;
-                }
-                let current = index.page_of(&rel).map(|p| p.key.clone());
-                crate::layer::queries(
-                    o,
-                    text,
-                    &|q| (*self.query_summary(index, q)).clone(),
-                    &|q| (*self.advanced_summary(index, q, current.as_deref())).clone(),
-                )
+                let mut o = if index.graph.kind == Kind::Obsidian {
+                    o
+                } else {
+                    let current = index.page_of(&rel).map(|p| p.key.clone());
+                    crate::layer::queries(
+                        o,
+                        text,
+                        &|q| (*self.query_summary(index, q)).clone(),
+                        &|q| (*self.advanced_summary(index, q, current.as_deref())).clone(),
+                    )
+                };
+                self.sources(index, &mut o);
+                o
             }
             None => crate::layer::overlays(kind, text, None, path.as_deref().map(files::file_name)),
+        }
+    }
+
+    /// The rows of `o` that show a block given the block's first line as
+    /// its file holds it, to be typed into where they are drawn (Kalem's
+    /// plugin API 0.2.15): the file read once for each version of the
+    /// index.
+    fn sources(&self, index: &Index, o: &mut crate::layer::Overlays) {
+        let Some(read) = self.read else {
+            return;
+        };
+        let version = index.version();
+        let mut texts = self.texts.borrow_mut();
+        for b in &mut o.below {
+            for r in &mut b.rows {
+                let Some((rel, line)) = &r.block else {
+                    continue;
+                };
+                let path = index.graph.path(rel);
+                let fresh = texts.get(&path).is_some_and(|(v, _)| *v == version);
+                if !fresh {
+                    let Some(t) = read(&path) else {
+                        continue;
+                    };
+                    texts.insert(path.clone(), (version, t.into()));
+                }
+                let Some(raw) = texts[&path].1.lines().nth(*line as usize) else {
+                    continue;
+                };
+                let column = crate::rows::content_column(raw);
+                r.source = Some(crate::rows::Source {
+                    path,
+                    line: *line,
+                    column: column as u32,
+                    text: raw[column..].to_string(),
+                });
+            }
         }
     }
 

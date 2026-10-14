@@ -1208,6 +1208,8 @@ mod tests {
         let row = |t: &str| Row {
             indent: 2,
             parts: vec![(t.to_string(), Look::default())],
+            block: None,
+            source: None,
         };
         let o = queries(
             Overlays::default(),
