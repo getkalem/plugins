@@ -303,6 +303,51 @@ impl App {
         out
     }
 
+    /// The ids promised to blocks that had none (`((` completion,
+    /// [`crate::index::Index::promise`]) whose references are saved:
+    /// written into the blocks' files, as Insert Block Reference writes
+    /// one. A file Kalem holds with unsaved changes waits for its save.
+    pub(super) fn keep_promises(&mut self, files: &dyn Files) -> Vec<Effect> {
+        let mut out = Vec::new();
+        let roots: Vec<String> = self.indexes.keys().cloned().collect();
+        for root in roots {
+            let due: Vec<(String, String, u32, String)> = {
+                let index = &self.indexes[&root];
+                index
+                    .promised()
+                    .into_iter()
+                    .filter(|(id, ..)| !index.block_backlinks(id).is_empty())
+                    .collect()
+            };
+            for (id, rel, line, text) in due {
+                let path = self.indexes[&root].graph.path(&rel);
+                if self.dirty.contains(&path) {
+                    continue;
+                }
+                let Ok(note) = files.read(&path) else {
+                    continue;
+                };
+                let Some(e) = find_block(&note, line, &text)
+                    .and_then(|line| edit::add_property(&note, line, "id", &id))
+                else {
+                    // The block is gone: the reference stays as typed.
+                    self.indexes[&root].forget_promise(&id);
+                    continue;
+                };
+                if let Err(e) = files.write(&path, &edit::apply(&note, &[e])) {
+                    out.push(Effect::Notify(e, Level::Error));
+                    continue;
+                }
+                if let Some(i) = self.indexes.get_mut(&root) {
+                    i.forget_promise(&id);
+                    i.update(files, &path);
+                }
+                out.extend(self.refresh(&root));
+            }
+        }
+        out
+    }
+
     /// The commands of the note at the cursor.
     pub(super) fn outline_command(
         &mut self,

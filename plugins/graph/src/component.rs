@@ -446,6 +446,7 @@ impl Plugin for Graph {
                 a.try_borrow().ok().and_then(|a| {
                     a.as_ref().map(|app| {
                         app.complete(
+                            &Fs,
                             completer,
                             request.path.as_deref(),
                             &request.text,

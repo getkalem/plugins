@@ -89,6 +89,10 @@ pub struct Index {
     /// When each page was made and last changed, in milliseconds, as
     /// Logseq keeps them (`logseq/pages-metadata.edn`): by key.
     times: HashMap<String, (i64, i64)>,
+    /// Ids given to blocks that had none, for references typed to them
+    /// (`((` completion), until written into the blocks' files: the id,
+    /// then the block's file, line and text.
+    promised: std::cell::RefCell<HashMap<String, (String, u32, String)>>,
     /// Changed with every change of the index, across indexes.
     version: u64,
 }
@@ -153,6 +157,7 @@ impl Index {
             problems: Vec::new(),
             drawings: std::collections::BTreeSet::new(),
             times: HashMap::new(),
+            promised: std::cell::RefCell::new(HashMap::new()),
             version: VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -992,9 +997,72 @@ impl Index {
 
     /// The block with the id `id`: its file and the block.
     pub fn block(&self, id: &str) -> Option<(&str, &Block)> {
-        let (rel, i) = self.blocks.get(id)?;
-        let b = self.files.get(rel)?.scanned.blocks.get(*i)?;
+        if let Some((rel, i)) = self.blocks.get(id) {
+            let b = self.files.get(rel)?.scanned.blocks.get(*i)?;
+            return Some((rel.as_str(), b));
+        }
+        // A block promised the id, not written with it yet.
+        let (rel, line, text) = self.promised.borrow().get(id).cloned()?;
+        let (rel, d) = self.files.get_key_value(&rel)?;
+        let b = d
+            .scanned
+            .blocks
+            .iter()
+            .filter(|b| b.text == text)
+            .min_by_key(|b| b.line.abs_diff(line))?;
         Some((rel.as_str(), b))
+    }
+
+    /// An id for block `b` of file `rel`, which has none, for a reference
+    /// typed to it before the id is written into the file: the same for
+    /// the same block, a UUID of version 4 made from it. Until then
+    /// [`Index::block`] finds the block by it.
+    pub fn promise(&self, rel: &str, b: &Block) -> String {
+        let fnv = |salt: u8| {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            let line = b.line.to_le_bytes();
+            let bytes = [salt]
+                .into_iter()
+                .chain(self.graph.root.bytes())
+                .chain(rel.bytes())
+                .chain(line)
+                .chain(b.text.bytes());
+            for x in bytes {
+                h ^= u64::from(x);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+            h
+        };
+        let (x, y) = (fnv(1), fnv(2));
+        let hex = format!("{x:016x}{y:016x}");
+        let id = format!(
+            "{}-{}-4{}-{:x}{}-{}",
+            &hex[0..8],
+            &hex[8..12],
+            &hex[13..16],
+            8 + (y >> 62) as u8 % 4,
+            &hex[17..20],
+            &hex[20..32]
+        );
+        self.promised
+            .borrow_mut()
+            .insert(id.clone(), (rel.to_string(), b.line, b.text.clone()));
+        id
+    }
+
+    /// The ids promised and not written yet: each with its block's file,
+    /// line and text.
+    pub fn promised(&self) -> Vec<(String, String, u32, String)> {
+        self.promised
+            .borrow()
+            .iter()
+            .map(|(id, (rel, line, text))| (id.clone(), rel.clone(), *line, text.clone()))
+            .collect()
+    }
+
+    /// Promised id `id` written into its block's file, or given up.
+    pub fn forget_promise(&self, id: &str) {
+        self.promised.borrow_mut().remove(id);
     }
 
     /// The file of the block `id` and its place among the file's blocks.

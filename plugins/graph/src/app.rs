@@ -880,7 +880,11 @@ impl App {
 
     /// A file saved, or changed on disk.
     pub fn saved(&mut self, files: &dyn Files, path: &str) -> Vec<Effect> {
-        self.files_changed(files, &[files::normalize(path)])
+        let mut out = self.files_changed(files, &[files::normalize(path)]);
+        // A reference typed to a block that had no id, saved: the id
+        // written into the block's file.
+        out.extend(self.keep_promises(files));
+        out
     }
 
     /// A file changed on disk (`workspace-file-changed`): noted, to be
