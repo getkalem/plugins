@@ -152,7 +152,7 @@
       "name": "PDF viewer",
       "version": "0.0.3",
       "description": "Shows PDF files (ISO 32000) page by page with their outline, page labels and links; search, copy and the terminal read the pages' text",
-      "api": "^0.2.13",
+      "api": "^0.2.1",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pdf-viewer",
       "download": null,
