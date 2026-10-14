@@ -36,6 +36,7 @@
 pub mod align;
 pub mod blocks;
 pub mod check;
+pub mod complete;
 #[cfg(target_arch = "wasm32")]
 mod component;
 pub mod import;

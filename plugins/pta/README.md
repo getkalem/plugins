@@ -39,7 +39,8 @@ Then the tool you use, and, if you like, a server and a price program:
 | | hledger | Ledger | Beancount |
 |---|---|---|---|
 | Highlighting (the plugin) | journal and CSV rules | journal | journal |
-| Completion, hover, definition, references, rename (the server) | hledger-lsp | none | beancount-language-server |
+| Completion of accounts, payees and commodities (the plugin, from the tool's lists) | `hledger accounts`, `payees`, `commodities` | `ledger accounts`, `payees`, `commodities` | `bean-query` |
+| Hover, definition, references, rename, and the server's own completion (tags, dates) (the server) | hledger-lsp | none | beancount-language-server |
 | Check Journal, on each save (the tool) | `hledger check --strict` and the setting `checks` | `ledger --pedantic --explicit balance` | `bean-check` |
 | Align Amounts, Format Document (the plugin) | aligns; the server's formatting turned off | aligns | aligns; Format Document is the server's or `bean-format` |
 | New Transaction, drafted from the payee's last (the tool) | `hledger print --match` | `ledger xact` | the payee's last entry |
@@ -131,7 +132,9 @@ A journal that `include`s others is checked and reported as one: checking an inc
 *Main Journal and Tool…* (the Journal menu, the palette) sets both from a pick: this file as the main journal, another typed, or none. The setting `tool` picks the program for hledger's and Ledger's journals: `auto` takes the file's own, and a `.ledger` file goes to Ledger where Ledger is installed and to hledger where only hledger is (hledger does not read Ledger's value expressions, such as `(-$132.00)`). A Beancount journal is always Beancount's.
 
 ## Writing transactions
+As you type, the plugin completes the account on a posting (and in Beancount's `open`, `close`, `balance`, `pad`, `note` and `document`), the payee on a transaction's line, and the commodity in an amount, from what the journal's tool lists of the main journal: its accounts, payees and commodities, read when a journal opens and again on each save (before that, those the text writes). A typed part matches the start of a name, or of its parts in order (`ex:fo` for `expenses:food`, `groc` for `expenses:food:groceries`); a payee also by any of its words. Enter or Tab takes the item. Ledger has no language server, so this is its completion; with hledger-lsp or beancount-language-server, the plugin's accounts and payees stand in for the server's, and the server still completes the rest (tags, dates).
 
+In a journal, under `SPC m` in Vim's command mode and in the palette's Journal group, each one undo step:
 In a journal, under `SPC m` in Vim's command mode and in the palette's Journal group, each one undo step:
 
 - *New Transaction* (`SPC m a`): asks the date (today offered; `yesterday`, `-3`, `5`, `10/5`, `friday`, `last friday` taken) and the payee (the journal's, the last written first, or another), then writes the transaction the tool drafts from that payee's last one (`hledger print --match`, `ledger xact`, Beancount's last entry), dated, without its old balance assertions, at its date's place (or at the end, `insert_at`), the cursor on its first amount.
