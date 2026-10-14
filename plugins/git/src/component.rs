@@ -24,6 +24,10 @@ thread_local! {
     /// The documents open, by repository and, for a commit view, the
     /// commit's hash: their numbers.
     static DOCS: RefCell<BTreeMap<(String, Option<String>), u64>> = const { RefCell::new(BTreeMap::new()) };
+    /// The files of the documents open, by number, and the number of the
+    /// one the cursor is in.
+    static FILES: RefCell<BTreeMap<u64, String>> = const { RefCell::new(BTreeMap::new()) };
+    static IN: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
 /// Hands `input` to the plugin and does what follows, each effect's own
@@ -456,13 +460,28 @@ impl Plugin for Git {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
             {
+                FILES.with(|f| f.borrow_mut().insert(d.document, p.clone()));
+                IN.with(|i| i.set(Some(d.document)));
                 feed(Input::Opened(p.clone()));
             }
             Reply::Proceed
         })?;
         kalem::on(EventKind::DocumentAfterSave, |e| {
             if let Event::DocumentAfterSave(d) = e {
+                FILES.with(|f| f.borrow_mut().insert(d.document, d.path.clone()));
                 feed(Input::Saved(d.path.clone()));
+            }
+            Reply::Proceed
+        })?;
+        // The cursor in another document of a file: its repository is the
+        // current one, as when it was opened (the status bar named the
+        // repository of the document opened last).
+        kalem::on(EventKind::SelectionChanged, |e| {
+            if let Event::SelectionChanged(s) = e
+                && IN.with(|i| i.replace(Some(s.document))) != Some(s.document)
+                && let Some(p) = FILES.with(|f| f.borrow().get(&s.document).cloned())
+            {
+                feed(Input::Opened(p));
             }
             Reply::Proceed
         })?;

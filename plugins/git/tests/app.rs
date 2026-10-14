@@ -381,6 +381,29 @@ fn a_document_opened_shows_its_repository() {
     );
 }
 
+/// A document outside every repository leaves none current: the status
+/// bar named the one before.
+#[test]
+fn a_document_outside_every_repository_leaves_none_current() {
+    let mut k = Kalem::new("outside");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    let path = k.path("a.txt");
+    k.feed(Input::Opened(path.clone()));
+    assert_eq!(k.status.as_deref(), Some("⎇ main"));
+    let elsewhere = std::env::temp_dir().join(format!("kalem-git-loose-{}", std::process::id()));
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let loose = elsewhere.join("loose.txt");
+    std::fs::write(&loose, "x\n").unwrap();
+    k.feed(Input::Opened(loose.to_string_lossy().into_owned()));
+    assert_eq!(k.status, None);
+    assert!(k.notes.is_empty(), "{:?}", k.notes);
+    // Back in the repository, its branch again.
+    k.feed(Input::Opened(path));
+    assert_eq!(k.status.as_deref(), Some("⎇ main"));
+    let _ = std::fs::remove_dir_all(&elsewhere);
+}
+
 #[test]
 fn the_leader_stages_unstages_reverts_and_deletes_the_file() {
     let mut k = Kalem::new("leader");

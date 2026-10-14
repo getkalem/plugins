@@ -1110,27 +1110,32 @@ impl App {
                     _ => None,
                 };
                 let Some((root, prefix)) = located else {
-                    // A document outside every repository says nothing;
-                    // a command says why it cannot act.
-                    if !after.quiet() {
-                        let why = match &result {
-                            Err(e)
-                                if e.contains("outside the projects")
-                                    || e.contains("No project") =>
-                            {
-                                format!(
-                                    "{} is outside Kalem's projects: add the repository as a project (SPC p a) to use git in it",
-                                    folder.as_deref().unwrap_or("This folder")
-                                )
-                            }
-                            Err(e) => e.clone(),
-                            Ok(o) if o.message().contains("not a git repository") => {
-                                "Not in a git repository".into()
-                            }
-                            Ok(o) => o.message(),
-                        };
-                        self.fail(out, why);
+                    // A document outside every repository says nothing and
+                    // leaves none current, so that the status bar does not
+                    // name the one before; a command says why it cannot
+                    // act.
+                    if after.quiet() {
+                        if self.current.take().is_some() {
+                            self.show(out);
+                        }
+                        return;
                     }
+                    let why = match &result {
+                        Err(e)
+                            if e.contains("outside the projects") || e.contains("No project") =>
+                        {
+                            format!(
+                                "{} is outside Kalem's projects: add the repository as a project (SPC p a) to use git in it",
+                                folder.as_deref().unwrap_or("This folder")
+                            )
+                        }
+                        Err(e) => e.clone(),
+                        Ok(o) if o.message().contains("not a git repository") => {
+                            "Not in a git repository".into()
+                        }
+                        Ok(o) => o.message(),
+                    };
+                    self.fail(out, why);
                     return;
                 };
                 if let Some(f) = folder {
