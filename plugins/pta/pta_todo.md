@@ -713,7 +713,26 @@ first.
   The pane beside came on 2026-10-14: a new reconciliation runs
   Kalem's `pane.splitRight` before its document opens, so the journal
   stays on the left and the Reconcile document on the right, Tab's
-  marks made in the journal there (the setting `reconcile_beside`, on).)
+  marks made in the journal there (the setting `reconcile_beside`, on).
+  One block per commodity came on 2026-10-14: an account whose
+  cleared-and-pending total has several commodities gets the
+  statement's balance asked for each in turn (`t` again the same way),
+  a block of the five figures under each commodity's name
+  (`reconcile::blocks`; a commodity with nothing cleared or pending at
+  zero in its style), and Finish, once every difference is zero,
+  writes one assertion each: hledger's and Ledger's transaction a zero
+  posting a commodity, Beancount's `balance` directives (all three
+  tools check them so, tried on a two-currency wallet). Finish writes nothing, and says
+  why, while a posting of the account marked neither itself nor by its
+  transaction is dated on or before the statement's date
+  (`reconcile::unmarked_by`, read from the journal's text: hledger's
+  register gives a pending transaction's postings as unmarked). Not
+  done: the
+  refresh before a save. The tools read the journal from the disk, so
+  a refresh while typing would need the unsaved text given to each
+  tool on its standard input (hledger and Ledger take `-f -`;
+  `bean-query` reads only a file) and the postings' places read back
+  from it; ledger-mode too refreshes on save, and Tab saves.)
 - [x] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
   the reconcile buffer), in the journal or the reconcile document:
   when the difference is zero, every pending posting of the account

@@ -23,6 +23,10 @@ use super::{NotRun, resolve, run, today};
 const DOC: &str = "pta.reconcile";
 pub(super) const KIND: &str = "pta-reconcile";
 
+/// A commodity's symbol (empty for an account of one commodity) and the
+/// statement's balance typed for it.
+type Target = (String, String);
+
 /// An account's reconciliation.
 #[derive(Debug)]
 struct Reconciliation {
@@ -30,8 +34,11 @@ struct Reconciliation {
     doc: Option<u64>,
     /// The journal it started in, which Finish edits.
     journal: String,
-    target: String,
-    figures: Figures,
+    /// The statement's balances: a commodity's symbol (empty for an
+    /// account of one commodity) and the balance typed.
+    targets: Vec<(String, String)>,
+    /// A block of figures a commodity.
+    figures: Vec<Figures>,
     postings: Vec<Posting>,
     /// The statement beside (PT8c): its file, its lines, and how they
     /// pair with the account's postings.
@@ -48,7 +55,7 @@ struct Reconciliation {
 struct Finish {
     journal: String,
     account: String,
-    target: reconcile::Amount,
+    targets: Vec<reconcile::Amount>,
     date: Date,
 }
 
@@ -177,17 +184,15 @@ fn pick(tool: Dialect, main: Main, journal: String) {
     });
 }
 
-/// The statement's closing balance, asked: the tool's total offered.
+/// The statement's closing balance asked, a commodity at a time for an
+/// account of several: the tool's totals offered.
 fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
     let (program, args) = reconcile::total_command(tool, &main.path, &account, Which::Both);
     let dir = journal::folder(&main.path).to_string();
     run(program, args, &dir, move |r| {
-        let offered = match r {
+        let totals = match r {
             Ok(e) if e.status == Some(0) => {
                 reconcile::total_of(tool, &String::from_utf8_lossy(&e.stdout))
-                    .first()
-                    .map(reconcile::Amount::written)
-                    .unwrap_or_default()
             }
             Ok(e) => {
                 let said = String::from_utf8_lossy(&e.stderr);
@@ -206,17 +211,26 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                 return ui::notify(&format!("{}: {why}", tool.checker()), ui::Level::Warning);
             }
         };
-        ui::prompt(
-            &format!("Statement balance of {account}"),
-            &ui::PromptOptions {
-                value: Some(offered),
-                placeholder: None,
-                password: false,
-            },
-            move |answer| {
-                let Some(target) = answer.filter(|t| !t.trim().is_empty()) else {
-                    return;
-                };
+        let offered: Vec<(String, String)> = if totals.len() <= 1 {
+            vec![(
+                String::new(),
+                totals
+                    .first()
+                    .map(reconcile::Amount::written)
+                    .unwrap_or_default(),
+            )]
+        } else {
+            totals
+                .iter()
+                .map(|a| (a.style.symbol.clone(), a.written()))
+                .collect()
+        };
+        let who = account.clone();
+        ask_each(
+            who,
+            offered.into(),
+            Vec::new(),
+            Box::new(move |targets| {
                 let key = (main.path.clone(), account);
                 RECONCILES.with(|r| {
                     let mut r = r.borrow_mut();
@@ -224,15 +238,15 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                         tool,
                         doc: None,
                         journal: journal.clone(),
-                        target: String::new(),
-                        figures: Figures::default(),
+                        targets: Vec::new(),
+                        figures: Vec::new(),
                         postings: Vec::new(),
                         statement: None,
                         cursor_line: None,
                         shown: report::Document::default(),
                         run: 0,
                     });
-                    e.target = target.trim().to_string();
+                    e.targets = targets;
                     e.journal = journal;
                 });
                 // Beside the journal, as ledger-mode's reconcile window:
@@ -243,9 +257,47 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                     let _ = kalem::run("pane.splitRight", "{}");
                 }
                 gather(&key, true);
-            },
+            }),
         );
     });
+}
+
+/// The statement's balances asked one after another, each offered as
+/// `rest` has it: a commodity's symbol (empty for an account of one) and
+/// the balance; `done` with them all, and nothing when one is not given.
+fn ask_each(
+    account: String,
+    mut rest: std::collections::VecDeque<Target>,
+    mut got: Vec<Target>,
+    done: Box<dyn FnOnce(Vec<Target>)>,
+) {
+    let Some((commodity, offered)) = rest.pop_front() else {
+        return done(got);
+    };
+    let title = if commodity.is_empty() {
+        format!("Statement balance of {account}")
+    } else {
+        format!(
+            "Statement balance of {account} in {commodity} ({} of {})",
+            got.len() + 1,
+            got.len() + 1 + rest.len()
+        )
+    };
+    ui::prompt(
+        &title,
+        &ui::PromptOptions {
+            value: Some(offered),
+            placeholder: None,
+            password: false,
+        },
+        move |answer| {
+            let Some(t) = answer.filter(|t| !t.trim().is_empty()) else {
+                return;
+            };
+            got.push((commodity, t.trim().to_string()));
+            ask_each(account, rest, got, done);
+        },
+    );
 }
 
 /// After a journal of `main` is saved: its open reconciliations run
@@ -335,16 +387,7 @@ fn gather(key: &(String, String), open: bool) {
                     }
                     RECONCILES.with(|m| {
                         if let Some(e) = m.borrow_mut().get_mut(&k3) {
-                            let total = reconcile::matching(&e.target, &both).cloned();
-                            e.figures = Figures {
-                                cleared: cleared.iter().map(reconcile::Amount::written).collect(),
-                                pending: pending.iter().map(reconcile::Amount::written).collect(),
-                                difference: total
-                                    .as_ref()
-                                    .and_then(|t| reconcile::difference(&e.target, t)),
-                                total,
-                                target: e.target.clone(),
-                            };
+                            e.figures = reconcile::blocks(&e.targets, &cleared, &pending, &both);
                             e.postings = postings;
                         }
                     });
@@ -709,31 +752,27 @@ pub(super) fn visit() -> Result<String, String> {
     Ok("null".into())
 }
 
-/// The target, asked again.
+/// The targets, asked again: each commodity's balance in turn.
 pub(super) fn retarget() -> Result<String, String> {
     let Some(key) = here() else {
         return Ok("null".into());
     };
     let now = RECONCILES
-        .with(|r| r.borrow().get(&key).map(|e| e.target.clone()))
+        .with(|r| r.borrow().get(&key).map(|e| e.targets.clone()))
         .unwrap_or_default();
-    ui::prompt(
-        &format!("Statement balance of {}", key.1),
-        &ui::PromptOptions {
-            value: Some(now),
-            placeholder: None,
-            password: false,
-        },
-        move |answer| {
-            if let Some(t) = answer.filter(|t| !t.trim().is_empty()) {
-                RECONCILES.with(|r| {
-                    if let Some(e) = r.borrow_mut().get_mut(&key) {
-                        e.target = t.trim().to_string();
-                    }
-                });
-                gather(&key, false);
-            }
-        },
+    let account = key.1.clone();
+    ask_each(
+        account,
+        now.into(),
+        Vec::new(),
+        Box::new(move |targets| {
+            RECONCILES.with(|r| {
+                if let Some(e) = r.borrow_mut().get_mut(&key) {
+                    e.targets = targets;
+                }
+            });
+            gather(&key, false);
+        }),
     );
     Ok("null".into())
 }
@@ -760,28 +799,39 @@ pub(super) fn finish() -> Result<String, String> {
         );
         return Ok("null".into());
     };
-    let Some((journal, target, difference)) = RECONCILES.with(|r| {
+    let Some((journal, blocks)) = RECONCILES.with(|r| {
         let r = r.borrow();
         let e = r.get(&key)?;
-        let total = e.figures.total.as_ref()?;
-        Some((
-            e.journal.clone(),
-            reconcile::target_amount(&e.target, total),
-            e.figures.difference.clone(),
-        ))
+        Some((e.journal.clone(), e.figures.clone()))
     }) else {
         ui::notify("The reconciliation has no total yet", ui::Level::Info);
         return Ok("null".into());
     };
-    let (Some(target), Some(difference)) = (target, difference) else {
-        ui::notify("The target does not read as an amount", ui::Level::Warning);
-        return Ok("null".into());
-    };
-    if !difference.quantity.is_zero() {
-        ui::notify(
-            &format!("Not finished: the difference is {}", difference.written()),
-            ui::Level::Warning,
-        );
+    // Every commodity's difference zero: each target asserted.
+    let mut targets = Vec::new();
+    for f in &blocks {
+        let Some(total) = f.total.as_ref() else {
+            ui::notify("The reconciliation has no total yet", ui::Level::Info);
+            return Ok("null".into());
+        };
+        let (Some(target), Some(difference)) = (
+            reconcile::target_amount(&f.target, total),
+            f.difference.as_ref(),
+        ) else {
+            ui::notify("The target does not read as an amount", ui::Level::Warning);
+            return Ok("null".into());
+        };
+        if !difference.quantity.is_zero() {
+            ui::notify(
+                &format!("Not finished: the difference is {}", difference.written()),
+                ui::Level::Warning,
+            );
+            return Ok("null".into());
+        }
+        targets.push(target);
+    }
+    if targets.is_empty() {
+        ui::notify("The reconciliation has no total yet", ui::Level::Info);
         return Ok("null".into());
     }
     let today = today();
@@ -801,7 +851,7 @@ pub(super) fn finish() -> Result<String, String> {
                 *f.borrow_mut() = Some(Finish {
                     journal: journal.clone(),
                     account: key.1.clone(),
-                    target,
+                    targets,
                     date,
                 })
             });
@@ -837,14 +887,37 @@ pub(super) fn finish_write() -> Result<String, String> {
     };
     let text = editor::text(None);
     let column = crate::align::Settings::read(kalem_plugin::settings::own).column;
-    let edits = reconcile::finish(&text, d, &f.account, &f.target, f.date, column);
+    // A posting not marked that the assertion would count: it would fail.
+    let early = reconcile::unmarked_by(&text, d, &f.account, f.date);
+    if let Some(first) = early.first() {
+        ui::notify(
+            &format!(
+                "Not finished: {} of {} not marked dated on or before {} (the first on {}), which the balance assertion would count; mark them, or give the statement's own date",
+                if early.len() == 1 {
+                    "a posting".to_string()
+                } else {
+                    format!("{} postings", early.len())
+                },
+                f.account,
+                f.date.written('-'),
+                first.written('-')
+            ),
+            ui::Level::Warning,
+        );
+        return Ok("null".into());
+    }
+    let edits = reconcile::finish(&text, d, &f.account, &f.targets, f.date, column);
     let cleared = edits.len().saturating_sub(1);
     super::edit(&edits, "Finish Reconciliation");
     ui::notify(
         &format!(
-            "Reconciled {} at {}: {cleared} marks cleared, the balance assertion written; save to check",
+            "Reconciled {} at {}: {cleared} marks cleared, the balance asserted; save to check",
             f.account,
-            f.target.written()
+            f.targets
+                .iter()
+                .map(reconcile::Amount::written)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         ui::Level::Info,
     );
