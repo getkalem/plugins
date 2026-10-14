@@ -662,10 +662,15 @@ first.
   first in the pick, dated unless its arguments give dates. A test
   runs every report of each tool on the corpus, dated ones within a
   period too, a pinned one, and a saved query. Not done: the keys of
-  PT7a on a tree (only the Balance folds); `roi` (it asks for its
-  investment and profit accounts: pinned in `reports` it runs); the
+  PT7a on a tree (only the Balance folds); the
   pinned reports in the Journal menu, whose items the manifest fixes
-  (they are in the pick).)
+  (they are in the pick).
+  hledger's `roi` came on 2026-10-14: Return on Investment asks its
+  investment and profit-and-loss queries first (`other::Ask`, the last
+  answers offered; `kalem run` takes them as `investment` and `pnl`),
+  then runs `roi --investment Q --pnl Q --value=end
+  --infer-market-prices`, a dated report; the corpus test answers
+  them.)
 
 ## PT8. Reconciliation
 

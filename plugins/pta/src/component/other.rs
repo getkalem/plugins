@@ -33,6 +33,9 @@ struct Shown {
 thread_local! {
     /// By the main journal and the report's title.
     static REPORTS: RefCell<BTreeMap<(String, String), Shown>> = const { RefCell::new(BTreeMap::new()) };
+    /// The last answer to each question a report asks, by the question,
+    /// offered next time.
+    static ANSWERS: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// The report whose document is the current one.
@@ -57,8 +60,9 @@ pub(super) fn command(args: &str) -> Result<String, String> {
             ui::notify("This document is no journal with a file", ui::Level::Info);
             return Ok("null".into());
         };
+        let given = args.to_string();
         resolve(path, d, move |tool, main| {
-            named(tool, main.path, title, period);
+            named(tool, main.path, title, period, given);
         });
         return Ok("null".into());
     }
@@ -83,7 +87,7 @@ pub(super) fn command(args: &str) -> Result<String, String> {
 
 /// Opens the report titled `title` (any case), the setting's, a saved
 /// query's (`Query: NAME`) or the tool's, of `period` when given.
-fn named(tool: Dialect, main: String, title: String, period: Option<Period>) {
+fn named(tool: Dialect, main: String, title: String, period: Option<Period>, args: String) {
     let entries = settings::own("reports")
         .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
         .unwrap_or_default();
@@ -92,6 +96,19 @@ fn named(tool: Dialect, main: String, title: String, period: Option<Period>) {
         .into_iter()
         .find(|r| r.title.eq_ignore_ascii_case(title.trim()))
     {
+        // A report that asks: the answers the arguments give
+        // (`investment`, `pnl`), else asked.
+        Some(r) if !r.asks.is_empty() => {
+            let given: Option<Vec<String>> = r
+                .asks
+                .iter()
+                .map(|a| super::arg(&args, a.flag.trim_start_matches('-')))
+                .collect();
+            match given {
+                Some(answers) => open(tool, main, r.answered(&answers), period),
+                None => open_asking(tool, main, r, period),
+            }
+        }
         Some(r) => open(tool, main, r, period),
         // An error: `kalem run` exits with 1.
         None => ui::notify(&format!("No report {title}"), ui::Level::Error),
@@ -192,8 +209,54 @@ fn offer(tool: Dialect, main: String, list: Vec<Report>, own: bool) {
                     ui::notify(&why, ui::Level::Warning);
                 }
             } else if let Some(r) = list.get(i - first.len()) {
-                open(tool, main, r.clone(), None);
+                open_asking(tool, main, r.clone(), None);
             }
+        },
+    );
+}
+
+/// Opens report `r`, its questions asked first, the last answers
+/// offered (hledger's `roi`: its investment and profit-and-loss
+/// queries).
+fn open_asking(tool: Dialect, main: String, r: Report, period: Option<Period>) {
+    if r.asks.is_empty() {
+        return open(tool, main, r, period);
+    }
+    ask_all(
+        r.asks.clone().into(),
+        Vec::new(),
+        Box::new(move |answers| open(tool, main, r.answered(&answers), period)),
+    );
+}
+
+/// Asks `rest`'s questions one after another; `done` with the answers,
+/// nothing when one is not given.
+fn ask_all(
+    mut rest: std::collections::VecDeque<other::Ask>,
+    mut got: Vec<String>,
+    done: Box<dyn FnOnce(Vec<String>)>,
+) {
+    let Some(ask) = rest.pop_front() else {
+        return done(got);
+    };
+    let last = ANSWERS.with(|a| a.borrow().get(&ask.title).cloned());
+    ui::prompt(
+        &ask.title.clone(),
+        &ui::PromptOptions {
+            value: last,
+            placeholder: Some(ask.placeholder.clone()),
+            password: false,
+        },
+        move |answer| {
+            let Some(a) = answer
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+            else {
+                return;
+            };
+            ANSWERS.with(|m| m.borrow_mut().insert(ask.title.clone(), a.clone()));
+            got.push(a);
+            ask_all(rest, got, done);
         },
     );
 }

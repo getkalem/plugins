@@ -24,6 +24,29 @@ pub struct Report {
     pub dated: bool,
     /// Asked as CSV, for a table ([`as_table`]).
     pub csv: bool,
+    /// Asked before it runs, each answer put in its arguments after its
+    /// flag: hledger's `roi` its investment and profit-and-loss queries.
+    pub asks: Vec<Ask>,
+}
+
+/// A question a report asks before it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ask {
+    pub title: String,
+    /// What an answer looks like.
+    pub placeholder: String,
+    /// The flag the answer follows (`--investment`).
+    pub flag: String,
+}
+
+impl Ask {
+    fn new(title: &str, placeholder: &str, flag: &str) -> Ask {
+        Ask {
+            title: title.into(),
+            placeholder: placeholder.into(),
+            flag: flag.into(),
+        }
+    }
 }
 
 impl Report {
@@ -34,7 +57,23 @@ impl Report {
             journal: args.first() == Some(&"print") || args.first() == Some(&"PRINT"),
             dated,
             csv: false,
+            asks: Vec::new(),
         }
+    }
+
+    /// The report with `answers` to its questions in its arguments, each
+    /// after its flag, right after the command; asking nothing more.
+    pub fn answered(&self, answers: &[String]) -> Report {
+        let mut r = self.clone();
+        let mut args: Vec<String> = r.args.drain(..1).collect();
+        for (ask, answer) in r.asks.iter().zip(answers) {
+            args.push(ask.flag.clone());
+            args.push(answer.trim().to_string());
+        }
+        args.append(&mut r.args);
+        r.args = args;
+        r.asks.clear();
+        r
     }
 }
 
@@ -53,6 +92,27 @@ pub fn reports(tool: Dialect, today: Date) -> Vec<Report> {
             Report::of("Budget, Monthly", &["balance", "--budget", "-M"], true),
             Report::of("Forecast, Monthly", &["balance", "-M", "--forecast"], true),
             Report::of("Activity, Monthly", &["activity", "-M"], true),
+            // Its investment and profit-and-loss queries asked; valued at
+            // the end in the market prices, as one commodity.
+            Report {
+                asks: vec![
+                    Ask::new(
+                        "Investment accounts (an hledger query)",
+                        "acct:assets:broker",
+                        "--investment",
+                    ),
+                    Ask::new(
+                        "Profit and loss accounts (an hledger query)",
+                        "acct:income:investment",
+                        "--pnl",
+                    ),
+                ],
+                ..Report::of(
+                    "Return on Investment",
+                    &["roi", "--value=end", "--infer-market-prices"],
+                    true,
+                )
+            },
             Report::of("Statistics", &["stats"], true),
             Report::of("Accounts", &["accounts", "--tree"], false),
             Report::of("Commodities", &["commodities"], false),
@@ -121,6 +181,7 @@ pub fn saved_queries(listed: &str) -> Vec<Report> {
             journal: false,
             dated: false,
             csv: false,
+            asks: Vec::new(),
         })
         .collect()
 }
@@ -202,6 +263,7 @@ pub fn pinned(tool: Dialect, entries: &[String]) -> Vec<Report> {
                 args,
                 dated,
                 csv: false,
+                asks: Vec::new(),
             })
         })
         .collect()
@@ -557,4 +619,42 @@ mod tests {
         assert_eq!(md, "| a | b |\n|---|---|\n| 1 | 2 |\n");
         assert_eq!(csv_rows("\"x \"\"y\"\"\",z"), [["x \"y\"", "z"]]);
     }
+
+    #[test]
+    fn a_report_that_asks() {
+        let roi = reports(Dialect::Hledger, TODAY_FOR_ASKS)
+            .into_iter()
+            .find(|r| r.title == "Return on Investment")
+            .expect("roi offered");
+        assert_eq!(roi.asks.len(), 2);
+        assert!(
+            reports(Dialect::Ledger, TODAY_FOR_ASKS)
+                .iter()
+                .all(|r| r.asks.is_empty())
+        );
+        let r = roi.answered(&[
+            "acct:assets:broker".into(),
+            " acct:income:investment ".into(),
+        ]);
+        assert!(r.asks.is_empty());
+        assert_eq!(
+            r.args,
+            [
+                "roi",
+                "--investment",
+                "acct:assets:broker",
+                "--pnl",
+                "acct:income:investment",
+                "--value=end",
+                "--infer-market-prices"
+            ]
+        );
+        assert!(as_table(Dialect::Hledger, &roi).is_none());
+    }
+
+    const TODAY_FOR_ASKS: Date = Date {
+        y: 2026,
+        m: 10,
+        d: 14,
+    };
 }

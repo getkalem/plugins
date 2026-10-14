@@ -112,7 +112,7 @@ Waiting on Kalem:
 
 Not done yet:
 
-- **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds. hledger's `roi`, which asks for its accounts, is not offered (pin it in `reports`).
+- **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds.
 
 ## Beside ledger-mode and Fava
 
@@ -155,7 +155,7 @@ In a bank statement (a CSV or TSV file), *Import Statement* (`SPC m i`) shows wh
 
 ## Other reports
 
-*Report…* (`SPC m r`, Doom's ledger-report, or `o` in a Report) lists the Balance and the Register (only when you start it from a journal), then the tool's other reports, and opens the one picked as a document, as the tool prints it: hledger's cash flow, income statement, budget and forecast (monthly, from its periodic transactions), activity, statistics, its accounts, commodities, payees, tags and prices, and `print`; Ledger's income statement, budget, forecast (six months on), cleared report, statistics, lists and `print`; Beancount's through `bean-query`: income statement, holdings at cost and value, monthly expenses, balances, lists and `PRINT`, after the journal's own saved queries (its `query` directives). `print` comes in the journal's syntax and colors. `p` picks the period of a report that takes one (hledger's and Ledger's), `r` runs it again, and it is run again when the journal is saved.
+*Report…* (`SPC m r`, Doom's ledger-report, or `o` in a Report) lists the Balance and the Register (only when you start it from a journal), then the tool's other reports, and opens the one picked as a document, as the tool prints it: hledger's cash flow, income statement, budget and forecast (monthly, from its periodic transactions), activity, return on investment (`roi`, which asks its investment and profit-and-loss queries first, the last answers offered, and values at the end in market prices), statistics, its accounts, commodities, payees, tags and prices, and `print`; Ledger's income statement, budget, forecast (six months on), cleared report, statistics, lists and `print`; Beancount's through `bean-query`: income statement, holdings at cost and value, monthly expenses, balances, lists and `PRINT`, after the journal's own saved queries (its `query` directives). `print` comes in the journal's syntax and colors. `p` picks the period of a report that takes one (hledger's and Ledger's), `r` runs it again, and it is run again when the journal is saved.
 
 The setting `reports` puts reports of your own before the tool's (after the Balance and the Register): `"Food by month: balance expenses:food -M"`, the tool's arguments after `-f JOURNAL` (quoted as a shell quotes), or, for Beancount, a query.
 
@@ -172,6 +172,7 @@ kalem run pta pta.check 2026.journal
 kalem run pta pta.balance 2026.journal --args '{"period": "this year", "value": true}'
 kalem run pta pta.register 2026.journal --args '{"account": "assets:bank"}'
 kalem run pta pta.report 2026.journal --args '{"report": "Cash Flow", "period": "last month"}'
+kalem run pta pta.report 2026.journal --args '{"report": "Return on Investment", "investment": "acct:assets:broker", "pnl": "acct:income:investment"}'
 ```
 
 A period is `this month`, `last month`, `this quarter`, `this year`, `last year`, `all dates`, or dates as Dates… takes them (`2026-Q1`, `2026-01-15..2026-02-14`; a range takes the whole of its second part, and either side may be left out); a report is named by its title in Report… (any case), a saved Beancount query as `Query: NAME`; the Balance and the Register have their own commands, `pta.balance` and `pta.register`. An unknown report is an error, and `kalem run` exits with 1. An unknown period is an error too: the document is still printed, for all dates, and `kalem run` exits with 1. The setting `glyphs` (`ascii`) writes the Balance's fold marks and a passed check's mark as `v > ok` for a terminal font without `▾ ▸ ✓`.
