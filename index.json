@@ -118,8 +118,8 @@
       "api": "^0.2.1",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/image-viewer",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/image-viewer-v0.0.3/image-viewer.wasm",
+      "sha256": "d6bb10436a3059a934420d3694b350e5705169b09ef62fc905edc321597446c2",
       "opens": [
         ".png",
         ".apng",
