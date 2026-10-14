@@ -13,11 +13,15 @@ One plugin, one install, with two halves in one manifest, both loaded:
 
 ## Install
 
+From Kalem: the Kalem menu, *Browse Plugins*, then *Plain text accounting*; Kalem also offers it when you open a journal. On the command line:
+
 ```
 kalem plugin install pta
 ```
 
-Kalem also offers it when you open a journal. Then the tool you use, and, if you like, a server and a price program:
+pta 0.4.0 and later need Kalem 0.6.22 or later (plugin API 0.2.14). Kalem 0.6.21 and earlier install it but do not start it, and say "the plugin asks for what it was not granted: kalem:plugin/problems@0.2.14": update Kalem.
+
+Then the tool you use, and, if you like, a server and a price program:
 
 | | Tool | Server (completion, hover, rename) | Prices |
 |---|---|---|---|
