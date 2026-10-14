@@ -122,7 +122,7 @@
     "align_on_enter": {
       "type": "boolean",
       "default": true,
-      "description": "Enter on a posting aligns its amount first, as ledger-mode does (not in Vim's insert mode, where SPC m = in normal mode does it)"
+      "description": "Enter on a posting aligns its amount first, as ledger-mode does (in Vim's insert mode from the Kalem release after 0.6.20)"
     },
     "check_on_save": {
       "type": "boolean",

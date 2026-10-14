@@ -1431,12 +1431,19 @@ impl Plugin for Pta {
             crate::TEXT_TYPES,
             |_| newline(),
         )?;
-        // Not in Vim's insert mode, whose layer takes Enter in a plain
-        // text file before the keys (K10); `SPC m =` aligns there.
+        // In Vim's insert mode too, from the Kalem whose keymap lets a
+        // binding written for it (`vimMode == insert`) come before the
+        // mode's own Enter (K10); in an older one that binding never runs
+        // and `SPC m =` aligns.
         kalem::keymap(
             "enter",
             "pta.newline",
             Some(&format!("{journal} && !vimCommand")),
+        )?;
+        kalem::keymap(
+            "enter",
+            "pta.newline",
+            Some(&format!("{journal} && vimMode == insert")),
         )?;
         let mut types = crate::TEXT_TYPES.to_vec();
         types.extend([

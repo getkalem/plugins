@@ -356,7 +356,7 @@ first.
 
 ## PT4. Formatting as the tool writes it
 
-- [~] PT4 Format (Kalem's `SPC c f`): the server's formatting where it
+- [x] PT4 Format (Kalem's `SPC c f`): the server's formatting where it
   formats (both do), else `commands.format`: `bean-format` for
   Beancount, nothing for hledger and Ledger (`hledger print` rewrites
   too much: it normalizes amounts, drops directives and reorders).
@@ -409,7 +409,12 @@ first.
   `tests/align.rs`: every corpus journal aligned whole at 52 and at 0
   changes only gaps, is unchanged by a second alignment, and reads as
   before to its tool (`hledger print`, `ledger register`, `bean-query`;
-  an error file's error the same).)
+  an error file's error the same).
+  Enter in Vim's insert mode came on 2026-10-14 with K10's other half:
+  the plugin binds Enter for `vimMode == insert` too, which Kalem's
+  keymap puts before insert mode's own Enter from the release after
+  0.6.20 (Kalem's branch `insert-keys`); checked in the terminal
+  editor, the amount aligned at 52 and the new line indented.)
 
 ## PT5. Checked by the tool
 
@@ -1120,11 +1125,11 @@ plugin's section 9 followed).
 - K10 A plugin's keys in the files of a language it declares
   (`textType == journal`) before the profile's, as its keys in its own
   documents are (PT4's Enter): built on Kalem's branch `language-keys`
-  (05177b87), unreleased. Its other half, open: Vim's insert mode
-  leaving a key to a plugin's binding where one applies; its layer
-  takes Enter in a plain text file before the keys
-  (`kalem-core/src/vim/insert.rs`), so ledger-mode's align on Enter
-  is not had there.
+  (05177b87), released in Kalem 0.6.16. Its other half, done
+  2026-10-14 on Kalem's branch `insert-keys` (f502cb84): a binding
+  whose when-clause looks at `vimMode` comes before insert mode's own
+  Enter, Tab and Backspace (`Keymap::insert_bound`), as one that looks
+  at `vimCommand` comes before the normal mode's keys.
 - K11 A language plugin's `commands` per language, or a component's
   command as a language's formatter: one `commands.format` serves all
   of a plugin's languages (`bean-format` would run on an hledger

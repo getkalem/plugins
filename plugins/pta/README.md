@@ -203,7 +203,7 @@ The servers' diagnostics are their own and may disagree with the tool (hledger-l
 
 *Align Amounts* (`SPC m =` in Vim's command mode; the palette's Journal group) puts the amounts' last digits of the transaction at the cursor, or of every transaction selected, at one column: the setting `amount_column`, 52 as in ledger-mode, or 0 for as near the accounts as the longest posting allows. Only the blanks between account and amount change, two at the least: the amount as you wrote it (sign, decimal mark, digit groups, commodity and its side), a cost, a lot, a balance assertion and a comment stay as they are, and a posting without an amount is left alone. A value expression (`(-$132.00)`) is aligned by its closing parenthesis, a posting with a balance assertion alone by the assertion's amount. One undo step.
 
-With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode, in the Word-like profile. Vim's insert mode takes Enter itself; there, `SPC m =` from command mode aligns.
+With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode: in the Word-like profile, and in Vim's insert mode from the Kalem release after 0.6.20 (earlier, insert mode takes Enter itself; `SPC m =` from command mode aligns there).
 
 Format Document (`SPC c f`) in an hledger or Ledger journal: none (hledger-lsp's is left unused, and `hledger print` rewrites a journal); Align Amounts, with the whole file selected, is the formatter. In a Beancount journal: its server's, else set `[formatters] beancount = "bean-format -"`.
 
