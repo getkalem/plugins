@@ -1073,7 +1073,12 @@ first.
   it, and the Book's chapter): PT7c, PT8c, PT11b, PT11c, PT13, the
   Register's narrowing and historical totals, Main Journal and Tool…;
   `api` still `^0.2.13`, every interface the component imports being
-  at 0.2.13.)
+  at 0.2.13.
+  0.3.0 prepared 2026-10-14, for Kalem 0.6.21 (K10's other half, Enter
+  in Vim's insert mode, in it): PT9b, PT8b's Tab, PT8a's pane beside,
+  PT11b's journal blocks run, PT4's Enter in insert mode, the waits for
+  a file `file.open` opens; `api` still `^0.2.13`, every import at
+  0.2.13. Edited in Kalem itself (the owner's word of 2026-10-14).)
 
 ## What Kalem's core must gain
 
