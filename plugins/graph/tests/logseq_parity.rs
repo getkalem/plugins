@@ -170,16 +170,9 @@ fn the_graph_view_as_logseq_draws_it() {
 /// The plugin's graph view of corpus `name` against Logseq's.
 fn graph_view(name: &str, file: &str) {
     let (_, i, answers) = load(name, file);
-    // Logseq's own, not drawn by the plugin: the pages of the properties'
-    // names (`:property-pages/enabled?`), and a page named by the block
+    // Logseq's own, not drawn by the plugin: a page named by the block
     // `{{embed ((uuid))}}` embeds, which Logseq 0.10.9 makes by mistake.
-    let logseq_only = [
-        "file",
-        "file-path",
-        "related",
-        "type",
-        "6512c0de-0001-4000-8000-000000000001",
-    ];
+    let logseq_only = ["6512c0de-0001-4000-8000-000000000001"];
     let want_nodes: BTreeSet<String> = answers["graph_view"]["nodes"]
         .as_array()
         .unwrap()

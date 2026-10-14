@@ -769,7 +769,65 @@ pub fn drawing_as(index: &Index, focus: Option<&str>, gv: crate::config::GraphVi
             }
         }
     }
-    let page = |k: &str| index.page(k).or_else(|| aliases.get(k).map(|(p, _)| p));
+    // Logseq's pages of properties' names (`:property-pages/enabled?`):
+    // a page's or a block's property links it to the page of its name.
+    let mut properties: BTreeMap<String, crate::index::Page> = BTreeMap::new();
+    let mut property_links: Vec<(String, String)> = Vec::new();
+    if index.graph.kind == Kind::Logseq && index.graph.property_pages {
+        for (_, d) in index.files() {
+            let keys = d
+                .scanned
+                .props
+                .iter()
+                .chain(d.scanned.blocks.iter().flat_map(|b| b.props.iter()))
+                .map(|(k, _)| k);
+            for k in keys {
+                if !index.graph.property_page(k) {
+                    continue;
+                }
+                let key = crate::names::key(k);
+                if index.page(&key).is_none() && !aliases.contains_key(&key) {
+                    properties
+                        .entry(key.clone())
+                        .or_insert_with(|| crate::index::Page {
+                            key: key.clone(),
+                            title: k.clone(),
+                            path: None,
+                            aliases: Vec::new(),
+                            journal: None,
+                            props: Vec::new(),
+                        });
+                }
+                property_links.push((d.key.clone(), key));
+            }
+        }
+    }
+    // Obsidian's tags, nodes of their own when its graph shows them
+    // (`showTags` in `.obsidian/graph.json`).
+    if index.graph.kind == Kind::Obsidian && gv.tags {
+        for (_, d) in index.files() {
+            for r in d.scanned.refs.iter().filter(|r| r.kind == RefKind::Tag) {
+                let key = format!("#{}", r.target.to_lowercase());
+                properties
+                    .entry(key.clone())
+                    .or_insert_with(|| crate::index::Page {
+                        key: key.clone(),
+                        title: format!("#{}", r.target),
+                        path: None,
+                        aliases: Vec::new(),
+                        journal: None,
+                        props: Vec::new(),
+                    });
+                property_links.push((d.key.clone(), key));
+            }
+        }
+    }
+    let page = |k: &str| {
+        index
+            .page(k)
+            .or_else(|| aliases.get(k).map(|(p, _)| p))
+            .or_else(|| properties.get(k))
+    };
     // The links, each once, by the pages' keys: a page's references, a
     // namespace's parents among them as Logseq's references have them,
     // each page of a namespace to its parent and each alias to its page,
@@ -811,6 +869,9 @@ pub fn drawing_as(index: &Index, focus: Option<&str>, gv: crate::config::GraphVi
     }
     for (key, (_, of)) in &aliases {
         link(of, key.clone());
+    }
+    for (from, key) in &property_links {
+        link(from, key.clone());
     }
     let mut near: HashMap<&str, Vec<&str>> = HashMap::new();
     for (a, b) in &links {
@@ -876,6 +937,16 @@ pub fn drawing_as(index: &Index, focus: Option<&str>, gv: crate::config::GraphVi
                     shown.insert(key.clone());
                 }
             }
+            // A property's page, linked to a page shown, or alone among
+            // the orphans.
+            for key in properties.keys() {
+                let linked = links.iter().any(|(a, b)| {
+                    (a == key && shown.contains(b)) || (b == key && shown.contains(a))
+                });
+                if linked || gv.orphans {
+                    shown.insert(key.clone());
+                }
+            }
             shown
         }
     };
@@ -883,6 +954,9 @@ pub fn drawing_as(index: &Index, focus: Option<&str>, gv: crate::config::GraphVi
     let mut pages: Vec<&crate::index::Page> = shown.iter().filter_map(|k| page(k)).collect();
     pages.sort_by_key(|p| (std::cmp::Reverse(degree(&p.key)), p.title.to_lowercase()));
     let group = |p: &crate::index::Page| {
+        if p.key.starts_with('#') {
+            return "tags".to_string();
+        }
         if p.journal.is_some() {
             "journals".to_string()
         } else if p.path.is_none() {
@@ -1832,6 +1906,59 @@ mod tests {
         assert_eq!(
             vault(r#"{"showOrphans": false, "hideUnresolved": true}"#),
             ["kalem", "org"]
+        );
+    }
+
+    #[test]
+    fn property_pages_and_obsidians_tags_drawn() {
+        let ids = |m: &Memory, root: &str, kind: Kind| {
+            let i = Index::build(m, Graph::load(m, root, kind, &Fallbacks::default()));
+            let d = drawing(&i, None).drawing.unwrap();
+            let mut v: Vec<(String, String)> =
+                d.nodes.into_iter().map(|n| (n.id, n.group)).collect();
+            v.sort();
+            v
+        };
+        // Logseq: a property's name is a page, but its own (`id::`).
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            (
+                "/g/pages/Book.md",
+                "type:: book\n\n- read\n  id:: 1\n  status:: open\n",
+            ),
+        ]);
+        let got: Vec<String> = ids(&m, "/g", Kind::Logseq)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(got, ["book", "status", "type"]);
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{:property-pages/enabled? false}"),
+            ("/g/pages/Book.md", "type:: book\n\n- read\n"),
+        ]);
+        let got: Vec<String> = ids(&m, "/g", Kind::Logseq)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(got, ["book"]);
+        // Obsidian: tags as nodes when its graph shows them.
+        let vault = |graph: &str| {
+            Memory::new(&[
+                ("/v/.obsidian/app.json", "{}"),
+                ("/v/.obsidian/graph.json", graph),
+                ("/v/Note.md", "about #idea\n"),
+            ])
+        };
+        assert_eq!(
+            ids(&vault("{}"), "/v", Kind::Obsidian),
+            [("note".into(), "pages".into())]
+        );
+        assert_eq!(
+            ids(&vault(r#"{"showTags": true}"#), "/v", Kind::Obsidian),
+            [
+                ("#idea".into(), "tags".into()),
+                ("note".into(), "pages".into())
+            ]
         );
     }
 
