@@ -31,14 +31,18 @@ pub const KINDS: &[&str] = &[
     "graph-graph",
     "graph-query",
     "graph-view",
+    "graph-cards",
 ];
 /// Where the documents' keys apply.
-pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-home) && (vimCommand || !vimActive)";
+pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-cards || textType == graph-home) && (vimCommand || !vimActive)";
 /// Where the leader's keys of a graph's notes apply in its documents too.
-pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-home) && vimCommand";
+pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-cards || textType == graph-home) && vimCommand";
 /// Where `t` cycles a task's keyword: the documents listing tasks.
 pub const TASK_DOC_WHEN: &str =
     "(textType == graph-tasks || textType == graph-query) && (vimCommand || !vimActive)";
+
+/// Where a review's keys apply: the flashcards' document.
+pub const CARDS_WHEN: &str = "textType == graph-cards && (vimCommand || !vimActive)";
 
 /// A command of the plugin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +181,12 @@ pub const COMMANDS: &[CommandInfo] = &[
     m!("graph.journals", "Journals", &["space n r j"], "j"),
     m!("graph.tags", "Tags", &["space n r shift+t"], "shift+t"),
     m!("graph.tasks", "Tasks", &["space n r t"], "t"),
+    m!(
+        "graph.flashcards",
+        "Review Flashcards",
+        &["space n r c"],
+        "c"
+    ),
     c("graph.graph", "Graph", &["space n r g"]),
     c("graph.runQuery", "Run Query", &["space n r q"]),
     c("graph.recent", "Recent Pages", &["space n r l"]),
@@ -236,6 +246,33 @@ pub const COMMANDS: &[CommandInfo] = &[
             "shift+o",
             "textType == graph-view && (vimCommand || !vimActive)",
         )],
+    ),
+    // A review's keys in the flashcards' document, Logseq's: the answer
+    // shown, the card scored or passed over.
+    n(
+        "graph.cardShow",
+        "Flashcards: Show the Answer",
+        &[("a", CARDS_WHEN)],
+    ),
+    n(
+        "graph.cardForgotten",
+        "Flashcards: Forgotten",
+        &[("f", CARDS_WHEN)],
+    ),
+    n(
+        "graph.cardRecalled",
+        "Flashcards: Remembered with Effort",
+        &[("t", CARDS_WHEN)],
+    ),
+    n(
+        "graph.cardRemembered",
+        "Flashcards: Remembered",
+        &[("r", CARDS_WHEN)],
+    ),
+    n(
+        "graph.cardSkip",
+        "Flashcards: Next Card",
+        &[("n", CARDS_WHEN)],
     ),
     n("graph.blockReferences", "Block References", &[]),
     CommandInfo {
@@ -640,6 +677,9 @@ const WRITES: &[&str] = &[
     "graph.setPriorityNow",
     "graph.renameNow",
     "graph.refBlockNow",
+    "graph.cardForgotten",
+    "graph.cardRecalled",
+    "graph.cardRemembered",
 ];
 
 /// What Follow Reference says off any reference.
@@ -673,6 +713,8 @@ pub struct App {
     page_sort: BTreeMap<String, views::PageSort>,
     /// What the graph view shows of each graph, as toggled (`J`, `O`).
     graph_view: BTreeMap<String, config::GraphView>,
+    /// The review of flashcards under way in each graph.
+    review: BTreeMap<String, cards::Review>,
     pending: BTreeMap<u64, Pending>,
     next: u64,
     /// The page the panel shows: `(root, key)`.
@@ -727,6 +769,7 @@ impl App {
             docs: BTreeMap::new(),
             page_sort: BTreeMap::new(),
             graph_view: BTreeMap::new(),
+            review: BTreeMap::new(),
             pending: BTreeMap::new(),
             next: 1,
             panel: None,
@@ -1215,6 +1258,16 @@ impl App {
                     views::home(index, &recent, &others, g),
                 )
             }
+            "graph.cards" => {
+                let (all, due) = self.due_cards(root, self.now.map_or(0, |f| f()));
+                let due: Vec<&crate::srs::Card> = due.iter().map(|i| &all[*i]).collect();
+                let r = self.review.get(root).cloned().unwrap_or_default();
+                (
+                    format!("Flashcards: {name}"),
+                    "graph-cards",
+                    views::cards(index, &due, all.len(), r.shown, r.reviewed),
+                )
+            }
             "graph.tasks" => (
                 format!("Tasks: {name}"),
                 "graph-tasks",
@@ -1425,6 +1478,12 @@ impl App {
             "graph.tasks" => {
                 out.extend(self.render(id, &root, true));
             }
+            "graph.flashcards"
+            | "graph.cardShow"
+            | "graph.cardForgotten"
+            | "graph.cardRecalled"
+            | "graph.cardRemembered"
+            | "graph.cardSkip" => out.extend(self.card_command(files, id, &root)),
             "graph.search" | "graph.findHeading" | "graph.recent" | "graph.random" => {
                 out.extend(self.browse_command(id, &root, ctx));
             }
@@ -2111,6 +2170,7 @@ fn relative_path(from: &str, to: &str) -> String {
 }
 
 mod browse;
+mod cards;
 pub mod complete;
 mod outline;
 mod queries;

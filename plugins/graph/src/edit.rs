@@ -937,6 +937,114 @@ pub fn add_id(text: &str, flavor: Flavor, line: u32, id: &str) -> Option<Edit> {
     })
 }
 
+/// Properties `props` of the block at line `line` set as its note writes
+/// them: a property it has written again in place, one it has not added
+/// after its others (Markdown's `key:: value` after the block's first
+/// line, Org's `:key: value` in the headline's drawer, made after its
+/// dates when it has none).
+pub fn set_properties(
+    text: &str,
+    flavor: Flavor,
+    line: u32,
+    props: &[(&str, String)],
+) -> Option<Vec<Edit>> {
+    let s = scan::scan(text, flavor, &scan::Options::default());
+    let st = starts(text);
+    let b = s.blocks.iter().find(|b| b.line == line)?;
+    let line_text = |n: u32| {
+        let a = line_start(&st, text, n);
+        let e = line_start(&st, text, n + 1);
+        text[a..e].trim_end_matches(['\n', '\r'])
+    };
+    let org = flavor == Flavor::LogseqOrg;
+    // The lines its properties are on, and where a new one goes.
+    let (lines, at, made): (Vec<u32>, u32, bool) = if org {
+        let first =
+            (b.line + 1..b.end).find(|n| line_text(*n).trim().eq_ignore_ascii_case(":PROPERTIES:"));
+        let end = first.and_then(|f| {
+            (f + 1..b.end).find(|n| line_text(*n).trim().eq_ignore_ascii_case(":END:"))
+        });
+        match (first, end) {
+            (Some(f), Some(e)) => ((f + 1..e).collect(), e, false),
+            _ => {
+                let mut n = b.line + 1;
+                while n < b.end && {
+                    let t = line_text(n).trim();
+                    t.starts_with("SCHEDULED:") || t.starts_with("DEADLINE:")
+                } {
+                    n += 1;
+                }
+                (Vec::new(), n, true)
+            }
+        }
+    } else {
+        let mut n = b.line + 1;
+        while n < b.end && {
+            let t = line_text(n).trim();
+            t.find("::").is_some_and(|p| p > 0 && !t[..p].contains(' '))
+        } {
+            n += 1;
+        }
+        ((b.line + 1..n).collect(), n, false)
+    };
+    let key_of = |n: u32| -> Option<String> {
+        let t = line_text(n).trim();
+        if org {
+            let rest = t.strip_prefix(':')?;
+            Some(rest[..rest.find(':')?].to_lowercase())
+        } else {
+            Some(t[..t.find("::")?].trim().to_lowercase())
+        }
+    };
+    let indent = if org {
+        String::new()
+    } else {
+        continuation(text, &st, b, flavor)
+    };
+    let written = |k: &str, v: &str| {
+        if org {
+            format!("{indent}:{k}: {v}")
+        } else {
+            format!("{indent}{k}:: {v}")
+        }
+    };
+    let mut edits = Vec::new();
+    let mut added = String::new();
+    for (k, v) in props {
+        match lines.iter().find(|n| key_of(**n).as_deref() == Some(*k)) {
+            Some(n) => {
+                let a = line_start(&st, text, *n);
+                edits.push(Edit {
+                    start: a,
+                    end: a + line_text(*n).len(),
+                    text: written(k, v),
+                });
+            }
+            None => {
+                added.push_str(&written(k, v));
+                added.push('\n');
+            }
+        }
+    }
+    if made {
+        added = format!(":PROPERTIES:\n{added}:END:\n");
+    }
+    if !added.is_empty() {
+        let a = line_start(&st, text, at);
+        let bare = a == text.len() && !text.is_empty() && !text.ends_with('\n');
+        edits.push(Edit {
+            start: a,
+            end: a,
+            text: if bare {
+                format!("\n{}", added.trim_end_matches('\n'))
+            } else {
+                added
+            },
+        });
+    }
+    Some(edits)
+}
+
 /// `text` with `edits` applied (for the tests and for files written).
 pub fn apply(text: &str, edits: &[Edit]) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1263,5 +1371,52 @@ mod tests {
         // Without a clock (a graph that does not track time): the keyword only.
         let c = cycle_todo_clocked(t, Flavor::LogseqMarkdown, NOW, 2, None).unwrap();
         assert_eq!(c.edits.len(), 1);
+    }
+
+    #[test]
+    fn properties_set_in_place_or_added_after_the_others() {
+        let set = |text: &str, flavor, line, props: &[(&str, String)]| {
+            apply(text, &set_properties(text, flavor, line, props).unwrap())
+        };
+        let props = [
+            ("card-repeats", "2".to_string()),
+            ("card-last-score", "5".into()),
+        ];
+        // Markdown: one written again in place, one added after the
+        // others, before the children.
+        assert_eq!(
+            set(
+                "- Q #card\n  card-repeats:: 1\n  id:: 1\n  - A\n",
+                Flavor::LogseqMarkdown,
+                0,
+                &props
+            ),
+            "- Q #card\n  card-repeats:: 2\n  id:: 1\n  card-last-score:: 5\n  - A\n"
+        );
+        // A tab's child; the file's last line without a line feed.
+        assert_eq!(
+            set("- x\n\t- Q", Flavor::LogseqMarkdown, 1, &props[..1]),
+            "- x\n\t- Q\n\t  card-repeats:: 2"
+        );
+        // Org: in the headline's drawer, made after its dates.
+        assert_eq!(
+            set(
+                "* Q #card\nSCHEDULED: <2026-10-20 Tue>\n** A\n",
+                Flavor::LogseqOrg,
+                0,
+                &props
+            ),
+            "* Q #card\nSCHEDULED: <2026-10-20 Tue>\n:PROPERTIES:\n:card-repeats: 2\n:card-last-score: 5\n:END:\n** A\n"
+        );
+        assert_eq!(
+            set(
+                "* Q\n:PROPERTIES:\n:card-repeats: 1\n:ID: 1\n:END:\nbody\n",
+                Flavor::LogseqOrg,
+                0,
+                &props
+            ),
+            "* Q\n:PROPERTIES:\n:card-repeats: 2\n:ID: 1\n:card-last-score: 5\n:END:\nbody\n"
+        );
+        assert!(set_properties("- x\n", Flavor::LogseqMarkdown, 5, &props).is_none());
     }
 }

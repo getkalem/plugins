@@ -602,6 +602,86 @@ fn rank(marker: &str) -> Option<u8> {
     }
 }
 
+/// "Flashcards": the review of the graph's cards due (Logseq's `#card`
+/// blocks), the first of them asked, its answer and clozes shown once
+/// `shown`; how many are due, of how many, and reviewed this session.
+pub fn cards(
+    index: &Index,
+    due: &[&crate::srs::Card],
+    all: usize,
+    shown: bool,
+    reviewed: usize,
+) -> Content {
+    let mut c = Content::new();
+    c.line(
+        &[
+            ("Flashcards: ", Style::Heading),
+            (index.graph.name(), Style::Heading),
+        ],
+        None,
+    );
+    c.line(
+        &[(
+            &format!("{} due of {all} cards · {reviewed} reviewed", due.len()),
+            Style::Muted,
+        )],
+        None,
+    );
+    c.blank();
+    let Some(card) = due.first() else {
+        c.line(
+            &[(
+                if all == 0 {
+                    "No card: a block tagged #card is one, its children the answer"
+                } else {
+                    "Nothing is due: every card is reviewed until its next day"
+                },
+                Style::Muted,
+            )],
+            None,
+        );
+        return c;
+    };
+    let path = index.graph.path(&card.rel);
+    let question = crate::srs::cloze(&card.text, shown);
+    c.line(
+        &[(question.trim(), Style::Strong)],
+        Some(Target::File {
+            path: path.clone(),
+            line: card.line,
+        }),
+    );
+    if shown {
+        for (line, a) in &card.answer {
+            c.line(
+                &[
+                    ("  ", Style::Normal),
+                    (&crate::srs::cloze(a, true), Style::Normal),
+                ],
+                Some(Target::File {
+                    path: path.clone(),
+                    line: *line,
+                }),
+            );
+        }
+    } else if !card.answer.is_empty() || question.contains("[…]") {
+        c.line(&[("  …", Style::Muted)], None);
+    }
+    c.blank();
+    c.line(
+        &[(
+            if shown {
+                "f forgotten · t remembered with effort · r remembered · n next"
+            } else {
+                "a shows the answer · n next"
+            },
+            Style::Muted,
+        )],
+        None,
+    );
+    c
+}
+
 /// "Tasks": what is being done, what is to do by priority, what waits,
 /// and, when the day is known, what is scheduled or due within a week.
 pub fn tasks(index: &Index, today: Option<Date>) -> Content {
@@ -1648,6 +1728,7 @@ const MENU: &[(&str, &str, &str)] = &[
     ("All pages", "p", "graph.pages"),
     ("Tags", "T", "graph.tags"),
     ("Tasks", "t", "graph.tasks"),
+    ("Flashcards", "c", "graph.flashcards"),
     ("Search the graph", "/", "graph.search"),
     ("Find or create a page", "f", "graph.findPage"),
 ];
@@ -1704,6 +1785,10 @@ pub fn home(index: &Index, recent: &[String], others: &[(String, String)], g: Gl
     );
     c.blank();
     for (label, key, command) in MENU {
+        // Flashcards are Logseq's.
+        if *command == "graph.flashcards" && gr.kind == Kind::Obsidian {
+            continue;
+        }
         let pad = 26usize.saturating_sub(label.chars().count());
         c.line(
             &[

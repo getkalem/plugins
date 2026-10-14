@@ -32,6 +32,7 @@ pub mod names;
 pub mod query;
 pub mod rows;
 pub mod scan;
+pub mod srs;
 pub mod template;
 pub mod views;
 

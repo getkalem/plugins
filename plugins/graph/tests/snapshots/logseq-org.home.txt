@@ -7,6 +7,7 @@ Logseq · corpus/logseq-org · 4 pages, 2 journals
   All pages                 p
   Tags                      T
   Tasks                     t
+  Flashcards                c
   Search the graph          /
   Find or create a page     f
 

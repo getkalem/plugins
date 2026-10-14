@@ -45,7 +45,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 
 | Keys | Command | What it does |
 |---|---|---|
-| `SPC n r m`; the **Graph** button; a click on the status bar item | Menu | The graph's menu, as Logseq's and Obsidian's left sidebar: Journals, Today's journal, Graph view, All pages, Tags, Tasks, Search and Find or create a page, each a key away in it (`j`, `.`, `g`, `p`, `T`, `t`, `/`, `f`) and Enter or a click on its line; then the favorites (Logseq's `:favorites` in `logseq/config.edn`, Obsidian's bookmarks), the pages opened last, the whiteboards or canvases, and the other graphs, each opened by Enter. The Graph button stands in the window's toolbar and at the foot of the terminal's sidebar in a graph's notes and the plugin's documents, and on the graph's folder in the file manager with Kalem 0.6.19 and later (`folderLayer`) |
+| `SPC n r m`; the **Graph** button; a click on the status bar item | Menu | The graph's menu, as Logseq's and Obsidian's left sidebar: Journals, Today's journal, Graph view, All pages, Tags, Tasks, Flashcards (a Logseq graph's), Search and Find or create a page, each a key away in it (`j`, `.`, `g`, `p`, `T`, `t`, `c`, `/`, `f`) and Enter or a click on its line; then the favorites (Logseq's `:favorites` in `logseq/config.edn`, Obsidian's bookmarks), the pages opened last, the whiteboards or canvases, and the other graphs, each opened by Enter. The Graph button stands in the window's toolbar and at the foot of the terminal's sidebar in a graph's notes and the plugin's documents, and on the graph's folder in the file manager with Kalem 0.6.19 and later (`folderLayer`) |
 | `SPC n r r` | Backlinks Panel | The side panel: the page's linked references grouped by page, then its unlinked mentions; a click opens the line |
 | `SPC n r R` | Backlinks | The same as a document, with the references to the page's blocks; Enter on a line opens it |
 | `SPC o l` in a note; Enter (Vim's normal mode) and `SPC m g x` in a Logseq Org note; `Alt+Enter` while typing in Markdown; a Ctrl-click in the window (Command-click on macOS) | Open Link | What Follow Reference follows, by the graph's rules (`[[page]]` in Org opens the page, not a heading of the file); any other link as the mode opens it |
@@ -61,6 +61,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r j` | Journals | The last thirty journals, newest first, with their blocks |
 | `SPC n r T` | Tags | Every tag with how often it is used |
 | `SPC n r t` | Tasks | NOW and DOING, then LATER and TODO by priority, then WAITING; what is scheduled or due within a week. Enter opens the task, `t` cycles its keyword in its file |
+| `SPC n r c` | Review Flashcards | Logseq's flashcards: the blocks tagged `#card` that are due, new ones first, one at a time. `a` shows the answer (the block's children, its `{{cloze …}}`); `f`, `t` and `r` score the card as forgotten, remembered with effort or remembered, and write Logseq's `card-*` properties into its block, its next review worked out as Logseq works it out (SM-5, with `:srs/learning-fraction`, `:srs/initial-interval` and the factors Logseq learnt in `logseq/srs-of-matrix.edn`); `n` passes over it. Enter opens the card |
 | `SPC n r q` | Run Query | A Logseq simple query typed, its results as a document |
 | `SPC n r l` | Recent Pages | The graph's pages opened last in this session |
 | `SPC n r a` | Random Page | A page of the graph at random |
@@ -170,13 +171,14 @@ A Logseq database graph's Markdown Mirror is read as a Logseq graph with Logseq'
 
 ## What it writes
 
-With `fs:write:workspace`: a new journal made from a template, and only when no file is there; a block's `id::` when it is first referred to; the references to a page renamed, and its file renamed (moved, never deleted); a task's keyword cycled from the Tasks or a Query document. Each file is read again right before, only the lines touched change, and a file Kalem holds with unsaved changes is never written. Every other new page opens as an empty document and is written when the user saves it. Nothing under `logseq/` or `.obsidian/`.
+With `fs:write:workspace`: a new journal made from a template, and only when no file is there; a block's `id::` when it is first referred to; the references to a page renamed, and its file renamed (moved, never deleted); a task's keyword cycled from the Tasks or a Query document (with Logseq's clock when the graph tracks time); a flashcard's `card-*` properties when it is scored. Each file is read again right before, only the lines touched change, and a file Kalem holds with unsaved changes is never written. Every other new page opens as an empty document and is written when the user saves it. Nothing under `logseq/` or `.obsidian/`.
 
 ## Known differences
 
 From Logseq:
 
-- Whiteboards are listed with the pages and their links resolve, but Kalem does not draw them; following one shows the file to open in Logseq. Flashcards, Logseq's plugins and their syntax, and PDF highlights drawn over the PDF are not there; a PDF's highlights page (`hls__…`) is a page like another.
+- Whiteboards are listed with the pages and their links resolve, but Kalem does not draw them; following one shows the file to open in Logseq. Logseq's plugins and their syntax, and PDF highlights drawn over the PDF are not there; a PDF's highlights page (`hls__…`) is a page like another.
+- Flashcards are reviewed in a document, not Logseq's dialog. The factors Logseq learns from its reviews (`logseq/srs-of-matrix.edn`) are read and not written, as nothing under `logseq/` is: a review in Kalem follows what Logseq learnt without teaching it. Logseq's Reset card and its `{{cards …}}` macro's query are not there.
 - Of advanced queries, `:result-transform`, `:view` and `:rules` of one's own (Clojure) are not run, nor functions beyond those above; the query says what it does not run. Of the simple ones, `(sample n)` takes n at random, the same n through a day (a query drawn again as one types keeps them); `created-at` and `updated-at` sort by when Logseq made and last changed the page, as `logseq/pages-metadata.edn` keeps it (a block by its page's), else by a journal's day; a clause Kalem does not read finds nothing and says so.
 - An embed shows its block's children or its page's blocks under its line, and a query its results (24 lines at most, then how many more; Follow Reference opens them all), as text in their note's style, not as editable blocks: an embed inside an embed shows as written, and a block is edited where it lives.
 - No real-time sync: Syncthing or git on the folder, as Logseq's file version is used.

@@ -2194,3 +2194,86 @@ fn insert_block_reference_in_an_org_graph_writes_orgs_id() {
         "{out:?}"
     );
 }
+
+#[test]
+fn flashcards_reviewed_as_logseq_reviews_them() {
+    // 2026-10-14 at 17:46:40 in UTC.
+    fn utc() -> i64 {
+        1_792_000_000_000
+    }
+    let m = logseq();
+    let note = "- What is the capital of France? #card\n\t- Paris\n- The capital of Italy is {{cloze Rome}} #card\n- Seen yesterday #card\n  card-repeats:: 1\n  card-next-schedule:: 2026-10-20T08:00:00.000Z\n- A note\n";
+    m.write("/w/notes/pages/Capitals.md", note).unwrap();
+    let mut app = App::new(Settings::default());
+    app.now = Some(utc);
+    app.opened(&m, "/w/notes/pages/Capitals.md");
+    let out = app.command(
+        &m,
+        "graph.flashcards",
+        &ctx("/w/notes/pages/Capitals.md", "", 0),
+    );
+    let (id, key, kind, content) = document(&out);
+    assert_eq!((id.as_str(), kind.as_str()), ("graph.cards", "graph-cards"));
+    let doc = Ctx {
+        path: None,
+        text: None,
+        cursor: 0,
+        doc: Some((id, key)),
+        args: "null".into(),
+    };
+    // The cards due, new first; the answer hidden until asked.
+    assert!(
+        content.text.contains("2 due of 3 cards"),
+        "{}",
+        content.text
+    );
+    assert!(
+        content
+            .text
+            .contains("What is the capital of France? #card")
+    );
+    assert!(!content.text.contains("Paris"));
+    let (_, _, _, content) = document(&app.command(&m, "graph.cardShow", &doc));
+    assert!(content.text.contains("  Paris"), "{}", content.text);
+    assert_eq!(
+        content.target(4),
+        Some(&Target::File {
+            path: "/w/notes/pages/Capitals.md".into(),
+            line: 1
+        })
+    );
+    // Remembered: Logseq's properties written into the block, the next
+    // card asked.
+    let out = app.command(&m, "graph.cardRemembered", &doc);
+    assert_eq!(
+        m.get("/w/notes/pages/Capitals.md").unwrap(),
+        "- What is the capital of France? #card\n  card-last-interval:: 4\n  card-repeats:: 1\n  card-ease-factor:: 2.6\n  card-next-schedule:: 2026-10-18T17:46:40.000Z\n  card-last-reviewed:: 2026-10-14T17:46:40.000Z\n  card-last-score:: 5\n\t- Paris\n- The capital of Italy is {{cloze Rome}} #card\n- Seen yesterday #card\n  card-repeats:: 1\n  card-next-schedule:: 2026-10-20T08:00:00.000Z\n- A note\n"
+    );
+    let (_, _, _, content) = document(&out);
+    assert!(
+        content.text.contains("1 due of 3 cards · 1 reviewed"),
+        "{}",
+        content.text
+    );
+    assert!(content.text.contains("The capital of Italy is […] #card"));
+    // Passed over: nothing is due.
+    let (_, _, _, content) = document(&app.command(&m, "graph.cardSkip", &doc));
+    assert!(content.text.contains("Nothing is due"), "{}", content.text);
+    // A card scored again is written in place.
+    let out = app.command(&m, "graph.flashcards", &doc);
+    let (_, _, _, content) = document(&out);
+    assert!(
+        content.text.contains("The capital of Italy"),
+        "{}",
+        content.text
+    );
+    app.command(&m, "graph.cardForgotten", &doc);
+    app.command(&m, "graph.flashcards", &doc);
+    app.command(&m, "graph.cardRecalled", &doc);
+    let text = m.get("/w/notes/pages/Capitals.md").unwrap();
+    assert!(
+        text.contains("- The capital of Italy is {{cloze Rome}} #card\n  card-last-interval:: 4\n  card-repeats:: 2\n  card-ease-factor:: 2.36\n"),
+        "{text}"
+    );
+    assert_eq!(text.matches("card-repeats::").count(), 3, "{text}");
+}
