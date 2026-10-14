@@ -1138,7 +1138,11 @@ first.
   it): PT5's problems drawn in their files, the servers' inlay hints,
   Enter on a line of the Balance without an account; `api` `^0.2.14`,
   every interface the component imports at 0.2.14. Edited in Kalem
-  itself.)
+  itself.
+  0.5.0 prepared 2026-10-14, for Kalem 0.6.22: PT7a's typed periods,
+  PT8a's accounts of several commodities and the Reconcile document
+  following the journal as typed, PT7c's Return on Investment, PT11a
+  closed; `api` `^0.2.14` as in 0.4.0.)
 
 ## What Kalem's core must gain
 
