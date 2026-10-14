@@ -167,9 +167,12 @@ const TENS: [&str; 10] = [
 
 fn cardinal(n: i64) -> String {
     if n < 0 {
-        return format!("minus {}", cardinal(-n));
+        return format!("minus {}", cardinal_of(n.unsigned_abs()));
     }
-    let n = n as u64;
+    cardinal_of(n.unsigned_abs())
+}
+
+fn cardinal_of(n: u64) -> String {
     if n < 20 {
         return ONES[n as usize].into();
     }
@@ -189,11 +192,11 @@ fn cardinal(n: i64) -> String {
     ] {
         if n >= unit {
             let rest = n % unit;
-            let head = format!("{} {name}", cardinal((n / unit) as i64));
+            let head = format!("{} {name}", cardinal_of(n / unit));
             return if rest == 0 {
                 head
             } else {
-                format!("{head} {}", cardinal(rest as i64))
+                format!("{head} {}", cardinal_of(rest))
             };
         }
     }
@@ -239,9 +242,22 @@ fn capitalized(s: String) -> String {
         .unwrap_or_default()
 }
 
+/// The largest number written in a format whose length grows with it
+/// (letters, Roman numerals, Chicago's signs); a larger one is written in
+/// decimal, so that a broken or hostile `w:start` makes no label of
+/// millions of characters.
+const MAX_REPEATED: i64 = 32_767;
+
 /// `n` written in the number format `fmt` (ST_NumberFormat); a format not
 /// written here is decimal.
 pub fn format_number(n: i64, fmt: &str) -> String {
+    let repeats = matches!(
+        fmt,
+        "upperRoman" | "lowerRoman" | "upperLetter" | "lowerLetter" | "chicago"
+    );
+    if repeats && n > MAX_REPEATED {
+        return n.to_string();
+    }
     match fmt {
         "upperRoman" => roman(n, true),
         "lowerRoman" => roman(n, false),
@@ -318,5 +334,23 @@ mod tests {
         assert_eq!(format_number(5, "chicago"), "**");
         assert_eq!(format_number(9, "none"), "");
         assert_eq!(format_number(9, "someNewFormat"), "9");
+    }
+
+    #[test]
+    fn numbers_far_out_of_range() {
+        // Formats whose length grows with the number: as far as 32,767,
+        // then decimal.
+        assert_eq!(format_number(32_767, "lowerLetter"), "g".repeat(1261));
+        assert_eq!(format_number(32_768, "lowerLetter"), "32768");
+        assert_eq!(format_number(4_294_967_296, "upperLetter"), "4294967296");
+        assert_eq!(format_number(i64::MAX, "lowerRoman"), i64::MAX.to_string());
+        assert_eq!(format_number(40_000, "chicago"), "40000");
+        // Words, of the smallest number too.
+        assert!(format_number(i64::MIN, "cardinalText").starts_with("Minus nine billion"));
+        assert!(format_number(i64::MIN, "ordinalText").ends_with("eighth"));
+        assert_eq!(
+            format_number(i64::MAX, "ordinal"),
+            format!("{}th", i64::MAX)
+        );
     }
 }

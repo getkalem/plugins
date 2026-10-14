@@ -359,7 +359,7 @@ impl<'a> Counters<'a> {
             counts[i] = None;
         }
         counts[i] = Some(match counts[i] {
-            Some(c) => c + 1,
+            Some(c) => c.saturating_add(1),
             None => start_of(i),
         });
         for (m, lv) in levels.iter().enumerate().skip(i + 1) {
@@ -474,6 +474,26 @@ mod tests {
         assert_eq!(next("5", 1), "2.1");
         assert_eq!(next("0", 0), "");
         assert_eq!(next("99", 0), "");
+    }
+
+    #[test]
+    fn numbers_out_of_range_make_short_labels() {
+        // A level starting at 2^32 in letters, one at the largest number
+        // in Roman numerals: decimal labels, counted on without overflow.
+        let xml = format!(
+            r#"<w:numbering><w:abstractNum w:abstractNumId="0">{}</w:abstractNum><w:abstractNum w:abstractNumId="1">{}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#,
+            lvl(0, "lowerLetter", "%1)", "").replace(r#"w:val="1"/>"#, r#"w:val="4294967296"/>"#),
+            lvl(0, "upperRoman", "%1.", "")
+                .replace(r#"w:val="1"/>"#, &format!(r#"w:val="{}"/>"#, i64::MAX)),
+        );
+        let n = Numbering::parse(&xml);
+        let s = Styles::default();
+        let mut c = Counters::new(&n, &s);
+        let mut next = |num: &str| c.next(num, 0).map(|l| l.text).unwrap_or_default();
+        assert_eq!(next("1"), "4294967296)");
+        assert_eq!(next("1"), "4294967297)");
+        assert_eq!(next("2"), format!("{}.", i64::MAX));
+        assert_eq!(next("2"), format!("{}.", i64::MAX));
     }
 
     #[test]

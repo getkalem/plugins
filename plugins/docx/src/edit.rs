@@ -920,6 +920,17 @@ fn open_at(src: &str, from: usize, to: usize) -> Result<Vec<(String, String, Str
     Ok(stack)
 }
 
+/// The end tag of the element whose start tag is `tag` (`<w:r>`,
+/// `<w:hyperlink r:id="rId4">`); of a start tag cut short at the part's
+/// end, a name as far as it goes.
+fn end_tag_of(tag: &str) -> String {
+    let rest = tag.get(1..).unwrap_or_default();
+    let name = rest
+        .find(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+        .map_or(rest, |e| &rest[..e]);
+    format!("</{name}>")
+}
+
 /// The highest numeric `w:id` of a part, so that a new tracked change or
 /// comment gets one of its own.
 pub fn max_id(src: &str) -> u64 {
@@ -1106,10 +1117,7 @@ pub fn split(
     // opened again in the second paragraph.
     if left_mid.is_empty() && right_mid.is_empty() {
         while let Some((_, tag, _)) = stack.last() {
-            let name_end = tag[1..]
-                .find(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
-                .map_or(tag.len() - 1, |e| e + 1);
-            let close = format!("</{}>", &tag[1..name_end]);
+            let close = end_tag_of(tag);
             if src[x1..].starts_with(&close) {
                 x1 += close.len();
                 x2 = x1;
@@ -1122,10 +1130,7 @@ pub fn split(
     let mut next_id = max_id(src);
     let mut close = String::new();
     for (_, tag, _) in stack.iter().rev() {
-        let name_end = tag[1..]
-            .find(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
-            .map_or(tag.len() - 1, |e| e + 1);
-        close.push_str(&format!("</{}>", &tag[1..name_end]));
+        close.push_str(&end_tag_of(tag));
     }
     let mut reopen = String::new();
     for (name, tag, props) in &stack {
@@ -1347,13 +1352,18 @@ pub fn cut(l: &Layout, src: &str, at: usize, opening: bool) -> Result<Cut, Strin
         };
         let from = r.rpr.as_ref().map_or(r.start_tag.end, |s| s.end);
         let end = &src[r.end_tag.clone()];
-        (
-            format!("{head}{rpr}{}{mid_left}{end}", &src[from..cut_at]),
-            format!(
-                "{head}{rpr_right}{mid_right}{}{end}",
-                &src[resume..r.end_tag.start]
-            ),
-        )
+        // The run's content before and after the cut: in a part whose tags
+        // do not nest, the cut can fall outside it.
+        let (Some(left), Some(right)) = (src.get(from..cut_at), src.get(resume..r.end_tag.start))
+        else {
+            return Err(String::from(
+                "The paragraph's XML is broken here (its tags do not nest)",
+            ));
+        };
+        Ok((
+            format!("{head}{rpr}{left}{mid_left}{end}"),
+            format!("{head}{rpr_right}{mid_right}{right}{end}"),
+        ))
     };
     let mut at = at;
     if let Some(s) = l
@@ -1369,7 +1379,7 @@ pub fn cut(l: &Layout, src: &str, at: usize, opening: bool) -> Result<Cut, Strin
             let off = at - s.range.start;
             let left = render_text_atom(src, &s.atom, &inner, &[Piece::Text(t[..off].into())]);
             let right = render_text_atom(src, &s.atom, &inner, &[Piece::Text(t[off..].into())]);
-            let (before, after) = halves(s.run, s.atom.start, &left, &right, s.atom.end);
+            let (before, after) = halves(s.run, s.atom.start, &left, &right, s.atom.end)?;
             return Ok(Cut {
                 range: l.runs[s.run].span.clone(),
                 before,
@@ -1386,7 +1396,7 @@ pub fn cut(l: &Layout, src: &str, at: usize, opening: bool) -> Result<Cut, Strin
     if let (Some(b), Some(a)) = (before, after) {
         let (b, a) = (&l.segs[b], &l.segs[a]);
         if b.run == a.run && !l.runs[a.run].start_tag.is_empty() {
-            let (before, after) = halves(a.run, a.atom.start, "", "", a.atom.start);
+            let (before, after) = halves(a.run, a.atom.start, "", "", a.atom.start)?;
             return Ok(Cut {
                 range: l.runs[a.run].span.clone(),
                 before,

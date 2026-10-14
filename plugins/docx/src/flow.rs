@@ -1645,7 +1645,7 @@ impl<'a> Walker<'a> {
         if let Some((_, m)) = list.iter().find(|(i, _)| i == id) {
             return m.clone();
         }
-        let n = start + list.len() as i64;
+        let n = start.saturating_add(list.len() as i64);
         let mark = crate::chars::format_number(n, fmt);
         list.push((id.to_owned(), mark.clone()));
         mark
