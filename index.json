@@ -150,13 +150,13 @@
     {
       "id": "org.kalem.pdf-viewer",
       "name": "PDF viewer",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "description": "Shows PDF files (ISO 32000) page by page with their outline, page labels and links; search, copy and the terminal read the pages' text",
-      "api": "^0.2.1",
+      "api": "^0.2.13",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pdf-viewer",
-      "download": "https://github.com/getkalem/plugins/releases/download/pdf-viewer-v0.0.2/pdf-viewer.wasm",
-      "sha256": "c29dbee56cf1bd28620840fd1b8bca5a590d04eb8ea8a2acdd6a72ad89b6cd1f",
+      "download": null,
+      "sha256": null,
       "opens": [
         ".pdf"
       ]

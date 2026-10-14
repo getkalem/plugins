@@ -1,7 +1,7 @@
 //! The viewer on PDF files the tests write themselves, so no file's
 //! license needs recording: pages with the base-14 Helvetica (not
 //! embedded), page labels, an outline reaching its pages through each kind
-//! of destination, links, a turned page, and malformed files.
+//! of destination, links, a turned page, and malformed files and fonts.
 
 use std::path::PathBuf;
 
@@ -402,4 +402,56 @@ fn malformed_files_fail_without_panicking() {
             }
         }
     }
+}
+
+#[test]
+fn a_broken_embedded_font_does_not_hang() {
+    // A Type 1 font whose encoding opens 64 procedures and closes none, a
+    // number before each: read-fonts 0.39.2's parser took time doubling
+    // with each (a fuzzed PDF's font hung the viewer), the patched one
+    // refuses the font at once and the page is drawn with a substitute.
+    let mut font = String::from("%!PS-AdobeFont-1.0: Broken 001\n/Encoding 256 array\n");
+    for i in 0..64 {
+        font.push_str(&format!("dup {i}{{x /C put\n"));
+    }
+    font.push_str("readonly def\ncurrentfile eexec\n");
+    let mut w = Writer::new();
+    let catalog = w.add("");
+    let pages = w.add("");
+    let file = w.add(format!(
+        "<< /Length {} /Length1 {} /Length2 0 /Length3 0 >>\nstream\n{font}\nendstream",
+        font.len() + 1,
+        font.len()
+    ));
+    let descriptor = w.add(format!(
+        "<< /Type /FontDescriptor /FontName /Broken /Flags 32 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 /FontFile {file} 0 R >>"
+    ));
+    let f1 = w.add(format!(
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Broken /FirstChar 32 /LastChar 126 /Widths [{}] /FontDescriptor {descriptor} 0 R >>",
+        vec!["500"; 95].join(" ")
+    ));
+    let content = w.stream(&text_page("Still here", 72, 700));
+    let page = w.add(format!(
+        "<< /Type /Page /Parent {pages} 0 R /MediaBox [0 0 612 792] /Contents {content} 0 R /Resources << /Font << /F1 {f1} 0 R >> >> >>"
+    ));
+    w.set(
+        pages,
+        format!("<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>"),
+    );
+    w.set(catalog, format!("<< /Type /Catalog /Pages {pages} 0 R >>"));
+    let bytes = w.finish(catalog, None);
+    // In a thread of its own, so that a hang fails the test rather than
+    // stopping the run.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut doc = open("broken-font.pdf", &bytes).unwrap();
+        let text = doc.text(0);
+        let drawn = doc.render(0, RenderRequest::default()).is_ok();
+        let _ = tx.send((text, drawn));
+    });
+    let (text, drawn) = rx
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the page read and drawn within 30 s");
+    assert!(drawn);
+    assert_eq!(text, "Still here");
 }

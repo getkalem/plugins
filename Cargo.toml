@@ -48,5 +48,9 @@ opt-level = 3
 
 # web-time without the browser's JavaScript, for the plugins built as
 # WebAssembly components (cfb reads its clock): see shims/web-time.
+# read-fonts with its Type 1 parser no longer taking time exponential in
+# a broken font's unclosed procedures (the PDF viewer hung on one): see
+# vendor/read-fonts/README.md.
 [patch.crates-io]
 web-time = { path = "shims/web-time" }
+read-fonts = { path = "vendor/read-fonts" }

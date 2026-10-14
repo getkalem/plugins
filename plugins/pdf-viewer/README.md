@@ -1,6 +1,6 @@
 # PDF viewer
 
-PDF files (ISO 32000-2) opened as themselves (D55): pages shown as the file draws them, never converted. A plugin of Kalem's `document-viewer` contract (D54, Kalem's task T3.7.3). Kalem has no viewer built in: install this one from Kalem's plugin list, from the offer Kalem makes the first time you open such a file, or with `kalem plugin install pdf-viewer`. Kalem opens `.pdf` files with it.
+PDF files (ISO 32000-2) opened as themselves (D55): pages shown as the file draws them, never converted. A plugin of Kalem's `document-viewer` contract (D54, Kalem's task T3.7.3). Kalem has no viewer built in: install this one from Kalem's plugin list, from the offer Kalem makes the first time you open such a file, or with `kalem plugin install pdf-viewer`. Kalem opens `.pdf` files with it. The plugin is a component of plugin API 0.2.13 or later (Kalem 0.6.15 and later); 0.0.2, the release before, asks for 0.2.1.
 
 ## Renderer
 
