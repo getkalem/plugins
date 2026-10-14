@@ -924,7 +924,7 @@ first.
 
 ## PT11. The rest of Kalem
 
-- [~] PT11a A **Journal** menu in the menu bar and the F10 list while
+- [x] PT11a A **Journal** menu in the menu bar and the F10 list while
   the current file is a journal or one of the plugin's documents
   (`when` `textType == hledger || textType == ledger || textType ==
   beancount || textType == pta-…`): New transaction, Toggle status,
@@ -950,7 +950,11 @@ first.
   same day: Main Journal and Tool… (`pta.setup`, in the menu and the
   pick) sets `journal` (this file, another typed, none) and `tool`
   from a pick, through `settings.set`, the status bar item following.
-  Open: the window's toolbar not looked at.)
+  The window's toolbar looked at on 2026-10-14 (Kalem 0.6.22, an
+  off-screen window of the graphical editor with the manifest's button
+  and when-clause): Journal stands beside File Manager and Projects
+  over a journal, and not over a Markdown note; the terminal lists it
+  under them, `▸ Journal`.)
 - [x] PT11b Org: `pta.insertAsTable` in an Org document, the report of
   PT7c chosen as an Org table (`hledger … -O csv`, `bean-query -f
   csv`, converted as Kalem converts CSV to an Org table and inserted
