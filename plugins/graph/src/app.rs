@@ -924,6 +924,17 @@ impl App {
             .collect();
         let mut out = Vec::new();
         for root in roots {
+            // The graph's own settings changed (Logseq's or Obsidian's
+            // app wrote them): the graph read again, as when it was found.
+            let settings = paths
+                .iter()
+                .filter_map(|p| files::relative(&root, p))
+                .any(config::is_settings);
+            if settings && let Some(kind) = self.indexes.get(&root).map(|i| i.graph.kind) {
+                self.load(files, &root, kind, &mut out);
+                out.extend(self.refresh(&root));
+                continue;
+            }
             let changed = self
                 .indexes
                 .get_mut(&root)

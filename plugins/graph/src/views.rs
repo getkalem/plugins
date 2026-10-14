@@ -283,6 +283,9 @@ pub enum PageSort {
     Links,
     /// The most blocks first.
     Blocks,
+    /// The page changed last first, as Logseq keeps it
+    /// (`logseq/pages-metadata.edn`).
+    Updated,
 }
 
 impl PageSort {
@@ -291,7 +294,8 @@ impl PageSort {
         match self {
             PageSort::Title => PageSort::Links,
             PageSort::Links => PageSort::Blocks,
-            PageSort::Blocks => PageSort::Title,
+            PageSort::Blocks => PageSort::Updated,
+            PageSort::Updated => PageSort::Title,
         }
     }
 
@@ -300,6 +304,7 @@ impl PageSort {
             PageSort::Title => "title",
             PageSort::Links => "links",
             PageSort::Blocks => "blocks",
+            PageSort::Updated => "changed",
         }
     }
 }
@@ -349,6 +354,9 @@ pub fn pages(index: &Index, sort: PageSort) -> Content {
         PageSort::Title => {}
         PageSort::Links => written.sort_by_key(|p| std::cmp::Reverse(links(p))),
         PageSort::Blocks => written.sort_by_key(|p| std::cmp::Reverse(blocks(p))),
+        PageSort::Updated => {
+            written.sort_by_key(|p| std::cmp::Reverse(index.times(&p.key).map(|t| t.1)));
+        }
     }
     let width = written
         .iter()
@@ -369,6 +377,13 @@ pub fn pages(index: &Index, sort: PageSort) -> Content {
     for p in &written {
         let (links, n) = (links(p), blocks(p));
         let pad = width.saturating_sub(p.title.chars().count());
+        // When it changed, the order's key.
+        let changed = (sort == PageSort::Updated)
+            .then(|| index.times(&p.key))
+            .flatten()
+            .map_or(String::new(), |(_, t)| {
+                format!("  changed {}", Date::from_millis(t).iso())
+            });
         // Logseq's PDF highlights: a page per PDF, its blocks the
         // highlights (drawn by Logseq over the PDF).
         let pdf = p
@@ -387,7 +402,7 @@ pub fn pages(index: &Index, sort: PageSort) -> Content {
                 (&p.title, Style::Link),
                 (&" ".repeat(pad + 2), Style::Normal),
                 (
-                    &format!("{links:>4} links  {n:>5} blocks{pdf}"),
+                    &format!("{links:>4} links  {n:>5} blocks{changed}{pdf}"),
                     Style::Muted,
                 ),
             ],
@@ -1195,7 +1210,17 @@ fn column_value(index: &Index, hit: &crate::query::Hit, column: &str) -> String 
         "block" => crate::query::hit_text(index, hit),
         "page" => page.map_or(String::new(), |p| p.title.clone()),
         "created-at" | "updated-at" | "journal-day" => page
-            .and_then(|p| p.journal)
+            .and_then(|p| {
+                let times = index.times(&p.key).filter(|_| column != "journal-day");
+                match times {
+                    Some((made, changed)) => Some(Date::from_millis(if column == "created-at" {
+                        made
+                    } else {
+                        changed
+                    })),
+                    None => p.journal,
+                }
+            })
             .map_or(String::new(), Date::iso),
         "priority" => block
             .and_then(|b| b.priority)

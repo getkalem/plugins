@@ -86,9 +86,15 @@ pub struct Index {
     pub problems: Vec<String>,
     /// The whiteboards and canvases: pages drawn by their application.
     drawings: std::collections::BTreeSet<String>,
+    /// When each page was made and last changed, in milliseconds, as
+    /// Logseq keeps them (`logseq/pages-metadata.edn`): by key.
+    times: HashMap<String, (i64, i64)>,
     /// Changed with every change of the index, across indexes.
     version: u64,
 }
+
+/// Where Logseq keeps when each page was made and last changed.
+const TIMES: &str = "logseq/pages-metadata.edn";
 
 /// The versions given out.
 static VERSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -146,6 +152,7 @@ impl Index {
             tags: BTreeMap::new(),
             problems: Vec::new(),
             drawings: std::collections::BTreeSet::new(),
+            times: HashMap::new(),
             version: VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -154,6 +161,39 @@ impl Index {
     /// share: what was computed from the index is good while it stays.
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Reads Logseq's `logseq/pages-metadata.edn` again: when each page
+    /// was made and last changed. Whether that changed.
+    fn read_times(&mut self, files: &dyn Files) -> bool {
+        use crate::edn::Value;
+        let mut times = HashMap::new();
+        if self.graph.kind == Kind::Logseq
+            && let Ok(text) = files.read(&self.graph.path(TIMES))
+            && let Ok(Value::Vector(items)) = crate::edn::parse(&text)
+        {
+            for m in &items {
+                let int = |k: &str| match m.get(k) {
+                    Some(Value::Int(n)) => Some(*n),
+                    _ => None,
+                };
+                if let Some(name) = m.get("block/name").and_then(Value::as_str)
+                    && let (Some(made), Some(changed)) =
+                        (int("block/created-at"), int("block/updated-at"))
+                {
+                    times.insert(names::key(name), (made, changed));
+                }
+            }
+        }
+        let changed = times != self.times;
+        self.times = times;
+        changed
+    }
+
+    /// When page `key` was made and last changed, in milliseconds since
+    /// 1970, as Logseq keeps them; none for a page it has no record of.
+    pub fn times(&self, key: &str) -> Option<(i64, i64)> {
+        self.times.get(key).copied()
     }
 
     /// The index of `graph`, its files read.
@@ -202,6 +242,7 @@ impl Index {
                 }
             }
         }
+        index.read_times(files);
         index.derive();
         index
     }
@@ -245,6 +286,14 @@ impl Index {
         let Some(rel) = files::relative(&self.graph.root, &path).map(str::to_string) else {
             return Reread::Same;
         };
+        // Logseq's record of when pages were made and changed.
+        if rel == TIMES {
+            return if self.read_times(files) {
+                Reread::InPlace
+            } else {
+                Reread::Same
+            };
+        }
         let (_, ext) = files::stem_ext(&rel);
         if drawn_elsewhere(&self.graph, &rel) && !self.graph.is_hidden(&rel) {
             let there = files.read(&path).is_ok() || files.list(&path).is_ok();

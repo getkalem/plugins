@@ -1842,3 +1842,110 @@ fn the_graphs_menu() {
     assert_eq!(key, "/w/vault");
     assert!(content.text.contains("Bookmarks"), "{}", content.text);
 }
+
+#[test]
+fn logseqs_record_of_changes_sorts_pages_and_is_followed() {
+    let m = logseq();
+    // Logseq keeps when each page was made and last changed.
+    m.write(
+        "/w/notes/logseq/pages-metadata.edn",
+        "[{:block/name \"other\" :block/created-at 1759000000000 :block/updated-at 1760000000000}\n {:block/name \"kalem\" :block/created-at 1758000000000 :block/updated-at 1759500000000}]",
+    )
+    .unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let index = &app.indexes["/w/notes"];
+    assert_eq!(
+        index.times("kalem"),
+        Some((1_758_000_000_000, 1_759_500_000_000))
+    );
+    assert_eq!(index.times("templates"), None);
+    // All pages, the page changed last first, with its day.
+    let c = ctx("/w/notes/pages/Kalem.md", "", 0);
+    let (_, key, _, _) = document(&app.command(&m, "graph.pages", &c));
+    let mut d = c.clone();
+    d.doc = Some(("graph.pages".into(), key));
+    for _ in 0..3 {
+        app.command(&m, "graph.sortPages", &d);
+    }
+    let (_, _, _, content) = document(&app.command(&m, "graph.pages", &c));
+    assert!(
+        content.text.contains("by changed; s sorts by title"),
+        "{}",
+        content.text
+    );
+    let lines: Vec<&str> = content
+        .text
+        .lines()
+        .skip_while(|l| !l.starts_with("Pages ("))
+        .skip(1)
+        .take(3)
+        .collect();
+    assert!(
+        lines[0].starts_with("Other") && lines[0].ends_with("changed 2025-10-09"),
+        "{lines:?}"
+    );
+    assert!(
+        lines[1].starts_with("Kalem") && lines[1].ends_with("changed 2025-10-03"),
+        "{lines:?}"
+    );
+    assert!(lines[2].starts_with("Templates"), "{lines:?}");
+    // A query sorted by when its pages were made.
+    let q = crate::query::parse("(and (page-property type) (sort-by created-at))");
+    assert!(q.is_ok());
+    // Logseq writes the record again: read again, alone.
+    m.write(
+        "/w/notes/logseq/pages-metadata.edn",
+        "[{:block/name \"kalem\" :block/created-at 1758000000000 :block/updated-at 1761000000000}]",
+    )
+    .unwrap();
+    assert!(app.file_changed("/w/notes/logseq/pages-metadata.edn"));
+    let none = Ctx {
+        path: None,
+        text: None,
+        cursor: 0,
+        doc: None,
+        args: "{}".into(),
+    };
+    app.command(&m, "graph.filesChanged", &none);
+    assert_eq!(
+        app.indexes["/w/notes"].times("kalem"),
+        Some((1_758_000_000_000, 1_761_000_000_000))
+    );
+    assert_eq!(app.indexes["/w/notes"].times("other"), None);
+}
+
+#[test]
+fn the_graphs_settings_changed_by_its_app_are_followed() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let c = ctx("/w/notes/pages/Kalem.md", "", 0);
+    let (_, _, _, content) = document(&app.command(&m, "graph.home", &c));
+    assert!(!content.text.contains("• Other"), "{}", content.text);
+    // Logseq writes its configuration: a favorite added.
+    m.write(
+        "/w/notes/logseq/config.edn",
+        "{:file/name-format :triple-lowbar :default-templates {:journals \"daily\"} :favorites [\"Other\"]}",
+    )
+    .unwrap();
+    assert!(app.file_changed("/w/notes/logseq/config.edn"));
+    let none = Ctx {
+        path: None,
+        text: None,
+        cursor: 0,
+        doc: None,
+        args: "{}".into(),
+    };
+    app.command(&m, "graph.filesChanged", &none);
+    let (_, _, _, content) = document(&app.command(&m, "graph.home", &c));
+    assert!(
+        content.text.contains("Favorites\n  • Other"),
+        "{}",
+        content.text
+    );
+    // Obsidian's windows' layout is not its settings.
+    assert!(config::is_settings(".obsidian/graph.json"));
+    assert!(!config::is_settings(".obsidian/workspace.json"));
+    assert!(!config::is_settings(".obsidian/plugins/x/data.json"));
+}
