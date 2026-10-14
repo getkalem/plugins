@@ -1,7 +1,7 @@
 {
   "id": "org.kalem.pta",
   "name": "Plain text accounting",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "hledger, Ledger and Beancount journals in Kalem: checked, reported, reconciled, imported and priced by the tool you already have, completed by their language servers",
   "main": "dist/pta.wasm",
   "api": "^0.2.14",
@@ -122,7 +122,7 @@
     "align_on_enter": {
       "type": "boolean",
       "default": true,
-      "description": "Enter on a posting aligns its amount first, as ledger-mode does (in Vim's insert mode from the Kalem release after 0.6.20)"
+      "description": "Enter on a posting aligns its amount first, as ledger-mode does (in Vim's insert mode too)"
     },
     "check_on_save": {
       "type": "boolean",

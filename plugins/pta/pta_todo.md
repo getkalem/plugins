@@ -1086,7 +1086,13 @@ first.
   in Vim's insert mode, in it): PT9b, PT8b's Tab, PT8a's pane beside,
   PT11b's journal blocks run, PT4's Enter in insert mode, the waits for
   a file `file.open` opens; `api` still `^0.2.13`, every import at
-  0.2.13. Edited in Kalem itself (the owner's word of 2026-10-14).)
+  0.2.13. Edited in Kalem itself (the owner's word of 2026-10-14).
+  0.4.0 prepared 2026-10-14, for Kalem 0.6.22 (K2, plugin API 0.2.14's
+  `problems`, and K4, the language server client's inlay hints, in
+  it): PT5's problems drawn in their files, the servers' inlay hints,
+  Enter on a line of the Balance without an account; `api` `^0.2.14`,
+  every interface the component imports at 0.2.14. Edited in Kalem
+  itself.)
 
 ## What Kalem's core must gain
 

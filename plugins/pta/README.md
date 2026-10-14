@@ -2,7 +2,7 @@
 
 hledger, Ledger and Beancount journals in [Kalem](https://github.com/getkalem/kalem): written with completion and alignment, checked by the tool you already have on each save, reported as documents (balance, register, market value), reconciled against a statement, imported from bank statements, and kept in prices. **The tool does the accounting**: hledger, Ledger and Beancount parse, balance, value and check; the plugin asks them and shows what they say, and has no engine of its own. The work list is [`pta_todo.md`](pta_todo.md).
 
-**Status: 0.3.0**, for Kalem 0.6.21 and later (plugin API 0.2.13). 0.3.0 brings Beancount's import through your beangulp script, Tab in the Reconcile document marking a posting in the journal, the Reconcile document in a pane beside the journal, Run the Journal Block in Org, and Enter aligning a posting in Vim's insert mode too; on Kalem 0.6.18 to 0.6.20 all of it works but that Enter (insert mode keeps its own there; `SPC m =` aligns). 0.2.0, for Kalem 0.6.18 and later, has everything but what 0.3.0 brings; 0.1.0, for Kalem 0.6.16 and 0.6.17, has everything but Report… (`SPC m r`; in 0.1.0 it opens the Balance) and the setting `reports`, Insert a Report as a Table, the `kalem run` commands and the setting `glyphs`, the statement paired with the reconciliation (`match_days`), the Register narrowed (`/`) and its running total kept within a period, Main Journal and Tool…, and large journals' outputs refused rather than cut.
+**Status: 0.4.0**, for Kalem 0.6.22 and later (plugin API 0.2.14). 0.4.0 brings hledger's, Ledger's and bean-check's problems drawn in the journal as a language server's diagnostics are, the servers' inlay hints (an elided posting's amount; running balances from ptimoney's hledger-lsp once its setting is on), and Enter on a line of the Balance without an account saying so. 0.3.0, for Kalem 0.6.21 and later (plugin API 0.2.13), has everything but what 0.4.0 brings; it brought Beancount's import through your beangulp script, Tab in the Reconcile document marking a posting in the journal, the Reconcile document in a pane beside the journal, Run the Journal Block in Org, and Enter aligning a posting in Vim's insert mode too; on Kalem 0.6.18 to 0.6.20 all of it works but that Enter (insert mode keeps its own there; `SPC m =` aligns). 0.2.0, for Kalem 0.6.18 and later, has everything but what 0.3.0 and 0.4.0 bring; 0.1.0, for Kalem 0.6.16 and 0.6.17, has everything but Report… (`SPC m r`; in 0.1.0 it opens the Balance) and the setting `reports`, Insert a Report as a Table, the `kalem run` commands and the setting `glyphs`, the statement paired with the reconciliation (`match_days`), the Register narrowed (`/`) and its running total kept within a period, Main Journal and Tool…, and large journals' outputs refused rather than cut.
 
 One plugin, one install, with two halves in one manifest, both loaded:
 
@@ -108,7 +108,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 
 Waiting on Kalem:
 
-- Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
+- Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6).
 
 Not done yet:
 
@@ -197,13 +197,13 @@ With the bank's statement open (a CSV file), *Pair with the Reconciliation* (`SP
 
 Each save checks again (`check_on_save`, on): the status bar item shows `✓` or the problems' count (`hledger · 2026.journal · 1 problem`), and an open Check document is written anew. A tool not installed is said once, with how to install it.
 
-From the Kalem release after 0.6.21 (plugin API 0.2.14), the tool's problems are also drawn in the journal as a language server's diagnostics are: a wavy line under each problem's place (the stretch hledger marks, else the whole line), the line number in the problem's color, the problem on the cursor's line in the status bar, its message on hover, and List Problems (`SPC c x`). Each check sets them anew, so a problem fixed and saved goes away. They stand beside the servers' diagnostics, which are their own and may disagree with the tool (hledger-lsp checks with rules of its own): the tool's are the truth.
+The tool's problems are also drawn in the journal as a language server's diagnostics are: a wavy line under each problem's place (the stretch hledger marks, else the whole line), the line number in the problem's color, the problem on the cursor's line in the status bar, its message on hover, and List Problems (`SPC c x`). Each check sets them anew, so a problem fixed and saved goes away. They stand beside the servers' diagnostics, which are their own and may disagree with the tool (hledger-lsp checks with rules of its own): the tool's are the truth.
 
 ## Aligning amounts
 
 *Align Amounts* (`SPC m =` in Vim's command mode; the palette's Journal group) puts the amounts' last digits of the transaction at the cursor, or of every transaction selected, at one column: the setting `amount_column`, 52 as in ledger-mode, or 0 for as near the accounts as the longest posting allows. Only the blanks between account and amount change, two at the least: the amount as you wrote it (sign, decimal mark, digit groups, commodity and its side), a cost, a lot, a balance assertion and a comment stay as they are, and a posting without an amount is left alone. A value expression (`(-$132.00)`) is aligned by its closing parenthesis, a posting with a balance assertion alone by the assertion's amount. One undo step.
 
-With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode: in the Word-like profile, and in Vim's insert mode from the Kalem release after 0.6.20 (earlier, insert mode takes Enter itself; `SPC m =` from command mode aligns there).
+With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode: in the Word-like profile, and in Vim's insert mode too.
 
 Format Document (`SPC c f`) in an hledger or Ledger journal: none (hledger-lsp's is left unused, and `hledger print` rewrites a journal); Align Amounts, with the whole file selected, is the formatter. In a Beancount journal: its server's, else set `[formatters] beancount = "bean-format -"`.
 
@@ -237,7 +237,7 @@ On the corpus, through Kalem's client (`kalem lsp ask`, `kalem lsp check`) and a
 | Formatting | **changes what the journal means**: drops an automated posting's `*-1` and writes `==` as `=` (undo puts it back) | amounts aligned; hledger reads it as before | amounts aligned; `bean-query` reads it as before |
 | Settings sent | `settings.hledgerLanguageServer.…` | `settings.hledger.…` | its main journal, `servers.beancount-language-server.initializationOptions.journal_file`, read as it starts |
 
-Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting, and from the Kalem release after 0.6.21 the servers' inlay hints, dimmed at the end of a posting: an elided posting's amount (both hledger servers, seen in Kalem's terminal editor), and running balances from ptimoney's once its setting is on, in `settings.toml`: `[plugins."org.kalem.pta".settings.hledgerLanguageServer.inlayHints]` with `showRunningBalances = true`. Kalem's `editor.inlay_hints` (on) and Toggle Inlay Hints show or hide them all. It does not yet ask for code lenses.
+Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting, and the servers' inlay hints, dimmed at the end of a posting: an elided posting's amount (both hledger servers, seen in Kalem's terminal editor), and running balances from ptimoney's once its setting is on, in `settings.toml`: `[plugins."org.kalem.pta".settings.hledgerLanguageServer.inlayHints]` with `showRunningBalances = true`. Kalem's `editor.inlay_hints` (on) and Toggle Inlay Hints show or hide them all. It does not yet ask for code lenses.
 
 The plugin turns hledger-lsp's formatting off (`servers.hledger-lsp.ignore`, `["documentFormattingProvider"]`), since ptimoney's 0.7.0 formats a journal into one that means something else; with juev's, whose formatting hledger reads as before, set it to `[]`.
 
