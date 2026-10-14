@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use crate::cellref::{CellRef, Range};
+use crate::cellref::{CellRef, MAX_ROW, Range};
 use crate::formula::{self, Op};
 use crate::sheet::{FormulaKind, Sheet};
 use crate::xml::{self, Reader, Tag, Token};
@@ -49,7 +49,12 @@ fn content(src: &str, r: &mut Reader<'_>, tag: &Tag<'_>) -> (usize, usize, usize
         return (tag.span.end, tag.span.end, tag.span.end);
     }
     let end = r.skip_element();
-    let close = src[..end].rfind('<').unwrap_or(end);
+    // Cut off at the part's end, the element has no end tag: its content
+    // runs to the end.
+    let close = src[..end]
+        .rfind('<')
+        .filter(|&c| c >= tag.span.end)
+        .unwrap_or(end);
     (tag.span.end, close, end)
 }
 
@@ -189,7 +194,12 @@ pub fn rewrite_sheet(src: &str, op: Op, sheet: &str, model: &Sheet) -> String {
                 }
             }
             "row" => {
-                let Some(row) = tag.attr("r").and_then(|v| v.parse::<u32>().ok()) else {
+                // A row numbered 0 or past the sheet's last is left as it is.
+                let Some(row) = tag
+                    .attr("r")
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .filter(|r| (1..=MAX_ROW).contains(r))
+                else {
                     continue;
                 };
                 let new = if rows_op {
