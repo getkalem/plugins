@@ -94,6 +94,74 @@ pub struct Drawing {
     pub command: String,
 }
 
+/// What a whiteboard or a canvas shape is drawn as (Kalem's plugin API
+/// 0.2.16).
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoardKind {
+    /// A rectangle, its corners rounded so much.
+    Box(f32),
+    /// An ellipse.
+    Ellipse,
+    /// Text alone.
+    Text,
+    /// A frame around others.
+    Group,
+    /// A picture, by its file's whole path.
+    Image(String),
+    /// A pen's line, its points from the shape's corner.
+    Stroke(Vec<[f32; 2]>),
+}
+
+/// A shape where its file places it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoardShape {
+    /// Its file's name for it.
+    pub id: String,
+    /// What it is drawn as.
+    pub kind: BoardKind,
+    /// Its left, top, width and height.
+    pub rect: [f32; 4],
+    /// Its text.
+    pub text: String,
+    /// Its fill and line: a color's name or `#rrggbb`; empty for the
+    /// theme's.
+    pub fill: String,
+    pub stroke: String,
+    /// Its line dashed.
+    pub dashed: bool,
+    /// Where opening it leads (`crate::board::Target`, encoded).
+    pub target: Option<String>,
+}
+
+/// A connector between shapes, by their ids, or points.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoardLine {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub start: [f32; 2],
+    pub end: [f32; 2],
+    pub label: String,
+    pub arrow_start: bool,
+    pub arrow_end: bool,
+    pub stroke: String,
+    pub dashed: bool,
+}
+
+/// A document drawn as a canvas by Kalem (plugin API 0.2.16): a
+/// whiteboard's or a canvas's shapes and connectors, its text the source.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Board {
+    /// In the order they are drawn.
+    pub shapes: Vec<BoardShape>,
+    /// Drawn over them.
+    pub lines: Vec<BoardLine>,
+    /// The plugin's command run with `{"shape": target}`.
+    pub command: String,
+}
+
+// Compared to tell a new one from the same written again.
+impl Eq for Board {}
+
 /// A document's text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Content {
@@ -105,6 +173,8 @@ pub struct Content {
     pub targets: Vec<Option<Target>>,
     /// The graph it is drawn as, when it is one.
     pub drawing: Option<Drawing>,
+    /// The canvas it is drawn as, when it is a whiteboard's.
+    pub board: Option<Box<Board>>,
 }
 
 impl Content {

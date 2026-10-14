@@ -32,11 +32,12 @@ pub const KINDS: &[&str] = &[
     "graph-query",
     "graph-view",
     "graph-cards",
+    "graph-board",
 ];
 /// Where the documents' keys apply.
-pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-cards || textType == graph-home) && (vimCommand || !vimActive)";
+pub const DOC_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-cards || textType == graph-board || textType == graph-home) && (vimCommand || !vimActive)";
 /// Where the leader's keys of a graph's notes apply in its documents too.
-pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-cards || textType == graph-home) && vimCommand";
+pub const DOC_LEADER_WHEN: &str = "(textType == graph-backlinks || textType == graph-pages || textType == graph-journals || textType == graph-tags || textType == graph-tasks || textType == graph-graph || textType == graph-query || textType == graph-view || textType == graph-cards || textType == graph-board || textType == graph-home) && vimCommand";
 /// Where `t` cycles a task's keyword: the documents listing tasks.
 pub const TASK_DOC_WHEN: &str =
     "(textType == graph-tasks || textType == graph-query) && (vimCommand || !vimActive)";
@@ -223,6 +224,10 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("graph.localGraph", "Local Graph", &["space n r shift+v"]),
     // Run by Kalem when a node of a drawn graph is opened.
     n("graph.openNode", "Open a Node of the Graph", &[]),
+    // A whiteboard or a canvas drawn (Kalem's plugin API 0.2.16), and a
+    // shape of one opened (run by Kalem on a double click or Enter).
+    n("graph.openBoard", "Open a Whiteboard", &[]),
+    n("graph.openShape", "Open a Shape of a Whiteboard", &[]),
     // `s` in All pages: by title, links, blocks.
     n(
         "graph.sortPages",
@@ -1387,6 +1392,24 @@ impl App {
                     views::advanced(index, text, self.day(), current, g),
                 )
             }
+            "graph.board" => {
+                let rel = page?;
+                let title = index.page_of(rel).map_or(rel, |p| p.title.as_str());
+                // Read as it is now: a whiteboard is written by its app.
+                let text = self
+                    .read
+                    .and_then(|read| read(&index.graph.path(rel)))
+                    .unwrap_or_default();
+                let b = match index.graph.kind {
+                    Kind::Logseq => crate::board::logseq(&text, index, rel),
+                    Kind::Obsidian => crate::board::obsidian(&text, index),
+                };
+                (
+                    format!("Whiteboard: {title}"),
+                    "graph-board",
+                    views::board(index, rel, b),
+                )
+            }
             "graph.graphView" => (
                 format!("Graph View: {name}"),
                 "graph-view",
@@ -1542,6 +1565,27 @@ impl App {
                     }
                     out.extend(self.render("graph.graphView", &root, true));
                 }
+            }
+            // A whiteboard or a canvas drawn (Kalem's plugin API 0.2.16),
+            // from where a link to it leads.
+            "graph.openBoard" => {
+                let path = serde_json::from_str::<serde_json::Value>(&ctx.args)
+                    .ok()
+                    .and_then(|v| v["path"].as_str().map(files::normalize));
+                if let Some(rel) = path
+                    .as_deref()
+                    .and_then(|p| files::relative(&root, p))
+                    .map(str::to_string)
+                {
+                    out.extend(self.render("graph.board", &format!("{root}{SEP}{rel}"), true));
+                }
+            }
+            // A shape of a whiteboard opened: where it leads.
+            "graph.openShape" => {
+                let target = serde_json::from_str::<serde_json::Value>(&ctx.args)
+                    .ok()
+                    .and_then(|v| v["shape"].as_str().and_then(crate::board::Target::decode));
+                out.extend(self.open_shape(files, &root, target));
             }
             "graph.openNode" => {
                 let key = serde_json::from_str::<serde_json::Value>(&ctx.args)
@@ -1836,6 +1880,48 @@ impl App {
         }
         out.push(Effect::Open { path, line: 1 });
         out
+    }
+
+    /// Where a shape of a whiteboard leads, opened: a page, a block at its
+    /// line, a file (a whiteboard drawn), a web address said.
+    fn open_shape(
+        &mut self,
+        files: &dyn Files,
+        root: &str,
+        target: Option<crate::board::Target>,
+    ) -> Vec<Effect> {
+        use crate::board::Target as T;
+        let Some(index) = self.indexes.get(root) else {
+            return Vec::new();
+        };
+        match target {
+            Some(T::Page(name)) => {
+                let key = crate::names::key(&name);
+                self.open_page(files, root, &key, None, None)
+            }
+            Some(T::Block(id)) => match index.block_place(&id) {
+                Some((rel, i)) => {
+                    let line = index
+                        .file(rel)
+                        .and_then(|f| f.scanned.blocks.get(i))
+                        .map_or(0, |b| b.line);
+                    vec![Effect::Open {
+                        path: index.graph.path(rel),
+                        line: line + 1,
+                    }]
+                }
+                None => vec![Effect::Notify(
+                    format!("No block {id} in the graph"),
+                    Level::Info,
+                )],
+            },
+            Some(T::File(rel)) => self.open_or_reveal(index.graph.path(&rel), 1),
+            Some(T::Url(url)) => vec![Effect::Notify(
+                format!("A link out of the graph: {url}"),
+                Level::Info,
+            )],
+            None => Vec::new(),
+        }
     }
 
     /// Opens page `key` of graph `root`: its file, or a new one when the

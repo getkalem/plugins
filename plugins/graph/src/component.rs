@@ -114,14 +114,17 @@ fn apply(effect: Effect) {
         } => {
             let styles = styled(&content);
             let open = DOCS.with(|d| d.borrow().get(&(id.clone(), key.clone())).copied());
-            // A graph Kalem draws (plugin API 0.2.12), its text the source.
+            // A graph Kalem draws (plugin API 0.2.12), or a canvas (API
+            // 0.2.16), its text the source.
             let drawn = content.drawing.as_ref().map(drawing);
-            let written = match (&drawn, open) {
+            let board = content.board.as_deref().map(canvas);
+            let written = match (&drawn, &board, open) {
                 _ if show => {
                     let spec = documents::Spec::new(&id, &key, &title, &kind);
-                    let opened = match &drawn {
-                        Some(g) => kalem_plugin::graph_view::open(&spec, g, &content.text),
-                        None => documents::open_styled(&spec, &content.text, None, &styles),
+                    let opened = match (&drawn, &board) {
+                        (Some(g), _) => kalem_plugin::graph_view::open(&spec, g, &content.text),
+                        (None, Some(c)) => kalem_plugin::canvas_view::open(&spec, c, &content.text),
+                        (None, None) => documents::open_styled(&spec, &content.text, None, &styles),
                     };
                     match opened {
                         Ok(n) => DOCS.with(|d| {
@@ -131,9 +134,14 @@ fn apply(effect: Effect) {
                     }
                     true
                 }
-                (Some(g), Some(n)) => kalem_plugin::graph_view::set(n, g, &content.text).is_ok(),
-                (None, Some(n)) => documents::set_styled(n, &content.text, None, &styles).is_ok(),
-                (_, None) => true,
+                (Some(g), _, Some(n)) => kalem_plugin::graph_view::set(n, g, &content.text).is_ok(),
+                (None, Some(c), Some(n)) => {
+                    kalem_plugin::canvas_view::set(n, c, &content.text).is_ok()
+                }
+                (None, None, Some(n)) => {
+                    documents::set_styled(n, &content.text, None, &styles).is_ok()
+                }
+                (_, _, None) => true,
             };
             if !written {
                 // The user closed it.
@@ -616,6 +624,58 @@ impl Plugin for Graph {
 }
 
 kalem_plugin::export_plugin!(Graph);
+
+/// A whiteboard's shapes and connectors as the `canvas-view` interface's
+/// canvas.
+fn canvas(b: &crate::content::Board) -> kalem_plugin::canvas_view::Canvas {
+    use crate::content::BoardKind as B;
+    use kalem_plugin::canvas_view::{Canvas, Connector, Point, Shape, ShapeKind};
+    let point = |p: [f32; 2]| Point { x: p[0], y: p[1] };
+    Canvas {
+        shapes: b
+            .shapes
+            .iter()
+            .map(|s| Shape {
+                id: s.id.clone(),
+                kind: match &s.kind {
+                    B::Box(r) => ShapeKind::Box(*r),
+                    B::Ellipse => ShapeKind::Ellipse,
+                    B::Text => ShapeKind::Text,
+                    B::Group => ShapeKind::Group,
+                    B::Image(p) => ShapeKind::Image(p.clone()),
+                    B::Stroke(points) => {
+                        ShapeKind::Stroke(points.iter().map(|p| point(*p)).collect())
+                    }
+                },
+                x: s.rect[0],
+                y: s.rect[1],
+                width: s.rect[2],
+                height: s.rect[3],
+                text: s.text.clone(),
+                fill: s.fill.clone(),
+                stroke: s.stroke.clone(),
+                dashed: s.dashed,
+                target: s.target.clone(),
+            })
+            .collect(),
+        connectors: b
+            .lines
+            .iter()
+            .map(|l| Connector {
+                from: l.from.clone(),
+                to: l.to.clone(),
+                start: point(l.start),
+                end: point(l.end),
+                label: l.label.clone(),
+                arrow_start: l.arrow_start,
+                arrow_end: l.arrow_end,
+                stroke: l.stroke.clone(),
+                dashed: l.dashed,
+            })
+            .collect(),
+        command: b.command.clone(),
+    }
+}
 
 /// A document's drawing as the `graph-view` interface's graph.
 fn drawing(d: &crate::content::Drawing) -> kalem_plugin::graph_view::Graph {

@@ -61,9 +61,9 @@ impl App {
                 index::drawn_elsewhere(&i.graph, rel).then_some(i.graph.kind)
             });
         match drawn {
-            Some(kind) => vec![Effect::Reveal {
-                path,
-                app: kind.title(),
+            Some(_) => vec![Effect::Run {
+                id: "graph.openBoard".into(),
+                args: serde_json::json!({ "path": path }).to_string(),
             }],
             None => vec![Effect::Open { path, line }],
         }
