@@ -38,6 +38,16 @@
       "when": "textType == hledger || textType == journal || textType == j || textType == ledger || textType == ldg || textType == beancount || textType == bean || textType == pta-check || textType == pta-balance || textType == pta-register || textType == pta-reconcile || textType == pta-import || textType == pta-report"
     }
   ],
+  "completers": [
+    {
+      "id": "journal",
+      "types": ["hledger", "journal", "j", "ledger", "ldg", "beancount", "bean"],
+      "triggers": [":"],
+      "word": 1,
+      "replaces": ["lsp", "words"],
+      "priority": 8
+    }
+  ],
   "syntaxes": [
     "syntaxes/hledger.sublime-syntax",
     "syntaxes/Ledger.sublime-syntax",

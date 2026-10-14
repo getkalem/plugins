@@ -84,6 +84,11 @@ struct Checked {
 thread_local! {
     /// The documents open, by number: their files.
     static DOCS: RefCell<BTreeMap<u64, String>> = const { RefCell::new(BTreeMap::new()) };
+    /// The names each main journal knows, as its tool listed them, for
+    /// completion.
+    static KNOWN: RefCell<BTreeMap<String, crate::complete::Known>> = const { RefCell::new(BTreeMap::new()) };
+    /// Each journal's main journal, as completion last found it.
+    static MAIN_OF: RefCell<BTreeMap<String, String>> = const { RefCell::new(BTreeMap::new()) };
     /// The document the cursor was last in.
     static CURRENT: Cell<Option<u64>> = const { Cell::new(None) };
     /// Which tools answered `--version`.
@@ -654,6 +659,31 @@ fn publish(main: &str, tool: Dialect, found: &[Problem]) {
     CHECKS.with(|c| {
         if let Some(e) = c.borrow_mut().get_mut(main) {
             e.published = now;
+        }
+    });
+}
+
+/// The names the main journal of the journal at `path` knows (its
+/// accounts, payees and commodities), listed by its tool for completion;
+/// again on each save.
+fn learn(path: String) {
+    let Some(dialect) = Dialect::of_path(&path) else {
+        return;
+    };
+    let file = path.clone();
+    resolve(path, dialect, move |tool, main| {
+        MAIN_OF.with(|m| m.borrow_mut().insert(file, main.path.clone()));
+        let dir = journal::folder(&main.path).to_string();
+        for (slot, program, args) in crate::complete::list_commands(tool, &main.path) {
+            let key = main.path.clone();
+            run(program, args, &dir, move |r| {
+                if let Ok(e) = r
+                    && e.status == Some(0)
+                {
+                    let names = crate::complete::list_of(tool, &String::from_utf8_lossy(&e.stdout));
+                    KNOWN.with(|k| k.borrow_mut().entry(key).or_default().set(slot, names));
+                }
+            });
         }
     });
 }
@@ -1599,6 +1629,65 @@ fn command(
 struct Pta;
 
 impl Plugin for Pta {
+    /// The completer's items (plugin API 0.2.11): accounts, payees and
+    /// commodities from the main journal's lists, else from the text.
+    fn complete(
+        _completer: &str,
+        request: &kalem_plugin::completer::Request,
+    ) -> Vec<kalem_plugin::completer::Item> {
+        use crate::complete::{self as c, Slot};
+        use kalem_plugin::completer::{Item, ItemKind};
+        let Some(path) = request.path.as_deref() else {
+            return Vec::new();
+        };
+        let Some(d) = Dialect::of_path(path) else {
+            return Vec::new();
+        };
+        let Some(cursor) = request.cursor.checked_sub(request.base) else {
+            return Vec::new();
+        };
+        let cursor = cursor as usize;
+        let Some((slot, start)) = c::slot(&request.text, cursor, d) else {
+            return Vec::new();
+        };
+        let typed = &request.text[start..cursor];
+        // A Beancount payee's string closed, where nothing closes it yet.
+        let after = &request.text[cursor..];
+        let close = if d == Dialect::Beancount && slot == Slot::Payee && !after.starts_with('"') {
+            "\""
+        } else {
+            ""
+        };
+        let main = MAIN_OF
+            .with(|m| m.borrow().get(path).cloned())
+            .unwrap_or_else(|| path.to_string());
+        let known = match KNOWN.with(|k| k.borrow().get(&main).cloned()) {
+            Some(k) if !k.of(slot).is_empty() => k,
+            _ => c::from_text(&request.text, d),
+        };
+        c::matches(&known, slot, typed)
+            .into_iter()
+            .map(|name| Item {
+                label: name.clone(),
+                insert: format!("{name}{close}"),
+                start: request.base + start as u64,
+                cursor: None,
+                kind: match slot {
+                    Slot::Account => ItemKind::Symbol,
+                    // Not a word's kind, which Enter leaves to the prose.
+                    Slot::Payee => ItemKind::Symbol,
+                    Slot::Commodity => ItemKind::Keyword,
+                },
+                detail: match slot {
+                    Slot::Account => "account",
+                    Slot::Payee => "payee",
+                    Slot::Commodity => "commodity",
+                }
+                .to_string(),
+                documentation: None,
+            })
+            .collect()
+    }
     fn activate() -> Result<(), String> {
         let journal = crate::journal_when();
         let leader = format!("{journal} && vimCommand");
@@ -1930,6 +2019,7 @@ impl Plugin for Pta {
                     seen_journal(p);
                     CURRENT.with(|c| c.set(Some(d.document)));
                     refresh(Some(p.clone()));
+                    learn(p.clone());
                 }
                 arrived(p);
             }
@@ -1981,6 +2071,7 @@ impl Plugin for Pta {
                 } else {
                     refresh(Some(d.path.clone()));
                 }
+                learn(d.path.clone());
                 if let Some(dialect) = Dialect::of_path(&d.path) {
                     resolve(d.path.clone(), dialect, |_, main| {
                         balance::saved(&main.path);

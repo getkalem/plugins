@@ -1179,7 +1179,19 @@ plugin's section 9 followed).
   and §11.12's bindings), for the `.rules` files' accounts and for a
   journal whose server is missing. The completer came with Kalem 0.6.13
   (plugin API 0.2.11, a component's `completer` export); the outline
-  provider has not.
+  provider has not. The plugin's completer came on 2026-10-14
+  (`src/complete.rs`, the feature `completer`): an account on a posting
+  and in Beancount's directives, a payee on a transaction's line, a
+  commodity in an amount, from the tool's lists of the main journal
+  (`accounts`, `payees`, `commodities`; `bean-query`'s), read when a
+  journal opens and on each save, else from the text; parts matched in
+  order (`ex:fo`); `replaces: ["lsp", "words"]`, so a server's accounts
+  and payees do not come twice and it completes the rest; a Beancount
+  payee's string closed. Ledger, which has no server, gets its first
+  completion. Checked in Kalem 0.6.24's terminal editor in all three
+  dialects (Enter takes an item: not of the word kind, which Enter
+  leaves to prose); `word: 1`, so the plugin answers before
+  hledger-lsp's menu at an amount, which offered accounts there.
 - K6 Babel executors from plugins (R5.6), for `hledger` and
   `beancount` source blocks in Org (PT11b).
 - K7 A plugin language's id as the text type of the files it serves:
