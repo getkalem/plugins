@@ -92,8 +92,8 @@
         "fs:write:workspace"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/graph-v0.9.0/graph.wasm",
+      "sha256": "eedef68c42b1c33d9d4f6e3012a204aec0f2cc895bbb0c85e300081846f5d363",
       "layers": [
         {
           "id": "logseq",
