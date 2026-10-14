@@ -1142,7 +1142,10 @@ first.
   0.5.0 prepared 2026-10-14, for Kalem 0.6.22: PT7a's typed periods,
   PT8a's accounts of several commodities and the Reconcile document
   following the journal as typed, PT7c's Return on Investment, PT11a
-  closed; `api` `^0.2.14` as in 0.4.0.)
+  closed; `api` `^0.2.14` as in 0.4.0.
+  0.6.0 prepared 2026-10-15, for Kalem 0.6.22: completion of accounts,
+  payees and commodities (the `completer` export, API 0.2.11); `api`
+  `^0.2.14` as in 0.5.0.)
 
 ## What Kalem's core must gain
 
