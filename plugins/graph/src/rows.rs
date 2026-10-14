@@ -20,6 +20,53 @@ pub struct Row {
     pub indent: u32,
     /// Its text, in parts with their looks.
     pub parts: Vec<(String, Look)>,
+    /// The block it shows, by its file (relative to the graph's folder)
+    /// and its first line, when it shows one.
+    pub block: Option<(String, u32)>,
+    /// The text of a file it shows, typed into where it is drawn (Kalem's
+    /// plugin API 0.2.15): the block's first line, set by the app from
+    /// `block` as the file holds it.
+    pub source: Option<Source>,
+}
+
+/// The text of a file a row shows (Kalem's `layer-3`): in file `path`,
+/// line `line` (from 0) from byte `column` to the line's end, which holds
+/// `text`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    /// A whole path.
+    pub path: String,
+    /// From 0.
+    pub line: u32,
+    /// A byte of the line.
+    pub column: u32,
+    /// The text, to the line's end.
+    pub text: String,
+}
+
+/// Where a block's text starts in its first line `raw`: after its
+/// indentation and its bullet (`- `, `* `, `+ `, `1. `) or an Org
+/// headline's stars.
+pub fn content_column(raw: &str) -> usize {
+    let w = raw.len() - raw.trim_start().len();
+    let rest = &raw[w..];
+    for bullet in ["- ", "* ", "+ "] {
+        if rest.starts_with(bullet) {
+            return w + 2;
+        }
+    }
+    if rest == "-" || rest == "*" {
+        return raw.len();
+    }
+    let stars = rest.len() - rest.trim_start_matches('*').len();
+    if stars > 0 && rest[stars..].starts_with(' ') {
+        return w + stars + 1;
+    }
+    let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    if digits > 0 && (rest[digits..].starts_with(". ") || rest[digits..].starts_with(") ")) {
+        return w + digits + 2;
+    }
+    w
 }
 
 impl Row {
@@ -46,13 +93,15 @@ fn capped(mut rows: Vec<Row>, indent: u32) -> Vec<Row> {
                 format!("… {more} more (Follow Reference opens them all)"),
                 look(|l| l.dim = true),
             )],
+            block: None,
+            source: None,
         });
     }
     rows
 }
 
 /// A block as a row: its bullet, keyword, priority and text.
-fn block_row(index: &Index, b: &Block, indent: u32) -> Row {
+fn block_row(index: &Index, rel: &str, b: &Block, indent: u32) -> Row {
     let mut parts = vec![("• ".to_string(), look(|l| l.dim = true))];
     if let Some(m) = b.marker {
         let closed = scan::is_closed(m);
@@ -73,7 +122,12 @@ fn block_row(index: &Index, b: &Block, indent: u32) -> Row {
         l.strike |= done;
         parts.push((t, l));
     }
-    Row { indent, parts }
+    Row {
+        indent,
+        parts,
+        block: Some((rel.to_string(), b.line)),
+        source: None,
+    }
 }
 
 /// A block's text as it reads: a link's name, a block reference's text,
@@ -155,7 +209,7 @@ pub fn embedded_block(index: &Index, id: &str) -> Vec<Row> {
     let rows = blocks[i + 1..]
         .iter()
         .take_while(|b| b.depth > depth)
-        .map(|b| block_row(index, b, 2 + 2 * u32::from(b.depth - depth)))
+        .map(|b| block_row(index, rel, b, 2 + 2 * u32::from(b.depth - depth)))
         .collect();
     capped(rows, 4)
 }
@@ -163,11 +217,10 @@ pub fn embedded_block(index: &Index, id: &str) -> Vec<Row> {
 /// What `{{embed [[page]]}}` shows under its line: the page's blocks, or
 /// those under its heading `anchor` (Obsidian's `![[note#Heading]]`).
 pub fn embedded_page(index: &Index, key: &str, anchor: Option<&str>) -> Vec<Row> {
-    let Some(file) = index
-        .page(key)
-        .and_then(|p| p.path.as_deref())
-        .and_then(|rel| index.file(rel))
-    else {
+    let Some(rel) = index.page(key).and_then(|p| p.path.as_deref()) else {
+        return Vec::new();
+    };
+    let Some(file) = index.file(rel) else {
         return Vec::new();
     };
     let s = &file.scanned;
@@ -197,7 +250,7 @@ pub fn embedded_page(index: &Index, key: &str, anchor: Option<&str>) -> Vec<Row>
     let top = blocks.iter().map(|b| b.depth).min().unwrap_or(0);
     let rows = blocks
         .iter()
-        .map(|b| block_row(index, b, 2 + 2 * u32::from(b.depth - top)))
+        .map(|b| block_row(index, rel, b, 2 + 2 * u32::from(b.depth - top)))
         .collect();
     capped(rows, 2)
 }
@@ -217,6 +270,8 @@ pub fn hits(index: &Index, answer: &Answer) -> Vec<Row> {
                         ("• ".into(), look(|l| l.dim = true)),
                         (title.to_string(), look(|l| l.link = true)),
                     ],
+                    block: None,
+                    source: None,
                 });
             }
             Hit::Block { rel, block } => {
@@ -240,9 +295,11 @@ pub fn hits(index: &Index, answer: &Answer) -> Vec<Row> {
                                 l.bold = true;
                             }),
                         )],
+                        block: None,
+                        source: None,
                     });
                 }
-                rows.push(block_row(index, b, 4));
+                rows.push(block_row(index, rel, b, 4));
             }
             // A page's properties: the page, as the block that names.
             Hit::Props { rel } => {
@@ -264,6 +321,8 @@ pub fn hits(index: &Index, answer: &Answer) -> Vec<Row> {
                             look(|l| l.dim = true),
                         ),
                     ],
+                    block: None,
+                    source: None,
                 });
             }
         }
@@ -283,7 +342,12 @@ pub fn table(columns: &[String], values: &[Vec<String>]) -> Vec<Row> {
             }
             parts.push((c.clone(), l));
         }
-        Row { indent: 2, parts }
+        Row {
+            indent: 2,
+            parts,
+            block: None,
+            source: None,
+        }
     };
     let mut rows = vec![line(columns, look(|l| l.bold = true))];
     rows.extend(values.iter().map(|v| line(v, Look::default())));

@@ -2331,3 +2331,56 @@ fn zoom_narrows_the_note_to_a_block_and_the_blocks_under_it() {
     );
     assert_eq!(hidden(&app), folded);
 }
+
+thread_local! {
+    /// The files the app reads for rows' blocks in the tests.
+    static DISK: std::cell::RefCell<BTreeMap<String, String>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+fn disk(path: &str) -> Option<String> {
+    DISK.with(|d| d.borrow().get(path).cloned())
+}
+
+#[test]
+fn an_embeds_blocks_are_given_to_type_into_where_they_show() {
+    let m = logseq();
+    let plan = "- Goals\n  id:: 22222222-2222-4222-8222-222222222222\n\t- TODO buy milk\n\t- [[Kalem]] notes\n";
+    m.write("/w/notes/pages/Plan.md", plan).unwrap();
+    let note = "- see {{embed ((22222222-2222-4222-8222-222222222222))}}\n";
+    m.write("/w/notes/pages/Host.md", note).unwrap();
+    DISK.with(|d| {
+        d.borrow_mut()
+            .insert("/w/notes/pages/Plan.md".into(), plan.into())
+    });
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Host.md");
+    let sources = |app: &App| -> Vec<Option<crate::rows::Source>> {
+        app.overlays("logseq", Some("/w/notes/pages/Host.md"), note)
+            .below
+            .iter()
+            .flat_map(|b| b.rows.iter().map(|r| r.source.clone()))
+            .collect()
+    };
+    // Without Kalem's files, none.
+    assert_eq!(sources(&app), [None, None]);
+    // The embedded block's children: their first lines, after the bullet.
+    app.read = Some(disk);
+    let source = |line: u32, text: &str| crate::rows::Source {
+        path: "/w/notes/pages/Plan.md".into(),
+        line,
+        column: 3,
+        text: text.into(),
+    };
+    assert_eq!(
+        sources(&app),
+        [
+            Some(source(2, "TODO buy milk")),
+            Some(source(3, "[[Kalem]] notes"))
+        ]
+    );
+    assert_eq!(crate::rows::content_column("** TODO x"), 3);
+    assert_eq!(crate::rows::content_column("  1. one"), 5);
+    assert_eq!(crate::rows::content_column("-"), 1);
+    assert_eq!(crate::rows::content_column("plain"), 0);
+}

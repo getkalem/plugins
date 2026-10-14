@@ -321,6 +321,8 @@ impl Plugin for Graph {
                 app.random = Some(kalem_plugin::clock::random);
                 app.now = Some(kalem_plugin::clock::now);
                 app.local_now = Some(kalem_plugin::clock::local_now);
+                // A row's block as its file holds it (API 0.2.15).
+                app.read = Some(|p| fs::read(p).ok());
             }
         });
         for c in app::COMMANDS {
@@ -476,8 +478,10 @@ impl Plugin for Graph {
     }
 
     /// The layer's overlays, with lines under lines (plugin API 0.2.13,
-    /// `layer-2`): an embed's blocks, a query's results.
-    fn overlays_2(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet2 {
+    /// `layer-2`): an embed's blocks, a query's results; those showing a
+    /// block with its first line as its file holds it, typed into in place
+    /// (API 0.2.15, `layer-3`).
+    fn overlays_3(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet3 {
         use crate::layer::{Effect as E, LineEffect as L};
         use kalem_plugin::layer as api;
         let (o, wanted) = APP
@@ -524,7 +528,7 @@ impl Plugin for Graph {
             }
             f
         };
-        api::OverlaySet2 {
+        api::OverlaySet3 {
             spans: o
                 .spans
                 .into_iter()
@@ -556,12 +560,12 @@ impl Plugin for Graph {
             below: o
                 .below
                 .into_iter()
-                .map(|b| api::Below {
+                .map(|b| api::Below3 {
                     at: b.at as u64,
                     lines: b
                         .rows
                         .into_iter()
-                        .map(|r| api::VirtualLine {
+                        .map(|r| api::VirtualLine3 {
                             indent: r.indent,
                             pieces: r
                                 .parts
@@ -571,6 +575,38 @@ impl Plugin for Graph {
                                     style: look(l),
                                 })
                                 .collect(),
+                            source: r.source.map(|s| api::Source {
+                                path: s.path,
+                                line: s.line,
+                                column: s.column,
+                                text: s.text,
+                            }),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The same for a Kalem before API 0.2.15, which asks `layer-2`: no
+    /// line typed into.
+    fn overlays_2(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet2 {
+        use kalem_plugin::layer as api;
+        let o = Self::overlays_3(layer, path, text);
+        api::OverlaySet2 {
+            spans: o.spans,
+            lines: o.lines,
+            below: o
+                .below
+                .into_iter()
+                .map(|b| api::Below {
+                    at: b.at,
+                    lines: b
+                        .lines
+                        .into_iter()
+                        .map(|l| api::VirtualLine {
+                            indent: l.indent,
+                            pieces: l.pieces,
                         })
                         .collect(),
                 })

@@ -1190,10 +1190,9 @@ user groups; the gaps that code can close, in this order.
     `logseq/srs-of-matrix.edn`, never written), and the `card-*`
     properties are written as Logseq writes them, in place or after the
     block's others (an Org headline's drawer).
-  - GR16h What waits on Kalem's core: embeds and query results edited in
-    place (K21), whiteboards and canvases drawn (K22), the first index of
-    a very large graph off the editor's thread (K13), the pages opened
-    last kept across sessions (K23).
+  - GR16h What waits on Kalem's core: whiteboards and canvases drawn
+    (K22), the first index of a very large graph off the editor's thread
+    (K13), the pages opened last kept across sessions (K23).
   - [x] GR16i Zoom into Block (`SPC m s n` and `SPC b -` in Markdown
     notes, Doom's narrowing keys; the palette and the Graph menu): the
     note narrowed to the block at the cursor and the blocks under it by
@@ -1201,6 +1200,15 @@ user groups; the gaps that code can close, in this order.
     `SPC b -` again: Kalem's Widen). In Org notes Kalem's own `SPC m s n`
     narrows to the headline, which is Logseq's block there. Not yet: the
     breadcrumb of the block's parents Logseq shows above it.
+  - [x] GR16j Embeds and query results typed into in place (K21, Kalem's
+    `layer-3`, plugin API 0.2.15): the rows of an embedded block's
+    children, an embedded page's blocks and a query's blocks name their
+    block's first line as its page holds it (read once for each version
+    of the index), past the bullet or an Org headline's stars; Kalem
+    types into them where they show and writes the page, and the plugin
+    reads it again. Not yet: the embedded block's own line (drawn in
+    place of `{{embed ((…))}}`), and new blocks or indenting from an
+    embed.
   - Not done, by choice: Obsidian's `showAttachments` in the graph view
     (a picture embedded is no reference in the index; the view has no
     use for it yet).
@@ -1346,9 +1354,16 @@ Each is the plugin's gate or its ask, written for every plugin.
   mode. The plugin's Zoom into Block runs it (GR16i).
 - K21 Lines a layer adds under a line (K2) that can be edited: an embed's
   blocks or a query's results typed into in place, the edit going to the
-  file the lines come from (the plugin told, or Kalem writing that file's
-  range), with undo in the note. Until then they are shown, and edited
-  where they live.
+  file the lines come from. Done 2026-10-14 on Kalem's branch
+  `editable-rows` (plugin API 0.2.15, `layer-3`): a line under a line may
+  name the text of a file it shows (`source`: the file, its line, the
+  byte it starts at, the text), which Kalem types into in place as a
+  one-line input (a click, or Edit Line Under Line) and writes back,
+  into the file's open document when that has unsaved changes, else the
+  file; only files in Kalem's projects, and only where they still hold
+  the text. Undo is the written document's (the note's own when the
+  block is in the note). The plugin's rows give their blocks' first
+  lines (GR16j).
 - K22 A drawing of shapes where a file places them (text boxes, pictures,
   arrows, at their coordinates), beside the graph drawing of API 0.2.12
   that lays out nodes itself: Logseq's whiteboards (`whiteboards/*.edn`)
