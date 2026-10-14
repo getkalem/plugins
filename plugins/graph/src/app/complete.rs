@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 use super::App;
 use crate::config::Kind;
-use crate::files;
+use crate::files::{self, Files};
 use crate::index::Index;
 
 /// The most items offered at once.
@@ -161,6 +161,7 @@ impl App {
     /// cursor at byte `cursor` of the document.
     pub fn complete(
         &self,
+        files: &dyn Files,
         completer: &str,
         path: Option<&str>,
         text: &str,
@@ -226,7 +227,7 @@ impl App {
         }
         if index.graph.kind == Kind::Logseq
             && !org
-            && let Some(found) = self.slash(index, line, cursor)
+            && let Some(found) = self.slash(files, index, &rel, line, cursor)
         {
             return found;
         }
@@ -336,7 +337,14 @@ impl App {
     /// After a `/` that starts a word, Logseq's commands that write text
     /// whose name holds what follows it, in place of the `/`. `None`
     /// when the line has no such `/`.
-    fn slash(&self, index: &Index, line: &str, cursor: usize) -> Option<Vec<Suggestion>> {
+    fn slash(
+        &self,
+        files: &dyn Files,
+        index: &Index,
+        rel: &str,
+        line: &str,
+        cursor: usize,
+    ) -> Option<Vec<Suggestion>> {
         let at = line.rfind('/')?;
         let before = &line[..at];
         if !before.chars().next_back().is_none_or(char::is_whitespace) {
@@ -387,6 +395,29 @@ impl App {
             4 + indent.len(),
         ));
         let lower = typed.trim().to_lowercase();
+        // Logseq's templates, at a block's start: their blocks typed in
+        // (its `/Template`), each read only when its name is asked for.
+        if at_start {
+            let values = crate::template::Values {
+                title: index
+                    .page_of(rel)
+                    .map_or_else(String::new, |p| p.title.clone()),
+                today,
+                date: today,
+                time: self
+                    .local_now
+                    .map(|now| (now().rem_euclid(86_400_000) / 1000) as u32),
+            };
+            for name in crate::template::logseq_names(index) {
+                let label = format!("Template: {name}");
+                if matches(&label, &lower).is_some()
+                    && let Some(text) =
+                        crate::template::logseq_insert(index, files, &name, &values, &line[..lead])
+                {
+                    all.push((label, text, 0));
+                }
+            }
+        }
         let mut found: Vec<(u8, usize, (String, String, usize))> = all
             .into_iter()
             .enumerate()
@@ -577,38 +608,57 @@ fn anchors(
         .collect()
 }
 
-/// The blocks with an id whose first line holds `typed`, as `((uuid))`
-/// after the `((`.
+/// The blocks whose first line holds `typed`, as `((uuid))` after the
+/// `((`: those with an id, and once something is typed, as Logseq
+/// offers them, those of Markdown notes without one, promised an id
+/// that is written into the block's file when the reference is saved
+/// ([`Index::promise`]).
 fn blocks(index: &Index, typed: &str, cursor: usize, closed: bool) -> Vec<Suggestion> {
-    let lower = typed.trim().to_lowercase();
-    let mut found: Vec<(u8, &str, &str, &str)> = index
-        .blocks_with_ids()
-        .filter_map(|(id, rel, b)| {
+    let typed_ = typed.trim();
+    // Where `typed` is in a line, letters in either case: an ASCII text
+    // compared byte by byte, as most are, for the graph's every block.
+    let needle = typed_.as_bytes();
+    let find = |hay: &str| -> Option<usize> {
+        if !typed_.is_ascii() {
+            return crate::scan::find_ci(hay, typed_).map(|r| r.start);
+        }
+        if needle.is_empty() {
+            return Some(0);
+        }
+        hay.as_bytes()
+            .windows(needle.len())
+            .position(|w| w.eq_ignore_ascii_case(needle))
+    };
+    let mut found: Vec<(u8, &str, Option<&str>, &str, &crate::scan::Block)> = Vec::new();
+    for (rel, d) in index.files() {
+        let markdown = rel.ends_with(".md");
+        for b in &d.scanned.blocks {
+            if b.id.is_none() && (typed_.is_empty() || !markdown) {
+                continue;
+            }
             let first = b.text.lines().next().unwrap_or("").trim();
             if first.is_empty() {
-                return None;
+                continue;
             }
-            let m = if lower.is_empty() {
-                Some(0)
-            } else {
-                matches(first, &lower)
-            }?;
-            Some((m, first, id, rel))
-        })
-        .collect();
-    found.sort_by_key(|f| (f.0, f.1.len()));
+            let m = match find(first) {
+                Some(0) => 0,
+                Some(_) => 1,
+                None => continue,
+            };
+            found.push((m, first, b.id.as_deref(), rel.as_str(), b));
+        }
+    }
+    // Those with an id first, as they were offered before.
+    found.sort_by_key(|f| (f.0, f.2.is_none(), f.1.len()));
     found.truncate(MOST);
     found
         .into_iter()
-        .map(|(_, first, id, rel)| {
+        .map(|(_, first, id, rel, b)| {
+            let id = id.map_or_else(|| index.promise(rel, b), str::to_string);
             let label: String = first.chars().take(80).collect();
             Suggestion {
                 label,
-                insert: if closed {
-                    id.to_string()
-                } else {
-                    format!("{id}))")
-                },
+                insert: if closed { id } else { format!("{id}))") },
                 start: cursor - typed.len(),
                 cursor: None,
                 what: What::Link,

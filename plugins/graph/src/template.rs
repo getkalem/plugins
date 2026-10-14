@@ -168,6 +168,51 @@ fn logseq_variables(text: &str, index: &Index, v: &Values) -> String {
     out
 }
 
+/// The names of Logseq's templates (blocks with `template:: NAME`), in
+/// the order of the graph's files, each once.
+pub fn logseq_names(index: &Index) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (_, d) in index.files() {
+        for b in &d.scanned.blocks {
+            for (k, v) in &b.props {
+                let name = v.trim();
+                if k == "template"
+                    && !name.is_empty()
+                    && !out.iter().any(|n| n.eq_ignore_ascii_case(name))
+                {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Logseq's template `name` filled in, to be typed into a block
+/// (`/Template`): its first block's text in the block's place, the rest
+/// after it under the block's `indent`; `None` when there is no such
+/// template.
+pub fn logseq_insert(
+    index: &Index,
+    files: &dyn Files,
+    name: &str,
+    v: &Values,
+    indent: &str,
+) -> Option<String> {
+    let text = logseq(index, files, name, v)?;
+    let mut out = String::new();
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 {
+            out.push_str(line.strip_prefix("- ").unwrap_or(line));
+        } else {
+            out.push('\n');
+            out.push_str(indent);
+            out.push_str(line);
+        }
+    }
+    Some(out)
+}
+
 /// Obsidian's template note `name` (relative to the root, without
 /// `.md`, or in the templates' folder), filled in.
 pub fn obsidian(index: &Index, files: &dyn Files, name: &str, v: &Values) -> Option<String> {

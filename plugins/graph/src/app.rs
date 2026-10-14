@@ -219,6 +219,24 @@ pub const COMMANDS: &[CommandInfo] = &[
         "Sort Pages",
         &[("s", "textType == graph-pages && (vimCommand || !vimActive)")],
     ),
+    // `J`, `O` in the graph view: its journals and the pages linked to
+    // no other shown or left out, for the session (Logseq's toggles).
+    n(
+        "graph.viewJournals",
+        "Graph View: Show or Leave Out the Journals",
+        &[(
+            "shift+j",
+            "textType == graph-view && (vimCommand || !vimActive)",
+        )],
+    ),
+    n(
+        "graph.viewOrphans",
+        "Graph View: Show or Leave Out the Orphans",
+        &[(
+            "shift+o",
+            "textType == graph-view && (vimCommand || !vimActive)",
+        )],
+    ),
     n("graph.blockReferences", "Block References", &[]),
     CommandInfo {
         id: "graph.open",
@@ -639,6 +657,8 @@ pub struct App {
     docs: BTreeMap<(String, String), Content>,
     /// How each graph's "All pages" is sorted.
     page_sort: BTreeMap<String, views::PageSort>,
+    /// What the graph view shows of each graph, as toggled (`J`, `O`).
+    graph_view: BTreeMap<String, config::GraphView>,
     pending: BTreeMap<u64, Pending>,
     next: u64,
     /// The page the panel shows: `(root, key)`.
@@ -692,6 +712,7 @@ impl App {
             today: None,
             docs: BTreeMap::new(),
             page_sort: BTreeMap::new(),
+            graph_view: BTreeMap::new(),
             pending: BTreeMap::new(),
             next: 1,
             panel: None,
@@ -880,7 +901,11 @@ impl App {
 
     /// A file saved, or changed on disk.
     pub fn saved(&mut self, files: &dyn Files, path: &str) -> Vec<Effect> {
-        self.files_changed(files, &[files::normalize(path)])
+        let mut out = self.files_changed(files, &[files::normalize(path)]);
+        // A reference typed to a block that had no id, saved: the id
+        // written into the block's file.
+        out.extend(self.keep_promises(files));
+        out
     }
 
     /// A file changed on disk (`workspace-file-changed`): noted, to be
@@ -924,6 +949,17 @@ impl App {
             .collect();
         let mut out = Vec::new();
         for root in roots {
+            // The graph's own settings changed (Logseq's or Obsidian's
+            // app wrote them): the graph read again, as when it was found.
+            let settings = paths
+                .iter()
+                .filter_map(|p| files::relative(&root, p))
+                .any(config::is_settings);
+            if settings && let Some(kind) = self.indexes.get(&root).map(|i| i.graph.kind) {
+                self.load(files, &root, kind, &mut out);
+                out.extend(self.refresh(&root));
+                continue;
+            }
             let changed = self
                 .indexes
                 .get_mut(&root)
@@ -1189,7 +1225,14 @@ impl App {
             "graph.graphView" => (
                 format!("Graph View: {name}"),
                 "graph-view",
-                views::drawing(index, None),
+                views::drawing_as(
+                    index,
+                    None,
+                    self.graph_view
+                        .get(root)
+                        .copied()
+                        .unwrap_or(index.graph.graph_view),
+                ),
             ),
             "graph.localGraph" => {
                 let page = page?;
@@ -1322,6 +1365,17 @@ impl App {
                 {
                     self.unindexed.borrow_mut().remove(&files::normalize(&path));
                     out.extend(self.opened(files, &path));
+                }
+            }
+            "graph.viewJournals" | "graph.viewOrphans" => {
+                if let Some(base) = self.indexes.get(&root).map(|i| i.graph.graph_view) {
+                    let gv = self.graph_view.entry(root.clone()).or_insert(base);
+                    if id == "graph.viewJournals" {
+                        gv.journals = !gv.journals;
+                    } else {
+                        gv.orphans = !gv.orphans;
+                    }
+                    out.extend(self.render("graph.graphView", &root, true));
                 }
             }
             "graph.openNode" => {

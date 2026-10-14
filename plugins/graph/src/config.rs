@@ -248,6 +248,17 @@ fn bookmarks(json: Option<&str>) -> Vec<String> {
     out
 }
 
+/// Whether file `rel` (relative to a graph's folder) holds the graph's
+/// settings as its own app keeps them: Logseq's `logseq/config.edn`,
+/// Obsidian's `.obsidian/*.json` but its windows' layout, which it writes
+/// as the user works, and its plugins' own.
+pub fn is_settings(rel: &str) -> bool {
+    rel == "logseq/config.edn"
+        || rel.strip_prefix(".obsidian/").is_some_and(|f| {
+            f.ends_with(".json") && !f.contains('/') && !f.starts_with("workspace")
+        })
+}
+
 /// Whose graph `dir` is, by what it holds: `logseq/config.edn` or
 /// `.obsidian/`.
 pub fn kind_of(files: &dyn Files, dir: &str) -> Option<Kind> {

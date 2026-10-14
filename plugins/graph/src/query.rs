@@ -701,7 +701,8 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
     }
     sort_hits(index, &mut hits);
     if let Some((key, desc)) = &q.sort {
-        let sort_key = |h: &Hit| -> (Option<Date>, String) {
+        // A moment in milliseconds, or a text.
+        let sort_key = |h: &Hit| -> (Option<i64>, String) {
             let (page, block) = match h {
                 Hit::Page(k) => (index.page(k), None),
                 Hit::Props { rel } => (index.page_of(rel), None),
@@ -713,7 +714,16 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
             match key.as_str() {
                 "page" => (None, page.map_or(String::new(), |p| p.title.to_lowercase())),
                 "created-at" | "updated-at" | "journal-day" => {
-                    (page.and_then(|p| p.journal), String::new())
+                    // When the page was made or changed, as Logseq keeps it;
+                    // else a journal's day.
+                    let at = page.and_then(|p| {
+                        match index.times(&p.key).filter(|_| key != "journal-day") {
+                            Some((made, _)) if key == "created-at" => Some(made),
+                            Some((_, changed)) => Some(changed),
+                            None => p.journal.map(|d| d.to_days() * 86_400_000),
+                        }
+                    });
+                    (at, String::new())
                 }
                 "priority" => (
                     None,

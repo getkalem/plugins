@@ -86,9 +86,19 @@ pub struct Index {
     pub problems: Vec<String>,
     /// The whiteboards and canvases: pages drawn by their application.
     drawings: std::collections::BTreeSet<String>,
+    /// When each page was made and last changed, in milliseconds, as
+    /// Logseq keeps them (`logseq/pages-metadata.edn`): by key.
+    times: HashMap<String, (i64, i64)>,
+    /// Ids given to blocks that had none, for references typed to them
+    /// (`((` completion), until written into the blocks' files: the id,
+    /// then the block's file, line and text.
+    promised: std::cell::RefCell<HashMap<String, (String, u32, String)>>,
     /// Changed with every change of the index, across indexes.
     version: u64,
 }
+
+/// Where Logseq keeps when each page was made and last changed.
+const TIMES: &str = "logseq/pages-metadata.edn";
 
 /// The versions given out.
 static VERSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -146,6 +156,8 @@ impl Index {
             tags: BTreeMap::new(),
             problems: Vec::new(),
             drawings: std::collections::BTreeSet::new(),
+            times: HashMap::new(),
+            promised: std::cell::RefCell::new(HashMap::new()),
             version: VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -154,6 +166,39 @@ impl Index {
     /// share: what was computed from the index is good while it stays.
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Reads Logseq's `logseq/pages-metadata.edn` again: when each page
+    /// was made and last changed. Whether that changed.
+    fn read_times(&mut self, files: &dyn Files) -> bool {
+        use crate::edn::Value;
+        let mut times = HashMap::new();
+        if self.graph.kind == Kind::Logseq
+            && let Ok(text) = files.read(&self.graph.path(TIMES))
+            && let Ok(Value::Vector(items)) = crate::edn::parse(&text)
+        {
+            for m in &items {
+                let int = |k: &str| match m.get(k) {
+                    Some(Value::Int(n)) => Some(*n),
+                    _ => None,
+                };
+                if let Some(name) = m.get("block/name").and_then(Value::as_str)
+                    && let (Some(made), Some(changed)) =
+                        (int("block/created-at"), int("block/updated-at"))
+                {
+                    times.insert(names::key(name), (made, changed));
+                }
+            }
+        }
+        let changed = times != self.times;
+        self.times = times;
+        changed
+    }
+
+    /// When page `key` was made and last changed, in milliseconds since
+    /// 1970, as Logseq keeps them; none for a page it has no record of.
+    pub fn times(&self, key: &str) -> Option<(i64, i64)> {
+        self.times.get(key).copied()
     }
 
     /// The index of `graph`, its files read.
@@ -202,6 +247,7 @@ impl Index {
                 }
             }
         }
+        index.read_times(files);
         index.derive();
         index
     }
@@ -245,6 +291,14 @@ impl Index {
         let Some(rel) = files::relative(&self.graph.root, &path).map(str::to_string) else {
             return Reread::Same;
         };
+        // Logseq's record of when pages were made and changed.
+        if rel == TIMES {
+            return if self.read_times(files) {
+                Reread::InPlace
+            } else {
+                Reread::Same
+            };
+        }
         let (_, ext) = files::stem_ext(&rel);
         if drawn_elsewhere(&self.graph, &rel) && !self.graph.is_hidden(&rel) {
             let there = files.read(&path).is_ok() || files.list(&path).is_ok();
@@ -943,9 +997,72 @@ impl Index {
 
     /// The block with the id `id`: its file and the block.
     pub fn block(&self, id: &str) -> Option<(&str, &Block)> {
-        let (rel, i) = self.blocks.get(id)?;
-        let b = self.files.get(rel)?.scanned.blocks.get(*i)?;
+        if let Some((rel, i)) = self.blocks.get(id) {
+            let b = self.files.get(rel)?.scanned.blocks.get(*i)?;
+            return Some((rel.as_str(), b));
+        }
+        // A block promised the id, not written with it yet.
+        let (rel, line, text) = self.promised.borrow().get(id).cloned()?;
+        let (rel, d) = self.files.get_key_value(&rel)?;
+        let b = d
+            .scanned
+            .blocks
+            .iter()
+            .filter(|b| b.text == text)
+            .min_by_key(|b| b.line.abs_diff(line))?;
         Some((rel.as_str(), b))
+    }
+
+    /// An id for block `b` of file `rel`, which has none, for a reference
+    /// typed to it before the id is written into the file: the same for
+    /// the same block, a UUID of version 4 made from it. Until then
+    /// [`Index::block`] finds the block by it.
+    pub fn promise(&self, rel: &str, b: &Block) -> String {
+        let fnv = |salt: u8| {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            let line = b.line.to_le_bytes();
+            let bytes = [salt]
+                .into_iter()
+                .chain(self.graph.root.bytes())
+                .chain(rel.bytes())
+                .chain(line)
+                .chain(b.text.bytes());
+            for x in bytes {
+                h ^= u64::from(x);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+            h
+        };
+        let (x, y) = (fnv(1), fnv(2));
+        let hex = format!("{x:016x}{y:016x}");
+        let id = format!(
+            "{}-{}-4{}-{:x}{}-{}",
+            &hex[0..8],
+            &hex[8..12],
+            &hex[13..16],
+            8 + (y >> 62) as u8 % 4,
+            &hex[17..20],
+            &hex[20..32]
+        );
+        self.promised
+            .borrow_mut()
+            .insert(id.clone(), (rel.to_string(), b.line, b.text.clone()));
+        id
+    }
+
+    /// The ids promised and not written yet: each with its block's file,
+    /// line and text.
+    pub fn promised(&self) -> Vec<(String, String, u32, String)> {
+        self.promised
+            .borrow()
+            .iter()
+            .map(|(id, (rel, line, text))| (id.clone(), rel.clone(), *line, text.clone()))
+            .collect()
+    }
+
+    /// Promised id `id` written into its block's file, or given up.
+    pub fn forget_promise(&self, id: &str) {
+        self.promised.borrow_mut().remove(id);
     }
 
     /// The file of the block `id` and its place among the file's blocks.

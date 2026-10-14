@@ -1131,6 +1131,32 @@ user groups; the gaps that code can close, in this order.
   nothing new. Also: the graph's menu and the drawn graph's text among
   the snapshots; the README's Getting started.
 
+- [x] GR15 After the launch, the owner's ask (2026-10-14): what Logseq
+  does that the plugin did not, done in Kalem itself (Vim's keys, the
+  git plugin's `SPC g g` for the commits).
+  - [x] GR15a When Logseq made and last changed each page, from
+    `logseq/pages-metadata.edn`: All pages sorted by it (`s`), queries'
+    `(sort-by created-at)`, `updated-at`, the Datalog's
+    `:block/created-at` and `:block/updated-at`; read again when Logseq
+    writes it.
+  - [x] GR15b The graph's own settings followed as its app writes them
+    (`logseq/config.edn`, `.obsidian/*.json` but the windows' layout):
+    the graph read again, so a favorite added or the graph view's
+    settings changed in Logseq show in Kalem.
+  - [x] GR15c `/Template`: the graph's templates in `/`'s completion, a
+    template's blocks typed into the block, under its indent, its
+    variables filled in.
+  - [x] GR15d `((` offers every block holding what is typed, as Logseq
+    does; a block without an id is promised one, found by it at once,
+    and written into its file as `id::` when the reference is saved. A
+    million blocks searched in 83 ms.
+  - [x] GR15e `J` and `O` in the graph view: the journals and the orphans
+    shown or left out for the session, as Logseq's toggles.
+  - Found in Kalem on the way: the terminal's status line said Ctrl+G
+    opens the commands in Vim's keys, which Vim's normal mode takes
+    (`Space :` now); Vim's command line over a graph drawn lost `-` and
+    Enter to the graph.
+
 ## What Kalem's core must gain
 
 Each is the plugin's gate or its ask, written for every plugin.

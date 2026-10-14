@@ -1324,12 +1324,15 @@ fn completion_of_pages_blocks_tags_and_blocks_of_text() {
     let mut app = App::new(Settings::default());
     let other = "/w/notes/pages/Other.md";
     // Before the graph is indexed: nothing, Kalem's own completers answer.
-    assert!(app.complete("refs", Some(other), "- [[Ka", 0, 6).is_empty());
+    assert!(
+        app.complete(&m, "refs", Some(other), "- [[Ka", 0, 6)
+            .is_empty()
+    );
     app.opened(&m, other);
     let complete = |text: &str| {
         let (text, after) = text.split_once('|').unwrap_or((text, ""));
         let whole = format!("{text}{after}");
-        app.complete("refs", Some(other), &whole, 0, text.len())
+        app.complete(&m, "refs", Some(other), &whole, 0, text.len())
     };
     // `[[`: pages by title, the link replacing the `[[`.
     let found = complete("- see [[Ka");
@@ -1378,7 +1381,7 @@ fn completion_of_pages_blocks_tags_and_blocks_of_text() {
     // Elsewhere, or another completer: nothing.
     assert!(complete("- plain words").is_empty());
     assert!(
-        app.complete("other", Some(other), "- [[Ka", 0, 6)
+        app.complete(&m, "other", Some(other), "- [[Ka", 0, 6)
             .is_empty()
     );
 }
@@ -1419,7 +1422,7 @@ fn completion_names_notes_of_the_same_name_by_their_link() {
     ]);
     let mut app = App::new(Settings::default());
     app.opened(&m, "/v/Home.md");
-    let found = app.complete("refs", Some("/v/Home.md"), "x [[No", 0, 6);
+    let found = app.complete(&m, "refs", Some("/v/Home.md"), "x [[No", 0, 6);
     let shown: Vec<(&str, &str)> = found
         .iter()
         .map(|s| (s.label.as_str(), s.insert.as_str()))
@@ -1447,7 +1450,7 @@ fn completion_of_properties_and_their_values() {
     let mut app = App::new(Settings::default());
     let c = "/w/notes/pages/C.md";
     app.opened(&m, c);
-    let complete = |text: &str| app.complete("refs", Some(c), text, 0, text.len());
+    let complete = |text: &str| app.complete(&m, "refs", Some(c), text, 0, text.len());
     let shown = |found: Vec<crate::app::complete::Suggestion>| -> Vec<(String, String, usize)> {
         found
             .into_iter()
@@ -1491,7 +1494,7 @@ fn completion_of_logseqs_slash_commands() {
     app.local_now = Some(local);
     let other = "/w/notes/pages/Other.md";
     app.opened(&m, other);
-    let complete = |text: &str| app.complete("refs", Some(other), text, 0, text.len());
+    let complete = |text: &str| app.complete(&m, "refs", Some(other), text, 0, text.len());
     // At a block's start: keywords, priorities and headings too.
     let found = complete("- /to");
     let names: Vec<&str> = found.iter().map(|s| s.label.as_str()).collect();
@@ -1535,6 +1538,7 @@ fn completion_of_a_vaults_headings_and_blocks() {
     app.opened(&m, "/v/Home.md");
     let complete = |text: &str, after: &str| {
         app.complete(
+            &m,
             "refs",
             Some("/v/Home.md"),
             &format!("{text}{after}"),
@@ -1841,4 +1845,229 @@ fn the_graphs_menu() {
     let (_, key, _, content) = document(&app.command(&m, "graph.home", &c));
     assert_eq!(key, "/w/vault");
     assert!(content.text.contains("Bookmarks"), "{}", content.text);
+}
+
+#[test]
+fn logseqs_record_of_changes_sorts_pages_and_is_followed() {
+    let m = logseq();
+    // Logseq keeps when each page was made and last changed.
+    m.write(
+        "/w/notes/logseq/pages-metadata.edn",
+        "[{:block/name \"other\" :block/created-at 1759000000000 :block/updated-at 1760000000000}\n {:block/name \"kalem\" :block/created-at 1758000000000 :block/updated-at 1759500000000}]",
+    )
+    .unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let index = &app.indexes["/w/notes"];
+    assert_eq!(
+        index.times("kalem"),
+        Some((1_758_000_000_000, 1_759_500_000_000))
+    );
+    assert_eq!(index.times("templates"), None);
+    // All pages, the page changed last first, with its day.
+    let c = ctx("/w/notes/pages/Kalem.md", "", 0);
+    let (_, key, _, _) = document(&app.command(&m, "graph.pages", &c));
+    let mut d = c.clone();
+    d.doc = Some(("graph.pages".into(), key));
+    for _ in 0..3 {
+        app.command(&m, "graph.sortPages", &d);
+    }
+    let (_, _, _, content) = document(&app.command(&m, "graph.pages", &c));
+    assert!(
+        content.text.contains("by changed; s sorts by title"),
+        "{}",
+        content.text
+    );
+    let lines: Vec<&str> = content
+        .text
+        .lines()
+        .skip_while(|l| !l.starts_with("Pages ("))
+        .skip(1)
+        .take(3)
+        .collect();
+    assert!(
+        lines[0].starts_with("Other") && lines[0].ends_with("changed 2025-10-09"),
+        "{lines:?}"
+    );
+    assert!(
+        lines[1].starts_with("Kalem") && lines[1].ends_with("changed 2025-10-03"),
+        "{lines:?}"
+    );
+    assert!(lines[2].starts_with("Templates"), "{lines:?}");
+    // A query sorted by when its pages were made.
+    let q = crate::query::parse("(and (page-property type) (sort-by created-at))");
+    assert!(q.is_ok());
+    // Logseq writes the record again: read again, alone.
+    m.write(
+        "/w/notes/logseq/pages-metadata.edn",
+        "[{:block/name \"kalem\" :block/created-at 1758000000000 :block/updated-at 1761000000000}]",
+    )
+    .unwrap();
+    assert!(app.file_changed("/w/notes/logseq/pages-metadata.edn"));
+    let none = Ctx {
+        path: None,
+        text: None,
+        cursor: 0,
+        doc: None,
+        args: "{}".into(),
+    };
+    app.command(&m, "graph.filesChanged", &none);
+    assert_eq!(
+        app.indexes["/w/notes"].times("kalem"),
+        Some((1_758_000_000_000, 1_761_000_000_000))
+    );
+    assert_eq!(app.indexes["/w/notes"].times("other"), None);
+}
+
+#[test]
+fn the_graphs_settings_changed_by_its_app_are_followed() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let c = ctx("/w/notes/pages/Kalem.md", "", 0);
+    let (_, _, _, content) = document(&app.command(&m, "graph.home", &c));
+    assert!(!content.text.contains("• Other"), "{}", content.text);
+    // Logseq writes its configuration: a favorite added.
+    m.write(
+        "/w/notes/logseq/config.edn",
+        "{:file/name-format :triple-lowbar :default-templates {:journals \"daily\"} :favorites [\"Other\"]}",
+    )
+    .unwrap();
+    assert!(app.file_changed("/w/notes/logseq/config.edn"));
+    let none = Ctx {
+        path: None,
+        text: None,
+        cursor: 0,
+        doc: None,
+        args: "{}".into(),
+    };
+    app.command(&m, "graph.filesChanged", &none);
+    let (_, _, _, content) = document(&app.command(&m, "graph.home", &c));
+    assert!(
+        content.text.contains("Favorites\n  • Other"),
+        "{}",
+        content.text
+    );
+    // Obsidian's windows' layout is not its settings.
+    assert!(config::is_settings(".obsidian/graph.json"));
+    assert!(!config::is_settings(".obsidian/workspace.json"));
+    assert!(!config::is_settings(".obsidian/plugins/x/data.json"));
+}
+
+#[test]
+fn a_template_typed_in_after_a_slash() {
+    let m = Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{}"),
+        (
+            "/w/notes/pages/Templates.md",
+            "- Meeting\n  template:: meeting\n\t- Attendees <% today %>\n\t\t- one\n\t- Notes\n",
+        ),
+        ("/w/notes/pages/Other.md", "- x\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.today = Date::new(2026, 10, 14);
+    let other = "/w/notes/pages/Other.md";
+    app.opened(&m, other);
+    // Logseq's `/Template`: the template's blocks in the block's place,
+    // under its indent.
+    let text = "- one\n\t- /meet";
+    let found = app.complete(&m, "refs", Some(other), text, 0, text.len());
+    let t = found
+        .iter()
+        .find(|s| s.label == "Template: meeting")
+        .expect("the template");
+    assert_eq!(
+        t.insert,
+        "Attendees [[Oct 14th, 2026]]\n\t\t- one\n\t- Notes"
+    );
+    assert_eq!(t.start, text.len() - "/meet".len());
+    // Only at a block's start.
+    let text = "- some text /meet";
+    let found = app.complete(&m, "refs", Some(other), text, 0, text.len());
+    assert!(!found.iter().any(|s| s.label.starts_with("Template:")));
+}
+
+#[test]
+fn a_block_without_an_id_referred_to_by_completion() {
+    let m = Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{}"),
+        (
+            "/w/notes/pages/Kalem.md",
+            "- An editor\n- Plans for the release\n\t- the first\n",
+        ),
+        ("/w/notes/pages/Other.md", "- x\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    let other = "/w/notes/pages/Other.md";
+    app.opened(&m, other);
+    // Logseq's `((`: any block, by its text.
+    let text = "- see ((plans";
+    let found = app.complete(&m, "refs", Some(other), text, 0, text.len());
+    let item = found
+        .iter()
+        .find(|s| s.label == "Plans for the release")
+        .expect("the block");
+    let id = item.insert.strip_suffix("))").unwrap().to_string();
+    assert_eq!(id.len(), 36);
+    // The same id when asked again, and the block found by it at once.
+    let again = app.complete(&m, "refs", Some(other), text, 0, text.len());
+    assert!(again.iter().any(|s| s.insert == item.insert));
+    let block = app.indexes["/w/notes"]
+        .block(&id)
+        .map(|(r, b)| (r.to_string(), b.text.clone()));
+    assert_eq!(
+        block,
+        Some(("pages/Kalem.md".into(), "Plans for the release".into()))
+    );
+    // Nothing written until the reference is saved; then the id.
+    assert!(!m.get("/w/notes/pages/Kalem.md").unwrap().contains("id::"));
+    m.write(other, &format!("- see (({id}))\n")).unwrap();
+    app.saved(&m, other);
+    assert_eq!(
+        m.get("/w/notes/pages/Kalem.md").unwrap(),
+        format!("- An editor\n- Plans for the release\n  id:: {id}\n\t- the first\n")
+    );
+    assert!(app.indexes["/w/notes"].promised().is_empty());
+    // Nothing typed: only the blocks with an id, as before.
+    let text = "- see ((";
+    let found = app.complete(&m, "refs", Some(other), text, 0, text.len());
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+#[test]
+fn the_graph_views_toggles() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Other.md");
+    let c = ctx("/w/notes/pages/Other.md", "", 0);
+    let ids = |out: &[Effect]| -> Vec<String> {
+        let (_, _, _, content) = document(out);
+        let mut v: Vec<String> = content
+            .drawing
+            .unwrap()
+            .nodes
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        v.sort();
+        v
+    };
+    let out = app.command(&m, "graph.graphView", &c);
+    let (_, key, _, content) = document(&out);
+    assert!(
+        content
+            .text
+            .contains("journals left out (J) · orphans shown (O)"),
+        "{}",
+        content.text
+    );
+    assert!(ids(&out).contains(&"templates".to_string()));
+    // `J` in the graph view: the journals shown; `O`: the orphans left out.
+    let mut d = c.clone();
+    d.doc = Some(("graph.graphView".into(), key));
+    let with = ids(&app.command(&m, "graph.viewJournals", &d));
+    assert!(with.iter().any(|k| k.starts_with("oct")), "{with:?}");
+    let without = ids(&app.command(&m, "graph.viewOrphans", &d));
+    assert!(!without.contains(&"templates".to_string()), "{without:?}");
+    assert!(without.iter().any(|k| k.starts_with("oct")), "{without:?}");
 }

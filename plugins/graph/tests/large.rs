@@ -348,6 +348,26 @@ fn a_million_blocks() {
     time("the graph's menu", Duration::from_millis(100), || {
         views::home(&index, &[], &[], g)
     });
+    // `((` and a word: every block holding it, those without an id
+    // promised one (a page's blocks are written without ids).
+    drop(index);
+    let mut app = kalem_plugin_graph::app::App::new(Default::default());
+    app.opened(&m, "/big/pages/Page 00001.md");
+    let found = time(
+        "(( completion over every block",
+        Duration::from_millis(300),
+        || {
+            app.complete(
+                &m,
+                "refs",
+                Some("/big/pages/Page 00001.md"),
+                "- ((review dr",
+                0,
+                13,
+            )
+        },
+    );
+    assert!(!found.is_empty());
     let over = OVER.lock().unwrap();
     assert!(over.is_empty(), "{over:#?}");
 }

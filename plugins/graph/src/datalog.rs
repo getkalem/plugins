@@ -168,6 +168,8 @@ fn day_int(d: Date) -> i64 {
 struct Db<'a> {
     pages: Vec<&'a Page>,
     page_id: HashMap<&'a str, u32>,
+    /// The index, for what it keeps of pages besides them.
+    index: &'a Index,
     /// Each block: its file, its place there, the block and its page.
     blocks: Vec<(&'a str, usize, &'a Block, u32)>,
     /// A file's first block's number.
@@ -279,6 +281,7 @@ impl<'a> Db<'a> {
         Db {
             pages,
             page_id,
+            index,
             blocks,
             first,
             refs,
@@ -363,6 +366,19 @@ impl<'a> Db<'a> {
                 "block/original-name" => vec![V::Str(p.title.clone())],
                 "block/journal?" => vec![V::Bool(p.journal.is_some())],
                 "block/journal-day" => p.journal.map(|d| V::Int(day_int(d))).into_iter().collect(),
+                // When Logseq made and last changed the page.
+                "block/created-at" => self
+                    .index
+                    .times(&p.key)
+                    .map(|t| V::Int(t.0))
+                    .into_iter()
+                    .collect(),
+                "block/updated-at" => self
+                    .index
+                    .times(&p.key)
+                    .map(|t| V::Int(t.1))
+                    .into_iter()
+                    .collect(),
                 "block/properties" => vec![self.props(&p.props)],
                 "block/tags" => pages(prop("tags")),
                 "block/alias" => p
@@ -434,6 +450,8 @@ impl<'a> Db<'a> {
                 | "block/original-name"
                 | "block/journal?"
                 | "block/journal-day"
+                | "block/created-at"
+                | "block/updated-at"
                 | "block/tags"
                 | "block/alias"
                 | "block/namespace",

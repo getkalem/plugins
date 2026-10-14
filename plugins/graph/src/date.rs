@@ -95,6 +95,12 @@ impl Date {
         }
     }
 
+    /// The day of the moment `ms` milliseconds after 1970-01-01, in
+    /// UTC.
+    pub fn from_millis(ms: i64) -> Date {
+        Date::from_days(ms.div_euclid(86_400_000))
+    }
+
     /// The date `n` days later (earlier when negative).
     pub fn add_days(self, n: i64) -> Date {
         Date::from_days(self.to_days() + n)
