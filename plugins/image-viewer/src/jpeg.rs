@@ -115,15 +115,38 @@ pub fn orientation(jpeg: &[u8]) -> Option<u16> {
     let segs = segments(jpeg).ok()?;
     let (seg, tiff_at) = exif_segment(jpeg, &segs)?;
     let tiff = &jpeg[tiff_at..seg.end];
+    let (order, e) = orientation_entry(tiff)?;
+    match order.u16(tiff, e + 2) {
+        Some(LONG) => order.u32(tiff, e + 8).map(|v| v as u16),
+        _ => order.u16(tiff, e + 8),
+    }
+}
+
+/// The TIFF data of a JPEG file's EXIF, its orientation upright (1): for
+/// a copy whose pixels are already turned (a PNG made of it). `None`
+/// without EXIF.
+pub fn exif_upright(jpeg: &[u8]) -> Option<Vec<u8>> {
+    let segs = segments(jpeg).ok()?;
+    let (seg, tiff_at) = exif_segment(jpeg, &segs)?;
+    let mut tiff = jpeg[tiff_at..seg.end].to_vec();
+    if let Some((order, e)) = orientation_entry(&tiff) {
+        match order.u16(&tiff, e + 2) {
+            Some(LONG) => tiff[e + 8..e + 12].copy_from_slice(&order.put_u32(1)),
+            _ => tiff[e + 8..e + 10].copy_from_slice(&order.put_u16(1)),
+        }
+    }
+    Some(tiff)
+}
+
+/// IFD0's orientation entry in TIFF data: the byte order, and where the
+/// entry starts.
+fn orientation_entry(tiff: &[u8]) -> Option<(Order, usize)> {
     let (order, ifd) = header(tiff)?;
     let n = order.u16(tiff, ifd)? as usize;
-    (0..n).find_map(|i| {
-        let e = ifd + 2 + 12 * i;
-        (order.u16(tiff, e)? == ORIENTATION).then(|| match order.u16(tiff, e + 2) {
-            Some(LONG) => order.u32(tiff, e + 8).map(|v| v as u16),
-            _ => order.u16(tiff, e + 8),
-        })?
-    })
+    (0..n)
+        .map(|i| ifd + 2 + 12 * i)
+        .find(|&e| e + 12 <= tiff.len() && order.u16(tiff, e) == Some(ORIENTATION))
+        .map(|e| (order, e))
 }
 
 /// The byte order and IFD0's offset of TIFF data.
@@ -333,6 +356,24 @@ mod tests {
             .unwrap();
         assert_eq!(f.value.get_uint(0), Some(8));
         assert_eq!(orientation(&turned), Some(8));
+    }
+
+    /// The EXIF a PNG made of a turned JPEG carries: upright, every other
+    /// tag kept; none without EXIF.
+    #[test]
+    fn exif_set_upright_for_a_copy() {
+        assert_eq!(exif_upright(&plain_jpeg()), None);
+        let turned = set_orientation(&with_make(&plain_jpeg()), 6).unwrap();
+        let tiff = exif_upright(&turned).unwrap();
+        let e = exif::Reader::new().read_raw(tiff).unwrap();
+        let f = e
+            .get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+            .unwrap();
+        assert_eq!(f.value.get_uint(0), Some(1));
+        let make = e.get_field(exif::Tag::Make, exif::In::PRIMARY).unwrap();
+        assert_eq!(make.display_value().to_string(), "\"Kalem\"");
+        // The file itself is left as it was.
+        assert_eq!(orientation(&turned), Some(6));
     }
 
     #[test]

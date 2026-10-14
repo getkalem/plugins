@@ -1,6 +1,8 @@
 # Image viewer
 
-Pictures opened as themselves (D55): a picture is shown, never converted, and the only edits are those the format allows without encoding the picture again. The first plugin of Kalem's `document-viewer` contract (D54, Kalem's task T3.7.2). Kalem has no viewer built in: install this one from Kalem's plugin list, from the offer Kalem makes the first time you open such a file, or with `kalem plugin install image-viewer`.
+Pictures opened as themselves (D55): a picture is shown, never converted (Save As makes a PNG of a JPEG only as a new file), and the only edits are those the format allows without encoding the picture again. The first plugin of Kalem's `document-viewer` contract (D54, Kalem's task T3.7.2). Kalem has no viewer built in: install this one from Kalem's plugin list, from the offer Kalem makes the first time you open such a file, or with `kalem plugin install image-viewer`.
+
+**Status: 0.0.3**, a `document-viewer` component of plugin API 0.2.1 or later. Its Save As under another JPEG name or as a PNG is asked for by Kalem 0.6.20 and later; 0.0.2, the release before, refuses both there, since Kalem 0.6.20 asks the plugin for a name of another kind.
 
 ## What it opens
 
@@ -31,6 +33,8 @@ A JPEG is turned right or left and flipped horizontally or vertically by rewriti
 
 Each edit has its inverse for Kalem's undo. Nothing else is offered for any format. In Kalem, the command Edit the File applies these edits (Rotate Right, Rotate Left, Flip Horizontally, Flip Vertically), and Save writes them; Rotate View Right and Left (`r`, `Shift+R`) only turn the view, in any format, and change nothing in the file.
 
+Save As writes a JPEG under another of its names (`.jpeg`, `.jpe`, `.jfif`) as Save does, its tag alone changed, or as a PNG: a new file of the picture decoded whole and turned as shown, with its EXIF (its orientation set upright) and its color profile (one for CMYK colors is left out, and Kalem says so after the save); the JPEG itself is not encoded again. No other kind and no other picture is written. Kalem 0.6.20 and later ask the plugin for these; earlier ones wrote the JPEG's bytes under whatever name was chosen.
+
 ## Information panel
 
 Format, size, file size, color type as stored, ICC profile, frames and duration, orientation, and from EXIF (read by `kamadak-exif`): camera, lens, date taken, exposure, aperture, ISO, focal length, color space, position, software, artist, copyright.
@@ -48,6 +52,6 @@ These commands build and install it from this folder; the released plugin is ins
 
 ## Tests
 
-`cargo test -p kalem-plugin-image-viewer`: one file per format made by the test itself (no picture whose license would need recording) and decoded against the pixels it was made from; the eight orientations; a turn and a save that differ from the original in the tag only; an animated GIF; a 50-megapixel picture and a 48-megapixel animation under the budget; the manifest's conformance.
+`cargo test -p kalem-plugin-image-viewer`: one file per format made by the test itself (no picture whose license would need recording) and decoded against the pixels it was made from; the eight orientations; a turn and a save that differ from the original in the tag only; Save As under another JPEG name and as a PNG (the pixels shown, its EXIF upright, a color profile for RGB kept and one for CMYK said lost); an animated GIF; a 50-megapixel picture and a 48-megapixel animation under the budget; the manifest's conformance.
 
 Not yet: hashes against reference decoders (libpng, libjpeg-turbo, giflib) on a corpus of real files, and the conformance suite against the fake host (T3.1.17).

@@ -1,7 +1,7 @@
 {
   "id": "org.kalem.image-viewer",
   "name": "Image viewer",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Shows pictures (PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, QOI, TGA, PNM, DDS, OpenEXR, HDR, SVG) with zoom, pan, turns and their EXIF information; a JPEG is turned or flipped by its orientation tag only",
   "main": "dist/image-viewer.wasm",
   "api": "^0.2.1",
