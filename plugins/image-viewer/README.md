@@ -2,6 +2,8 @@
 
 Pictures opened as themselves (D55): a picture is shown, never converted (Save As makes a PNG of a JPEG only as a new file), and the only edits are those the format allows without encoding the picture again. The first plugin of Kalem's `document-viewer` contract (D54, Kalem's task T3.7.2). Kalem has no viewer built in: install this one from Kalem's plugin list, from the offer Kalem makes the first time you open such a file, or with `kalem plugin install image-viewer`.
 
+**Status: 0.0.3**, a `document-viewer` component of plugin API 0.2.1 or later. Its Save As under another JPEG name or as a PNG is asked for by Kalem 0.6.20 and later; 0.0.2, the release before, refuses both there, since Kalem 0.6.20 asks the plugin for a name of another kind.
+
 ## What it opens
 
 | Format | Decoder | Notes |
