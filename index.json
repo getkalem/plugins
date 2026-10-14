@@ -250,13 +250,13 @@
     {
       "id": "org.kalem.xlsx",
       "name": "Excel workbooks",
-      "version": "0.0.11",
+      "version": "0.0.12",
       "description": "Opens, edits and saves Excel workbooks (.xlsx, .xlsm) as themselves: only the edited cells change, charts, pivot tables and macros are kept byte for byte",
       "api": "^0.2.13",
       "permissions": [],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/xlsx",
-      "download": "https://github.com/getkalem/plugins/releases/download/xlsx-v0.0.11/xlsx.wasm",
-      "sha256": "1a56264eb9ff270addf626afffc14c0f6eae851db70ed3468247a1d3c76e7c1a",
+      "download": null,
+      "sha256": null,
       "opens": [
         ".xlsx",
         ".xlsm",
