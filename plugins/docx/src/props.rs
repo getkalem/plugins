@@ -423,6 +423,16 @@ pub struct RunProps {
 }
 
 impl RunProps {
+    /// Whether nothing is set but the character style (`w:rStyle`): a
+    /// run that takes all its look from its styles.
+    pub fn only_style(&self) -> bool {
+        *self
+            == RunProps {
+                style: self.style.clone(),
+                ..RunProps::default()
+            }
+    }
+
     /// A toggle property as written.
     pub fn toggle(&self, t: Toggle) -> Option<bool> {
         self.toggles[t as usize]
