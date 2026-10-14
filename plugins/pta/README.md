@@ -93,6 +93,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 | `rules` | empty | hledger's rules for a statement, when not its own beside it (`statement.csv.rules`) |
 | `ledger_account`, `ledger_date_format` | empty | Ledger's import: the bank's account, and how the statement writes dates (`%d.%m.%Y`) |
 | `glyphs` | `unicode` | The Balance's fold marks and a passed check's mark: `▾ ▸ ✓`, or `v > ok` (`ascii`) |
+| `reconcile_beside` | on | Reconcile opens its document in a pane beside the journal |
 | `match_days` | 3 | How many days apart a statement's line and its posting may be, paired |
 | `reports` | `[]` | Reports of your own, first in Report…: `NAME: ARGUMENTS` (`Food by month: balance expenses:food -M`; for Beancount, a query) |
 | `importer`, `programs.python3` | empty | Beancount's import: your beangulp script (beside the main journal when relative; `import.py` there when empty), and the Python that has beangulp |
@@ -107,7 +108,6 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 
 Waiting on Kalem:
 
-- **The statement in a pane beside.** The Reconcile and Import documents open as documents of their own, not in a pane beside the journal.
 - The tool's problems in the gutter beside the server's (K2); the servers' running balances and elided amounts as inlay hints (K4); Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
 
 Not done yet:
@@ -187,7 +187,7 @@ A period is `this month`, `last month`, `this quarter`, `this year`, `last year`
 
 ## Reconciliation
 
-*Reconcile* (`SPC m R` on a posting of the account, or pick one of your asset and liability accounts) asks the statement's closing balance (the tool's total of the cleared and pending postings offered) and opens a document with the cleared total, the pending total, their sum, the target and the difference, then the postings not cleared yet. As you tick postings off the statement, Tab on one in the Reconcile document marks it pending in the journal (or takes the mark back), saves the journal and shows the reconciliation again with the difference moved; `SPC m t` in the journal marks one too, then save; `t` changes the target, Enter opens the journal at a posting. When the difference is zero, *Finish Reconciliation* (`C`, or `SPC m C`) asks the statement's date, clears the pending postings and writes a balance assertion for the target (hledger and Ledger: a "Balance assertion" transaction with a zero posting; Beancount: a `balance` directive the day after), one undo step. Finish edits only the file where you started Reconcile: pending postings of the account in other included files stay pending. The totals are the tool's; the plugin only subtracts them from the target you typed.
+*Reconcile* (`SPC m R` on a posting of the account, or pick one of your asset and liability accounts) asks the statement's closing balance (the tool's total of the cleared and pending postings offered) and opens a document with the cleared total, the pending total, their sum, the target and the difference, then the postings not cleared yet. The Reconcile document opens in a pane beside the journal (`reconcile_beside`). As you tick postings off the statement, Tab on one in the Reconcile document marks it pending in the journal (or takes the mark back), saves the journal and shows the reconciliation again with the difference moved; `SPC m t` in the journal marks one too, then save; `t` changes the target, Enter opens the journal at a posting. When the difference is zero, *Finish Reconciliation* (`C`, or `SPC m C`) asks the statement's date, clears the pending postings and writes a balance assertion for the target (hledger and Ledger: a "Balance assertion" transaction with a zero posting; Beancount: a `balance` directive the day after), one undo step. Finish edits only the file where you started Reconcile: pending postings of the account in other included files stay pending. The totals are the tool's; the plugin only subtracts them from the target you typed.
 
 With the bank's statement open (a CSV file), *Pair with the Reconciliation* (`SPC m r` there) pairs its lines with the account's postings by amount and date (within `match_days`, 3): in the Reconcile document each posting not cleared says whether it is on the statement, and the statement's lines with no posting are listed in red, for Import to take. A statement that writes the account's amounts the other way round (a card's charges above zero) is paired turned. It is paired again each time the reconciliation is written, until another is paired.
 

@@ -168,6 +168,11 @@
       "default": "unicode",
       "description": "The Balance's fold marks and a passed check's mark as ▾ ▸ ✓, or as v > ok for a terminal font without them"
     },
+    "reconcile_beside": {
+      "type": "boolean",
+      "default": true,
+      "description": "Reconcile opens its document in a pane beside the journal, as ledger-mode's reconcile window; off for the journal's own pane"
+    },
     "match_days": {
       "type": "integer",
       "default": 3,

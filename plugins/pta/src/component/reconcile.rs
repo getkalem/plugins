@@ -235,6 +235,13 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                     e.target = target.trim().to_string();
                     e.journal = journal;
                 });
+                // Beside the journal, as ledger-mode's reconcile window:
+                // a pane of its own, unless it is open already.
+                let shown =
+                    RECONCILES.with(|r| r.borrow().get(&key).is_some_and(|e| e.doc.is_some()));
+                if !shown && beside() {
+                    let _ = kalem::run("pane.splitRight", "{}");
+                }
                 gather(&key, true);
             },
         );
@@ -347,6 +354,12 @@ fn gather(key: &(String, String), open: bool) {
             });
         });
     });
+}
+
+/// Whether the Reconcile document opens in a pane beside the journal:
+/// the setting `reconcile_beside`, on.
+fn beside() -> bool {
+    kalem_plugin::settings::own("reconcile_beside").as_deref() != Some("false")
 }
 
 /// The days a statement's line and its posting may be apart: the

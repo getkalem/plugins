@@ -693,7 +693,11 @@ first.
   filter was wrong before, its test now checks the last total). The
   account picked: the cursor's posting's, else among the asset and
   liability accounts. Opened as a document, not yet in a pane beside
-  the journal; the commodity the target names, or the first.)
+  the journal; the commodity the target names, or the first.
+  The pane beside came on 2026-10-14: a new reconciliation runs
+  Kalem's `pane.splitRight` before its document opens, so the journal
+  stays on the left and the Reconcile document on the right, Tab's
+  marks made in the journal there (the setting `reconcile_beside`, on).)
 - [x] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
   the reconcile buffer), in the journal or the reconcile document:
   when the difference is zero, every pending posting of the account
