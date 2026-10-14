@@ -741,6 +741,12 @@ const BUILTIN_PAGES: [&str; 16] = [
 /// that key and the pages two links from it, all of them. Its text lists
 /// the pages, the most linked first, each line opening its page.
 pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
+    drawing_as(index, focus, index.graph.graph_view)
+}
+
+/// [`drawing`], what the graph view shows of the whole graph given: as
+/// the user toggled it in Kalem (`J`, `O` in the graph view).
+pub fn drawing_as(index: &Index, focus: Option<&str>, gv: crate::config::GraphView) -> Content {
     use std::collections::{BTreeMap, BTreeSet, HashMap};
     // A Logseq page's aliases, pages of their own in Logseq, each linked
     // to its page: by key, the alias as a page, and its page's key.
@@ -830,7 +836,7 @@ pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
             seen
         }
         None => {
-            let gv = index.graph.graph_view;
+            // As the graph's app is set to show it, or as toggled.
             let journal = |k: &str| index.page(k).is_some_and(|p| p.journal.is_some());
             // Linked: by a link that is drawn, a journal's only with them.
             let linked: BTreeSet<&str> = links
@@ -901,7 +907,18 @@ pub fn drawing(index: &Index, focus: Option<&str>) -> Content {
         .collect();
     c.line(
         &[(
-            &format!("{} pages · {} links", pages.len(), edges.len()),
+            &if focus.is_none() && index.graph.kind == Kind::Logseq {
+                let on = |b: bool| if b { "shown" } else { "left out" };
+                format!(
+                    "{} pages · {} links · journals {} (J) · orphans {} (O)",
+                    pages.len(),
+                    edges.len(),
+                    on(gv.journals),
+                    on(gv.orphans)
+                )
+            } else {
+                format!("{} pages · {} links", pages.len(), edges.len())
+            },
             Style::Muted,
         )],
         None,

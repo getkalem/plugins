@@ -2033,3 +2033,41 @@ fn a_block_without_an_id_referred_to_by_completion() {
     let found = app.complete(&m, "refs", Some(other), text, 0, text.len());
     assert_eq!(found.len(), 1, "{found:?}");
 }
+
+#[test]
+fn the_graph_views_toggles() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Other.md");
+    let c = ctx("/w/notes/pages/Other.md", "", 0);
+    let ids = |out: &[Effect]| -> Vec<String> {
+        let (_, _, _, content) = document(out);
+        let mut v: Vec<String> = content
+            .drawing
+            .unwrap()
+            .nodes
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        v.sort();
+        v
+    };
+    let out = app.command(&m, "graph.graphView", &c);
+    let (_, key, _, content) = document(&out);
+    assert!(
+        content
+            .text
+            .contains("journals left out (J) · orphans shown (O)"),
+        "{}",
+        content.text
+    );
+    assert!(ids(&out).contains(&"templates".to_string()));
+    // `J` in the graph view: the journals shown; `O`: the orphans left out.
+    let mut d = c.clone();
+    d.doc = Some(("graph.graphView".into(), key));
+    let with = ids(&app.command(&m, "graph.viewJournals", &d));
+    assert!(with.iter().any(|k| k.starts_with("oct")), "{with:?}");
+    let without = ids(&app.command(&m, "graph.viewOrphans", &d));
+    assert!(!without.contains(&"templates".to_string()), "{without:?}");
+    assert!(without.iter().any(|k| k.starts_with("oct")), "{without:?}");
+}
