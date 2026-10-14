@@ -301,8 +301,28 @@ fn write(key: &(String, String), said: &str, open: bool) {
     }) else {
         return;
     };
+    // The header and the keys as the other documents have them.
+    let styles = {
+        use documents::{Color, StyledSpan, TextStyle};
+        let header_end = text.find('\n').unwrap_or(text.len());
+        let hint_end = text[header_end + 1..]
+            .find('\n')
+            .map_or(text.len(), |i| header_end + 1 + i);
+        vec![
+            StyledSpan {
+                start: 0,
+                end: header_end as u64,
+                style: TextStyle::color(Color::Accent).bold(),
+            },
+            StyledSpan {
+                start: header_end as u64 + 1,
+                end: hint_end as u64,
+                style: TextStyle::color(Color::Muted),
+            },
+        ]
+    };
     if let Some(n) = doc
-        && documents::set(n, &text, None).is_ok()
+        && documents::set_styled(n, &text, None, &styles).is_ok()
     {
         return;
     }
@@ -323,12 +343,15 @@ fn write(key: &(String, String), said: &str, open: bool) {
     if journal_syntax {
         spec = spec.language(tool.language());
     }
-    match documents::open(&spec, &text, None) {
-        Ok(n) => REPORTS.with(|r| {
-            if let Some(e) = r.borrow_mut().get_mut(key) {
-                e.doc = Some(n);
-            }
-        }),
+    match documents::open_styled(&spec, &text, None, &styles) {
+        Ok(n) => {
+            REPORTS.with(|r| {
+                if let Some(e) = r.borrow_mut().get_mut(key) {
+                    e.doc = Some(n);
+                }
+            });
+            super::owned(n, &key.0);
+        }
         Err(why) => ui::notify(&why, ui::Level::Error),
     }
 }
@@ -387,6 +410,11 @@ pub(super) fn close() -> Result<String, String> {
         forget(n);
     }
     Ok("null".into())
+}
+
+/// Whether document `n` is one of these.
+pub(super) fn has_doc(n: u64) -> bool {
+    REPORTS.with(|r| r.borrow().values().any(|e| e.doc == Some(n)))
 }
 
 /// Document `n` closed.

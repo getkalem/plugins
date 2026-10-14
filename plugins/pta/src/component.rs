@@ -643,11 +643,14 @@ fn write_report(main: &Main, report: &check::Report, open: bool) {
     let title = format!("Check: {}", journal::name(&main.path));
     let spec = documents::Spec::new(CHECK_DOC, &main.path, &title, CHECK_KIND);
     match documents::open_styled(&spec, &report.text, first, &styles) {
-        Ok(n) => CHECKS.with(|c| {
-            if let Some(e) = c.borrow_mut().get_mut(&main.path) {
-                e.doc = Some(n);
-            }
-        }),
+        Ok(n) => {
+            CHECKS.with(|c| {
+                if let Some(e) = c.borrow_mut().get_mut(&main.path) {
+                    e.doc = Some(n);
+                }
+            });
+            owned(n, &main.path);
+        }
         Err(why) => ui::notify(&why, ui::Level::Error),
     }
 }
@@ -664,9 +667,10 @@ fn checked_here() -> Option<String> {
 }
 
 /// Check Journal: in a journal, its main journal; in a check document,
-/// that one's again.
+/// that one's again; in the Balance, a Register, a Reconcile or a
+/// Report, the journal they are of.
 fn check_command() -> Result<String, String> {
-    if let Some(main) = checked_here() {
+    if let Some(main) = checked_here().or_else(document_journal) {
         check(main, true);
         return Ok("null".into());
     }
@@ -743,7 +747,40 @@ fn current(n: u64) {
     if let Some(p) = &path {
         seen_journal(p);
     }
+    // One of the plugin's own documents: the item keeps naming the
+    // journal it came from.
+    if path.is_none() && own_document(n) {
+        return;
+    }
     refresh(path);
+}
+
+/// The plugin's document `n` just opened, of the journal `main`: the
+/// item names that journal while it is current (the editor may make it
+/// current before the plugin knows it is its own).
+fn owned(n: u64, main: &str) {
+    if CURRENT.with(Cell::get) == Some(n) {
+        refresh(Some(main.to_string()));
+    }
+}
+
+/// Whether document `n` is one the plugin writes.
+fn own_document(n: u64) -> bool {
+    CHECKS.with(|c| c.borrow().values().any(|e| e.doc == Some(n)))
+        || balance::has_doc(n)
+        || register::has_doc(n)
+        || reconcile::has_doc(n)
+        || other::has_doc(n)
+        || import::has_doc(n)
+}
+
+/// The main journal of the plugin's document that is current: the
+/// Balance's, a Register's, a Reconcile's, a Report's.
+fn document_journal() -> Option<String> {
+    balance::here()
+        .or_else(|| register::here().map(|k| k.0))
+        .or_else(|| reconcile::here().map(|k| k.0))
+        .or_else(|| other::here().map(|k| k.0))
 }
 
 fn current_path() -> Option<String> {
@@ -1341,9 +1378,25 @@ impl Plugin for Pta {
             Some(&format!("{journal} && !vimCommand")),
         )?;
         let mut types = crate::TEXT_TYPES.to_vec();
-        types.push(CHECK_KIND);
+        types.extend([
+            CHECK_KIND,
+            balance::KIND,
+            register::KIND,
+            reconcile::KIND,
+            other::KIND,
+        ]);
         command("pta.check", "Check Journal", &types, |_| check_command())?;
         kalem::keymap("space m k", "pta.check", Some(&leader))?;
+        // And from the Balance, a Register, a Reconcile or a Report: their
+        // journal's check.
+        let reports = [balance::KIND, register::KIND, reconcile::KIND, other::KIND]
+            .map(|k| format!("textType == {k}"))
+            .join(" || ");
+        kalem::keymap(
+            "space m k",
+            "pta.check",
+            Some(&format!("({reports}) && vimCommand")),
+        )?;
         kalem::keymap("r", "pta.check", Some(CHECK_WHEN))?;
         command(
             "pta.checkOpen",

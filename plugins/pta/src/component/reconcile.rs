@@ -477,11 +477,14 @@ fn write(key: &(String, String), open: bool) {
         KIND,
     );
     match documents::open_styled(&spec, &text, None, &styles) {
-        Ok(n) => RECONCILES.with(|r| {
-            if let Some(e) = r.borrow_mut().get_mut(key) {
-                e.doc = Some(n);
-            }
-        }),
+        Ok(n) => {
+            RECONCILES.with(|r| {
+                if let Some(e) = r.borrow_mut().get_mut(key) {
+                    e.doc = Some(n);
+                }
+            });
+            super::owned(n, &key.0);
+        }
         Err(why) => ui::notify(&why, ui::Level::Error),
     }
 }
@@ -651,6 +654,11 @@ pub(super) fn close() -> Result<String, String> {
         forget(n);
     }
     Ok("null".into())
+}
+
+/// Whether document `n` is one of these.
+pub(super) fn has_doc(n: u64) -> bool {
+    RECONCILES.with(|r| r.borrow().values().any(|e| e.doc == Some(n)))
 }
 
 /// Document `n` closed.

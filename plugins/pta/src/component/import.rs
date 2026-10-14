@@ -457,6 +457,11 @@ pub(super) fn close() -> Result<String, String> {
     Ok("null".into())
 }
 
+/// Whether document `n` is one of these.
+pub(super) fn has_doc(n: u64) -> bool {
+    IMPORTS.with(|r| r.borrow().values().any(|e| e.doc == Some(n)))
+}
+
 /// Document `n` closed.
 pub(super) fn forget(n: u64) {
     IMPORTS.with(|i| {

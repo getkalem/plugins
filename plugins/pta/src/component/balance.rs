@@ -379,11 +379,14 @@ fn write(main: &str, open: bool, account: Option<&str>) {
         KIND,
     );
     match documents::open_styled(&spec, &text, cursor, &styles) {
-        Ok(n) => BALANCES.with(|b| {
-            if let Some(e) = b.borrow_mut().get_mut(main) {
-                e.doc = Some(n);
-            }
-        }),
+        Ok(n) => {
+            BALANCES.with(|b| {
+                if let Some(e) = b.borrow_mut().get_mut(main) {
+                    e.doc = Some(n);
+                }
+            });
+            super::owned(n, main);
+        }
         Err(why) => ui::notify(&why, ui::Level::Error),
     }
 }
@@ -575,6 +578,11 @@ pub(super) fn close() -> Result<String, String> {
         forget(n);
     }
     Ok("null".into())
+}
+
+/// Whether document `n` is one of these.
+pub(super) fn has_doc(n: u64) -> bool {
+    BALANCES.with(|r| r.borrow().values().any(|e| e.doc == Some(n)))
 }
 
 /// Document `n` closed.
