@@ -173,6 +173,11 @@
       "default": true,
       "description": "Reconcile opens its document in a pane beside the journal, as ledger-mode's reconcile window; off for the journal's own pane"
     },
+    "reconcile_live": {
+      "type": "boolean",
+      "default": true,
+      "description": "An open Reconcile document follows the journal as you type, before you save: the tool reads the unsaved text on its standard input (hledger and Ledger; Beancount's on save)"
+    },
     "match_days": {
       "type": "integer",
       "default": 3,

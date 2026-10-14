@@ -1833,6 +1833,12 @@ impl Plugin for Pta {
             crate::TEXT_TYPES,
             |_| reconcile::mark_write(),
         )?;
+        command(
+            "pta.reconcileLive",
+            "Follow the Journal as Typed",
+            crate::TEXT_TYPES,
+            |_| reconcile::live(),
+        )?;
         command("pta.reconcileClose", "Close the Reconciliation", k, |_| {
             reconcile::close()
         })?;
@@ -1983,6 +1989,17 @@ impl Plugin for Pta {
                         other::saved(&main.path);
                     });
                 }
+            }
+            Reply::Proceed
+        })?;
+        // The journal as typed: an open Reconcile document follows it
+        // (hledger, Ledger), its text read where a command runs.
+        kalem::on(EventKind::DocumentChanged, |e| {
+            if let Event::DocumentChanged(c) = e
+                && let Some(p) = DOCS.with(|d| d.borrow().get(&c.document).cloned())
+                && reconcile::follows_file(&p)
+            {
+                let _ = kalem::run("pta.reconcileLive", "{}");
             }
             Reply::Proceed
         })?;

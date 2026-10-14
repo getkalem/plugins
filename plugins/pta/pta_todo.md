@@ -674,7 +674,7 @@ first.
 
 ## PT8. Reconciliation
 
-- [~] PT8a `pta.reconcile` (`SPC m r`; ledger-mode's `C-c C-r`), in a
+- [x] PT8a `pta.reconcile` (`SPC m r`; ledger-mode's `C-c C-r`), in a
   journal: asks the account (a quick-pick of the asset and liability
   accounts, the one at the cursor first) and the target balance (the
   statement's closing balance; the default the account's last balance
@@ -731,13 +731,23 @@ first.
   why, while a posting of the account marked neither itself nor by its
   transaction is dated on or before the statement's date
   (`reconcile::unmarked_by`, read from the journal's text: hledger's
-  register gives a pending transaction's postings as unmarked). Not
-  done: the
-  refresh before a save. The tools read the journal from the disk, so
-  a refresh while typing would need the unsaved text given to each
-  tool on its standard input (hledger and Ledger take `-f -`;
-  `bean-query` reads only a file) and the postings' places read back
-  from it; ledger-mode too refreshes on save, and Tab saves.)
+  register gives a pending transaction's postings as unmarked).
+  The refresh before a save came the same day, for hledger and Ledger
+  (`reconcile_live`, on): Kalem's `document-changed` (debounced)
+  queues `pta.reconcileLive`, which reads the journal's text where it
+  runs and has the tool read it on its standard input (`-f -`, its
+  includes found from its folder; `reconcile::from_input`), the
+  postings' places put back in the journal (`placed_in`: hledger's
+  `-`, Ledger's empty name), Enter's and Tab's places read from the
+  same text; a text that does not read keeps the last figures with a
+  note under the hint, gone on the text that read (an undo). Only the
+  main journal's text is live (an include is read as saved);
+  Beancount's follows on save (`bean-query` reads only a file).
+  Checked in the terminal editor: `SPC m t` without saving moves the
+  totals (hledger and Ledger), a broken line shows the note, undo
+  takes it away, Enter after a line added above lands on the moved
+  line. Found: `SPC m R` on a posting written with a Ledger alias
+  (`chk`) takes the alias as the account; pick the account then.)
 - [x] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
   the reconcile buffer), in the journal or the reconcile document:
   when the difference is zero, every pending posting of the account

@@ -8,6 +8,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use kalem_plugin::{documents, editor, kalem, ui};
 
@@ -18,7 +19,7 @@ use crate::report::{self, Posting};
 use crate::statement::{self, Line, Paired};
 use crate::write::Date;
 
-use super::{NotRun, resolve, run, today};
+use super::{NotRun, resolve, run, run_input, today};
 
 const DOC: &str = "pta.reconcile";
 pub(super) const KIND: &str = "pta-reconcile";
@@ -47,6 +48,12 @@ struct Reconciliation {
     cursor_line: Option<usize>,
     shown: report::Document,
     run: u64,
+    /// The journal's text as typed, unsaved, the figures were read from
+    /// (`reconcile_live`); none when they are of the file as saved.
+    live: Option<Rc<Vec<u8>>>,
+    /// The text as typed did not read: the figures are of the last that
+    /// did.
+    unreadable: bool,
 }
 
 /// A Finish asked for, waiting for the command that writes it in the
@@ -245,6 +252,8 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                         cursor_line: None,
                         shown: report::Document::default(),
                         run: 0,
+                        live: None,
+                        unreadable: false,
                     });
                     e.targets = targets;
                     e.journal = journal;
@@ -336,27 +345,46 @@ pub(super) fn saved(main: &str) {
     }
 }
 
-/// The tool's total of `which` postings of `key`'s account.
+/// The tool's total of `which` postings of `key`'s account, read from
+/// `input` when given (the journal as typed); none when the tool failed.
 fn total(
     tool: Dialect,
     key: &(String, String),
     which: Which,
-    done: impl FnOnce(Vec<reconcile::Amount>) + 'static,
+    input: Option<Rc<Vec<u8>>>,
+    done: impl FnOnce(Option<Vec<reconcile::Amount>>) + 'static,
 ) {
-    let (p, a) = reconcile::total_command(tool, &key.0, &key.1, which);
-    run(p, a, journal::folder(&key.0), move |r| {
-        done(match r {
-            Ok(e) if e.status == Some(0) => {
-                reconcile::total_of(tool, &String::from_utf8_lossy(&e.stdout))
-            }
-            _ => Vec::new(),
-        });
-    });
+    let (p, mut a) = reconcile::total_command(tool, &key.0, &key.1, which);
+    if input.is_some() {
+        a = reconcile::from_input(a, &key.0);
+    }
+    run_input(
+        p,
+        a,
+        journal::folder(&key.0),
+        input.map(|t| t.to_vec()),
+        move |r| {
+            done(match r {
+                Ok(e) if e.status == Some(0) => Some(reconcile::total_of(
+                    tool,
+                    &String::from_utf8_lossy(&e.stdout),
+                )),
+                _ => None,
+            });
+        },
+    );
 }
 
 /// The tool's totals and postings not cleared, one run after another,
 /// then the document.
 fn gather(key: &(String, String), open: bool) {
+    gather_from(key, open, None);
+}
+
+/// [`gather`], the journal read from `input` when given (its text as
+/// typed): where the tool cannot read it, the figures shown stay, said
+/// to be of the last text that read.
+fn gather_from(key: &(String, String), open: bool, input: Option<Rc<Vec<u8>>>) {
     let Some((tool, run_no)) = RECONCILES.with(|r| {
         let mut r = r.borrow_mut();
         let e = r.get_mut(key)?;
@@ -366,29 +394,57 @@ fn gather(key: &(String, String), open: bool) {
         return;
     };
     let k = key.clone();
-    total(tool, key, Which::Cleared, move |cleared| {
+    let i1 = input.clone();
+    total(tool, key, Which::Cleared, input.clone(), move |cleared| {
         let k2 = k.clone();
-        total(tool, &k, Which::Pending, move |pending| {
+        let i2 = i1.clone();
+        total(tool, &k, Which::Pending, i1, move |pending| {
             let k3 = k2.clone();
-            total(tool, &k2, Which::Both, move |both| {
-                let (p, a) = reconcile::open_command(tool, &k3.0, &k3.1);
+            let i3 = i2.clone();
+            total(tool, &k2, Which::Both, i2, move |both| {
+                let (p, mut a) = reconcile::open_command(tool, &k3.0, &k3.1);
+                if i3.is_some() {
+                    a = reconcile::from_input(a, &k3.0);
+                }
                 let dir = journal::folder(&k3.0).to_string();
-                run(p, a, &dir, move |r| {
+                let bytes = i3.as_ref().map(|t| t.to_vec());
+                run_input(p, a, &dir, bytes, move |r| {
                     let postings = match r {
                         Ok(e) if e.status == Some(0) => {
-                            reconcile::open_of(tool, &String::from_utf8_lossy(&e.stdout))
+                            let mut list =
+                                reconcile::open_of(tool, &String::from_utf8_lossy(&e.stdout));
+                            if i3.is_some() {
+                                reconcile::placed_in(&mut list, &k3.0);
+                            }
+                            Some(list)
                         }
-                        _ => Vec::new(),
+                        _ => None,
                     };
                     let current =
                         RECONCILES.with(|m| m.borrow().get(&k3).map(|e| e.run)) == Some(run_no);
                     if !current {
                         return;
                     }
+                    let read = cleared.is_some()
+                        && pending.is_some()
+                        && both.is_some()
+                        && postings.is_some();
                     RECONCILES.with(|m| {
                         if let Some(e) = m.borrow_mut().get_mut(&k3) {
-                            e.figures = reconcile::blocks(&e.targets, &cleared, &pending, &both);
-                            e.postings = postings;
+                            if i3.is_some() && !read {
+                                // Half typed: the last figures stay.
+                                e.unreadable = true;
+                                return;
+                            }
+                            e.figures = reconcile::blocks(
+                                &e.targets,
+                                &cleared.unwrap_or_default(),
+                                &pending.unwrap_or_default(),
+                                &both.unwrap_or_default(),
+                            );
+                            e.postings = postings.unwrap_or_default();
+                            e.live = i3.clone();
+                            e.unreadable = false;
                         }
                     });
                     write(&k3, open);
@@ -397,6 +453,68 @@ fn gather(key: &(String, String), open: bool) {
             });
         });
     });
+}
+
+/// Whether the Reconcile documents follow their journal as typed: the
+/// setting `reconcile_live`, on.
+fn follows() -> bool {
+    kalem_plugin::settings::own("reconcile_live").as_deref() != Some("false")
+}
+
+/// Whether the file at `path` is the main journal of an open
+/// reconciliation that follows it as typed: hledger's and Ledger's, which
+/// read the standard input.
+pub(super) fn follows_file(path: &str) -> bool {
+    follows()
+        && RECONCILES.with(|r| {
+            r.borrow().iter().any(|(k, e)| {
+                e.doc.is_some() && e.tool != Dialect::Beancount && journal::same_file(&k.0, path)
+            })
+        })
+}
+
+/// The journal changed (`pta.reconcileLive`, queued on its change): its
+/// open reconciliations run again on its text as typed, when it is the
+/// current document and their main journal.
+pub(super) fn live() -> Result<String, String> {
+    let Some((_, Some(path))) = super::dialect_here() else {
+        return Ok("null".into());
+    };
+    if !follows_file(&path) {
+        return Ok("null".into());
+    }
+    let keys: Vec<(String, String)> = RECONCILES.with(|r| {
+        r.borrow()
+            .iter()
+            .filter(|(k, e)| {
+                e.doc.is_some() && e.tool != Dialect::Beancount && journal::same_file(&k.0, &path)
+            })
+            .map(|(k, _)| k.clone())
+            .collect()
+    });
+    let text = Rc::new(editor::text(None).into_bytes());
+    for k in keys {
+        let same = RECONCILES.with(|r| {
+            r.borrow()
+                .get(&k)
+                .and_then(|e| e.live.clone())
+                .is_some_and(|l| *l == *text)
+        });
+        if !same {
+            gather_from(&k, false, Some(text.clone()));
+            continue;
+        }
+        // Back to the text the figures are of (an undo): they hold again.
+        let was = RECONCILES.with(|r| {
+            r.borrow_mut()
+                .get_mut(&k)
+                .map(|e| std::mem::replace(&mut e.unreadable, false))
+        });
+        if was == Some(true) {
+            write(&k, false);
+        }
+    }
+    Ok("null".into())
 }
 
 /// Whether the Reconcile document opens in a pane beside the journal:
@@ -547,9 +665,13 @@ fn write(key: &(String, String), open: bool) {
             e.tool.language()
         );
         let hint = "Tab mark pending · Enter the posting · t target · C finish · r again · q close";
+        let note = e.unreadable.then_some(
+            "As typed, the journal does not read: the figures are of the last text that did",
+        );
         e.shown = reconcile::layout(
             &header,
             hint,
+            note,
             &e.figures,
             &e.postings,
             e.statement.as_ref().map(|(_, _, p)| p),
@@ -623,15 +745,15 @@ pub(super) fn mark() -> Result<String, String> {
             .matches('\n')
             .count();
         let i: usize = e.shown.lines.get(n)?.as_deref()?.parse().ok()?;
-        Some((e.tool, e.postings.get(i)?.clone(), n))
+        Some((e.tool, e.postings.get(i)?.clone(), n, e.live.clone()))
     });
-    let Some((tool, posting, at_line)) = found else {
+    let Some((tool, posting, at_line, input)) = found else {
         ui::notify("No posting on this line", ui::Level::Info);
         return Ok("null".into());
     };
     let amount = posting.amount.clone();
     let k = key.clone();
-    super::register::place_of(tool, &key.0, posting, move |place| {
+    super::register::place_of(tool, &key.0, posting, input, move |place| {
         let Some((file, line)) = place else {
             return ui::notify(
                 "The tool did not say where the posting is",
@@ -744,10 +866,10 @@ pub(super) fn visit() -> Result<String, String> {
             .matches('\n')
             .count();
         let i: usize = e.shown.lines.get(n)?.as_deref()?.parse().ok()?;
-        Some((e.tool, e.postings.get(i)?.clone()))
+        Some((e.tool, e.postings.get(i)?.clone(), e.live.clone()))
     });
-    if let Some((tool, posting)) = found {
-        super::register::go_to(tool, &key.0, posting);
+    if let Some((tool, posting, input)) = found {
+        super::register::go_to_in(tool, &key.0, posting, input);
     }
     Ok("null".into())
 }
