@@ -992,6 +992,25 @@ pub fn logseq_org(text: &str, index: Option<&Index>, rel: Option<&str>) -> Overl
     }
     o.finish()
 }
+/// The blocks under the block at line `line` of a Logseq note in
+/// Markdown shown though it is collapsed: the block the note is zoomed
+/// into, whose children Logseq shows.
+pub fn unfold(o: &mut Overlays, text: &str, line: u32) {
+    let s = scan::scan(text, Flavor::LogseqMarkdown, &scan::Options::default());
+    let Some(i) = s.blocks.iter().position(|b| b.line == line) else {
+        return;
+    };
+    let Some(child) = s.blocks.get(i + 1).filter(|c| c.parent == Some(i)) else {
+        return;
+    };
+    let from: usize = text
+        .split_inclusive('\n')
+        .take(child.line as usize)
+        .map(str::len)
+        .sum();
+    o.lines
+        .retain(|l| !(l.start == from && l.effect == LineEffect::Hidden));
+}
 
 /// The overlays of a note of a graph of `kind` at `rel` (relative to the
 /// root) with `text`.

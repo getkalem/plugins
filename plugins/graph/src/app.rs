@@ -371,6 +371,38 @@ pub const COMMANDS: &[CommandInfo] = &[
             ("space m z", in_note!(" && vimCommand")),
         ],
     ),
+    // Logseq's zoom into a block (a click on its bullet): the note
+    // narrowed to the block and the blocks under it, Doom's narrowing keys
+    // (`SPC m s n`, `SPC b -`; Org's own narrow an Org note's headline).
+    n(
+        "graph.zoom",
+        "Zoom into Block",
+        &[
+            (
+                "space m s n",
+                in_note!(" && vimCommand && editorMode == markdown"),
+            ),
+            (
+                "space b -",
+                in_note!(" && vimCommand && editorMode == markdown && !narrowed"),
+            ),
+        ],
+    ),
+    n(
+        "graph.zoomOut",
+        "Zoom Out",
+        &[
+            (
+                "space m s shift+n",
+                in_note!(" && vimCommand && editorMode == markdown"),
+            ),
+            // Kalem's own `SPC b -` widens too: this one forgets the zoom.
+            (
+                "space b -",
+                in_note!(" && vimCommand && editorMode == markdown && narrowed"),
+            ),
+        ],
+    ),
     // Enter while typing in a Logseq note in Markdown, as Logseq's Enter.
     n(
         "graph.newBlock",
@@ -715,6 +747,10 @@ pub struct App {
     graph_view: BTreeMap<String, config::GraphView>,
     /// The review of flashcards under way in each graph.
     review: BTreeMap<String, cards::Review>,
+    /// The block each Logseq note in Markdown is zoomed into (Zoom into
+    /// Block), by file: its first line. A collapsed block zoomed into
+    /// shows the blocks under it, as Logseq shows them.
+    zoomed: BTreeMap<String, u32>,
     pending: BTreeMap<u64, Pending>,
     next: u64,
     /// The page the panel shows: `(root, key)`.
@@ -770,6 +806,7 @@ impl App {
             page_sort: BTreeMap::new(),
             graph_view: BTreeMap::new(),
             review: BTreeMap::new(),
+            zoomed: BTreeMap::new(),
             pending: BTreeMap::new(),
             next: 1,
             panel: None,
@@ -1105,7 +1142,10 @@ impl App {
         });
         match found {
             Some((index, rel)) => {
-                let o = crate::layer::overlays(index.graph.kind, text, Some(index), Some(&rel));
+                let mut o = crate::layer::overlays(index.graph.kind, text, Some(index), Some(&rel));
+                if let Some(line) = path.as_ref().and_then(|p| self.zoomed.get(p)) {
+                    crate::layer::unfold(&mut o, text, *line);
+                }
                 if index.graph.kind == Kind::Obsidian {
                     return o;
                 }
@@ -1472,6 +1512,16 @@ impl App {
                 *sort = sort.next();
                 out.extend(self.render("graph.pages", &root, true));
             }
+            "graph.zoomOut" => {
+                if let Some(p) = &ctx.path {
+                    self.zoomed.remove(&files::normalize(p));
+                }
+                out.push(Effect::Run {
+                    id: "view.widen".into(),
+                    args: "null".into(),
+                });
+                out.push(Effect::RefreshLayers);
+            }
             "graph.blockReferences" => {
                 out.extend(self.block_references(&root, rel.as_deref(), ctx))
             }
@@ -1642,6 +1692,7 @@ impl App {
             | "graph.setPriorityNow"
             | "graph.renameNow"
             | "graph.insertDate"
+            | "graph.zoom"
             | "graph.refBlockNow" => {
                 out.extend(self.outline_command(files, id, &root, rel.as_deref(), ctx));
             }

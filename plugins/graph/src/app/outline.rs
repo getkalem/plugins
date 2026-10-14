@@ -531,6 +531,31 @@ impl App {
                     Err(why) => vec![Effect::Notify(why.to_string(), Level::Info)],
                 }
             }
+            // The note narrowed to the block at the cursor and the blocks
+            // under it, by Kalem's `view.narrowToLines` (Kalem 0.6.23).
+            "graph.zoom" => {
+                let s = scan::scan(text, flavor, &scan::Options::default());
+                let line = text[..cursor].matches('\n').count() as u32;
+                match edit::block_at(&s, line) {
+                    Some(i) => {
+                        let (first, end) = edit::subtree(&s.blocks, i);
+                        if flavor == Flavor::LogseqMarkdown
+                            && let Some(p) = &ctx.path
+                        {
+                            self.zoomed.insert(files::normalize(p), first);
+                        }
+                        vec![
+                            Effect::Run {
+                                id: "view.narrowToLines".into(),
+                                args: serde_json::json!({ "start": first + 1, "end": end })
+                                    .to_string(),
+                            },
+                            Effect::RefreshLayers,
+                        ]
+                    }
+                    None => vec![Effect::Notify("No block at the cursor".into(), Level::Info)],
+                }
+            }
             "graph.refBlockNow" => {
                 let line = args["line"].as_u64().unwrap_or(0) as u32;
                 let block = args["text"].as_str().unwrap_or_default();
