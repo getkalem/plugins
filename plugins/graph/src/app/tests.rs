@@ -2277,3 +2277,57 @@ fn flashcards_reviewed_as_logseq_reviews_them() {
     );
     assert_eq!(text.matches("card-repeats::").count(), 3, "{text}");
 }
+
+#[test]
+fn zoom_narrows_the_note_to_a_block_and_the_blocks_under_it() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let text = "- one\n- two\n  collapsed:: true\n\t- three\n\t\t- four\n- five\n";
+    let run = |app: &mut App, at: &str| {
+        let c = ctx("/w/notes/pages/Kalem.md", text, text.find(at).unwrap());
+        app.command(&m, "graph.zoom", &c)
+    };
+    let narrow = |args: &str| {
+        [
+            Effect::Run {
+                id: "view.narrowToLines".into(),
+                args: args.into(),
+            },
+            Effect::RefreshLayers,
+        ]
+    };
+    let hidden = |app: &App| {
+        app.overlays("logseq", Some("/w/notes/pages/Kalem.md"), text)
+            .lines
+            .iter()
+            .filter(|l| l.effect == crate::layer::LineEffect::Hidden)
+            .count()
+    };
+    // The collapsed block's children hidden, as Logseq folds them (and
+    // its `collapsed::` line).
+    let folded = hidden(&app);
+    assert_eq!(folded, 2);
+    // A block deeper in: lines 5 to 5, from 1.
+    assert_eq!(run(&mut app, "four"), narrow(r#"{"end":5,"start":5}"#));
+    // Lines 2 to 5: the block, its properties and its children, shown
+    // though it is collapsed, as Logseq shows the block zoomed into.
+    assert_eq!(run(&mut app, "two"), narrow(r#"{"end":5,"start":2}"#));
+    assert_eq!(hidden(&app), folded - 1);
+    let out = app.command(
+        &m,
+        "graph.zoomOut",
+        &ctx("/w/notes/pages/Kalem.md", text, 0),
+    );
+    assert_eq!(
+        out,
+        [
+            Effect::Run {
+                id: "view.widen".into(),
+                args: "null".into(),
+            },
+            Effect::RefreshLayers,
+        ]
+    );
+    assert_eq!(hidden(&app), folded);
+}

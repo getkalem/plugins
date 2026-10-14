@@ -40,6 +40,7 @@
         "-",
         "graph.cycleTodo", "graph.setPriority", "graph.schedule", "graph.deadline",
         "graph.moveBlockUp", "graph.moveBlockDown", "graph.indent", "graph.outdent", "graph.toggleFold",
+        "graph.zoom", "graph.zoomOut",
         "-",
         "graph.backlinks", "graph.backlinksDocument", "graph.blockReferences",
         "-",

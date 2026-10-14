@@ -1190,11 +1190,17 @@ user groups; the gaps that code can close, in this order.
     `logseq/srs-of-matrix.edn`, never written), and the `card-*`
     properties are written as Logseq writes them, in place or after the
     block's others (an Org headline's drawer).
-  - GR16h What waits on Kalem's core: zooming into a block (K20),
-    embeds and query results edited in place (K21), whiteboards and
-    canvases drawn (K22), the first index of a very large graph off the
-    editor's thread (K13), the pages opened last kept across sessions
-    (K23).
+  - GR16h What waits on Kalem's core: embeds and query results edited in
+    place (K21), whiteboards and canvases drawn (K22), the first index of
+    a very large graph off the editor's thread (K13), the pages opened
+    last kept across sessions (K23).
+  - [x] GR16i Zoom into Block (`SPC m s n` and `SPC b -` in Markdown
+    notes, Doom's narrowing keys; the palette and the Graph menu): the
+    note narrowed to the block at the cursor and the blocks under it by
+    Kalem's Narrow to Lines (K20, Kalem 0.6.24); Zoom Out (`SPC m s N`,
+    `SPC b -` again: Kalem's Widen). In Org notes Kalem's own `SPC m s n`
+    narrows to the headline, which is Logseq's block there. Not yet: the
+    breadcrumb of the block's parents Logseq shows above it.
   - Not done, by choice: Obsidian's `showAttachments` in the graph view
     (a picture embedded is no reference in the index; the view has no
     use for it yet).
@@ -1331,9 +1337,13 @@ Each is the plugin's gate or its ask, written for every plugin.
   given an empty `.obsidian/` (or `logseq/config.edn`).
 - K20 A document narrowed to a range of its lines in every mode, not Org's
   subtree only (`doc.narrowing`): a plugin's command narrows a Markdown
-  note to a block and its children (Logseq's zoom-in, `graph.zoom`),
-  Escape or Widen giving the whole note back, the edits made inside it
-  the note's. Until then Zoom works in Org notes only.
+  note to a block and its children (Logseq's zoom-in, `graph.zoom`), the
+  edits made inside it the note's. Done 2026-10-14 on Kalem's branch
+  `narrow-any-mode` (in Kalem 0.6.24): Narrow to Lines
+  (`view.narrowToLines`, lines `start` and `end` from 1, else the
+  selection's) in any mode, the cursor, Find and Vim's motions, searches
+  and ranges kept in the part shown, a narrowing kept through a change of
+  mode. The plugin's Zoom into Block runs it (GR16i).
 - K21 Lines a layer adds under a line (K2) that can be edited: an embed's
   blocks or a query's results typed into in place, the edit going to the
   file the lines come from (the plugin told, or Kalem writing that file's
