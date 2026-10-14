@@ -108,7 +108,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 
 Waiting on Kalem:
 
-- The tool's problems in the gutter beside the server's (K2); the servers' running balances and elided amounts as inlay hints (K4); Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
+- Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
 
 Not done yet:
 
@@ -197,7 +197,7 @@ With the bank's statement open (a CSV file), *Pair with the Reconciliation* (`SP
 
 Each save checks again (`check_on_save`, on): the status bar item shows `✓` or the problems' count (`hledger · 2026.journal · 1 problem`), and an open Check document is written anew. A tool not installed is said once, with how to install it.
 
-The servers' diagnostics are their own and may disagree with the tool (hledger-lsp checks with rules of its own): the Check document is the tool's word. Kalem has no way yet for a plugin to put its problems in the gutter beside the server's.
+From the Kalem release after 0.6.21 (plugin API 0.2.14), the tool's problems are also drawn in the journal as a language server's diagnostics are: a wavy line under each problem's place (the stretch hledger marks, else the whole line), the line number in the problem's color, the problem on the cursor's line in the status bar, its message on hover, and List Problems (`SPC c x`). Each check sets them anew, so a problem fixed and saved goes away. They stand beside the servers' diagnostics, which are their own and may disagree with the tool (hledger-lsp checks with rules of its own): the tool's are the truth.
 
 ## Aligning amounts
 
@@ -237,7 +237,7 @@ On the corpus, through Kalem's client (`kalem lsp ask`, `kalem lsp check`) and a
 | Formatting | **changes what the journal means**: drops an automated posting's `*-1` and writes `==` as `=` (undo puts it back) | amounts aligned; hledger reads it as before | amounts aligned; `bean-query` reads it as before |
 | Settings sent | `settings.hledgerLanguageServer.…` | `settings.hledger.…` | its main journal, `servers.beancount-language-server.initializationOptions.journal_file`, read as it starts |
 
-Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting; it does not yet ask for the inlay hints all three give (an elided posting's amount; running balances in juev's), nor for code lenses.
+Kalem shows completion, hover, definition, references, rename, diagnostics, document symbols and formatting, and from the Kalem release after 0.6.21 the servers' inlay hints, dimmed at the end of a posting: an elided posting's amount (both hledger servers, seen in Kalem's terminal editor), and running balances from ptimoney's once its setting is on, in `settings.toml`: `[plugins."org.kalem.pta".settings.hledgerLanguageServer.inlayHints]` with `showRunningBalances = true`. Kalem's `editor.inlay_hints` (on) and Toggle Inlay Hints show or hide them all. It does not yet ask for code lenses.
 
 The plugin turns hledger-lsp's formatting off (`servers.hledger-lsp.ignore`, `["documentFormattingProvider"]`), since ptimoney's 0.7.0 formats a journal into one that means something else; with juev's, whose formatting hledger reads as before, set it to `[]`.
 

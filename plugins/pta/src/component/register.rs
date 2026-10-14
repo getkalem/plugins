@@ -65,6 +65,12 @@ pub(super) fn command(args: &str) -> Result<String, String> {
         open(tool, main, account, None);
         return Ok("null".into());
     }
+    // A line of the Balance without an account: its headings, totals and
+    // blank lines.
+    if super::balance::here().is_some() {
+        ui::notify("No account on this line", ui::Level::Info);
+        return Ok("null".into());
+    }
     let Some((d, Some(path))) = super::dialect_here() else {
         ui::notify("This document is no journal with a file", ui::Level::Info);
         return Ok("null".into());

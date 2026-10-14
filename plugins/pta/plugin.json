@@ -4,7 +4,7 @@
   "version": "0.3.0",
   "description": "hledger, Ledger and Beancount journals in Kalem: checked, reported, reconciled, imported and priced by the tool you already have, completed by their language servers",
   "main": "dist/pta.wasm",
-  "api": "^0.2.13",
+  "api": "^0.2.14",
   "activation": ["onEvent:document:open"],
   "permissions": [
     "subprocess",
@@ -127,7 +127,7 @@
     "check_on_save": {
       "type": "boolean",
       "default": true,
-      "description": "Check the main journal with its tool each time a journal is saved: the status bar item shows ✓ or the problems' count, and the Check document, when open, is written again"
+      "description": "Check the main journal with its tool each time a journal is saved: the status bar item shows ✓ or the problems' count, the problems are drawn in their files as a language server's are, and the Check document, when open, is written again"
     },
     "checks": {
       "type": "array",
