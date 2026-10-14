@@ -2425,3 +2425,57 @@ fn an_embeds_blocks_are_given_to_type_into_where_they_show() {
     assert_eq!(crate::rows::content_column("-"), 1);
     assert_eq!(crate::rows::content_column("plain"), 0);
 }
+
+thread_local! {
+    /// What the app keeps between sessions in the tests.
+    static KEPT: std::cell::RefCell<BTreeMap<String, String>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+fn kept(key: &str) -> Option<String> {
+    KEPT.with(|k| k.borrow().get(key).cloned())
+}
+
+fn keep(key: &str, value: Option<&str>) -> Result<(), String> {
+    KEPT.with(|k| {
+        let mut k = k.borrow_mut();
+        match value {
+            Some(v) => k.insert(key.to_string(), v.to_string()),
+            None => k.remove(key),
+        };
+    });
+    Ok(())
+}
+
+#[test]
+fn recent_pages_and_a_graphs_toggles_kept_between_sessions() {
+    let m = logseq();
+    let session = || {
+        let mut app = App::new(Settings::default());
+        app.kept = Some(kept);
+        app.keep = Some(keep);
+        app.restore();
+        app
+    };
+    let mut app = session();
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    app.opened(&m, "/w/notes/pages/Other.md");
+    let d = ctx("/w/notes/pages/Other.md", "", 0);
+    app.command(&m, "graph.viewJournals", &d);
+    app.command(&m, "graph.sortPages", &d);
+    // The next session: the pages opened last, the journals shown, All
+    // pages by links.
+    let mut app = session();
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let out = app.command(&m, "graph.recent", &ctx("/w/notes/pages/Kalem.md", "", 0));
+    let Effect::Pick { items, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let titles: Vec<&str> = items.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(titles, ["Other"]);
+    assert_eq!(
+        app.graph_view.get("/w/notes").map(|g| g.journals),
+        Some(true)
+    );
+    assert_eq!(app.page_sort.get("/w/notes"), Some(&views::PageSort::Links));
+}

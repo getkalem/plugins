@@ -16,7 +16,7 @@ type Place = (String, u32);
 /// The most headings Find Heading offers.
 const HEADINGS: usize = 20_000;
 /// The pages Recent Pages keeps.
-const RECENT: usize = 50;
+pub(super) const RECENT: usize = 50;
 
 /// What a graph's search leaves out: the application's own folders, its
 /// backups and trash, and the folders the graph hides.
@@ -45,6 +45,7 @@ impl App {
         self.recent.retain(|p| p != path);
         self.recent.insert(0, path.to_string());
         self.recent.truncate(RECENT);
+        self.keep_recent();
     }
 
     /// The file `path` at `line` (from 1) opened, or, for a whiteboard or

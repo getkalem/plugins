@@ -307,6 +307,23 @@ impl PageSort {
             PageSort::Updated => "changed",
         }
     }
+
+    /// Its name, as kept between sessions.
+    pub fn key(self) -> &'static str {
+        self.name()
+    }
+
+    /// The order named `key`.
+    pub fn parse(key: &str) -> Option<PageSort> {
+        [
+            PageSort::Title,
+            PageSort::Links,
+            PageSort::Blocks,
+            PageSort::Updated,
+        ]
+        .into_iter()
+        .find(|s| s.name() == key)
+    }
 }
 
 /// "All pages": every page with its links and blocks, sorted by `sort`,

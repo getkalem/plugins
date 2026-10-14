@@ -69,7 +69,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r t` | Tasks | NOW and DOING, then LATER and TODO by priority, then WAITING; what is scheduled or due within a week. Enter opens the task, `t` cycles its keyword in its file |
 | `SPC n r c` | Review Flashcards | Logseq's flashcards: the blocks tagged `#card` that are due, new ones first, one at a time. `a` shows the answer (the block's children, its `{{cloze …}}`); `f`, `t` and `r` score the card as forgotten, remembered with effort or remembered, and write Logseq's `card-*` properties into its block, its next review worked out as Logseq works it out (SM-5, with `:srs/learning-fraction`, `:srs/initial-interval` and the factors Logseq learnt in `logseq/srs-of-matrix.edn`); `n` passes over it. Enter opens the card |
 | `SPC n r q` | Run Query | A Logseq simple query typed, its results as a document |
-| `SPC n r l` | Recent Pages | The graph's pages opened last in this session |
+| `SPC n r l` | Recent Pages | The graph's pages opened last, kept from one session to the next with Kalem 0.6.28 and later (plugin API 0.2.17), as are each graph's graph view toggles (`J`, `O`) and its sort of All pages (`s`) |
 | `SPC n r a` | Random Page | A page of the graph at random |
 | `SPC n s` (in a graph) | Search the Graph | Kalem's search over the graph's folder, without `logseq/`, `.obsidian/`, `.trash/` and the hidden folders; elsewhere `SPC n s` searches Kalem's notes folder |
 | `SPC n S` (in a graph) | Find Heading | The graph's headings, and the top-level blocks of its pages (not its journals'), each with its page |

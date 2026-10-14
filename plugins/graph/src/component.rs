@@ -331,6 +331,10 @@ impl Plugin for Graph {
                 app.local_now = Some(kalem_plugin::clock::local_now);
                 // A row's block as its file holds it (API 0.2.15).
                 app.read = Some(|p| fs::read(p).ok());
+                // What it kept between sessions (API 0.2.17).
+                app.kept = Some(kalem_plugin::state::get);
+                app.keep = Some(kalem_plugin::state::set);
+                app.restore();
             }
         });
         for c in app::COMMANDS {

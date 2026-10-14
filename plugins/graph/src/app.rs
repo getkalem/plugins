@@ -732,6 +732,9 @@ const SEP: char = '\u{1f}';
 /// under it.
 type Shown = std::rc::Rc<(String, Vec<crate::rows::Row>)>;
 
+/// Keeps a value between sessions under a key, or forgets it (none).
+pub type Keep = fn(&str, Option<&str>) -> Result<(), String>;
+
 /// The plugin's state.
 #[derive(Debug)]
 pub struct App {
@@ -779,6 +782,11 @@ pub struct App {
     /// The same in the user's local time, when Kalem gives the plugin
     /// its time zone's offset (API 0.2.11).
     pub local_now: Option<fn() -> i64>,
+    /// What the plugin kept between sessions, by key, and keeping a value
+    /// (none forgets it), when Kalem keeps a plugin's state (plugin API
+    /// 0.2.17).
+    pub kept: Option<fn(&str) -> Option<String>>,
+    pub keep: Option<Keep>,
     /// A file's text, when Kalem gives the plugin its files (`fs`): a
     /// row's block as its file holds it, typed into in place (Kalem's
     /// plugin API 0.2.15).
@@ -830,6 +838,8 @@ impl App {
             random: None,
             now: None,
             local_now: None,
+            kept: None,
+            keep: None,
             read: None,
             texts: std::cell::RefCell::new(BTreeMap::new()),
             recent: Vec::new(),
@@ -934,6 +944,7 @@ impl App {
         if !self.known.iter().any(|(r, _)| *r == root) {
             self.known.push((root.clone(), kind));
         }
+        self.restore_graph(&index);
         self.indexes.insert(root.clone(), index);
         root
     }
@@ -1563,6 +1574,7 @@ impl App {
                     } else {
                         gv.orphans = !gv.orphans;
                     }
+                    self.keep_graph(&root);
                     out.extend(self.render("graph.graphView", &root, true));
                 }
             }
@@ -1603,6 +1615,7 @@ impl App {
             "graph.sortPages" => {
                 let sort = self.page_sort.entry(root.clone()).or_default();
                 *sort = sort.next();
+                self.keep_graph(&root);
                 out.extend(self.render("graph.pages", &root, true));
             }
             "graph.zoomOut" => {
@@ -2358,6 +2371,7 @@ fn relative_path(from: &str, to: &str) -> String {
 mod browse;
 mod cards;
 pub mod complete;
+mod kept;
 mod outline;
 mod queries;
 
