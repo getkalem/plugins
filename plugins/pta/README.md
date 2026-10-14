@@ -108,7 +108,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 
 Waiting on Kalem:
 
-- The tool's problems in the gutter beside the server's (K2); the servers' running balances and elided amounts as inlay hints (K4); Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
+- The servers' running balances and elided amounts as inlay hints (K4); Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6); Enter aligning in Vim's insert mode before the Kalem release after 0.6.20.
 
 Not done yet:
 
@@ -197,7 +197,7 @@ With the bank's statement open (a CSV file), *Pair with the Reconciliation* (`SP
 
 Each save checks again (`check_on_save`, on): the status bar item shows `✓` or the problems' count (`hledger · 2026.journal · 1 problem`), and an open Check document is written anew. A tool not installed is said once, with how to install it.
 
-The servers' diagnostics are their own and may disagree with the tool (hledger-lsp checks with rules of its own): the Check document is the tool's word. Kalem has no way yet for a plugin to put its problems in the gutter beside the server's.
+From the Kalem release after 0.6.21 (plugin API 0.2.14), the tool's problems are also drawn in the journal as a language server's diagnostics are: a wavy line under each problem's place (the stretch hledger marks, else the whole line), the line number in the problem's color, the problem on the cursor's line in the status bar, its message on hover, and List Problems (`SPC c x`). Each check sets them anew, so a problem fixed and saved goes away. They stand beside the servers' diagnostics, which are their own and may disagree with the tool (hledger-lsp checks with rules of its own): the tool's are the truth.
 
 ## Aligning amounts
 

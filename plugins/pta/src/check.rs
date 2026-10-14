@@ -9,6 +9,7 @@
 //! and Beancount (`bean-check`) report all of them, which are sorted by
 //! file and line.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use crate::Dialect;
@@ -357,6 +358,58 @@ pub fn mark(problems: usize, glyphs: crate::Glyphs) -> String {
     }
 }
 
+/// A problem as the editor draws it in its file (plugin API 0.2.14):
+/// its line from 1, its column from 1 (0 for the whole line), how many
+/// characters it covers (0 for the rest of the line), and its message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Drawn {
+    pub line: u32,
+    pub column: u32,
+    pub length: u32,
+    pub message: String,
+}
+
+/// The `problems` that have a place, by file (a relative one beside
+/// `main`), as the editor draws them; the others are only in the check
+/// document. hledger's carets under the line it quotes give the width.
+pub fn marks(main: &str, problems: &[Problem]) -> BTreeMap<String, Vec<Drawn>> {
+    let mut out: BTreeMap<String, Vec<Drawn>> = BTreeMap::new();
+    for p in problems {
+        let (Some(file), Some(line)) = (&p.file, p.line) else {
+            continue;
+        };
+        let column = p.column.unwrap_or(0);
+        let length = if column == 0 { 0 } else { carets(&p.excerpt) };
+        let message = if p.message.trim().is_empty() {
+            "The check failed here".to_string()
+        } else {
+            p.message.clone()
+        };
+        out.entry(crate::journal::beside(main, file))
+            .or_default()
+            .push(Drawn {
+                line,
+                column,
+                length,
+                message,
+            });
+    }
+    out
+}
+
+/// How many carets hledger put under the quoted line (`   |   ^^^^`); 0
+/// when none.
+fn carets(excerpt: &[String]) -> u32 {
+    excerpt
+        .iter()
+        .find_map(|l| {
+            let mark = l.split_once('|')?.1.trim();
+            (!mark.is_empty() && mark.chars().all(|c| c == '^'))
+                .then(|| mark.chars().count() as u32)
+        })
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,5 +531,54 @@ mod tests {
         assert_eq!(mark(0, crate::Glyphs::Unicode), "✓");
         assert_eq!(mark(0, crate::Glyphs::Ascii), "ok");
         assert_eq!(mark(3, crate::Glyphs::Ascii), "3 problems");
+    }
+
+    #[test]
+    fn the_problems_drawn_in_their_files() {
+        let main = "/tmp/m/2026.journal";
+        let mut p = problems(Dialect::Hledger, Some(1), HLEDGER);
+        p.extend(problems(Dialect::Ledger, Some(1), LEDGER));
+        p.push(Problem {
+            file: Some("sub/feb.journal".into()),
+            line: Some(3),
+            column: None,
+            message: String::new(),
+            excerpt: Vec::new(),
+        });
+        p.push(Problem {
+            message: "no place".into(),
+            ..Problem::default()
+        });
+        let m = marks(main, &p);
+        assert_eq!(
+            m.keys().collect::<Vec<_>>(),
+            [
+                "/private/tmp/m/hledger/errors.journal",
+                "/private/tmp/m/two.ledger",
+                "/tmp/m/sub/feb.journal"
+            ]
+        );
+        // hledger's column, and its carets' width.
+        let e = &m["/private/tmp/m/hledger/errors.journal"][0];
+        assert_eq!((e.line, e.column, e.length), (13, 49, 15));
+        assert!(e.message.starts_with("Balance assertion failed"));
+        // Ledger says no column: the whole line.
+        let l = &m["/private/tmp/m/two.ledger"];
+        assert_eq!(
+            l.iter()
+                .map(|e| (e.line, e.column, e.length))
+                .collect::<Vec<_>>(),
+            [(7, 0, 0), (10, 0, 0)]
+        );
+        assert_eq!(l[1].message, "Unknown account 'Expenses:Unknown'");
+        // A relative file beside the main journal; a message always.
+        assert_eq!(
+            m["/tmp/m/sub/feb.journal"][0].message,
+            "The check failed here"
+        );
+        let ordered = marks(main, &problems(Dialect::Hledger, Some(1), HLEDGER_ORDER));
+        let o = &ordered["/tmp/m/two.journal"][0];
+        assert_eq!((o.line, o.column, o.length), (8, 0, 0));
+        assert!(marks(main, &[]).is_empty());
     }
 }

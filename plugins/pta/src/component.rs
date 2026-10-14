@@ -37,6 +37,8 @@ const STATUS: &str = "pta.journal";
 /// The check document's id and kind.
 const CHECK_DOC: &str = "pta.check";
 const CHECK_KIND: &str = crate::CHECK_KIND;
+/// The problems drawn in a file at most, as the editor takes them.
+const MAX_DRAWN: usize = 10_000;
 /// Keys in the check document: Vim's command mode, or the Word-like
 /// profile.
 const CHECK_WHEN: &str = "textType == pta-check && (vimCommand || !vimActive)";
@@ -75,6 +77,8 @@ struct Checked {
     entries: Vec<(Range<usize>, Problem)>,
     /// Counts its runs: an older run's answer is dropped.
     run: u64,
+    /// The files its problems are drawn in.
+    published: BTreeSet<String>,
 }
 
 thread_local! {
@@ -590,6 +594,7 @@ fn check(path: String, open: bool) {
                     };
                     let problems =
                         check::problems(tool, exit.status, &String::from_utf8_lossy(out));
+                    publish(&main.path, tool, &problems);
                     let report = check::report(&said, &main.path, &problems, glyphs());
                     write_report(&main, &report, open);
                     if GENERATION.with(Cell::get) == generation {
@@ -610,6 +615,46 @@ fn check(path: String, open: bool) {
                 }
             }
         });
+    });
+}
+
+/// Draws the check's problems in their files as a language server's
+/// diagnostics are (plugin API 0.2.14): each file's in place of the last
+/// check's, and none left in a file that has none now.
+fn publish(main: &str, tool: Dialect, found: &[Problem]) {
+    use kalem_plugin::problems as drawn;
+    let marks = check::marks(main, found);
+    let before = CHECKS.with(|c| {
+        c.borrow_mut()
+            .get_mut(main)
+            .map(|e| std::mem::take(&mut e.published))
+            .unwrap_or_default()
+    });
+    for file in before.iter().filter(|f| !marks.contains_key(*f)) {
+        let _ = drawn::set(file, &[]);
+    }
+    let mut now = BTreeSet::new();
+    for (file, list) in marks {
+        let list: Vec<drawn::Problem> = list
+            .into_iter()
+            .take(MAX_DRAWN)
+            .map(|d| drawn::Problem {
+                line: d.line,
+                column: d.column,
+                length: d.length,
+                severity: drawn::Severity::Error,
+                message: d.message,
+                source: Some(tool.checker().to_string()),
+            })
+            .collect();
+        if drawn::set(&file, &list).is_ok() {
+            now.insert(file);
+        }
+    }
+    CHECKS.with(|c| {
+        if let Some(e) = c.borrow_mut().get_mut(main) {
+            e.published = now;
+        }
     });
 }
 

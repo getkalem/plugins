@@ -463,7 +463,15 @@ first.
   the plugin does on the corpus: each error file one problem at its
   line (hledger 13, Ledger 9, Beancount 7), each clean journal none.
   K2 stands: `diagnostics` is a plugin's panic report, and
-  `decorations` marks only a diff's lines.)
+  `decorations` marks only a diff's lines. 2026-10-14, with K2 (Kalem's plugin
+  API 0.2.14, the `problems` import): each check's problems with a
+  place are drawn in their files as a language server's diagnostics
+  are (`check::marks`: hledger's column and its carets' width, else
+  the whole line; a file the tool names relatively taken beside the
+  main journal), set anew by every check and taken away from a file
+  that has none now; seen in Kalem's terminal editor built from that
+  branch: the problem on its line in the status line, in List
+  Problems (`SPC c x`), and gone once the fix is saved.)
 
 ## PT6. Writing transactions
 
@@ -1089,7 +1097,10 @@ plugin's section 9 followed).
 - K1 A manifest with both `main` and `languages`, its component and
   its languages both loaded and both listed by `kalem plugin` and the
   installer's summary. Holds in Kalem 0.6.9 (PT1): nothing to gain.
-- K2 Diagnostics published by a plugin for a document (the tool's
+- K2 (done, 2026-10-14: Kalem branch `plugin-problems`, plugin API
+  0.2.14's `problems` import, drawn where the language server
+  client's diagnostics are; pta uses it in PT5) Diagnostics published
+  by a plugin for a document (the tool's
   check results of PT5 beside the server's, in the gutter and the
   problems list): a `diagnostics-2` or `publish` interface on the path
   the language server client's diagnostics already take.

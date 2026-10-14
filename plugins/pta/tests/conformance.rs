@@ -40,9 +40,10 @@ fn the_manifest_has_both_halves() {
     assert_eq!(m["id"], "org.kalem.pta");
     assert_eq!(m["main"], "dist/pta.wasm");
     // The release imports the plugin API of the kalem-plugin it is built
-    // with: every interface at 0.2.13 (`wasm-tools component wit` on the
-    // component), styled documents and `clock-2` among them.
-    assert_eq!(m["api"], "^0.2.13");
+    // with: every interface at 0.2.14 (`wasm-tools component wit` on the
+    // component), `problems` (the check's problems in their files) among
+    // them, with styled documents and `clock-2`.
+    assert_eq!(m["api"], "^0.2.14");
     // Started with the first document of any kind: a bank statement (a
     // CSV file, which the plugin does not claim) is imported from (PT9),
     // and a statement opened before any journal would find the plugin
