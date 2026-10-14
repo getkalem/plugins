@@ -1688,6 +1688,24 @@ impl Plugin for Pta {
             })
             .collect()
     }
+    /// Format Document and format on save (plugin API 0.2.16, K11): the
+    /// journal's amounts aligned at `amount_column`, every transaction's,
+    /// as Align Amounts aligns a selection.
+    fn format(
+        _formatter: &str,
+        request: &kalem_plugin::formatter::Request,
+    ) -> Result<String, kalem_plugin::formatter::Refusal> {
+        let d = Dialect::of_language(&request.text_type)
+            .or_else(|| request.path.as_deref().and_then(Dialect::of_path))
+            .ok_or_else(|| {
+                kalem_plugin::formatter::refusal(
+                    "Not a journal of hledger, Ledger or Beancount",
+                    None,
+                )
+            })?;
+        let column = align::Settings::read(settings::own).column;
+        Ok(align::format(&request.text, d, column))
+    }
     fn activate() -> Result<(), String> {
         let journal = crate::journal_when();
         let leader = format!("{journal} && vimCommand");

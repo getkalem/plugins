@@ -40,10 +40,16 @@ fn the_manifest_has_both_halves() {
     assert_eq!(m["id"], "org.kalem.pta");
     assert_eq!(m["main"], "dist/pta.wasm");
     // The release imports the plugin API of the kalem-plugin it is built
-    // with: every interface at 0.2.14 (`wasm-tools component wit` on the
+    // with: every interface at 0.2.16 (`wasm-tools component wit` on the
     // component), `problems` (the check's problems in their files) among
-    // them, with styled documents and `clock-2`.
-    assert_eq!(m["api"], "^0.2.14");
+    // them, with styled documents and `clock-2`, and exports `formatter`
+    // (Format Document's alignment, K11) with `completer`.
+    assert_eq!(m["api"], "^0.2.16");
+    // The completer and the formatter serve every journal's text type.
+    for key in ["completers", "formatters"] {
+        let types = strings(&m[key][0]["types"]);
+        assert_eq!(types, kalem_plugin_pta::TEXT_TYPES, "{key}");
+    }
     // Started with the first document of any kind: a bank statement (a
     // CSV file, which the plugin does not claim) is imported from (PT9),
     // and a statement opened before any journal would find the plugin

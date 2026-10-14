@@ -383,6 +383,9 @@ first.
   formatter. Beancount's: its server's (bean-format's widths, read as
   before by `bean-query`, PT3b), else, without the server, the user's
   `formatters.beancount = "bean-format -"`, as the README says.
+  Since K11 (2026-10-15) Format Document is the plugin's alignment of
+  the whole journal in all three, a Beancount server's formatting
+  first.
   Align Amounts (`pta.align`, `SPC m a` in Vim's command mode, the
   palette): `src/align.rs`, the anchor an amount's last digit (the sign
   and a left commodity before it, Beancount's sum `800.00 + 42.35`
@@ -1237,6 +1240,14 @@ plugin's section 9 followed).
   command as a language's formatter: one `commands.format` serves all
   of a plugin's languages (`bean-format` would run on an hledger
   journal), and Align Amounts cannot be Format Document's in a journal.
+  Done 2026-10-15 the second way, on the Kalem branch
+  `plugin-formatter` (be5de531, for Kalem 0.6.27): plugin API 0.2.16's
+  `formatter` export, a component's formatters declared in the
+  manifest by text type, asked by Format Document and format on save
+  after a server and a language plugin's `commands.format`, before the
+  language's usual program. pta's (branch `pta-format`) aligns every
+  transaction at `amount_column`; its api is ^0.2.16, so the release
+  waits for Kalem 0.6.27 and the plugins pin moved to it.
 - K14 A component installed from the index by its name gets the files
   its manifest names: Kalem 0.6.16 and 0.6.17 write only the released
   component and `plugin.json` (`plugin_store::released_component`), so
