@@ -1320,6 +1320,7 @@ fn menu() -> Result<String, String> {
         ]
     } else if reconcile::here().is_some() {
         vec![
+            ("pta.reconcileMark", "Mark Pending or Not", "Tab"),
             ("pta.reconcileVisit", "Go to the Posting", "Enter"),
             ("pta.reconcileTarget", "Statement Balance…", "t"),
             ("pta.finishReconcile", "Finish Reconciliation", "C"),
@@ -1623,6 +1624,17 @@ impl Plugin for Pta {
             reconcile::retarget()
         })?;
         kalem::keymap("t", "pta.reconcileTarget", Some(RECONCILE_WHEN))?;
+        command("pta.reconcileMark", "Mark Pending or Not", k, |_| {
+            reconcile::mark()
+        })?;
+        // Doom's ledger-reconcile toggle is Tab.
+        kalem::keymap("tab", "pta.reconcileMark", Some(RECONCILE_WHEN))?;
+        command(
+            "pta.reconcileMarkWrite",
+            "Write the Mark Asked For",
+            crate::TEXT_TYPES,
+            |_| reconcile::mark_write(),
+        )?;
         command("pta.reconcileClose", "Close the Reconciliation", k, |_| {
             reconcile::close()
         })?;

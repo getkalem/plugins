@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use kalem_plugin::{documents, editor, ui};
+use kalem_plugin::{documents, editor, kalem, ui};
 
 use crate::Dialect;
 use crate::journal::{self, Main};
@@ -36,6 +36,8 @@ struct Reconciliation {
     /// The statement beside (PT8c): its file, its lines, and how they
     /// pair with the account's postings.
     statement: Option<(String, Vec<Line>, Paired)>,
+    /// The line the cursor goes to when the document is shown again.
+    cursor_line: Option<usize>,
     shown: report::Document,
     run: u64,
 }
@@ -50,7 +52,23 @@ struct Finish {
     date: Date,
 }
 
+/// A posting to mark pending from the Reconcile document, waiting for
+/// its journal to be the current document.
+#[derive(Debug)]
+struct Mark {
+    file: String,
+    line: u32,
+    amount: String,
+    key: (String, String),
+    /// The Reconcile document's line it was on, for the cursor after.
+    at_line: usize,
+}
+
 thread_local! {
+    static MARK: RefCell<Option<Mark>> = const { RefCell::new(None) };
+    /// The reconciliation to show again once its journal is saved, with
+    /// the line for the cursor.
+    static RETURN: RefCell<Option<((String, String), usize)>> = const { RefCell::new(None) };
     /// By the main journal and the account.
     static RECONCILES: RefCell<BTreeMap<(String, String), Reconciliation>> = const { RefCell::new(BTreeMap::new()) };
     static FINISH: RefCell<Option<Finish>> = const { RefCell::new(None) };
@@ -210,6 +228,7 @@ fn ask_target(tool: Dialect, main: Main, journal: String, account: String) {
                         figures: Figures::default(),
                         postings: Vec::new(),
                         statement: None,
+                        cursor_line: None,
                         shown: report::Document::default(),
                         run: 0,
                     });
@@ -232,8 +251,29 @@ pub(super) fn saved(main: &str) {
             .map(|(k, _)| k.clone())
             .collect()
     });
+    let back = RETURN.with(|r| {
+        let mut r = r.borrow_mut();
+        if r.as_ref().is_some_and(|(k, _)| k.0 == main) {
+            r.take()
+        } else {
+            None
+        }
+    });
     for k in keys {
+        if back.as_ref().is_some_and(|(b, _)| *b == k) {
+            continue;
+        }
         gather(&k, false);
+    }
+    // A posting just marked from it: the Reconcile document shown again,
+    // its cursor on the line it was on.
+    if let Some((k, line)) = back {
+        RECONCILES.with(|r| {
+            if let Some(e) = r.borrow_mut().get_mut(&k) {
+                e.cursor_line = Some(line);
+            }
+        });
+        gather(&k, true);
     }
 }
 
@@ -441,11 +481,16 @@ fn pair(key: &(String, String)) {
 
 /// Writes the Reconcile document (opened when `open`).
 fn write(key: &(String, String), open: bool) {
-    let Some((doc, text, styles)) = RECONCILES.with(|r| {
+    let Some((doc, text, styles, cursor)) = RECONCILES.with(|r| {
         let mut r = r.borrow_mut();
         let e = r.get_mut(key)?;
-        let header = format!("Reconcile: {} · {} · {}", key.1, journal::name(&key.0), e.tool.language());
-        let hint = "Enter the posting · t target · C finish · r again · q close; mark postings in the journal (SPC m t), then save";
+        let header = format!(
+            "Reconcile: {} · {} · {}",
+            key.1,
+            journal::name(&key.0),
+            e.tool.language()
+        );
+        let hint = "Tab mark pending · Enter the posting · t target · C finish · r again · q close";
         e.shown = reconcile::layout(
             &header,
             hint,
@@ -453,11 +498,27 @@ fn write(key: &(String, String), open: bool) {
             &e.postings,
             e.statement.as_ref().map(|(_, _, p)| p),
         );
-        Some((e.doc, e.shown.text.clone(), super::balance::styles(&e.shown)))
+        let cursor = e.cursor_line.take().map(|n| {
+            e.shown
+                .text
+                .split_inclusive('\n')
+                .take(n)
+                .map(str::len)
+                .sum::<usize>() as u64
+        });
+        Some((
+            e.doc,
+            e.shown.text.clone(),
+            super::balance::styles(&e.shown),
+            cursor,
+        ))
     }) else {
         return;
     };
-    if let Some(n) = doc
+    // Asked to show it (opened, or a posting marked from it): opened
+    // again, which shows it; else written where it is.
+    if !open
+        && let Some(n) = doc
         && documents::set_styled(n, &text, None, &styles).is_ok()
     {
         return;
@@ -476,7 +537,7 @@ fn write(key: &(String, String), open: bool) {
         &format!("Reconcile: {}", key.1),
         KIND,
     );
-    match documents::open_styled(&spec, &text, None, &styles) {
+    match documents::open_styled(&spec, &text, cursor, &styles) {
         Ok(n) => {
             RECONCILES.with(|r| {
                 if let Some(e) = r.borrow_mut().get_mut(key) {
@@ -487,6 +548,131 @@ fn write(key: &(String, String), open: bool) {
         }
         Err(why) => ui::notify(&why, ui::Level::Error),
     }
+}
+
+/// Tab in the Reconcile document (ledger-mode's reconcile toggle): the
+/// posting on the cursor's line marked pending in its journal, or
+/// unmarked; the journal saved, the totals run again, and the document
+/// shown again. A plugin edits only the document its command runs in,
+/// so the journal is opened for it.
+pub(super) fn mark() -> Result<String, String> {
+    let Some(key) = here() else {
+        return Ok("null".into());
+    };
+    let at = editor::selected().head as usize;
+    let found = RECONCILES.with(|r| {
+        let r = r.borrow();
+        let e = r.get(&key)?;
+        let n = e.shown.text[..at.min(e.shown.text.len())]
+            .matches('\n')
+            .count();
+        let i: usize = e.shown.lines.get(n)?.as_deref()?.parse().ok()?;
+        Some((e.tool, e.postings.get(i)?.clone(), n))
+    });
+    let Some((tool, posting, at_line)) = found else {
+        ui::notify("No posting on this line", ui::Level::Info);
+        return Ok("null".into());
+    };
+    let amount = posting.amount.clone();
+    let k = key.clone();
+    super::register::place_of(tool, &key.0, posting, move |place| {
+        let Some((file, line)) = place else {
+            return ui::notify(
+                "The tool did not say where the posting is",
+                ui::Level::Warning,
+            );
+        };
+        MARK.with(|m| {
+            *m.borrow_mut() = Some(Mark {
+                file: file.clone(),
+                line,
+                amount,
+                key: k,
+                at_line,
+            })
+        });
+        super::open_then(&file, "pta.reconcileMarkWrite");
+    });
+    Ok("null".into())
+}
+
+/// Marks the posting [`mark`] keeps, in its journal once that is the
+/// current document: the account's posting of the transaction at its
+/// line (the one with its amount where there are several), one undo
+/// step; then the journal saved.
+pub(super) fn mark_write() -> Result<String, String> {
+    let Some(file) = MARK.with(|m| m.borrow().as_ref().map(|m| m.file.clone())) else {
+        return Ok("null".into());
+    };
+    match super::here_is(&file) {
+        super::Here::There => {}
+        super::Here::Waiting => return Ok("null".into()),
+        super::Here::Elsewhere => {
+            MARK.with(|m| m.borrow_mut().take());
+            return Ok("null".into());
+        }
+    }
+    let Some(m) = MARK.with(|m| m.borrow_mut().take()) else {
+        return Ok("null".into());
+    };
+    let Some((d, _)) = super::dialect_here() else {
+        return Ok("null".into());
+    };
+    let text = editor::text(None);
+    let Some(at) = posting_line(&text, d, m.line, &m.key.1, &m.amount) else {
+        ui::notify(
+            &format!("No posting of {} found there", m.key.1),
+            ui::Level::Warning,
+        );
+        return Ok("null".into());
+    };
+    match crate::write::toggle_pending(&text, d, at) {
+        Some(edits) if !edits.is_empty() => {
+            super::edit(&edits, "Mark Pending");
+            RETURN.with(|r| *r.borrow_mut() = Some((m.key, m.at_line)));
+            if let Err(why) = kalem::run("app.save", "{}") {
+                ui::notify(&why, ui::Level::Warning);
+            }
+        }
+        _ => ui::notify("The posting is cleared already", ui::Level::Info),
+    }
+    Ok("null".into())
+}
+
+/// The start of the posting of `account` (or under it) in the
+/// transaction holding line `line` (from 1) of `text`: the one on that
+/// line, else the one written with `amount`, else the first.
+fn posting_line(text: &str, d: Dialect, line: u32, account: &str, amount: &str) -> Option<usize> {
+    let start: usize = text
+        .split_inclusive('\n')
+        .take(line.saturating_sub(1) as usize)
+        .map(str::len)
+        .sum();
+    let txs = crate::write::transactions(text, d);
+    let t =
+        crate::write::at(&txs, start).or_else(|| txs.iter().find(|t| t.range.start >= start))?;
+    let squeeze = |s: &str| s.split_whitespace().collect::<String>();
+    let mut candidates = Vec::new();
+    let mut offset = t.range.start;
+    for l in text[t.range.clone()].split_inclusive('\n') {
+        if offset > t.range.start
+            && crate::write::account_at(text, offset, d)
+                .is_some_and(|a| a == account || a.starts_with(&format!("{account}:")))
+        {
+            candidates.push((offset, l));
+        }
+        offset += l.len();
+    }
+    candidates
+        .iter()
+        .find(|(o, _)| *o == start)
+        .or_else(|| {
+            candidates
+                .iter()
+                .find(|(_, l)| !amount.is_empty() && squeeze(l).contains(&squeeze(amount)))
+        })
+        .or(candidates.first())
+        .map(|(o, _)| *o)
 }
 
 /// Enter in the document: the journal at the posting.

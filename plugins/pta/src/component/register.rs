@@ -314,16 +314,31 @@ pub(super) fn visit() -> Result<String, String> {
     Ok("null".into())
 }
 
-/// The journal at `posting`: its place, or hledger's transaction's,
-/// found in `hledger print -O json` of `main` for the posting's day (the
-/// whole journal's may pass 16 MB) when asked.
+/// The journal at `posting`: its place, or hledger's transaction's.
 pub(super) fn go_to(tool: Dialect, main: &str, posting: Posting) {
-    if let Some((file, line)) = posting.place {
-        go(&file, line);
-        return;
+    place_of(tool, main, posting, |place| match place {
+        Some((file, line)) => go(&file, line),
+        None => ui::notify(
+            "hledger did not say where the transaction is",
+            ui::Level::Warning,
+        ),
+    });
+}
+
+/// Where `posting` is (its file and line): the tool's word, or hledger's
+/// transaction's, found in `hledger print -O json` of `main` for the
+/// posting's day (the whole journal's may pass 16 MB).
+pub(super) fn place_of(
+    tool: Dialect,
+    main: &str,
+    posting: Posting,
+    done: impl FnOnce(Option<(String, u32)>) + 'static,
+) {
+    if let Some(place) = posting.place {
+        return done(Some(place));
     }
     let Some(n) = posting.transaction else {
-        return;
+        return done(None);
     };
     let mut args = vec![
         "-f".into(),
@@ -346,13 +361,7 @@ pub(super) fn go_to(tool: Dialect, main: &str, posting: Posting) {
             .ok()
             .filter(|e| e.status == Some(0))
             .and_then(|e| report::hledger_place(&String::from_utf8_lossy(&e.stdout), n));
-        match place {
-            Some((file, line)) => go(&file, line),
-            None => ui::notify(
-                "hledger did not say where the transaction is",
-                ui::Level::Warning,
-            ),
-        }
+        done(place);
     });
 }
 

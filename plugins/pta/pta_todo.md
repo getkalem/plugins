@@ -689,7 +689,7 @@ first.
   account picked: the cursor's posting's, else among the asset and
   liability accounts. Opened as a document, not yet in a pane beside
   the journal; the commodity the target names, or the first.)
-- [~] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
+- [x] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
   the reconcile buffer), in the journal or the reconcile document:
   when the difference is zero, every pending posting of the account
   becomes cleared, and a balance assertion for the target at the
@@ -716,7 +716,16 @@ first.
   the next day; one undo step. Checked: the corpus's pending Market
   transaction cleared, the assertion written, `hledger check
   --strict` passing. Pending marks in an included file are not
-  cleared (only the open journal is edited).)
+  cleared (only the open journal is edited).
+  Marking from the Reconcile document came on 2026-10-14 without K3:
+  Tab there (Doom's reconcile toggle; Space is the Vim leader) finds the
+  posting's place (the tool's, or hledger's `print` of its day), opens
+  its journal and, once Kalem has opened it, marks the account's
+  posting pending or takes the mark back (`write::toggle_pending`: a
+  pending transaction loses its mark, a cleared one stays), one undo
+  step, saves it (`app.save`), and on the save shows the Reconcile
+  document again, written anew, the cursor on its line. The assertion
+  Finish writes is aligned at `amount_column`.)
 - [x] PT8c The statement beside: `pta.reconcileWith`, in a CSV
   document (Kalem's grid) or from the reconcile document, pairs the
   statement's rows with the account's postings by date and amount
@@ -1062,7 +1071,9 @@ plugin's section 9 followed).
   check results of PT5 beside the server's, in the gutter and the
   problems list): a `diagnostics-2` or `publish` interface on the path
   the language server client's diagnostics already take.
-- K3 Edits to an open document other than the one the command runs
+- K3 (not needed, 2026-10-14: the plugin opens the journal and edits
+  it from its own command once Kalem has opened it, PT8b) Edits to an
+  open document other than the one the command runs
   in, by path (the reconcile document marking a posting in the
   journal, PT8b; an import appended to the journal, PT9b): `editor`
   reaching a named document, or the editable generated documents with

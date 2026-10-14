@@ -322,6 +322,32 @@ fn transaction_status(text: &str, t: &Transaction) -> Status {
         .map_or(Status::Unmarked, |r| Status::of(&text[r]))
 }
 
+/// Marks the posting at `at` pending, or unmarks it, as a reconciliation
+/// ticks it off (ledger-mode's reconcile toggle): a posting not marked
+/// in a transaction not marked gets `!`; a pending posting, or a
+/// pending transaction, loses it; a cleared one is left as it is (none
+/// when `at` is on no posting).
+pub fn toggle_pending(
+    text: &str,
+    dialect: Dialect,
+    at: usize,
+) -> Option<Vec<(Range<usize>, String)>> {
+    let (start, mark) = posting_status(text, at, dialect)?;
+    let posting = mark.clone().map(|r| Status::of(&text[r]));
+    let txs = transactions(text, dialect);
+    let t = self::at(&txs, at)?;
+    let whole = transaction_status(text, t);
+    Some(match (posting, whole) {
+        (Some(Status::Cleared), _) | (None, Status::Cleared) => Vec::new(),
+        (Some(Status::Pending), _) => vec![(mark?, String::new())],
+        (_, Status::Pending) => {
+            let r = t.status.clone()?;
+            vec![(r, Status::Unmarked.written(dialect).to_string())]
+        }
+        _ => vec![(start..start, Status::Pending.written(dialect).to_string())],
+    })
+}
+
 /// The posting line holding `at` and its status's place: after the
 /// indent; the status written there, with its blank.
 fn posting_status(
@@ -1023,6 +1049,35 @@ mod tests {
         let (t, at) = new_transaction(Beancount, D(2026, 2, 1), '-', "Market", Some(b));
         assert!(t.starts_with("2026-02-01 ! \"Market\" \"two\"\n"), "{t}");
         assert_eq!(&t[at..at + 6], "842.35");
+    }
+
+    #[test]
+    fn pending_toggled() {
+        let j = "2026-01-03 Market\n    expenses:food  842,35 TRY\n    assets:bank\n\n2026-01-04 ! Rent\n    expenses:rent  10 TRY\n    assets:bank\n\n2026-01-05 * Fee\n    expenses:fees  1 TRY\n    assets:bank\n";
+        let apply = |at: usize| {
+            let e = toggle_pending(j, Dialect::Hledger, at).expect("a posting");
+            crate::align::apply(j, &e)
+        };
+        let bank = j.find("    assets:bank").unwrap();
+        assert!(
+            apply(bank).starts_with(
+                "2026-01-03 Market\n    expenses:food  842,35 TRY\n    ! assets:bank\n"
+            )
+        );
+        let pending = apply(bank);
+        let again = toggle_pending(
+            &pending,
+            Dialect::Hledger,
+            pending.find("! assets").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(crate::align::apply(&pending, &again), j, "unmarked again");
+        // A pending transaction loses its mark; a cleared one stays.
+        let rent = j.find("    assets:bank\n\n2026-01-05").unwrap();
+        assert!(apply(rent).contains("2026-01-04 Rent\n"));
+        let fee = j.rfind("    assets:bank").unwrap();
+        assert_eq!(toggle_pending(j, Dialect::Hledger, fee), Some(Vec::new()));
+        assert_eq!(toggle_pending(j, Dialect::Hledger, 0), None);
     }
 
     #[test]
