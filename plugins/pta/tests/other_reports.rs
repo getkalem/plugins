@@ -70,6 +70,12 @@ fn each_tools_reports_run() {
     ] {
         let main = corpus("").join(file);
         for r in other::reports(tool, TODAY) {
+            // A report that asks (hledger's `roi`): the corpus's answers.
+            let r = if r.asks.is_empty() {
+                r
+            } else {
+                r.answered(&["acct:assets:broker".into(), "acct:income:investment".into()])
+            };
             let Some(out) = run(tool, &main, &r, None) else {
                 break;
             };
@@ -78,6 +84,9 @@ fn each_tools_reports_run() {
             let empty_ok =
                 tool == Dialect::Ledger && matches!(r.title.as_str(), "Budget" | "Forecast");
             assert!(empty_ok || !out.trim().is_empty(), "{tool:?} {}", r.title);
+            if r.title == "Return on Investment" {
+                assert!(out.contains("IRR"), "{out}");
+            }
             if r.dated {
                 run(tool, &main, &r, jan).expect("ran");
             }

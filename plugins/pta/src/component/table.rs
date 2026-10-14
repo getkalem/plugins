@@ -127,26 +127,10 @@ fn pick(tool: Dialect, main: String, doc: String, markup: Markup) {
 }
 
 fn pick_period(tool: Dialect, main: String, doc: String, markup: Markup, r: Report) {
-    let items: Vec<ui::PickItem> = Period::ALL
-        .iter()
-        .map(|p| ui::PickItem {
-            label: p.name().to_string(),
-            detail: None,
-        })
-        .collect();
-    ui::quick_pick(
-        &items,
-        &ui::PickOptions {
-            title: Some(format!("Period of {}", r.title)),
-            placeholder: None,
-            many: false,
-        },
-        move |picked| {
-            if let Some(&p) = picked.first().and_then(|&i| Period::ALL.get(i as usize)) {
-                gather(tool, main, doc, markup, r, p);
-            }
-        },
-    );
+    let title = format!("Period of {}", r.title);
+    super::pick_period(&title, Period::All, move |p| {
+        gather(tool, main, doc, markup, r, p);
+    });
 }
 
 /// Runs the report as CSV and has its table written.
@@ -180,7 +164,7 @@ fn gather(tool: Dialect, main: String, doc: String, markup: Markup, r: Report, p
         let mut caption = format!("{}, {}", title.unwrap_or(r.title), journal::name(&main));
         if r.dated && dates {
             caption.push_str(", ");
-            caption.push_str(period.name());
+            caption.push_str(&period.name());
         }
         let text = match markup {
             Markup::Org => format!("#+caption: {caption}\n{table}"),

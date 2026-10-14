@@ -174,18 +174,27 @@ fn title(
     period: Period,
     bounds: Option<(crate::write::Date, crate::write::Date)>,
 ) -> String {
+    use crate::report::{EARLIEST, LATEST};
     match (s, bounds) {
         (_, None) => s.title().to_string(),
+        (Section::Sheet, Some((_, end))) if end == LATEST => s.title().to_string(),
         (Section::Sheet, Some((_, end))) => {
             format!("{}, at the end of {}", s.title(), end.plus(-1).written('-'))
         }
-        (Section::Flow, Some((begin, end))) => format!(
-            "{}, {} ({} to {})",
-            s.title(),
-            period.name(),
-            begin.written('-'),
-            end.plus(-1).written('-')
-        ),
+        (Section::Flow, Some((begin, end))) => {
+            let last = end.plus(-1).written('-');
+            let dates = match (begin == EARLIEST, end == LATEST) {
+                (true, true) => return s.title().to_string(),
+                (true, false) => format!("up to {last}"),
+                (false, true) => format!("from {}", begin.written('-')),
+                (false, false) => format!("{} to {last}", begin.written('-')),
+            };
+            match period {
+                // Typed dates: their name says them already.
+                Period::Dates(..) => format!("{}, {dates}", s.title()),
+                _ => format!("{}, {} ({dates})", s.title(), period.name()),
+            }
+        }
     }
 }
 
@@ -496,30 +505,16 @@ pub(super) fn fold(how: Option<bool>) -> Result<String, String> {
     Ok("null".into())
 }
 
-/// The period, picked; the report run again.
+/// The period, picked or typed; the balance run again.
 pub(super) fn pick_period() -> Result<String, String> {
     let Some(main) = here() else {
         return Ok("null".into());
     };
-    let items: Vec<ui::PickItem> = Period::ALL
-        .iter()
-        .map(|p| ui::PickItem {
-            label: p.name().to_string(),
-            detail: None,
-        })
-        .collect();
-    ui::quick_pick(
-        &items,
-        &ui::PickOptions {
-            title: Some("Period of the balance".into()),
-            placeholder: None,
-            many: false,
-        },
-        move |picked| {
-            let Some(&i) = picked.first() else { return };
-            let Some(&p) = Period::ALL.get(i as usize) else {
-                return;
-            };
+    let now = BALANCES.with(|b| b.borrow().get(&main).map(|e| e.period));
+    super::pick_period(
+        "Period of the balance",
+        now.unwrap_or(Period::All),
+        move |p| {
             BALANCES.with(|b| {
                 if let Some(e) = b.borrow_mut().get_mut(&main) {
                     e.period = p;

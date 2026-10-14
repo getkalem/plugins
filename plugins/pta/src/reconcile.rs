@@ -515,15 +515,74 @@ pub fn target_amount(target: &str, total: &Amount) -> Option<Amount> {
     })
 }
 
-/// The reconciliation's numbers as the document shows them.
+/// One commodity's reconciliation as the document shows it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Figures {
+    /// The commodity's symbol; empty when the account has one commodity.
+    pub commodity: String,
     pub cleared: Vec<String>,
     pub pending: Vec<String>,
     /// The tool's total of both.
     pub total: Option<Amount>,
     pub target: String,
     pub difference: Option<Amount>,
+}
+
+/// The reconciliation's figures, a block per target: each target is a
+/// commodity's (its symbol, empty for an account of one commodity, whose
+/// total is then the one the target names, else the first) with the
+/// statement's balance typed; its block the tool's totals of that
+/// commodity and the difference. A commodity with nothing cleared or
+/// pending has a total of zero, in its amounts' style.
+pub fn blocks(
+    targets: &[(String, String)],
+    cleared: &[Amount],
+    pending: &[Amount],
+    both: &[Amount],
+) -> Vec<Figures> {
+    let single = targets.len() == 1 && targets[0].0.is_empty();
+    targets
+        .iter()
+        .map(|(commodity, target)| {
+            let total = if single {
+                matching(target, both).cloned()
+            } else {
+                both.iter()
+                    .find(|a| a.style.symbol == *commodity)
+                    .cloned()
+                    .or_else(|| {
+                        cleared
+                            .iter()
+                            .chain(pending)
+                            .find(|a| a.style.symbol == *commodity)
+                            .map(|a| a.style.clone())
+                            .or_else(|| text_amount(target).map(|a| a.style))
+                            .map(|style| Amount {
+                                quantity: Decimal::default(),
+                                style,
+                            })
+                    })
+            };
+            let of = |list: &[Amount]| -> Vec<String> {
+                list.iter()
+                    .filter(|a| single || a.style.symbol == *commodity)
+                    .map(Amount::written)
+                    .collect()
+            };
+            Figures {
+                commodity: if single {
+                    String::new()
+                } else {
+                    commodity.clone()
+                },
+                cleared: of(cleared),
+                pending: of(pending),
+                difference: total.as_ref().and_then(|t| difference(target, t)),
+                total,
+                target: target.clone(),
+            }
+        })
+        .collect()
 }
 
 /// The Reconcile document: the figures, then the postings not cleared,
@@ -533,7 +592,7 @@ pub struct Figures {
 pub fn layout(
     header: &str,
     hint: &str,
-    f: &Figures,
+    figures: &[Figures],
     postings: &[Posting],
     statement: Option<&crate::statement::Paired>,
 ) -> Document {
@@ -550,37 +609,46 @@ pub fn layout(
     push(&mut doc, header.to_string(), Some(Style::Header), None);
     push(&mut doc, hint.to_string(), Some(Style::Hint), None);
     push(&mut doc, String::new(), None, None);
-    let total = f.total.as_ref().map(Amount::written).unwrap_or_default();
-    let diff = f
-        .difference
-        .as_ref()
-        .map(Amount::written)
-        .unwrap_or_else(|| "?".into());
-    let figures = [
-        ("Cleared", f.cleared.join(", ")),
-        ("Pending", f.pending.join(", ")),
-        ("Cleared and pending", total),
-        ("Target", f.target.clone()),
-        ("Difference", diff.clone()),
-    ];
-    let w = figures
-        .iter()
-        .map(|(_, v)| v.chars().count())
-        .max()
-        .unwrap_or(0);
-    for (name, value) in figures {
-        let line = format!("{name:<20}{}{value}", " ".repeat(w - value.chars().count()));
-        let start = doc.text.len();
-        let zero = f.difference.as_ref().is_some_and(|d| d.quantity.is_zero());
-        let style = match name {
-            "Difference" if zero => Some(Style::Total),
-            "Difference" => Some(Style::Negative),
-            _ => None,
-        };
-        if let Some(st) = style {
-            doc.styles.push((start + 20..start + line.len(), st));
+    for (k, f) in figures.iter().enumerate() {
+        // An account of several commodities: a block for each.
+        if !f.commodity.is_empty() {
+            if k > 0 {
+                push(&mut doc, String::new(), None, None);
+            }
+            push(&mut doc, f.commodity.clone(), Some(Style::Section), None);
         }
-        push(&mut doc, line, None, None);
+        let total = f.total.as_ref().map(Amount::written).unwrap_or_default();
+        let diff = f
+            .difference
+            .as_ref()
+            .map(Amount::written)
+            .unwrap_or_else(|| "?".into());
+        let figures = [
+            ("Cleared", f.cleared.join(", ")),
+            ("Pending", f.pending.join(", ")),
+            ("Cleared and pending", total),
+            ("Target", f.target.clone()),
+            ("Difference", diff.clone()),
+        ];
+        let w = figures
+            .iter()
+            .map(|(_, v)| v.chars().count())
+            .max()
+            .unwrap_or(0);
+        for (name, value) in figures {
+            let line = format!("{name:<20}{}{value}", " ".repeat(w - value.chars().count()));
+            let start = doc.text.len();
+            let zero = f.difference.as_ref().is_some_and(|d| d.quantity.is_zero());
+            let style = match name {
+                "Difference" if zero => Some(Style::Total),
+                "Difference" => Some(Style::Negative),
+                _ => None,
+            };
+            if let Some(st) = style {
+                doc.styles.push((start + 20..start + line.len(), st));
+            }
+            push(&mut doc, line, None, None);
+        }
     }
     push(&mut doc, String::new(), None, None);
     let open: Vec<(usize, &Posting)> = postings
@@ -683,6 +751,41 @@ pub fn layout(
     doc
 }
 
+/// The dates of `account`'s postings in `text` marked neither on
+/// themselves nor on their transaction and dated on or before `date`: a
+/// balance assertion of the statement's balance at `date` would count
+/// them, and fail. Beancount's transactions are all marked (`*`, `!` or
+/// `txn`): none there.
+pub fn unmarked_by(text: &str, dialect: Dialect, account: &str, date: Date) -> Vec<Date> {
+    let mut out = Vec::new();
+    if dialect == Dialect::Beancount {
+        return out;
+    }
+    for t in write::transactions(text, dialect) {
+        let marked = t
+            .status
+            .as_ref()
+            .is_some_and(|r| matches!(text[r.clone()].trim(), "!" | "*"));
+        if t.date > date || marked {
+            continue;
+        }
+        let mut offset = t.range.start;
+        for line in text[t.range.clone()].split_inclusive('\n') {
+            if offset > t.range.start
+                && let Some(a) = write::account_at(text, offset, dialect)
+                && under(&a, account)
+            {
+                let own = line.trim_start();
+                if !(own.starts_with('!') || own.starts_with('*')) {
+                    out.push(t.date);
+                }
+            }
+            offset += line.len();
+        }
+    }
+    out
+}
+
 /// Whether `posting_account` is `account` or under it.
 fn under(posting_account: &str, account: &str) -> bool {
     posting_account == account
@@ -703,7 +806,7 @@ pub fn finish(
     text: &str,
     dialect: Dialect,
     account: &str,
-    target: &Amount,
+    targets: &[Amount],
     date: Date,
     column: usize,
 ) -> Vec<(Range<usize>, String)> {
@@ -735,31 +838,33 @@ pub fn finish(
             edits.push((r.start..r.start + 1, "*".to_string()));
         }
     }
-    let zero = Amount {
-        quantity: Decimal::default(),
-        style: target.style.clone(),
-    };
+    let sep = write::separator(text, dialect);
     let (when, assertion) = match dialect {
         Dialect::Beancount => {
+            // A `balance` directive a commodity.
             let next = date.plus(1);
-            (
-                next,
-                format!(
-                    "{} balance {account}  {}\n",
-                    next.written(write::separator(text, dialect)),
-                    target.written()
-                ),
-            )
+            let lines: String = targets
+                .iter()
+                .map(|t| format!("{} balance {account}  {}\n", next.written(sep), t.written()))
+                .collect();
+            (next, lines)
         }
-        _ => (
-            date,
-            format!(
-                "{} * Balance assertion\n    {account}  {} = {}\n",
-                date.written(write::separator(text, dialect)),
-                zero.written(),
-                target.written()
-            ),
-        ),
+        _ => {
+            // One transaction, a zero posting asserting each commodity.
+            let mut t = format!("{} * Balance assertion\n", date.written(sep));
+            for target in targets {
+                let zero = Amount {
+                    quantity: Decimal::default(),
+                    style: target.style.clone(),
+                };
+                t.push_str(&format!(
+                    "    {account}  {} = {}\n",
+                    zero.written(),
+                    target.written()
+                ));
+            }
+            (date, t)
+        }
     };
     let assertion = if dialect == Dialect::Beancount {
         assertion
@@ -858,7 +963,7 @@ mod tests {
             text,
             Dialect::Hledger,
             "assets:bank",
-            &target,
+            std::slice::from_ref(&target),
             Date {
                 y: 2026,
                 m: 1,
@@ -886,7 +991,7 @@ mod tests {
                 text,
                 Dialect::Hledger,
                 "assets:bank",
-                &target,
+                std::slice::from_ref(&target),
                 Date {
                     y: 2026,
                     m: 1,
@@ -906,7 +1011,7 @@ mod tests {
                 b,
                 Dialect::Beancount,
                 "Assets:Bank",
-                &t,
+                std::slice::from_ref(&t),
                 Date {
                     y: 2026,
                     m: 1,
@@ -920,5 +1025,116 @@ mod tests {
             out.ends_with("\n2026-02-01 balance Assets:Bank  76857.65 TRY\n"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn several_commodities() {
+        let eur = text_amount("200.00 EUR").unwrap();
+        let usd = text_amount("$100.00").unwrap();
+        let cleared = [eur.clone(), usd.clone()];
+        let pending = [text_amount("-20.00 EUR").unwrap()];
+        let both = [text_amount("180.00 EUR").unwrap(), usd.clone()];
+        let b = blocks(
+            &[
+                ("EUR".into(), "180.00 EUR".into()),
+                ("$".into(), "$99.00".into()),
+                ("GBP".into(), "5.00 GBP".into()),
+            ],
+            &cleared,
+            &pending,
+            &both,
+        );
+        assert_eq!(b.len(), 3);
+        assert_eq!(
+            (
+                b[0].commodity.as_str(),
+                b[0].cleared.clone(),
+                b[0].pending.clone()
+            ),
+            (
+                "EUR",
+                vec!["200.00 EUR".to_string()],
+                vec!["-20.00 EUR".to_string()]
+            )
+        );
+        assert_eq!(b[0].difference.as_ref().unwrap().written(), "0.00 EUR");
+        assert_eq!(b[1].difference.as_ref().unwrap().written(), "$-1.00");
+        // Nothing of it cleared or pending: a total of zero.
+        assert_eq!(b[2].total.as_ref().unwrap().written(), "0.00 GBP");
+        assert_eq!(b[2].difference.as_ref().unwrap().written(), "5.00 GBP");
+        // One commodity: the block of before, without a heading.
+        let one = blocks(
+            &[(String::new(), "$100.00".into())],
+            std::slice::from_ref(&usd),
+            &[],
+            std::slice::from_ref(&usd),
+        );
+        assert_eq!(one[0].commodity, "");
+        let doc = layout("h", "k", &b, &[], None);
+        assert!(doc.text.contains("\nEUR\nCleared"), "{}", doc.text);
+        assert!(doc.text.contains("\n\n$\nCleared"), "{}", doc.text);
+        assert!(!layout("h", "k", &one, &[], None).text.contains("\n$\n"));
+        // Finish asserts each commodity.
+        let text = "2026-01-01 * Opening\n    assets:cash  200.00 EUR\n    assets:cash  $100.00\n    equity:opening\n";
+        let targets = [
+            text_amount("180.00 EUR").unwrap(),
+            text_amount("$100.00").unwrap(),
+        ];
+        let date = Date {
+            y: 2026,
+            m: 1,
+            d: 31,
+        };
+        let out = crate::align::apply(
+            text,
+            &finish(text, Dialect::Hledger, "assets:cash", &targets, date, 0),
+        );
+        // Aligned with each other (column 0: as near the accounts as they go).
+        let tail = out
+            .split("2026-01-31 * Balance assertion\n")
+            .nth(1)
+            .unwrap_or_default();
+        let lines: Vec<&str> = tail.lines().collect();
+        assert_eq!(lines.len(), 2, "{out}");
+        assert!(
+            lines[0].starts_with("    assets:cash ")
+                && lines[0].ends_with(" 0.00 EUR = 180.00 EUR"),
+            "{out}"
+        );
+        assert!(
+            lines[1].starts_with("    assets:cash ") && lines[1].ends_with(" $0.00 = $100.00"),
+            "{out}"
+        );
+        let bean = "2026-01-01 * \"Opening\"\n  Assets:Cash  200.00 EUR\n  Equity:Opening\n";
+        let out = crate::align::apply(
+            bean,
+            &finish(bean, Dialect::Beancount, "Assets:Cash", &targets, date, 0),
+        );
+        assert!(
+            out.ends_with("\n2026-02-01 balance Assets:Cash  180.00 EUR\n2026-02-01 balance Assets:Cash  $100.00\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn unmarked_postings_before_the_statement() {
+        let text = "2026-01-05 * Cafe\n    expenses:food  20.00 EUR\n    assets:wallet\n\n2026-01-06 ! Taxi\n    expenses:transport  $15.00\n    assets:wallet\n\n2026-01-07 Museum\n    expenses:fun  12.00 EUR\n    assets:wallet\n\n2026-01-08 Kiosk\n    expenses:fun  1.00 EUR\n    ! assets:wallet\n\n2026-01-09 Bus\n    expenses:transport  2.00 EUR\n    assets:card\n";
+        let d = |day| Date {
+            y: 2026,
+            m: 1,
+            d: day,
+        };
+        // A pending transaction's postings are marked; so is a posting's
+        // own mark; another account's posting does not count.
+        assert!(unmarked_by(text, Dialect::Hledger, "assets:wallet", d(6)).is_empty());
+        assert_eq!(
+            unmarked_by(text, Dialect::Hledger, "assets:wallet", d(7)),
+            [d(7)]
+        );
+        assert_eq!(
+            unmarked_by(text, Dialect::Hledger, "assets:wallet", d(31)),
+            [d(7)]
+        );
+        assert!(unmarked_by(text, Dialect::Beancount, "assets:wallet", d(31)).is_empty());
     }
 }

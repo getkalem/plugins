@@ -378,30 +378,16 @@ fn go(file: &str, line: u32) {
     }
 }
 
-/// The period, picked; the register run again.
+/// The period, picked or typed; the register run again.
 pub(super) fn pick_period() -> Result<String, String> {
     let Some(key) = here() else {
         return Ok("null".into());
     };
-    let items: Vec<ui::PickItem> = Period::ALL
-        .iter()
-        .map(|p| ui::PickItem {
-            label: p.name().to_string(),
-            detail: None,
-        })
-        .collect();
-    ui::quick_pick(
-        &items,
-        &ui::PickOptions {
-            title: Some("Period of the register".into()),
-            placeholder: None,
-            many: false,
-        },
-        move |picked| {
-            let Some(&i) = picked.first() else { return };
-            let Some(&p) = Period::ALL.get(i as usize) else {
-                return;
-            };
+    let now = REGISTERS.with(|r| r.borrow().get(&key).map(|e| e.period));
+    super::pick_period(
+        "Period of the register",
+        now.unwrap_or(Period::All),
+        move |p| {
             REGISTERS.with(|r| {
                 if let Some(e) = r.borrow_mut().get_mut(&key) {
                     e.period = p;

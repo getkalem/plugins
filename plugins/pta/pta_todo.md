@@ -550,7 +550,7 @@ first.
 
 ## PT7. The balance and the register as documents
 
-- [~] PT7a `pta.balance` (`SPC m b`): the balance sheet of the main
+- [x] PT7a `pta.balance` (`SPC m b`): the balance sheet of the main
   journal as a document "Balance: 2026.journal" (kind `pta-balance`),
   written as the git plugin writes its status: a header line with the
   tool, the period and the depth; the account tree with `▸` and `▾`
@@ -587,13 +587,21 @@ first.
   month, this quarter, this year, last year, all dates), `d` the depth,
   `r` again, `q` and Escape close, `?` the pick; written again on the
   journal's save. Changed: the period and depth keys are `p` and `d` in
-  the document, not `SPC m p`; a typed period waits (Ledger and
+  the document, not `SPC m p`; a typed period waited (Ledger and
   Beancount would need it parsed). Styled: the header, the sections and
   totals bold, marks muted, amounts below zero red. Tests: unit tests
   of each tool's rows, the tree, the folds, the periods, the commands;
   `tests/reports.rs` runs each tool on the corpus (a subtotal, a
   section's accounts, a period's change against the balance at its
-  end).)
+  end).
+  Typed dates came on 2026-10-14: `p`'s pick ends with Dates…, which
+  takes a year, a quarter, a month or a day (`2026`, `2026-Q1`,
+  `2026-03`, `2026-03-05`) or a range of them (`2026-01..2026-03`, the
+  whole of its second part; an open side), parsed by the plugin into
+  the same first and last days the named periods give, so each tool
+  gets its dates as before (`report::Period::typed`, `Dates`); the
+  Register, Report… and Insert a Report as a Table take them too, and
+  `kalem run`'s `period`.)
 - [x] PT7b `pta.register` (`SPC m R`; Enter on an account in PT7a; the
   account at the cursor in a journal, else asked): "Register:
   Expenses:Market" (kind `pta-register`), one line per posting: date,
@@ -654,10 +662,15 @@ first.
   first in the pick, dated unless its arguments give dates. A test
   runs every report of each tool on the corpus, dated ones within a
   period too, a pinned one, and a saved query. Not done: the keys of
-  PT7a on a tree (only the Balance folds); `roi` (it asks for its
-  investment and profit accounts: pinned in `reports` it runs); the
+  PT7a on a tree (only the Balance folds); the
   pinned reports in the Journal menu, whose items the manifest fixes
-  (they are in the pick).)
+  (they are in the pick).
+  hledger's `roi` came on 2026-10-14: Return on Investment asks its
+  investment and profit-and-loss queries first (`other::Ask`, the last
+  answers offered; `kalem run` takes them as `investment` and `pnl`),
+  then runs `roi --investment Q --pnl Q --value=end
+  --infer-market-prices`, a dated report; the corpus test answers
+  them.)
 
 ## PT8. Reconciliation
 
@@ -705,7 +718,26 @@ first.
   The pane beside came on 2026-10-14: a new reconciliation runs
   Kalem's `pane.splitRight` before its document opens, so the journal
   stays on the left and the Reconcile document on the right, Tab's
-  marks made in the journal there (the setting `reconcile_beside`, on).)
+  marks made in the journal there (the setting `reconcile_beside`, on).
+  One block per commodity came on 2026-10-14: an account whose
+  cleared-and-pending total has several commodities gets the
+  statement's balance asked for each in turn (`t` again the same way),
+  a block of the five figures under each commodity's name
+  (`reconcile::blocks`; a commodity with nothing cleared or pending at
+  zero in its style), and Finish, once every difference is zero,
+  writes one assertion each: hledger's and Ledger's transaction a zero
+  posting a commodity, Beancount's `balance` directives (all three
+  tools check them so, tried on a two-currency wallet). Finish writes nothing, and says
+  why, while a posting of the account marked neither itself nor by its
+  transaction is dated on or before the statement's date
+  (`reconcile::unmarked_by`, read from the journal's text: hledger's
+  register gives a pending transaction's postings as unmarked). Not
+  done: the
+  refresh before a save. The tools read the journal from the disk, so
+  a refresh while typing would need the unsaved text given to each
+  tool on its standard input (hledger and Ledger take `-f -`;
+  `bean-query` reads only a file) and the postings' places read back
+  from it; ledger-mode too refreshes on save, and Tab saves.)
 - [x] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
   the reconcile buffer), in the journal or the reconcile document:
   when the difference is zero, every pending posting of the account
@@ -897,7 +929,7 @@ first.
 
 ## PT11. The rest of Kalem
 
-- [~] PT11a A **Journal** menu in the menu bar and the F10 list while
+- [x] PT11a A **Journal** menu in the menu bar and the F10 list while
   the current file is a journal or one of the plugin's documents
   (`when` `textType == hledger || textType == ledger || textType ==
   beancount || textType == pta-…`): New transaction, Toggle status,
@@ -923,7 +955,11 @@ first.
   same day: Main Journal and Tool… (`pta.setup`, in the menu and the
   pick) sets `journal` (this file, another typed, none) and `tool`
   from a pick, through `settings.set`, the status bar item following.
-  Open: the window's toolbar not looked at.)
+  The window's toolbar looked at on 2026-10-14 (Kalem 0.6.22, an
+  off-screen window of the graphical editor with the manifest's button
+  and when-clause): Journal stands beside File Manager and Projects
+  over a journal, and not over a Markdown note; the terminal lists it
+  under them, `▸ Journal`.)
 - [x] PT11b Org: `pta.insertAsTable` in an Org document, the report of
   PT7c chosen as an Org table (`hledger … -O csv`, `bean-query -f
   csv`, converted as Kalem converts CSV to an Org table and inserted

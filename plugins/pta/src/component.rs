@@ -871,19 +871,76 @@ fn arg(args: &str, key: &str) -> Option<String> {
     }
 }
 
-/// The argument `period` (`this month`, `last year`, `all dates`).
+/// The argument `period`: a name of the pick (`this month`, `last
+/// year`, `all dates`) or dates (`2026`, `2026-Q1`,
+/// `2026-01-15..2026-02-14`).
 fn period_arg(args: &str) -> Option<crate::report::Period> {
     let name = arg(args, "period")?;
-    let p = crate::report::Period::named(&name);
+    let p = crate::report::Period::typed(&name);
     if p.is_none() {
-        ui::notify(
-            &format!(
-                "{name}: a period is this month, last month, this quarter, this year, last year or all dates"
-            ),
-            ui::Level::Error,
-        );
+        ui::notify(&format!("{name}: {PERIOD_HELP}"), ui::Level::Error);
     }
     p
+}
+
+/// What a period may be, said when one typed is not.
+const PERIOD_HELP: &str = "a period is this month, last month, this quarter, this year, last year, all dates, or dates: 2026, 2026-03, 2026-Q1, 2026-03-05, 2026-01..2026-03 (January to March)";
+
+/// Picks a period for `title`: one of the pick's names, or `Dates…`
+/// typed (`now` offered when it is typed dates); `then` runs with the
+/// one chosen.
+fn pick_period(
+    title: &str,
+    now: crate::report::Period,
+    then: impl FnOnce(crate::report::Period) + 'static,
+) {
+    use crate::report::Period;
+    let mut items: Vec<ui::PickItem> = Period::ALL
+        .iter()
+        .map(|p| ui::PickItem {
+            label: p.name(),
+            detail: None,
+        })
+        .collect();
+    items.push(ui::PickItem {
+        label: "Dates…".into(),
+        detail: Some("2026, 2026-03, 2026-Q1, 2026-01-15..2026-02-14".into()),
+    });
+    let title = title.to_string();
+    ui::quick_pick(
+        &items,
+        &ui::PickOptions {
+            title: Some(title.clone()),
+            placeholder: None,
+            many: false,
+        },
+        move |picked| {
+            let Some(&i) = picked.first() else { return };
+            if let Some(&p) = Period::ALL.get(i as usize) {
+                then(p);
+                return;
+            }
+            let value = matches!(now, Period::Dates(..)).then(|| now.name());
+            ui::prompt(
+                &format!("{title}: dates"),
+                &ui::PromptOptions {
+                    value,
+                    placeholder: Some("2026-Q1, or 2026-01..2026-03 (January to March)".into()),
+                    password: false,
+                },
+                move |answer| {
+                    let Some(text) = answer else { return };
+                    match Period::typed(&text) {
+                        Some(p) => then(p),
+                        None => ui::notify(
+                            &format!("{}: {PERIOD_HELP}", text.trim()),
+                            ui::Level::Warning,
+                        ),
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// The setting `glyphs`: the documents' marks.
