@@ -280,8 +280,9 @@ impl App {
                 Level::Error,
             )];
         };
-        let Some(e) = find_block(&text, choice.line, &choice.text)
-            .and_then(|line| edit::add_property(&text, line, "id", &id))
+        let flavor = self.flavor_in(root, &choice.rel);
+        let Some(e) = find_block_in(&text, choice.line, &choice.text, flavor)
+            .and_then(|line| edit::add_id(&text, flavor, line, &id))
         else {
             return vec![Effect::Notify(
                 format!(
@@ -327,8 +328,9 @@ impl App {
                 let Ok(note) = files.read(&path) else {
                     continue;
                 };
-                let Some(e) = find_block(&note, line, &text)
-                    .and_then(|line| edit::add_property(&note, line, "id", &id))
+                let flavor = self.flavor_in(&root, &rel);
+                let Some(e) = find_block_in(&note, line, &text, flavor)
+                    .and_then(|line| edit::add_id(&note, flavor, line, &id))
                 else {
                     // The block is gone: the reference stays as typed.
                     self.indexes[&root].forget_promise(&id);
@@ -388,7 +390,13 @@ impl App {
         };
         match id {
             "graph.cycleTodo" => done(
-                edit::cycle_todo(text, flavor, cycle, cursor),
+                edit::cycle_todo_clocked(
+                    text,
+                    flavor,
+                    cycle,
+                    cursor,
+                    self.clock_now(root).as_ref(),
+                ),
                 "Cycle Task",
                 "No block at the cursor",
             ),
@@ -444,6 +452,17 @@ impl App {
                     ),
                     value: None,
                     placeholder: Some("2026-10-12, oct 12, +3, friday".into()),
+                }]
+            }
+            "graph.insertDate" => {
+                let t = self.token(Pending::InsertDate {
+                    root: root.to_string(),
+                });
+                vec![Effect::Prompt {
+                    token: t,
+                    title: "Insert a link to the journal of".into(),
+                    value: None,
+                    placeholder: Some("today, friday, +3, oct 12, 2026-10-20".into()),
                 }]
             }
             "graph.setDateNow" => {
@@ -516,8 +535,8 @@ impl App {
                 let line = args["line"].as_u64().unwrap_or(0) as u32;
                 let block = args["text"].as_str().unwrap_or_default();
                 let new = args["id"].as_str().unwrap_or_default();
-                match find_block(text, line, block)
-                    .and_then(|l| edit::add_property(text, l, "id", new))
+                match find_block_in(text, line, block, flavor)
+                    .and_then(|l| edit::add_id(text, flavor, l, new))
                 {
                     Some(e) => {
                         let at = Edit {
@@ -822,8 +841,14 @@ fn name_in(span: &str, name: &str) -> Option<usize> {
 /// The first line of the block that starts at `line` with `text`, or,
 /// the file having changed, the line of the block with that text nearest
 /// to it.
+#[cfg(test)]
 pub(super) fn find_block(note: &str, line: u32, text: &str) -> Option<u32> {
-    let s = scan::scan(note, Flavor::LogseqMarkdown, &scan::Options::default());
+    find_block_in(note, line, text, Flavor::LogseqMarkdown)
+}
+
+/// [`find_block`] in a note of `flavor` (Org's headlines).
+pub(super) fn find_block_in(note: &str, line: u32, text: &str, flavor: Flavor) -> Option<u32> {
+    let s = scan::scan(note, flavor, &scan::Options::default());
     if s.blocks.iter().any(|b| b.line == line && b.text == text) {
         return Some(line);
     }

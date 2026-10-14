@@ -131,6 +131,11 @@ pub struct Scanned {
     /// their own in Logseq (queries find it), kept apart from `blocks`,
     /// which the outliner edits.
     pub pre: Option<Block>,
+    /// The lines of its blocks after their first that are text, not
+    /// properties, dates, code or drawers (a Logseq block's content past
+    /// its first line), by block, joined by line feeds; most blocks have
+    /// none.
+    pub more: Vec<(usize, String)>,
 }
 
 /// What the scanner is told of the graph.
@@ -775,6 +780,17 @@ fn front_matter(lines: &[&str]) -> (Vec<(String, String)>, usize) {
     (out, end + 2)
 }
 
+/// Adds `line` to block `c`'s text beyond its first line.
+fn more(list: &mut Vec<(usize, String)>, c: usize, line: &str) {
+    match list.last_mut() {
+        Some((i, t)) if *i == c => {
+            t.push('\n');
+            t.push_str(line);
+        }
+        _ => list.push((c, line.to_string())),
+    }
+}
+
 /// Places `raw` references of line `n` (whose text started `offset` bytes
 /// into the line) under block `block`.
 fn place(out: &mut Vec<Ref>, raw: Vec<Raw>, n: usize, offset: usize, block: Option<usize>) {
@@ -1160,6 +1176,9 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
         {
             b.text = format!("{}: {}", kind.trim().to_lowercase(), trimmed.trim());
         }
+        if !trimmed.trim().is_empty() {
+            more(&mut s.more, c, trimmed.trim());
+        }
         place(
             &mut s.refs,
             inline(rest, Flavor::LogseqMarkdown),
@@ -1197,6 +1216,10 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
         }
         for r in &mut s.refs {
             r.block = r.block.and_then(|p| p.checked_sub(1));
+        }
+        s.more.retain(|(i, _)| *i > 0);
+        for (i, _) in &mut s.more {
+            *i -= 1;
         }
     }
     // The properties at the top without a bullet: a pre-block too.
@@ -1376,6 +1399,14 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
             });
             current = Some(index);
             stack.push((0, index));
+        }
+        // A block's text beyond its first line.
+        if let Some(c) = current
+            && s.blocks[c].line != n as u32
+            && !trimmed.is_empty()
+            && !trimmed.starts_with("#+")
+        {
+            more(&mut s.more, c, trimmed);
         }
         let at = line.len() - line.trim_start().len();
         place(

@@ -2071,3 +2071,209 @@ fn the_graph_views_toggles() {
     assert!(!without.contains(&"templates".to_string()), "{without:?}");
     assert!(without.iter().any(|k| k.starts_with("oct")), "{without:?}");
 }
+
+#[test]
+fn a_date_typed_written_as_its_journals_link() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.today = Date::new(2026, 10, 10);
+    let other = "/w/notes/pages/Other.md";
+    app.opened(&m, other);
+    let c = ctx(other, "- x\n", 3);
+    let out = app.command(&m, "graph.insertDate", &c);
+    let Effect::Prompt { token, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    // Logseq's date picker: `+3`, `friday`, `oct 12` as well.
+    let out = app.answer(&m, *token, Answer::Text(Some("+3".into())));
+    let Effect::Run { id, args } = &out[0] else {
+        panic!("{out:?}")
+    };
+    assert_eq!(id, "graph.insertText");
+    assert_eq!(args, r#"{"text":"[[Oct 13th, 2026]]"}"#);
+    let out = app.command(&m, "graph.insertDate", &c);
+    let Effect::Prompt { token, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let out = app.answer(&m, *token, Answer::Text(Some("someday".into())));
+    assert!(matches!(&out[..], [Effect::Notify(..)]), "{out:?}");
+}
+
+#[test]
+fn an_org_blocks_id_written_in_its_drawer() {
+    let m = Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{:preferred-format :org}"),
+        (
+            "/w/notes/pages/Kalem.org",
+            "* An editor\n:PROPERTIES:\n:type: program\n:END:\n* Plans for the release\nSCHEDULED: <2026-10-20 Tue>\n",
+        ),
+        ("/w/notes/pages/Other.org", "* x\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    let other = "/w/notes/pages/Other.org";
+    app.opened(&m, other);
+    // `((` in an Org note: the id written as Org writes it, after the
+    // headline's dates.
+    let text = "* see ((plans";
+    let found = app.complete(&m, "refs", Some(other), text, 0, text.len());
+    let id = found
+        .iter()
+        .find(|s| s.label == "Plans for the release")
+        .expect("the block")
+        .insert
+        .strip_suffix("))")
+        .unwrap()
+        .to_string();
+    m.write(other, &format!("* see (({id}))\n")).unwrap();
+    app.saved(&m, other);
+    let kalem = m.get("/w/notes/pages/Kalem.org").unwrap();
+    assert_eq!(
+        kalem,
+        format!(
+            "* An editor\n:PROPERTIES:\n:type: program\n:END:\n* Plans for the release\nSCHEDULED: <2026-10-20 Tue>\n:PROPERTIES:\n:ID: {id}\n:END:\n"
+        )
+    );
+    // A block with a drawer: the id in it, not Markdown's `id::`.
+    let found = app.complete(&m, "refs", Some(other), "* ((an ed", 0, 9);
+    let id2 = found
+        .iter()
+        .find(|s| s.label == "An editor")
+        .expect("the block")
+        .insert
+        .strip_suffix("))")
+        .unwrap()
+        .to_string();
+    m.write(other, &format!("* see (({id2}))\n")).unwrap();
+    app.saved(&m, other);
+    let kalem = m.get("/w/notes/pages/Kalem.org").unwrap();
+    assert!(
+        kalem.starts_with(&format!(
+            "* An editor\n:PROPERTIES:\n:type: program\n:ID: {id2}\n:END:\n"
+        )),
+        "{kalem}"
+    );
+    assert!(!kalem.contains("id::"), "{kalem}");
+}
+
+#[test]
+fn insert_block_reference_in_an_org_graph_writes_orgs_id() {
+    let m = Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{:preferred-format :org}"),
+        ("/w/notes/pages/Kalem.org", "* An editor\n* Plans\n"),
+        ("/w/notes/pages/Other.org", "* x\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Other.org");
+    let out = app.command(
+        &m,
+        "graph.insertBlockRef",
+        &ctx("/w/notes/pages/Other.org", "* x\n", 3),
+    );
+    let Effect::Pick { token, items, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let i = items
+        .iter()
+        .position(|(t, _)| t == "Plans")
+        .expect("the block");
+    let out = app.answer(&m, *token, Answer::Picked(Some(vec![i as u32])));
+    let id = m
+        .get("/w/notes/pages/Kalem.org")
+        .unwrap()
+        .split(":ID: ")
+        .nth(1)
+        .map(|s| s[..36].to_string())
+        .expect("Org's id written");
+    assert_eq!(
+        m.get("/w/notes/pages/Kalem.org").unwrap(),
+        format!("* An editor\n* Plans\n:PROPERTIES:\n:ID: {id}\n:END:\n")
+    );
+    assert!(
+        out.iter()
+            .any(|e| matches!(e, Effect::Run { args, .. } if args.contains(&format!("(({id}))")))),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn flashcards_reviewed_as_logseq_reviews_them() {
+    // 2026-10-14 at 17:46:40 in UTC.
+    fn utc() -> i64 {
+        1_792_000_000_000
+    }
+    let m = logseq();
+    let note = "- What is the capital of France? #card\n\t- Paris\n- The capital of Italy is {{cloze Rome}} #card\n- Seen yesterday #card\n  card-repeats:: 1\n  card-next-schedule:: 2026-10-20T08:00:00.000Z\n- A note\n";
+    m.write("/w/notes/pages/Capitals.md", note).unwrap();
+    let mut app = App::new(Settings::default());
+    app.now = Some(utc);
+    app.opened(&m, "/w/notes/pages/Capitals.md");
+    let out = app.command(
+        &m,
+        "graph.flashcards",
+        &ctx("/w/notes/pages/Capitals.md", "", 0),
+    );
+    let (id, key, kind, content) = document(&out);
+    assert_eq!((id.as_str(), kind.as_str()), ("graph.cards", "graph-cards"));
+    let doc = Ctx {
+        path: None,
+        text: None,
+        cursor: 0,
+        doc: Some((id, key)),
+        args: "null".into(),
+    };
+    // The cards due, new first; the answer hidden until asked.
+    assert!(
+        content.text.contains("2 due of 3 cards"),
+        "{}",
+        content.text
+    );
+    assert!(
+        content
+            .text
+            .contains("What is the capital of France? #card")
+    );
+    assert!(!content.text.contains("Paris"));
+    let (_, _, _, content) = document(&app.command(&m, "graph.cardShow", &doc));
+    assert!(content.text.contains("  Paris"), "{}", content.text);
+    assert_eq!(
+        content.target(4),
+        Some(&Target::File {
+            path: "/w/notes/pages/Capitals.md".into(),
+            line: 1
+        })
+    );
+    // Remembered: Logseq's properties written into the block, the next
+    // card asked.
+    let out = app.command(&m, "graph.cardRemembered", &doc);
+    assert_eq!(
+        m.get("/w/notes/pages/Capitals.md").unwrap(),
+        "- What is the capital of France? #card\n  card-last-interval:: 4\n  card-repeats:: 1\n  card-ease-factor:: 2.6\n  card-next-schedule:: 2026-10-18T17:46:40.000Z\n  card-last-reviewed:: 2026-10-14T17:46:40.000Z\n  card-last-score:: 5\n\t- Paris\n- The capital of Italy is {{cloze Rome}} #card\n- Seen yesterday #card\n  card-repeats:: 1\n  card-next-schedule:: 2026-10-20T08:00:00.000Z\n- A note\n"
+    );
+    let (_, _, _, content) = document(&out);
+    assert!(
+        content.text.contains("1 due of 3 cards · 1 reviewed"),
+        "{}",
+        content.text
+    );
+    assert!(content.text.contains("The capital of Italy is […] #card"));
+    // Passed over: nothing is due.
+    let (_, _, _, content) = document(&app.command(&m, "graph.cardSkip", &doc));
+    assert!(content.text.contains("Nothing is due"), "{}", content.text);
+    // A card scored again is written in place.
+    let out = app.command(&m, "graph.flashcards", &doc);
+    let (_, _, _, content) = document(&out);
+    assert!(
+        content.text.contains("The capital of Italy"),
+        "{}",
+        content.text
+    );
+    app.command(&m, "graph.cardForgotten", &doc);
+    app.command(&m, "graph.flashcards", &doc);
+    app.command(&m, "graph.cardRecalled", &doc);
+    let text = m.get("/w/notes/pages/Capitals.md").unwrap();
+    assert!(
+        text.contains("- The capital of Italy is {{cloze Rome}} #card\n  card-last-interval:: 4\n  card-repeats:: 2\n  card-ease-factor:: 2.36\n"),
+        "{text}"
+    );
+    assert_eq!(text.matches("card-repeats::").count(), 3, "{text}");
+}

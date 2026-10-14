@@ -1,14 +1,18 @@
 Graph view: logseq-md
-22 pages · 19 links · journals left out (J) · orphans shown (O)
+26 pages · 24 links · journals left out (J) · orphans shown (O)
 
-Kalem  12 links
+Kalem  14 links
 Project  5 links
 Project/Plugins  5 links
 Project/Plugins/Graph  5 links
 Queries  4 links
+hls__paper_1700000000000_0  2 links
+type  2 links
 a [[nested]] link  1 link
 Design  1 link
 Editor  1 link
+file  1 link
+file-path  1 link
 Markdown  1 link
 meeting  1 link
 nested  1 link
@@ -17,9 +21,9 @@ Org  1 link
 Program  1 link
 Read from Assets  1 link
 readme  1 link
+related  1 link
 software  1 link
+Templates  1 link
 The Editor  1 link
 writing  1 link
-hls__paper_1700000000000_0  0 links
 Questions?  0 links
-Templates  0 links

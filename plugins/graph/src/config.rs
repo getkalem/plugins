@@ -159,6 +159,11 @@ pub struct Graph {
     pub favorites: Vec<String>,
     /// What the graph view shows of the whole graph.
     pub graph_view: GraphView,
+    /// A property's name a page of its own (Logseq's
+    /// `:property-pages/enabled?`).
+    pub property_pages: bool,
+    /// The properties without one (`:property-pages/excludelist`).
+    pub property_excludes: Vec<String>,
     /// What could not be read, for one notice.
     pub problems: Vec<String>,
 }
@@ -184,6 +189,9 @@ pub struct GraphView {
     /// Pages only linked to, with no file (Obsidian's `hideUnresolved`,
     /// off).
     pub unresolved: bool,
+    /// Tags as nodes of their own (Obsidian's `showTags`, off; Logseq's
+    /// tags are pages).
+    pub tags: bool,
 }
 
 impl GraphView {
@@ -202,6 +210,7 @@ impl GraphView {
             builtin: flag("builtin-pages?", false),
             excluded: flag("excluded-pages?", false),
             unresolved: true,
+            tags: false,
         }
     }
 
@@ -221,6 +230,7 @@ impl GraphView {
             builtin: true,
             excluded: true,
             unresolved: !flag("hideUnresolved", false),
+            tags: flag("showTags", false),
         }
     }
 }
@@ -352,6 +362,75 @@ fn folder(s: &str) -> String {
 }
 
 impl Graph {
+    /// Whether a property's name `key` has a page of its own, as Logseq
+    /// makes them (`:property-pages/enabled?`, Logseq's default): not
+    /// its own properties (`id::`, `collapsed::`, `tags::`, `alias::`…)
+    /// nor those `:property-pages/excludelist` names.
+    pub fn property_page(&self, key: &str) -> bool {
+        // Logseq 0.10.9's editable and hidden built-in properties.
+        const OWN: [&str; 51] = [
+            "template-including-parent",
+            "filetags",
+            "filters",
+            "public",
+            "template",
+            "icon",
+            "title",
+            "exclude-from-graph-view",
+            "logseq.query/nlp-date",
+            "macro",
+            "tags",
+            "alias",
+            "aliases",
+            "logseq.table.version",
+            "logseq.table.max-width",
+            "logseq.table.hover",
+            "logseq.table.compact",
+            "logseq.table.headers",
+            "logseq.color",
+            "logseq.table.borders",
+            "logseq.table.stripes",
+            "updated-at",
+            "last_modified_at",
+            "query-sort-by",
+            "logseq.order-list-type",
+            "query-table",
+            "doing",
+            "done",
+            "logseq.macro-arguments",
+            "hl-type",
+            "now",
+            "collapsed",
+            "later",
+            "logseq.tldraw.shape",
+            "hl-stamp",
+            "custom-id",
+            "hl-page",
+            "ls-type",
+            "background_color",
+            "last-modified-at",
+            "background-color",
+            "logseq.tldraw.page",
+            "id",
+            "todo",
+            "query-sort-desc",
+            "query-properties",
+            "logseq.macro-name",
+            "created-at",
+            "hl-color",
+            "created_at",
+            "heading",
+        ];
+        let key = key.trim().to_lowercase();
+        self.property_pages
+            && !key.is_empty()
+            && !OWN.contains(&key.as_str())
+            && !self
+                .property_excludes
+                .iter()
+                .any(|e| e.eq_ignore_ascii_case(&key))
+    }
+
     /// The graph at `root`, its settings read.
     pub fn load(files: &dyn Files, root: &str, kind: Kind, fallbacks: &Fallbacks) -> Graph {
         let root = files::normalize(root);
@@ -482,6 +561,14 @@ impl Graph {
             read_only: false,
             favorites: c.get("favorites").map(Value::strings).unwrap_or_default(),
             graph_view: GraphView::logseq(c.get("graph/settings")),
+            property_pages: c
+                .get("property-pages/enabled?")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            property_excludes: c
+                .get("property-pages/excludelist")
+                .map(Value::strings)
+                .unwrap_or_default(),
             problems,
         }
     }
@@ -568,6 +655,8 @@ impl Graph {
             read_only: false,
             favorites: Vec::new(),
             graph_view: GraphView::obsidian(None),
+            property_pages: false,
+            property_excludes: Vec::new(),
             problems,
         }
     }

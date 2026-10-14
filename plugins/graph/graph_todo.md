@@ -1157,6 +1157,48 @@ user groups; the gaps that code can close, in this order.
     (`Space :` now); Vim's command line over a graph drawn lost `-` and
     Enter to the graph.
 
+- [x] GR16 The owner's ask (2026-10-14): the gaps left after GR15 found
+  and filled, in Kalem itself, Logseq 0.10.9's rules read from its own
+  code where its documentation does not give them.
+  - [x] GR16a Unlinked references found in a block's every line, not its
+    first only: the scan keeps a block's lines past the first.
+  - [x] GR16b `(sample n)`: n at random, the same n through the day, so a
+    query drawn again as one types keeps them.
+  - [x] GR16c Logseq's clock (`:feature/enable-timetracking?`, on by
+    default): a task started (none or TODO to DOING, LATER to NOW) opens
+    a `CLOCK:` line in its `:LOGBOOK:`, one done or set back closes it
+    with its time, in Logseq's format; in a note, and from the Tasks and
+    Query documents.
+  - [x] GR16d Insert Date (`SPC m d t`), for Logseq's date picker: a date
+    typed as the journals' commands read it, its journal's link
+    inserted.
+  - [x] GR16e The graph view to the last node: properties' names are
+    pages of their own (`:property-pages/enabled?`,
+    `:property-pages/excludelist`, not Logseq's own properties), and
+    Obsidian's tags are drawn when `graph.json` shows them (`showTags`).
+  - [x] GR16f `((` in Org notes too, and a block's id written as its note
+    writes one (`:ID:` in an Org headline's drawer). Found on the way:
+    Insert Block Reference wrote Markdown's `id::` into Org notes, and a
+    task cycled from the Tasks document found its Org block as Markdown.
+  - [x] GR16g Flashcards: Review Flashcards (`SPC n r c`, `c` in the
+    menu) asks a Logseq graph's `#card` blocks that are due as Logseq
+    asks them (new, never remembered, or past their moment; new first),
+    `a` shows the answer and the clozes, `f`, `t` and `r` score the card
+    1, 3 or 5, `n` passes over it. The next review is Logseq's SM-5 as
+    its `next-interval` works it out (`:srs/learning-fraction`,
+    `:srs/initial-interval`, the factors it learnt read from
+    `logseq/srs-of-matrix.edn`, never written), and the `card-*`
+    properties are written as Logseq writes them, in place or after the
+    block's others (an Org headline's drawer).
+  - GR16h What waits on Kalem's core: zooming into a block (K20),
+    embeds and query results edited in place (K21), whiteboards and
+    canvases drawn (K22), the first index of a very large graph off the
+    editor's thread (K13), the pages opened last kept across sessions
+    (K23).
+  - Not done, by choice: Obsidian's `showAttachments` in the graph view
+    (a picture embedded is no reference in the index; the view has no
+    use for it yet).
+
 ## What Kalem's core must gain
 
 Each is the plugin's gate or its ask, written for every plugin.
@@ -1287,6 +1329,24 @@ Each is the plugin's gate or its ask, written for every plugin.
   plugin adding roots to its layer at run time, for every plugin whose
   folders are set rather than marked. Until then such a folder can be
   given an empty `.obsidian/` (or `logseq/config.edn`).
+- K20 A document narrowed to a range of its lines in every mode, not Org's
+  subtree only (`doc.narrowing`): a plugin's command narrows a Markdown
+  note to a block and its children (Logseq's zoom-in, `graph.zoom`),
+  Escape or Widen giving the whole note back, the edits made inside it
+  the note's. Until then Zoom works in Org notes only.
+- K21 Lines a layer adds under a line (K2) that can be edited: an embed's
+  blocks or a query's results typed into in place, the edit going to the
+  file the lines come from (the plugin told, or Kalem writing that file's
+  range), with undo in the note. Until then they are shown, and edited
+  where they live.
+- K22 A drawing of shapes where a file places them (text boxes, pictures,
+  arrows, at their coordinates), beside the graph drawing of API 0.2.12
+  that lays out nodes itself: Logseq's whiteboards (`whiteboards/*.edn`)
+  and Obsidian's canvases (`*.canvas`) drawn, read only at first. Until
+  then they are listed and opened in their application.
+- K23 State a plugin keeps between sessions (a small key-value store in
+  Kalem's state folder, per plugin): the pages opened last, the graph
+  view's toggles, a review under way. Until then they last a session.
 
 ## Decisions, and what waits in Kalem's repository
 
