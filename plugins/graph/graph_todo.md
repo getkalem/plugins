@@ -1197,7 +1197,7 @@ user groups; the gaps that code can close, in this order.
   - [x] GR16i Zoom into Block (`SPC m s n` and `SPC b -` in Markdown
     notes, Doom's narrowing keys; the palette and the Graph menu): the
     note narrowed to the block at the cursor and the blocks under it by
-    Kalem's Narrow to Lines (K20, Kalem 0.6.23); Zoom Out (`SPC m s N`,
+    Kalem's Narrow to Lines (K20, Kalem 0.6.24); Zoom Out (`SPC m s N`,
     `SPC b -` again: Kalem's Widen). In Org notes Kalem's own `SPC m s n`
     narrows to the headline, which is Logseq's block there. Not yet: the
     breadcrumb of the block's parents Logseq shows above it.
@@ -1339,7 +1339,7 @@ Each is the plugin's gate or its ask, written for every plugin.
   subtree only (`doc.narrowing`): a plugin's command narrows a Markdown
   note to a block and its children (Logseq's zoom-in, `graph.zoom`), the
   edits made inside it the note's. Done 2026-10-14 on Kalem's branch
-  `narrow-any-mode` (for Kalem 0.6.23): Narrow to Lines
+  `narrow-any-mode` (in Kalem 0.6.24): Narrow to Lines
   (`view.narrowToLines`, lines `start` and `end` from 1, else the
   selection's) in any mode, the cursor, Find and Vim's motions, searches
   and ranges kept in the part shown, a narrowing kept through a change of

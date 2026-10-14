@@ -532,7 +532,7 @@ impl App {
                 }
             }
             // The note narrowed to the block at the cursor and the blocks
-            // under it, by Kalem's `view.narrowToLines` (Kalem 0.6.23).
+            // under it, by Kalem's `view.narrowToLines` (Kalem 0.6.24).
             "graph.zoom" => {
                 let s = scan::scan(text, flavor, &scan::Options::default());
                 let line = text[..cursor].matches('\n').count() as u32;
