@@ -162,3 +162,50 @@ fn ledgers_conversion() {
     assert_eq!(n, 2, "{out}");
     assert!(text.contains("Assets:Checking"));
 }
+
+/// Beancount's import (PT9b): the user's beangulp script run as the
+/// plugin runs it, its new entries read, and nothing new once they are
+/// in the journal (beangulp comments them out as duplicates). The
+/// Python is `PTA_PYTHON`'s, else `python3`; one without beangulp skips
+/// the test with a note.
+#[test]
+fn beancounts_import() {
+    let python = std::env::var("PTA_PYTHON").unwrap_or_else(|_| "python3".into());
+    let has = Command::new(&python)
+        .args(["-c", "import beangulp"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !has {
+        eprintln!("{python} has no beangulp: Beancount's import is not tried");
+        return;
+    }
+    let c = Copy::of("beancount", "beangulp");
+    std::fs::write(
+        c.0.join("import.py"),
+        "import beangulp\nfrom beangulp.importers import csvbase\n\n\nclass Bank(csvbase.Importer):\n    date = csvbase.Date(\"Date\", \"%Y-%m-%d\")\n    narration = csvbase.Column(\"Description\")\n    amount = csvbase.Amount(\"Amount\")\n\n    def identify(self, filepath):\n        return filepath.endswith(\".csv\")\n\n\nif __name__ == \"__main__\":\n    beangulp.Ingest([Bank(\"Assets:Bank:Ziraat\", \"TRY\")])()\n",
+    )
+    .expect("script");
+    std::fs::write(
+        c.0.join("feb.csv"),
+        "Date,Description,Amount\n2026-02-03,MIGROS KADIKOY,-412.50\n2026-02-05,MAAS ODEMESI,45000.00\n",
+    )
+    .expect("statement");
+    let journal = c.path("household.beancount");
+    let script = import::beangulp_script(&journal, "");
+    let args = import::beangulp_command(&script, &c.path("feb.csv"), &journal);
+    let (out, err, ok) = run(&python, &args, &c.0).expect("ran");
+    assert!(ok, "{err}");
+    let (n, text) = import::drafted(Dialect::Beancount, &out);
+    assert_eq!(n, 2, "{out}");
+    assert!(
+        !text.contains("****") && text.contains("Assets:Bank:Ziraat"),
+        "{text}"
+    );
+    let mut j = std::fs::read_to_string(&journal).expect("journal");
+    j.push('\n');
+    j.push_str(&text);
+    std::fs::write(&journal, j).expect("journal");
+    let (out, err, ok) = run(&python, &args, &c.0).expect("ran");
+    assert!(ok, "{err}");
+    assert_eq!(import::drafted(Dialect::Beancount, &out).0, 0, "{out}");
+}

@@ -174,7 +174,8 @@
         "subprocess:bean-check",
         "subprocess:bean-query",
         "subprocess:pricehist",
-        "subprocess:bean-price"
+        "subprocess:bean-price",
+        "subprocess:python3"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pta",
       "download": "https://github.com/getkalem/plugins/releases/download/pta-v0.2.0/pta.wasm",

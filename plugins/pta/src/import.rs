@@ -5,8 +5,9 @@
 //! remembers (`.latest.statement.csv`), so a second import skips what was
 //! taken; a statement without rules is offered rules from a template
 //! made of its header row. Ledger's `convert`, whose output the plugin
-//! appends. Beancount's importers are Python scripts (beangulp), which
-//! the plugin may not run yet (PT9b).
+//! appends. Beancount's importers are the user's beangulp script
+//! (`import.py`), run with `python3 import.py extract` (PT9b), whose
+//! entries the plugin appends too.
 
 use crate::Dialect;
 
@@ -42,6 +43,50 @@ pub fn ledger_command(journal: &str, csv: &str, account: &str, date_format: &str
     a
 }
 
+/// The user's beangulp script for `journal`: the setting `importer`
+/// (beside the journal when relative), else `import.py` beside it.
+pub fn beangulp_script(journal: &str, setting: &str) -> String {
+    let set = setting.trim();
+    if set.is_empty() {
+        crate::journal::beside(journal, "import.py")
+    } else {
+        crate::journal::beside(journal, set)
+    }
+}
+
+/// beangulp's extraction of `csv` by `script` (run by `python3`), the
+/// journal's entries given so that those already in it are marked as
+/// duplicates (`-e`).
+pub fn beangulp_command(script: &str, csv: &str, journal: &str) -> Vec<String> {
+    vec![
+        script.to_string(),
+        "extract".into(),
+        "-e".into(),
+        journal.to_string(),
+        csv.to_string(),
+    ]
+}
+
+/// What Python said last on standard error (a traceback's last line),
+/// or the hint for a script not found.
+pub fn python_said(stderr: &str, script: &str) -> String {
+    let last = stderr
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("failed")
+        .trim();
+    if stderr.contains("can't open file")
+        || stderr.contains("No such file") && stderr.contains(script)
+    {
+        format!(
+            "No beangulp script at {script}: write one (beangulp's import.py) beside the journal, or name it in the setting importer"
+        )
+    } else {
+        last.to_string()
+    }
+}
+
 /// What a dry run (or Ledger's conversion) gives: how many transactions,
 /// and their text; hledger's first line ("would import 4 new
 /// transactions from …:") left out.
@@ -61,6 +106,30 @@ pub fn drafted(tool: Dialect, stdout: &str) -> (usize, String) {
                     .join("\n"),
                 None => String::new(),
             }
+        }
+        // beangulp's: its mode line, its `**** FILE` headings and the
+        // entries it found already in the journal (commented out as
+        // duplicates) left out.
+        Dialect::Beancount => {
+            let mut out: Vec<&str> = Vec::new();
+            let mut duplicate = false;
+            for l in stdout.lines() {
+                if l.starts_with("; duplicate of ") {
+                    duplicate = true;
+                    continue;
+                }
+                if duplicate {
+                    if l.trim().is_empty() {
+                        duplicate = false;
+                    }
+                    continue;
+                }
+                if l.starts_with(";; -*-") || l.starts_with("**** ") {
+                    continue;
+                }
+                out.push(l);
+            }
+            out.join("\n").trim_matches('\n').to_string()
         }
         _ => stdout.to_string(),
     };
@@ -265,6 +334,42 @@ mod tests {
             Some("/s/other.csv.rules")
         );
         assert_eq!(missing_rules("hledger: Error: something else"), None);
+        let bg = ";; -*- mode: beancount -*-\n\n**** /s/feb.csv\n\n; duplicate of /j/h.beancount:68\n; 2026-02-03 * \"MIGROS\"\n;   Assets:Bank:Ziraat  -412.50 TRY\n\n2026-02-05 * \"MAAS\"\n  Assets:Bank:Ziraat  45000.00 TRY\n\n";
+        let (n, text) = drafted(Dialect::Beancount, bg);
+        assert_eq!(n, 1);
+        assert_eq!(
+            text,
+            "2026-02-05 * \"MAAS\"\n  Assets:Bank:Ziraat  45000.00 TRY\n"
+        );
+        assert_eq!(
+            beangulp_command("/j/import.py", "/s/s.csv", "/j/main.beancount"),
+            [
+                "/j/import.py",
+                "extract",
+                "-e",
+                "/j/main.beancount",
+                "/s/s.csv"
+            ]
+        );
+        assert_eq!(beangulp_script("/j/main.beancount", ""), "/j/import.py");
+        assert_eq!(
+            beangulp_script("/j/main.beancount", "tools/imp.py"),
+            "/j/tools/imp.py"
+        );
+        assert!(
+            python_said(
+                "python3: can't open file '/j/import.py': [Errno 2] No such file or directory",
+                "/j/import.py"
+            )
+            .starts_with("No beangulp script")
+        );
+        assert_eq!(
+            python_said(
+                "Traceback…\n  File x\nValueError: bad date\n",
+                "/j/import.py"
+            ),
+            "ValueError: bad date"
+        );
         let printed = r#"[{"tindex": 7}, {"tindex": 40}, {"tindex": 41}]"#;
         assert_eq!(nth_last(printed, 2), Some(40));
         assert_eq!(nth_last(printed, 1), Some(41));

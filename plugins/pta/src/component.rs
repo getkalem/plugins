@@ -107,6 +107,10 @@ thread_local! {
     static APPEND: RefCell<Option<(String, String, String)>> = const { RefCell::new(None) };
     /// `hledger files`' answers by folder, until a journal is saved.
     static FILES: RefCell<BTreeMap<String, Files>> = const { RefCell::new(BTreeMap::new()) };
+    /// The plugin's commands waiting for a file to be the current
+    /// document: Kalem opens a file `file.open` asks for after the
+    /// commands queued with it have run.
+    static WAITING: RefCell<Vec<(String, &'static str)>> = const { RefCell::new(Vec::new()) };
     /// The programs running, in their order.
     static RUNNING: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
     /// What the status bar item shows: the tool and the main journal.
@@ -1197,7 +1201,7 @@ fn insert_transaction() -> Result<String, String> {
         );
         return Ok("null".into());
     };
-    if path != p.path {
+    if !journal::same_file(&path, &p.path) {
         ui::notify(
             "The journal is no longer the current document",
             ui::Level::Warning,
@@ -1213,32 +1217,88 @@ fn insert_transaction() -> Result<String, String> {
     Ok("null".into())
 }
 
+/// Opens `path` and runs the plugin's `command` once it is the current
+/// document: at once where it is already, else when Kalem has opened it
+/// (it opens a file after the commands queued with `file.open` have run).
+fn open_then(path: &str, command: &'static str) {
+    WAITING.with(|w| w.borrow_mut().push((path.to_string(), command)));
+    let args = serde_json::json!({ "path": path });
+    let _ = kalem::run("file.open", &args.to_string());
+    if let Err(why) = kalem::run(command, "{}") {
+        ui::notify(&why, ui::Level::Warning);
+    }
+}
+
+/// Where a command meant for the file `path` is: there, or waiting for
+/// it to open, or elsewhere.
+#[derive(Debug, PartialEq, Eq)]
+enum Here {
+    There,
+    Waiting,
+    Elsewhere,
+}
+
+/// Whether the current document is `path` (the command's wait over), or
+/// one is waiting for it ([`open_then`]).
+fn here_is(path: &str) -> Here {
+    let here = editor::document().and_then(|d| d.path);
+    if here.is_some_and(|h| journal::same_file(&h, path)) {
+        WAITING.with(|w| w.borrow_mut().retain(|(p, _)| !journal::same_file(p, path)));
+        return Here::There;
+    }
+    if WAITING.with(|w| w.borrow().iter().any(|(p, _)| journal::same_file(p, path))) {
+        Here::Waiting
+    } else {
+        Here::Elsewhere
+    }
+}
+
+/// A document of `path` opened or current: the commands waiting for it
+/// run.
+fn arrived(path: &str) {
+    let commands: Vec<&'static str> = WAITING.with(|w| {
+        w.borrow()
+            .iter()
+            .filter(|(p, _)| journal::same_file(p, path))
+            .map(|(_, c)| *c)
+            .collect()
+    });
+    for c in commands {
+        if let Err(why) = kalem::run(c, "{}") {
+            ui::notify(&why, ui::Level::Warning);
+        }
+    }
+}
+
 /// Appends `text` at the end of `path`, opened for it, as one undo step
 /// named `title`: the plugin's command `pta.append` writes it, the editor
 /// being reached only while a command runs.
 fn append(path: String, text: String, title: String) {
     APPEND.with(|a| *a.borrow_mut() = Some((path.clone(), text, title)));
-    let args = serde_json::json!({ "path": path });
-    let _ = kalem::run("file.open", &args.to_string());
-    if let Err(why) = kalem::run("pta.append", "{}") {
-        ui::notify(&why, ui::Level::Warning);
-    }
+    open_then(&path, "pta.append");
 }
 
 /// Writes what [`append`] keeps at the end of the current document, when
-/// it is still the file it was meant for.
+/// it is the file it was meant for (waiting while that opens).
 fn write_append() -> Result<String, String> {
-    let Some((path, text, title)) = APPEND.with(|a| a.borrow_mut().take()) else {
+    let Some(path) = APPEND.with(|a| a.borrow().as_ref().map(|(p, _, _)| p.clone())) else {
         return Ok("null".into());
     };
-    let here = editor::document().and_then(|d| d.path);
-    if here.as_deref() != Some(path.as_str()) {
-        ui::notify(
-            &format!("{} is no longer the current document", journal::name(&path)),
-            ui::Level::Warning,
-        );
-        return Ok("null".into());
+    match here_is(&path) {
+        Here::There => {}
+        Here::Waiting => return Ok("null".into()),
+        Here::Elsewhere => {
+            APPEND.with(|a| a.borrow_mut().take());
+            ui::notify(
+                &format!("{} is no longer the current document", journal::name(&path)),
+                ui::Level::Warning,
+            );
+            return Ok("null".into());
+        }
     }
+    let Some((_, text, title)) = APPEND.with(|a| a.borrow_mut().take()) else {
+        return Ok("null".into());
+    };
     let current = editor::text(None);
     let at = current.len();
     let (ins, _) = write::insertion(&current, at, &text);
@@ -1643,6 +1703,7 @@ impl Plugin for Pta {
                     CURRENT.with(|c| c.set(Some(d.document)));
                     refresh(Some(p.clone()));
                 }
+                arrived(p);
             }
             Reply::Proceed
         })?;
@@ -1671,6 +1732,9 @@ impl Plugin for Pta {
         kalem::on(EventKind::SelectionChanged, |e| {
             if let Event::SelectionChanged(s) = e {
                 current(s.document);
+                if let Some(p) = DOCS.with(|d| d.borrow().get(&s.document).cloned()) {
+                    arrived(&p);
+                }
             }
             Reply::Proceed
         })?;

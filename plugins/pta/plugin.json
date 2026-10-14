@@ -13,7 +13,8 @@
     "subprocess:bean-check",
     "subprocess:bean-query",
     "subprocess:pricehist",
-    "subprocess:bean-price"
+    "subprocess:bean-price",
+    "subprocess:python3"
   ],
   "menus": [
     {
@@ -214,6 +215,17 @@
       "type": "string",
       "default": "",
       "description": "Where pricehist is (Fetch Prices for hledger and Ledger), when it is not the one on the PATH; empty for the PATH's"
+    },
+    "programs.python3": {
+      "type": "string",
+      "default": "",
+      "description": "Where the Python with beangulp is (Beancount's import runs your import.py with it), a virtual environment's python3 say, when it is not the one on the PATH; empty for the PATH's"
+    },
+    "importer": {
+      "type": "string",
+      "default": "",
+      "examples": ["import.py", "importers/main.py"],
+      "description": "Beancount's import: your beangulp script, absolute or beside the main journal; empty for import.py beside it"
     },
     "programs.bean-price": {
       "type": "string",

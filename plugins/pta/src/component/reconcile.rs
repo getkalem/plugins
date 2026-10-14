@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use kalem_plugin::{documents, editor, kalem, ui};
+use kalem_plugin::{documents, editor, ui};
 
 use crate::Dialect;
 use crate::journal::{self, Main};
@@ -550,7 +550,7 @@ pub(super) fn finish() -> Result<String, String> {
         RECONCILES.with(|r| {
             r.borrow()
                 .iter()
-                .find(|(_, e)| e.journal == path)
+                .find(|(_, e)| journal::same_file(&e.journal, &path))
                 .map(|(k, _)| k.clone())
         })
     });
@@ -607,11 +607,7 @@ pub(super) fn finish() -> Result<String, String> {
                 })
             });
             // The journal first, then the edits in it.
-            let args = serde_json::json!({ "path": journal });
-            let _ = kalem::run("file.open", &args.to_string());
-            if let Err(why) = kalem::run("pta.finishReconcileWrite", "{}") {
-                ui::notify(&why, ui::Level::Warning);
-            }
+            super::open_then(&journal, "pta.finishReconcileWrite");
         },
     );
     Ok("null".into())
@@ -619,19 +615,27 @@ pub(super) fn finish() -> Result<String, String> {
 
 /// Writes the Finish asked for, in its journal: one undo step.
 pub(super) fn finish_write() -> Result<String, String> {
+    let Some(journal) = FINISH.with(|f| f.borrow().as_ref().map(|f| f.journal.clone())) else {
+        return Ok("null".into());
+    };
+    match super::here_is(&journal) {
+        super::Here::There => {}
+        super::Here::Waiting => return Ok("null".into()),
+        super::Here::Elsewhere => {
+            FINISH.with(|f| f.borrow_mut().take());
+            ui::notify(
+                "The journal is no longer the current document",
+                ui::Level::Warning,
+            );
+            return Ok("null".into());
+        }
+    }
     let Some(f) = FINISH.with(|f| f.borrow_mut().take()) else {
         return Ok("null".into());
     };
-    let Some((d, Some(path))) = super::dialect_here() else {
+    let Some((d, Some(_))) = super::dialect_here() else {
         return Ok("null".into());
     };
-    if path != f.journal {
-        ui::notify(
-            "The journal is no longer the current document",
-            ui::Level::Warning,
-        );
-        return Ok("null".into());
-    }
     let text = editor::text(None);
     let edits = reconcile::finish(&text, d, &f.account, &f.target, f.date);
     let cleared = edits.len().saturating_sub(1);

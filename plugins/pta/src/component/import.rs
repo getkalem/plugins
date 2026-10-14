@@ -131,12 +131,6 @@ pub(super) fn command() -> Result<String, String> {
             &journal,
             journal::Installed::default(),
         );
-        if tool == Dialect::Beancount {
-            return ui::notify(
-                "Beancount's statements are imported by your beangulp script, which the plugin may not run yet (pta_todo.md PT9b)",
-                ui::Level::Info,
-            );
-        }
         IMPORTS.with(|i| {
             let mut i = i.borrow_mut();
             let e = i.entry(csv.clone()).or_insert(Import {
@@ -161,7 +155,9 @@ fn dry_run(csv: String, csv_text: Option<String>, open: bool) {
     else {
         return;
     };
+    let script = import::beangulp_script(&journal, &own("importer"));
     let (program, args) = match tool {
+        Dialect::Beancount => ("python3", import::beangulp_command(&script, &csv, &journal)),
         Dialect::Ledger => (
             "ledger",
             import::ledger_command(
@@ -190,7 +186,12 @@ fn dry_run(csv: String, csv_text: Option<String>, open: bool) {
         }
         Ok(e) => {
             let said = String::from_utf8_lossy(&e.stderr).into_owned();
-            if let (Dialect::Hledger, Some(rules), Some(csv_text)) =
+            if tool == Dialect::Beancount {
+                ui::notify(
+                    &format!("python3: {}", import::python_said(&said, &script)),
+                    ui::Level::Warning,
+                );
+            } else if let (Dialect::Hledger, Some(rules), Some(csv_text)) =
                 (tool, import::missing_rules(&said), csv_text)
             {
                 offer_rules(csv, rules, csv_text, journal);
@@ -202,6 +203,10 @@ fn dry_run(csv: String, csv_text: Option<String>, open: bool) {
                 ui::notify(&format!("{program}: {first}"), ui::Level::Warning);
             }
         }
+        Err(NotRun::Missing) if tool == Dialect::Beancount => ui::notify(
+            "python3 was not found: install Python with beangulp, or give its path (a virtual environment's) as the setting programs.python3",
+            ui::Level::Warning,
+        ),
         Err(NotRun::Missing) => ui::notify(&super::missing(tool), ui::Level::Warning),
         Err(NotRun::Refused(why)) => ui::notify(&format!("{program}: {why}"), ui::Level::Warning),
         Err(NotRun::TooLong) => {}
@@ -255,11 +260,7 @@ fn offer_rules(csv: String, rules: String, csv_text: String, journal: String) {
                             .unwrap_or_else(|| "assets:bank".into());
                         let text = import::rules_template(journal::name(&csv), &csv_text, &account);
                         RULES.with(|r| *r.borrow_mut() = Some((rules.clone(), text)));
-                        let args = serde_json::json!({ "path": rules });
-                        let _ = kalem::run("file.open", &args.to_string());
-                        if let Err(why) = kalem::run("pta.insertRules", "{}") {
-                            ui::notify(&why, ui::Level::Warning);
-                        }
+                        super::open_then(&rules, "pta.insertRules");
                     },
                 );
             });
@@ -269,11 +270,17 @@ fn offer_rules(csv: String, rules: String, csv_text: String, journal: String) {
 
 /// Writes the rules made from the template in their new document.
 pub(super) fn insert_rules() -> Result<String, String> {
+    let Some(path) = RULES.with(|r| r.borrow().as_ref().map(|(p, _)| p.clone())) else {
+        return Ok("null".into());
+    };
+    let there = super::here_is(&path);
+    if there == super::Here::Waiting {
+        return Ok("null".into());
+    }
     let Some((path, text)) = RULES.with(|r| r.borrow_mut().take()) else {
         return Ok("null".into());
     };
-    let here = editor::document().and_then(|d| d.path);
-    if here.as_deref() != Some(path.as_str()) || !editor::text(None).trim().is_empty() {
+    if there == super::Here::Elsewhere || !editor::text(None).trim().is_empty() {
         ui::notify(
             &format!("{path} is not the new, empty rules file"),
             ui::Level::Warning,
@@ -305,7 +312,11 @@ fn write(csv: &str, open: bool) {
                 n => format!("{n} new transactions"),
             }
         );
-        t.push_str("; i import · e the rules · r again · q close\n\n");
+        t.push_str(if e.tool == Dialect::Beancount {
+            "; i import · e the importer · r again · q close\n\n"
+        } else {
+            "; i import · e the rules · r again · q close\n\n"
+        });
         if e.count == 0 && e.tool == Dialect::Hledger {
             t.push_str("; hledger skips what it imported before (.latest.");
             t.push_str(journal::name(csv));
@@ -360,7 +371,9 @@ pub(super) fn accept() -> Result<String, String> {
         ui::notify("Nothing new to import", ui::Level::Info);
         return Ok("null".into());
     }
-    if tool == Dialect::Ledger {
+    if tool != Dialect::Hledger {
+        // Ledger's conversion and beangulp's entries: appended by the
+        // plugin, one undo step.
         let title = format!("Import {}", journal::name(&csv));
         close_import(&csv);
         super::append(journal, text, title);
@@ -433,11 +446,21 @@ fn first_imported(journal: String, drafted: &str) {
 /// Opens the statement's rules (`SPC m e` in it, `e` in the Import
 /// document); a missing file opens new, to be written on save.
 pub(super) fn edit_rules() -> Result<String, String> {
+    // In a Beancount import's document: the beangulp script.
+    let importer = here().and_then(|csv| {
+        IMPORTS.with(|i| {
+            i.borrow()
+                .get(&csv)
+                .filter(|e| e.tool == Dialect::Beancount)
+                .map(|e| import::beangulp_script(&e.journal, &own("importer")))
+        })
+    });
     let csv = here().or_else(|| editor::document().and_then(|d| d.path));
     let Some(csv) = csv else {
         return Ok("null".into());
     };
-    let args = serde_json::json!({ "path": rules_of(&csv) });
+    let path = importer.unwrap_or_else(|| rules_of(&csv));
+    let args = serde_json::json!({ "path": path });
     kalem::run("file.open", &args.to_string())?;
     Ok("null".into())
 }

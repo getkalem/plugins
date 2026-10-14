@@ -789,7 +789,7 @@ first.
   not one it claims and claiming CSV would suggest it for every CSV.
   Not done: the yellow of the postings to `expenses:unknown` (the
   document is highlighted as hledger's journal).)
-- [ ] PT9b Beancount: the user's beangulp import script (`import.py`
+- [x] PT9b Beancount: the user's beangulp import script (`import.py`
   at the journal's root, or the setting `importer`) run as `python3
   SCRIPT extract FILE` (the permission `subprocess:python3`, asked of
   the owner: a broad program to grant, and the alternative, the script
@@ -801,7 +801,23 @@ first.
   closed and the journal is the current document, and K3 for the clean
   way. `bean-check` runs after, as PT5.
   (Waits on the owner: `subprocess:python3` is the open question
-  below; until then Import in a Beancount journal's statement says so.)
+  below; until then Import in a Beancount journal's statement says so.
+  Done 2026-10-14, the owner granting `subprocess:python3`: Import in a
+  statement whose journal is Beancount's runs `python3 SCRIPT extract
+  -e JOURNAL STATEMENT` (`import::beangulp_command`), the script the
+  setting `importer` (beside the main journal) or `import.py` beside
+  it, the Python the setting `programs.python3` (a virtual
+  environment's); beangulp's mode line, `**** FILE` headings and the
+  entries it found in the journal (`; duplicate of …`, thanks to `-e`)
+  left out of the Import document (`import::drafted`), `e` there
+  opening the script, `i` appending the entries (as Ledger's), a
+  second import finding nothing new. A missing script or Python, or a
+  traceback's last line, said in a notice. Checked with beangulp 0.2.0
+  and its `csvbase` importer in the terminal editor; `tests/import.rs`
+  runs a real script where `PTA_PYTHON` (or `python3`) has beangulp,
+  skipped with a note otherwise. beangulp's importers write one
+  posting a transaction: the script's hooks or the user add the
+  other, and Check Journal names what does not balance.)
 - [x] PT9c Ledger: `ledger convert FILE` with the account and the input
   date format from settings, through PT9a's document, appended as PT9b
   appends.
@@ -1144,9 +1160,8 @@ plugin's section 9 followed).
 - Which dialect first: hledger is proposed (the widest gap, the
   fastest tool, the server with the most to show); the owner may want
   Beancount first for its stricter format and Fava's users.
-- `subprocess:python3` for the Beancount importers (PT9b): a broad
-  program to grant; the alternative waits on a permission that names
-  a script.
+- `subprocess:python3` for the Beancount importers (PT9b): decided
+  2026-10-14, granted (the owner's word in the session); PT9b done.
 - `.dat` and `.j` claimed or not; hledger's `timeclock` and `timedot`
   as later languages.
 - The roadmap item (R5.17 proposed). The plugin is installed from

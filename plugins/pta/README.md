@@ -23,7 +23,7 @@ Kalem also offers it when you open a journal. Then the tool you use, and, if you
 |---|---|---|---|
 | hledger | `brew install hledger`, or a [release](https://hledger.org/install) | `npm install -g hledger-lsp`, or juev's: `go install github.com/juev/hledger-lsp/cmd/hledger-lsp@latest` (see below) | `pip install pricehist` |
 | Ledger | `brew install ledger`, or your system's package | none exists | `pip install pricehist` |
-| Beancount | `pip install beancount beanquery` (`bean-check` for Check Journal; `bean-query` for everything else: the Balance, the Register, Reconcile, New Transaction and the reports) | `brew install beancount-language-server`, or `cargo install beancount-language-server` | `pip install beanprice` |
+| Beancount | `pip install beancount beanquery` (`bean-check` for Check Journal; `bean-query` for everything else: the Balance, the Register, Reconcile, New Transaction and the reports) | `brew install beancount-language-server`, or `cargo install beancount-language-server` | `pip install beanprice`; `pip install beangulp` for import |
 
 - **The journal's folder among your projects** (`projects.toml`, or Project: Add Project): Kalem runs a plugin's programs in a project's folder only.
 - A program not on the PATH Kalem sees (a virtual environment's `bean-check`, Kalem started from the Dock) is named by the setting `programs.NAME`.
@@ -44,7 +44,7 @@ Kalem also offers it when you open a journal. Then the tool you use, and, if you
 | Market value (the tool) | `-V --infer-market-prices` | `-V` | `value()` |
 | Other reports (the tool) | cash flow, income statement, budget, forecast, activity, statistics, lists, `print` | income statement, budget, forecast, cleared, statistics, lists, `print` | income statement, holdings, monthly expenses, lists, `PRINT`, the journal's saved queries |
 | Reconcile, Finish (the tool's totals, the plugin's edits) | a `Balance assertion` transaction | a `Balance assertion` transaction | a `balance` directive |
-| Import a bank statement (the tool) | `hledger import` through its rules, rules offered from the statement's header | `ledger convert` | not yet (your beangulp script) |
+| Import a bank statement (the tool) | `hledger import` through its rules, rules offered from the statement's header | `ledger convert` | your beangulp script (`import.py extract`) |
 | Fetch Prices (your price program) | `pricehist` | `pricehist` | `bean-price --update` |
 
 ## Keys
@@ -94,6 +94,7 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 | `glyphs` | `unicode` | The Balance's fold marks and a passed check's mark: `▾ ▸ ✓`, or `v > ok` (`ascii`) |
 | `match_days` | 3 | How many days apart a statement's line and its posting may be, paired |
 | `reports` | `[]` | Reports of your own, first in Report…: `NAME: ARGUMENTS` (`Food by month: balance expenses:food -M`; for Beancount, a query) |
+| `importer`, `programs.python3` | empty | Beancount's import: your beangulp script (beside the main journal when relative; `import.py` there when empty), and the Python that has beangulp |
 | `prices` | empty | Where Fetch Prices writes: a file your main journal includes (beside it when relative); empty for the main journal |
 | `price_sources` | `[]` | hledger and Ledger: the pairs to fetch, `SOURCE BASE/QUOTE` (`ecb EUR/USD`), a third word for the journal's symbol (`ecb EUR/USD $`) |
 | `programs.NAME` | empty | Where `hledger`, `ledger`, `bean-check`, `bean-query`, `pricehist` or `bean-price` is, when not on the PATH |
@@ -112,7 +113,6 @@ Waiting on Kalem:
 Not done yet:
 
 - **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds. hledger's `roi`, which asks for its accounts, is not offered (pin it in `reports`).
-- **Beancount's import** (PT9b): your beangulp script, which needs a permission to run `python3`.
 - `hledger` and `beancount` source blocks run by Babel (PT11b, K6), and journals of 200,000 transactions measured (PT13).
 
 ## Beside ledger-mode and Fava
@@ -152,7 +152,7 @@ In a bank statement (a CSV or TSV file), *Import Statement* (`SPC m i`) shows wh
 
 - **hledger** imports through the statement's rules (`statement.csv.rules` beside it, or the setting `rules`), writes the journal itself and remembers what it took, so the next import of a longer statement adds only the new lines. A statement without rules is offered rules made from its header row (columns, date format, decimal mark, the bank's account), to check and save; `SPC m e` opens them.
 - **Ledger** converts a statement whose header uses its names (`date`, `payee`, `amount`), for the account the setting `ledger_account` names and dates in `ledger_date_format`; the plugin appends the result to the journal, one undo step.
-- **Beancount**'s statements are imported by your own beangulp script, which the plugin does not run yet.
+- **Beancount** imports through your own [beangulp](https://github.com/beancount/beangulp) script: `import.py` beside the main journal (or the setting `importer`), run as `python3 import.py extract -e JOURNAL STATEMENT`, so that what the journal has already is left out. `e` in the Import document opens the script; `i` appends its entries to the journal, one undo step. A Python with beangulp in a virtual environment is named by the setting `programs.python3`. beangulp's own importers write the bank's posting only: your script's hooks, or you, add the other side, and Check Journal says which transactions do not balance yet.
 
 ## Other reports
 

@@ -203,7 +203,7 @@ fn resolve(dir: &str, p: &str) -> String {
 /// Whether `a` and `b` name one file: macOS's `/private/tmp` and `/tmp`
 /// (the tools print the first, the editor may hold the second) taken as
 /// one.
-fn same_file(a: &str, b: &str) -> bool {
+pub fn same_file(a: &str, b: &str) -> bool {
     let strip = |p: &str| -> String {
         for top in ["/private/tmp/", "/private/var/", "/private/etc/"] {
             if let Some(rest) = p.strip_prefix(top) {

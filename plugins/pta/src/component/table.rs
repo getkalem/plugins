@@ -199,7 +199,10 @@ pub(super) fn write() -> Result<String, String> {
     let Some((doc, table)) = TABLE.with(|t| t.borrow_mut().take()) else {
         return Ok("null".into());
     };
-    if editor::document().and_then(|d| d.path).as_deref() != Some(doc.as_str()) {
+    if !editor::document()
+        .and_then(|d| d.path)
+        .is_some_and(|p| journal::same_file(&p, &doc))
+    {
         ui::notify(
             &format!("{} is no longer the current document", journal::name(&doc)),
             ui::Level::Warning,
