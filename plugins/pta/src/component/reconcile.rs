@@ -637,7 +637,8 @@ pub(super) fn finish_write() -> Result<String, String> {
         return Ok("null".into());
     };
     let text = editor::text(None);
-    let edits = reconcile::finish(&text, d, &f.account, &f.target, f.date);
+    let column = crate::align::Settings::read(kalem_plugin::settings::own).column;
+    let edits = reconcile::finish(&text, d, &f.account, &f.target, f.date, column);
     let cleared = edits.len().saturating_sub(1);
     super::edit(&edits, "Finish Reconciliation");
     ui::notify(

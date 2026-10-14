@@ -696,13 +696,16 @@ fn under(posting_account: &str, account: &str) -> bool {
 /// the balance assertion written at `date`'s place: hledger's and
 /// Ledger's a transaction "Balance assertion" with a zero posting
 /// asserting `target`, Beancount's a `balance` directive the day after
-/// (Beancount checks at the day's start).
+/// (Beancount checks at the day's start). hledger's and Ledger's
+/// assertion is aligned at `column` (`amount_column`; 0 leaves it near
+/// the account), as Align Amounts aligns.
 pub fn finish(
     text: &str,
     dialect: Dialect,
     account: &str,
     target: &Amount,
     date: Date,
+    column: usize,
 ) -> Vec<(Range<usize>, String)> {
     let mut edits = Vec::new();
     for t in write::transactions(text, dialect) {
@@ -757,6 +760,12 @@ pub fn finish(
                 target.written()
             ),
         ),
+    };
+    let assertion = if dialect == Dialect::Beancount {
+        assertion
+    } else {
+        let aligned = crate::align::edits(&assertion, 0..0, dialect, column);
+        crate::align::apply(&assertion, &aligned)
     };
     let place = write::place(text, dialect, when, false);
     let (ins, _) = write::insertion(text, place, &assertion);
@@ -855,6 +864,7 @@ mod tests {
                 m: 1,
                 d: 31,
             },
+            0,
         );
         let out = crate::align::apply(text, &edits);
         assert!(out.contains("2026-01-03 * Market"), "{out}");
@@ -869,6 +879,25 @@ mod tests {
             ),
             "{out}"
         );
+        // At the amount column: the zero's last digit at column 52.
+        let at52 = crate::align::apply(
+            text,
+            &finish(
+                text,
+                Dialect::Hledger,
+                "assets:bank",
+                &target,
+                Date {
+                    y: 2026,
+                    m: 1,
+                    d: 31,
+                },
+                52,
+            ),
+        );
+        let last = at52.lines().last().unwrap();
+        assert!(last.starts_with("    assets:bank   "), "{last:?}");
+        assert_eq!(last.find(" TRY ="), Some(52), "{last:?}");
         let b = "2026-01-15 ! \"M\" \"G\"\n  Expenses:Food  842.35 TRY\n  Assets:Bank\n";
         let t = text_amount("76857.65 TRY").unwrap();
         let out = crate::align::apply(
@@ -883,6 +912,7 @@ mod tests {
                     m: 1,
                     d: 31,
                 },
+                52,
             ),
         );
         assert!(out.starts_with("2026-01-15 * \"M\""), "{out}");
