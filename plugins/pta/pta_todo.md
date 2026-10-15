@@ -1148,7 +1148,10 @@ first.
   closed; `api` `^0.2.14` as in 0.4.0.
   0.6.0 prepared 2026-10-15, for Kalem 0.6.22: completion of accounts,
   payees and commodities (the `completer` export, API 0.2.11); `api`
-  `^0.2.14` as in 0.5.0.)
+  `^0.2.14` as in 0.5.0.
+  0.7.0 prepared 2026-10-15, for Kalem 0.6.27: K11's Format Document
+  and format on save (the `formatter` export, API 0.2.16); `api`
+  `^0.2.16`.)
 
 ## What Kalem's core must gain
 

@@ -84,16 +84,16 @@
     {
       "id": "org.kalem.graph",
       "name": "Note graphs",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags, tasks and queries, edited as an outliner, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
-      "api": "^0.2.13",
+      "api": "^0.2.16",
       "permissions": [
         "fs:read:workspace",
         "fs:write:workspace"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
-      "download": "https://github.com/getkalem/plugins/releases/download/graph-v0.12.0/graph.wasm",
-      "sha256": "589629b7ff9b914b900fce481d5979c8eca0d04edcef0afdf4c5fbbf2f20a594",
+      "download": null,
+      "sha256": null,
       "layers": [
         {
           "id": "logseq",
@@ -164,9 +164,9 @@
     {
       "id": "org.kalem.pta",
       "name": "Plain text accounting",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "description": "hledger, Ledger and Beancount journals in Kalem: checked, reported, reconciled, imported and priced by the tool you already have, completed by their language servers",
-      "api": "^0.2.14",
+      "api": "^0.2.16",
       "permissions": [
         "subprocess",
         "subprocess:hledger",
@@ -178,8 +178,8 @@
         "subprocess:python3"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pta",
-      "download": "https://github.com/getkalem/plugins/releases/download/pta-v0.6.0/pta.wasm",
-      "sha256": "4c9956781063f0347f5a6841e101e95de59827a9185f7d7025385b5c86af6ed5",
+      "download": null,
+      "sha256": null,
       "languages": [
         {
           "id": "hledger",
