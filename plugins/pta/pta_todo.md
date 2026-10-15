@@ -1169,7 +1169,8 @@ first.
   0.7.2 prepared 2026-10-15: CR LF journals written as they end, Windows
   paths (PT15, partly); `api` `^0.2.16`.
   0.8.0 prepared 2026-10-15, for Kalem 0.6.30: K5's outline (the
-  `outline` export, API 0.2.18); `api` `^0.2.18`.)
+  `outline` export, API 0.2.18), hledger rerun in C.UTF-8 when the
+  locale cannot decode the journal (PT15, Linux); `api` `^0.2.18`.)
 
 ## PT15. Linux and Windows
 
