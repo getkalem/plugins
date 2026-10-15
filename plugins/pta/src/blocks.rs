@@ -191,7 +191,7 @@ pub fn write(text: &str, b: &Block, output: &str) -> (Range<usize>, String) {
     ins.push_str(&results(output));
     // A blank line before what follows, where none is.
     let rest = &text[b.results.end..];
-    if !rest.is_empty() && !rest.starts_with('\n') {
+    if !rest.is_empty() && !rest.starts_with('\n') && !rest.starts_with("\r\n") {
         ins.push('\n');
     }
     // The blank lines between the block and old results go too.

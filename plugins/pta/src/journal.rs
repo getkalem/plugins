@@ -187,7 +187,7 @@ fn resolve(dir: &str, p: &str) -> String {
         join(dir, p)
     };
     let mut parts: Vec<&str> = Vec::new();
-    for part in whole.split('/') {
+    for part in whole.split(['/', '\\']) {
         match part {
             "." => {}
             "" if !parts.is_empty() => {}
@@ -197,14 +197,19 @@ fn resolve(dir: &str, p: &str) -> String {
             _ => parts.push(part),
         }
     }
-    parts.join("/")
+    // Windows's paths keep their separator.
+    parts.join(if whole.contains('\\') { "\\" } else { "/" })
 }
 
 /// Whether `a` and `b` name one file: macOS's `/private/tmp` and `/tmp`
 /// (the tools print the first, the editor may hold the second) taken as
-/// one.
+/// one; and a Windows path (a drive's letter, or `\`) with either
+/// separator and in any case, as Windows tells its files apart.
 pub fn same_file(a: &str, b: &str) -> bool {
     let strip = |p: &str| -> String {
+        if p.contains('\\') || p.as_bytes().get(1) == Some(&b':') {
+            return p.replace('\\', "/").to_lowercase();
+        }
         for top in ["/private/tmp/", "/private/var/", "/private/etc/"] {
             if let Some(rest) = p.strip_prefix(top) {
                 return format!("/{}/{rest}", &top[9..top.len() - 1]);
@@ -411,5 +416,26 @@ mod tests {
         });
         assert_eq!(s.journal_for(Dialect::Beancount), "main.beancount");
         assert_eq!(s.journal_for(Dialect::Hledger), "");
+    }
+
+    #[test]
+    fn windows_paths() {
+        // The tools print a Windows path with `\`; the editor may hold it
+        // with `/` and another case.
+        assert!(same_file(
+            "C:\\Users\\a\\Money\\2026.journal",
+            "c:/users/a/money/2026.journal"
+        ));
+        assert!(!same_file("C:\\a\\x.journal", "C:\\a\\y.journal"));
+        assert!(!same_file("/j/A.journal", "/j/a.journal"));
+        // An include beside a Windows journal, `..` resolved.
+        assert_eq!(
+            resolve("C:\\Users\\a\\Money", "..\\Old\\2025.journal"),
+            "C:\\Users\\a\\Old\\2025.journal"
+        );
+        assert_eq!(
+            resolve("C:\\Users\\a\\Money", "2026.journal"),
+            "C:\\Users\\a\\Money\\2026.journal"
+        );
     }
 }

@@ -987,6 +987,14 @@ fn at_end() -> bool {
 /// Applies `edits` (places of the text as the command found it) as one
 /// undo step named `label`.
 fn edit(edits: &[(Range<usize>, String)], label: &str) {
+    // In a CRLF journal, what is written ends its lines so too.
+    let ended;
+    let edits = if edits.iter().any(|(_, s)| s.contains('\n')) {
+        ended = write::edits_ended_as(&editor::text(None), edits.to_vec());
+        &ended[..]
+    } else {
+        edits
+    };
     for (r, s) in edits {
         let done = if r.is_empty() {
             editor::insert(Some(r.start as u64), s);
@@ -1523,7 +1531,7 @@ fn write_append() -> Result<String, String> {
     let current = editor::text(None);
     let at = current.len();
     let (ins, _) = write::insertion(&current, at, &text);
-    editor::insert(Some(at as u64), &ins);
+    editor::insert(Some(at as u64), &write::ended_as(&current, &ins));
     editor::transact(&title);
     Ok("null".into())
 }

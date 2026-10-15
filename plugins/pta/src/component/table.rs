@@ -204,7 +204,7 @@ pub(super) fn write() -> Result<String, String> {
     } else {
         (line_end + 1, table)
     };
-    editor::insert(Some(place as u64), &ins);
+    editor::insert(Some(place as u64), &crate::write::ended_as(&text, &ins));
     editor::transact("Insert Report as Table");
     Ok("null".into())
 }

@@ -230,6 +230,10 @@ Every tool call runs beside the editor, which never waits for it; the status bar
 
 Kalem takes at most 16 MB of what a program prints. An output past it is not shown cut: a notice says so and names a shorter period. hledger's register comes as JSON (its amounts' styles and statuses), some 1.3 KB a posting, so past about 12,000 postings of one account in the period it is refused, where Ledger's and Beancount's, some 100 bytes a posting, pass 150,000; the Register shows the last 2,000 either way. The plugin reads 14,000 postings of hledger's JSON in 0.1 s. hledger's `files` (which journal `LEDGER_FILE` names) is asked once until a journal is saved, and the place of a posting from hledger's `print` of its day only.
 
+## Platforms
+
+Built and tried on macOS; on Linux and Windows the plugin runs the same tools, untried yet. A journal with Windows's line endings (CRLF) reads as any other, and what the plugin writes in it (a transaction, a balance assertion, a block's results) ends its lines the same way. A path a tool prints with `\` names the same file as the editor's with `/`, in any case. A Beancount block (Run the Journal Block) gives its text to `bean-query` as `/dev/stdin`, which Windows lacks: there it does not run.
+
 ## The servers, measured
 
 On the corpus, through Kalem's client (`kalem lsp ask`, `kalem lsp check`) and asked directly where Kalem cannot ask yet, with hledger 1.52.4 and Beancount 3.2.3. The server's checks are its own: the tool's check (PT5) is the one to trust.

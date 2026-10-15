@@ -450,6 +450,45 @@ pub fn place(text: &str, dialect: Dialect, date: Date, at_end: bool) -> usize {
     }
 }
 
+/// The line ending `text` writes: CRLF where its first line ends so
+/// (Windows's; Kalem hands a plugin a document's text as it is), else LF.
+pub fn line_ending(text: &str) -> &'static str {
+    match text.find('\n') {
+        Some(i) if text[..i].ends_with('\r') => "\r\n",
+        _ => "\n",
+    }
+}
+
+/// `s`, written in `text`, with its lines ended as `text` ends them:
+/// what the plugin writes in a CRLF journal ends its lines so too.
+pub fn ended_as(text: &str, s: &str) -> String {
+    if line_ending(text) == "\n" || !s.contains('\n') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + s.len() / 16);
+    let mut last = '\0';
+    for c in s.chars() {
+        if c == '\n' && last != '\r' {
+            out.push('\r');
+        }
+        out.push(c);
+        last = c;
+    }
+    out
+}
+
+/// Edits of `text`, their new text's lines ended as `text` ends them
+/// ([`ended_as`]).
+pub fn edits_ended_as(
+    text: &str,
+    edits: Vec<(Range<usize>, String)>,
+) -> Vec<(Range<usize>, String)> {
+    edits
+        .into_iter()
+        .map(|(r, s)| (r, ended_as(text, &s)))
+        .collect()
+}
+
 /// The text inserted at `at` to hold `transaction` (its lines, ending
 /// with a line feed): a blank line before and after it where its
 /// neighbours have text, a line feed first where the text does not end
@@ -460,7 +499,8 @@ pub fn insertion(text: &str, at: usize, transaction: &str) -> (String, usize) {
     if !before.is_empty() && !before.ends_with('\n') {
         s.push('\n');
     }
-    if !before.is_empty() && !before.ends_with("\n\n") {
+    // A blank line before it, in LF or CRLF.
+    if !before.is_empty() && !before.ends_with("\n\n") && !before.ends_with("\n\r\n") {
         s.push('\n');
     }
     let start = s.len();
@@ -469,7 +509,7 @@ pub fn insertion(text: &str, at: usize, transaction: &str) -> (String, usize) {
         s.push('\n');
     }
     let after = &text[at..];
-    if !after.is_empty() && !after.starts_with('\n') {
+    if !after.is_empty() && !after.starts_with('\n') && !after.starts_with("\r\n") {
         s.push('\n');
     }
     (s, start)
