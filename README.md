@@ -2,7 +2,10 @@
 
 The plugins of [Kalem](https://github.com/getkalem/kalem), the editor for Org, Markdown and other plain-text formats. Every mode, file type, language pack, completer and exporter beyond Kalem's small core (Org, Markdown, CSV, LaTeX) is developed here as a plugin, never in the core (Kalem's [design document](https://github.com/getkalem/kalem/blob/main/docs/design_document.md), sections 11.0 and 11.8).
 
-**Status: early.** Kalem installs these plugins from the editor (Browse Plugins, or its offer when you open a file a plugin serves) and with `kalem plugin install NAME`. The plugin API for components (the WIT package `kalem:plugin`, 0.2.13 today, and the `kalem-plugin` bindings) still grows with Kalem's releases, and the `kalem-plugin` crate is not on crates.io yet: plugins take it from Kalem's git repository. Language plugins need no API: they are declarative.
+**Status: early.** Kalem installs these plugins from the editor (Browse Plugins, or its offer when you open a file a plugin serves) and with `kalem plugin install NAME`. The plugin API for components (the WIT package `kalem:plugin`, 0.2.19 today, and the `kalem-plugin` bindings) still grows with Kalem's releases, and the `kalem-plugin` crate is not on crates.io yet: plugins take it from Kalem's git repository. Language plugins need no API: they are declarative.
+
+> [!IMPORTANT]
+> **Please update now and then.** Kalem and its plugins are under heavy development, and new releases with fixes come out often. In Kalem, *Browse Plugins* offers an update for each plugin that has a newer release. Update Kalem itself too (run its [install command](https://github.com/getkalem/kalem#install) again): a plugin's newest release often needs the newest Kalem.
 
 | Plugin | What it gives | Kind |
 |---|---|---|
