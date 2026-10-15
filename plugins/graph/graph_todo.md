@@ -921,8 +921,8 @@ below replace the earlier GR4a to GR4d.
   thousands of ways through the scanner, the layer, the queries and the
   editing commands, which found no panic. Found on the way: the Graph
   document hung a namespace's pages under the line above when the
-  namespace itself had no file. Open: the first index of a large graph
-  holds Kalem's thread while it is built (K13).)
+  namespace itself had no file. The first index of a large graph held
+  Kalem's thread while it was built: in slices since K13.)
 
 ## GR12. Release, the README and the Book
 
@@ -1190,9 +1190,9 @@ user groups; the gaps that code can close, in this order.
     `logseq/srs-of-matrix.edn`, never written), and the `card-*`
     properties are written as Logseq writes them, in place or after the
     block's others (an Org headline's drawer).
-  - GR16h What waits on Kalem's core: the first index of a very large
-    graph off the editor's thread (K13), the pages opened last kept across
-    sessions (K23).
+  - [x] GR16h The first index of a very large graph built in slices of
+    30 ms at Kalem's ticks, the editor answering between them (K13,
+    Kalem's plugin API 0.2.17, `later`, 2026-10-15).
   - [x] GR16i Zoom into Block (`SPC m s n` and `SPC b -` in Markdown
     notes, Doom's narrowing keys; the palette and the Graph menu): the
     note narrowed to the block at the cursor and the blocks under it by
@@ -1220,6 +1220,13 @@ user groups; the gaps that code can close, in this order.
     or file (`graph.openShape`). Read from a hand-written board after the
     shapes' properties in Logseq 0.10.9's tldraw: not yet checked against
     a board Logseq drew.
+  - [x] GR16l The pages opened last, and each graph's graph view toggles
+    (`J`, `O`) and sort of All pages, kept from one session to the next
+    (K23, Kalem's `state`, plugin API 0.2.17): written as they change,
+    read when the plugin starts and when a graph is indexed. Found on the
+    way: a page opened by two spellings of one folder (macOS's `/tmp` and
+    `/private/tmp`) is two pages to Recent Pages, as the graph's folder is
+    one of them; the plugin cannot resolve links (no `fs` call for it).
   - Not done, by choice: Obsidian's `showAttachments` in the graph view
     (a picture embedded is no reference in the index; the view has no
     use for it yet).
@@ -1285,7 +1292,17 @@ Each is the plugin's gate or its ask, written for every plugin.
   Kalem's release build) run off the editor's thread, or in slices with
   the editor drawing between them, the plugin's other calls waiting.
   Until then the first command or note of a large graph waits. Not
-  blocking.
+  blocking. Done 2026-10-15 on Kalem's branch `plugin-later` (plugin API
+  0.2.17, the import `later`: a plugin's own command run at an editor's
+  tick once some milliseconds have passed, after the editor drew and
+  took the keys typed meanwhile). The plugin builds a graph's first
+  index, Index Again's and one whose settings changed in slices of 30 ms
+  (`index::Building`, `graph.indexing`), the status bar saying how far it
+  is; a command that needs the graph meanwhile builds the rest at once.
+  In Kalem's terminal editor a note of the graph of a million blocks is
+  drawn at 0.6 s, where nothing was drawn for 5.5 to 7 s, and keys are
+  answered within 40 ms while the graph is indexed, by 3.2 to 4.4 s
+  (GR16h).
 - K11 Renaming (and deleting) a file through `fs`, under
   `fs:write:workspace`: a page renamed with its file as Logseq does, a
   vault's note renamed at all (GR8c). Not blocking. (Done 2026-10-11:
@@ -1387,7 +1404,11 @@ Each is the plugin's gate or its ask, written for every plugin.
   (GR16k).
 - K23 State a plugin keeps between sessions (a small key-value store in
   Kalem's state folder, per plugin): the pages opened last, the graph
-  view's toggles, a review under way. Until then they last a session.
+  view's toggles, a review under way. Done 2026-10-15 on Kalem's branch
+  `plugin-state` (plugin API 0.2.17, the import `state`: get, set, keys;
+  `plugin-state/ID.json`, written at once, keys of 256 bytes, 1 MB in
+  all). The plugin keeps its pages opened last and each graph's toggles
+  and sort (GR16l).
 
 ## Decisions, and what waits in Kalem's repository
 

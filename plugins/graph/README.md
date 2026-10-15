@@ -71,7 +71,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r t` | Tasks | NOW and DOING, then LATER and TODO by priority, then WAITING; what is scheduled or due within a week. Enter opens the task, `t` cycles its keyword in its file |
 | `SPC n r c` | Review Flashcards | Logseq's flashcards: the blocks tagged `#card` that are due, new ones first, one at a time. `a` shows the answer (the block's children, its `{{cloze …}}`); `f`, `t` and `r` score the card as forgotten, remembered with effort or remembered, and write Logseq's `card-*` properties into its block, its next review worked out as Logseq works it out (SM-5, with `:srs/learning-fraction`, `:srs/initial-interval` and the factors Logseq learnt in `logseq/srs-of-matrix.edn`); `n` passes over it. Enter opens the card |
 | `SPC n r q` | Run Query | A Logseq simple query typed, its results as a document |
-| `SPC n r l` | Recent Pages | The graph's pages opened last in this session |
+| `SPC n r l` | Recent Pages | The graph's pages opened last, kept from one session to the next with Kalem 0.6.28 and later (plugin API 0.2.17), as are each graph's graph view toggles (`J`, `O`) and its sort of All pages (`s`) |
 | `SPC n r a` | Random Page | A page of the graph at random |
 | `SPC n s` (in a graph) | Search the Graph | Kalem's search over the graph's folder, without `logseq/`, `.obsidian/`, `.trash/` and the hidden folders; elsewhere `SPC n s` searches Kalem's notes folder |
 | `SPC n S` (in a graph) | Find Heading | The graph's headings, and the top-level blocks of its pages (not its journals'), each with its page |
@@ -214,6 +214,7 @@ Measured on a graph generated at the scale Logseq aims at (`tests/large.rs`): 10
 | | Native | Budget |
 |---|---|---|
 | The index built | 0.8 s | 2 s |
+| Its longest slice, built a slice at a time as in Kalem | 30 ms | 50 ms |
 | The memory it holds (64-bit; less in WebAssembly's 32 bits) | 287 MB | 300 MB |
 | A saved page indexed again | 0.4 ms | 10 ms |
 | The backlinks panel of the page with 1,000 references | 2 ms | 50 ms |
@@ -222,8 +223,9 @@ Measured on a graph generated at the scale Logseq aims at (`tests/large.rs`): 10
 | The Tasks document, 200,000 tasks | 350 ms | 500 ms |
 | A query over the graph | 20 ms | 500 ms |
 | In Kalem: the graph indexed and All pages printed | 1.9 s, 340 MB for the whole process | |
+| In Kalem's terminal editor: a note of the graph drawn, then the graph indexed, keys answered meanwhile | 0.6 s, then 3.2 to 4.4 s; keys within 40 ms | |
 
-The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `plugin.json`): an extension's own, 64 MB and 100 ms, stop it at the first note of a graph of some thousand pages. The first command or note of a large graph waits for its index while Kalem runs the call; a save then changes only the saved file's entries in the index (a page renamed, or a file added or removed, derives the names again, as fast as the first build's last step). Files changed on disk together (a `git pull`, Logseq renaming a page and its references) are read together once the event that told of the first returns, the names derived and the documents written again once for them all. The panel's unlinked references are searched for when they are opened, as Logseq does.
+The plugin asks Kalem for a viewer's limits, 1 GB and 10 s a call (`limits` in `plugin.json`): an extension's own, 64 MB and 100 ms, stop it at the first note of a graph of some thousand pages. A note of a graph opened, the graph is indexed in slices of 30 ms at Kalem's ticks (its plugin API 0.2.17, `later`), Kalem drawing and taking keys between them: the status bar says how far it is, and the note's backlinks and links come once it is built. A command that needs the graph meanwhile (All pages, Journals) builds the rest at once; Index Again builds a slice at a time while the index the graph has serves. A save then changes only the saved file's entries in the index (a page renamed, or a file added or removed, derives the names again, as fast as the first build's last step). Files changed on disk together (a `git pull`, Logseq renaming a page and its references) are read together once the event that told of the first returns, the names derived and the documents written again once for them all. The panel's unlinked references are searched for when they are opened, as Logseq does.
 
 ## Tests
 
