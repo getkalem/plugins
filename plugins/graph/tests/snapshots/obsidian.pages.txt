@@ -8,7 +8,7 @@ Home      4 links      8 blocks
 Kalem     1 links      1 blocks
 Kalem     5 links      5 blocks
 
-Canvases (1)  drawn by Obsidian: Enter shows the file, to open it there
-Board.canvas  1 links · opens in Obsidian
+Canvases (1)  drawn by Obsidian: Enter draws one here, read only
+Board.canvas  1 links
 
 Not written yet (0)

@@ -30,6 +30,19 @@ pub struct Page {
     pub props: Vec<(String, String)>,
 }
 
+impl Page {
+    /// Its title as Logseq shows it: a whiteboard still named by the UUID
+    /// Logseq gave it when it was made is "Untitled".
+    pub fn shown_title(&self) -> &str {
+        let board = self.path.as_deref().is_some_and(|p| p.ends_with(".edn"));
+        if board && scan::is_uuid(&self.title) {
+            "Untitled"
+        } else {
+            &self.title
+        }
+    }
+}
+
 /// A file of the graph, scanned.
 #[derive(Debug, Clone)]
 pub struct FileData {
@@ -1650,6 +1663,26 @@ mod tests {
             "first line\nthen kalem is named"
         );
         assert_eq!(i.unlinked_counts().get("kalem"), Some(&2));
+    }
+
+    #[test]
+    fn a_whiteboard_named_by_its_uuid_is_untitled() {
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            (
+                "/g/whiteboards/6ad0422d-5603-4169-9f35-3aed0bee1c53.edn",
+                "{}",
+            ),
+            ("/g/whiteboards/Design.edn", "{}"),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        // As Logseq shows a whiteboard it made and nobody named yet.
+        let shown = |k: &str| i.page(k).unwrap().shown_title().to_string();
+        assert_eq!(shown("6ad0422d-5603-4169-9f35-3aed0bee1c53"), "Untitled");
+        assert_eq!(shown("design"), "Design");
     }
 
     #[test]

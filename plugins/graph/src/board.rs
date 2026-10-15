@@ -151,16 +151,20 @@ pub fn logseq(edn: &str, index: &Index, rel: &str) -> Board {
             "text" => {
                 shape.kind = BoardKind::Text;
                 shape.text = text(s.get("text"));
-                // Its size follows its text (tldraw keeps a text's size locked to
-                // it, 20 pixels' font): at least the text's own.
-                let longest = shape
-                    .text
-                    .lines()
-                    .map(|l| l.chars().count())
-                    .max()
-                    .unwrap_or(1);
-                shape.rect[2] = w.max(longest as f32 * 11.0);
-                shape.rect[3] = h.max(shape.text.lines().count().max(1) as f32 * 26.0);
+                // Where its file sizes it, as tldraw keeps a text's size
+                // locked to its text; at its font's size (20 pixels unless
+                // it says) when the file gives none.
+                if w <= 0.0 || h <= 0.0 {
+                    let font = number(s.get("fontSize")).unwrap_or(20.0);
+                    let longest = shape
+                        .text
+                        .lines()
+                        .map(|l| l.chars().count())
+                        .max()
+                        .unwrap_or(1);
+                    shape.rect[2] = longest as f32 * font * 0.55;
+                    shape.rect[3] = shape.text.lines().count().max(1) as f32 * font * 1.3;
+                }
             }
             "group" => shape.kind = BoardKind::Group,
             "pencil" | "highlighter" => {
@@ -233,10 +237,21 @@ pub fn logseq(edn: &str, index: &Index, rel: &str) -> Board {
                     .find(|(id, _)| *id == asset)
                     .map(|(_, src)| src.clone())
                     .unwrap_or_default();
-                // `../assets/x.png`, from the whiteboards' folder.
-                let path = resolve(dir, &src);
-                shape.kind = BoardKind::Image(index.graph.path(&path));
-                shape.target = Some(Target::File(path).encode());
+                if src.starts_with("data:") {
+                    // A picture kept in the board itself, as Logseq's first
+                    // whiteboard keeps its own: Kalem draws pictures from
+                    // files only, so a box says one is there.
+                    shape.text = "picture".into();
+                } else if src.starts_with("http://") || src.starts_with("https://") {
+                    // One on the web: its address, leading there.
+                    shape.text = src.clone();
+                    shape.target = Some(Target::Url(src).encode());
+                } else {
+                    // `../assets/x.png`, from the whiteboards' folder.
+                    let path = resolve(dir, &src);
+                    shape.kind = BoardKind::Image(index.graph.path(&path));
+                    shape.target = Some(Target::File(path).encode());
+                }
             }
             "youtube" | "tweet" | "iframe" | "video" | "html" => {
                 let url = text(s.get("url"));
@@ -432,6 +447,36 @@ mod tests {
         assert_eq!(
             Target::decode("page:Kalem"),
             Some(Target::Page("Kalem".into()))
+        );
+    }
+
+    #[test]
+    fn pictures_in_the_board_or_on_the_web_and_texts_at_their_size() {
+        let i = index(Kind::Logseq, &[("/g/logseq/config.edn", "{}")]);
+        let edn = r#"{:blocks ({:block/properties {:logseq.tldraw.shape {:id "i1", :type "image", :index "a1", :point [0 0], :size [80 60], :assetId "d"}}}
+ {:block/properties {:logseq.tldraw.shape {:id "i2", :type "image", :index "a2", :point [100 0], :size [80 60], :assetId "w"}}}
+ {:block/properties {:logseq.tldraw.shape {:id "t1", :type "text", :index "a3", :point [0 100], :size [101 22], :fontSize 10, :text "Double Click on the Canvas"}}}
+ {:block/properties {:logseq.tldraw.shape {:id "t2", :type "text", :index "a4", :point [0 200], :fontSize 40, :text "Big"}}}),
+ :pages ({:block/properties {:logseq.tldraw.page {:assets [{:id "d", :src "data:image/png;base64,iVBORw0KGgo="} {:id "w", :src "https://example.com/a.png"}]}}})}"#;
+        let b = logseq(edn, &i, "whiteboards/W.edn");
+        // Pictures are drawn from files only: one kept in the board (as
+        // Logseq's own first whiteboard keeps them) is a box saying so,
+        // one on the web leads there.
+        let p = &b.shapes[0];
+        assert_eq!(
+            (&p.kind, p.text.as_str(), p.target.as_deref()),
+            (&BoardKind::Box(0.0), "picture", None)
+        );
+        assert_eq!(
+            b.shapes[1].target.as_deref(),
+            Some("url:https://example.com/a.png")
+        );
+        // A text where its file sizes it, though its font is small (as
+        // Logseq 0.10.9 wrote it); at its font's size when it is not.
+        assert_eq!(b.shapes[2].rect, [0.0, 100.0, 101.0, 22.0]);
+        assert_eq!(
+            b.shapes[3].rect,
+            [0.0, 200.0, 3.0 * 40.0 * 0.55, 1.0 * 40.0 * 1.3]
         );
     }
 

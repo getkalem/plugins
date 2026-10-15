@@ -12,8 +12,8 @@ Questions?                     0 links      2 blocks
 readme                         0 links      1 blocks
 Templates                      0 links      7 blocks
 
-Whiteboards (1)  drawn by Logseq: Enter shows the file, to open it there
-Design  1 links · opens in Logseq
+Whiteboards (1)  drawn by Logseq: Enter draws one here, read only
+Design  1 links
 
 Not written yet (10)
 a [[nested]] link  1 links

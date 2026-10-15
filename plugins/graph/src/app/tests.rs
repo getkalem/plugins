@@ -2549,6 +2549,9 @@ fn a_graph_indexed_a_slice_at_a_time_where_kalem_runs_commands_later() {
     );
     let mut whole = App::new(Settings::default());
     whole.opened(&m, "/w/notes/pages/Kalem.md");
+    // The note opened before its graph was indexed: among the pages
+    // opened last once it is.
+    assert_eq!(app.recent, ["/w/notes/pages/Kalem.md"]);
     let counts = |app: &App| app.index("/w/notes").map(Index::counts);
     assert_eq!(counts(&app), counts(&whole));
     // Index Again: a slice at a time too, the index it has serving

@@ -24,6 +24,9 @@ pub(super) struct Build {
     pub(super) changed: BTreeSet<String>,
     /// Its counts said once it is built (Index Again).
     announce: bool,
+    /// Its notes opened meanwhile, in order: Recent Pages once it is
+    /// built.
+    pub(super) opened: Vec<String>,
     /// How far it is, as the status bar last showed it.
     shown: u32,
 }
@@ -101,11 +104,17 @@ impl App {
         let building = Building::new(Graph::load(files, root, kind, &self.settings.fallbacks));
         let root = building.graph().root.clone();
         let announce = announce || self.building.get(&root).is_some_and(|b| b.announce);
+        let opened = self
+            .building
+            .get(&root)
+            .map(|b| b.opened.clone())
+            .unwrap_or_default();
         let build = Build {
             building,
             kind,
             changed: BTreeSet::new(),
             announce,
+            opened,
             shown: 0,
         };
         // A slice at a time: one started again goes on in the slice
@@ -175,6 +184,9 @@ impl App {
         let root = self.put_index(index, b.kind, out);
         if b.announce {
             out.push(self.counts_notice(&root));
+        }
+        for p in &b.opened {
+            self.track_recent(p);
         }
         if self
             .current
