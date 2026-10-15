@@ -40,13 +40,15 @@ fn the_manifest_has_both_halves() {
     assert_eq!(m["id"], "org.kalem.pta");
     assert_eq!(m["main"], "dist/pta.wasm");
     // The release imports the plugin API of the kalem-plugin it is built
-    // with: every interface at 0.2.16 (`wasm-tools component wit` on the
+    // with: every interface at 0.2.18 (`wasm-tools component wit` on the
     // component), `problems` (the check's problems in their files) among
     // them, with styled documents and `clock-2`, and exports `formatter`
-    // (Format Document's alignment, K11) with `completer`.
-    assert_eq!(m["api"], "^0.2.16");
-    // The completer and the formatter serve every journal's text type.
-    for key in ["completers", "formatters"] {
+    // (Format Document's alignment, K11) and `outline` (the sidebar's
+    // headings, K5) with `completer`.
+    assert_eq!(m["api"], "^0.2.18");
+    // The completer, the formatter and the outline serve every journal's
+    // text type.
+    for key in ["completers", "formatters", "outlines"] {
         let types = strings(&m[key][0]["types"]);
         assert_eq!(types, kalem_plugin_pta::TEXT_TYPES, "{key}");
     }

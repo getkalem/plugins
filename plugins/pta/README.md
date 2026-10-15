@@ -40,6 +40,7 @@ Then the tool you use, and, if you like, a server and a price program:
 |---|---|---|---|
 | Highlighting (the plugin) | journal and CSV rules | journal | journal |
 | Completion of accounts, payees and commodities (the plugin, from the tool's lists) | `hledger accounts`, `payees`, `commodities` | `ledger accounts`, `payees`, `commodities` | `bean-query` |
+| Outline: Org headings, else years and months (the plugin) | yes | yes | yes |
 | Hover, definition, references, rename, and the server's own completion (tags, dates) (the server) | hledger-lsp | none | beancount-language-server |
 | Check Journal, on each save (the tool) | `hledger check --strict` and the setting `checks` | `ledger --pedantic --explicit balance` | `bean-check` |
 | Align Amounts, Format Document (the plugin) | aligns; the server's formatting turned off | aligns | aligns; Format Document is the server's when it runs |
@@ -145,7 +146,7 @@ In a journal, under `SPC m` in Vim's command mode and in the palette's Journal g
 - *Date a Day Later* and *Earlier* (`ctrl+shift+l`, `ctrl+shift+h` in Vim's command mode).
 - *Sort Transactions* (`SPC m s`): those selected, or the file's, by date, each with the comment lines above it; refused where a directive between them (`apply account`, `alias`, `include`, `pushtag`…) would apply to others after sorting.
 
-The outline is the server's document symbols. Ledger has no server, so a Ledger journal has no outline.
+The outline sidebar (`gO` with Vim's keys, Ctrl+Shift+O) lists the journal's Org headings (`* Household`, `** Food`, lines all three tools read as comments), else the years and months its transactions begin, for Kalem 0.6.30 and later.
 
 ## The balance and the register
 

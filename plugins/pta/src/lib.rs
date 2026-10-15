@@ -42,6 +42,7 @@ mod component;
 pub mod import;
 pub mod journal;
 pub mod other;
+pub mod outline;
 pub mod prices;
 pub mod reconcile;
 pub mod report;

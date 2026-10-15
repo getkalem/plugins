@@ -332,3 +332,34 @@ fn the_accountants_journal() {
         }
     }
 }
+
+/// The outline (K5) of the accountant's ten years in one text, as the
+/// sidebar asks it once a version: months under years, read from the
+/// text alone (`cargo test -p kalem-plugin-pta --test large --
+/// --ignored --nocapture outline`).
+#[test]
+#[ignore = "writes and reads 200,000 transactions"]
+fn the_outline_of_a_large_journal() {
+    let dir = folder();
+    if !dir.join("2026.journal").exists() {
+        write_journals(&dir);
+    }
+    for (tool, ext) in [
+        (Dialect::Hledger, "journal"),
+        (Dialect::Beancount, "beancount"),
+    ] {
+        let text: String = (2017..=2026)
+            .map(|y| std::fs::read_to_string(dir.join(format!("{y}.{ext}"))).unwrap_or_default())
+            .collect();
+        let t = Instant::now();
+        let heads = kalem_plugin_pta::outline::headings(&text, tool);
+        println!(
+            "  {} outline of {:.1} MB: {} headings in {:.3} s",
+            tool.language(),
+            text.len() as f64 / 1e6,
+            heads.len(),
+            t.elapsed().as_secs_f64()
+        );
+        assert!(heads.len() > 100, "{tool:?}");
+    }
+}

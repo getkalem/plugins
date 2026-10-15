@@ -1221,8 +1221,8 @@ plugin's section 9 followed).
 - K5 An outline provider and a completer from a plugin (design §11.11
   and §11.12's bindings), for the `.rules` files' accounts and for a
   journal whose server is missing. The completer came with Kalem 0.6.13
-  (plugin API 0.2.11, a component's `completer` export); the outline
-  provider has not. The plugin's completer came on 2026-10-14
+  (plugin API 0.2.11, a component's `completer` export), the outline
+  provider with Kalem 0.6.30 (below). The plugin's completer came on 2026-10-14
   (`src/complete.rs`, the feature `completer`): an account on a posting
   and in Beancount's directives, a payee on a transaction's line, a
   commodity in an amount, from the tool's lists of the main journal
@@ -1235,6 +1235,16 @@ plugin's section 9 followed).
   dialects (Enter takes an item: not of the word kind, which Enter
   leaves to prose); `word: 1`, so the plugin answers before
   hledger-lsp's menu at an amount, which offered accounts there.
+  The outline came on 2026-10-15: Kalem's plugin API 0.2.18 `outline`
+  export (Kalem branch `plugin-outline`, for Kalem 0.6.30), a
+  component's outlines declared in the manifest by text type and asked
+  by both editors' outline sidebars where the mode and a pack give none,
+  once a version of the text; the plugin's (`src/outline.rs`, branch
+  `pta-outline`, api ^0.2.18) gives Org's headings where the journal
+  writes them (a line of stars and a blank, which all three tools read
+  as a comment), else its transactions' months, under their years when
+  there are several; 130 headings of the accountant's 20 MB in 0.04 s
+  (`tests/large.rs`).
 - K6 Babel executors from plugins (R5.6), for `hledger` and
   `beancount` source blocks in Org (PT11b).
 - K7 A plugin language's id as the text type of the files it serves:
