@@ -119,7 +119,7 @@ fn apply(effect: Effect) {
             let styles = styled(&content);
             let open = DOCS.with(|d| d.borrow().get(&(id.clone(), key.clone())).copied());
             // A graph Kalem draws (plugin API 0.2.12), or a canvas (API
-            // 0.2.16), its text the source.
+            // 0.2.16, its shapes' text sizes by API 0.2.19), its text the source.
             let drawn = content.drawing.as_ref().map(drawing);
             let board = content.board.as_deref().map(canvas);
             let written = match (&drawn, &board, open) {
@@ -127,7 +127,9 @@ fn apply(effect: Effect) {
                     let spec = documents::Spec::new(&id, &key, &title, &kind);
                     let opened = match (&drawn, &board) {
                         (Some(g), _) => kalem_plugin::graph_view::open(&spec, g, &content.text),
-                        (None, Some(c)) => kalem_plugin::canvas_view::open(&spec, c, &content.text),
+                        (None, Some(c)) => {
+                            kalem_plugin::canvas_view_2::open(&spec, c, &content.text)
+                        }
                         (None, None) => documents::open_styled(&spec, &content.text, None, &styles),
                     };
                     match opened {
@@ -140,7 +142,7 @@ fn apply(effect: Effect) {
                 }
                 (Some(g), _, Some(n)) => kalem_plugin::graph_view::set(n, g, &content.text).is_ok(),
                 (None, Some(c), Some(n)) => {
-                    kalem_plugin::canvas_view::set(n, c, &content.text).is_ok()
+                    kalem_plugin::canvas_view_2::set(n, c, &content.text).is_ok()
                 }
                 (None, None, Some(n)) => {
                     documents::set_styled(n, &content.text, None, &styles).is_ok()
@@ -707,11 +709,12 @@ impl Plugin for Graph {
 
 kalem_plugin::export_plugin!(Graph);
 
-/// A whiteboard's shapes and connectors as the `canvas-view` interface's
-/// canvas.
-fn canvas(b: &crate::content::Board) -> kalem_plugin::canvas_view::Canvas {
+/// A whiteboard's shapes and connectors as the `canvas-view-2` interface's
+/// canvas, each shape's text at its size (Kalem's plugin API 0.2.19).
+fn canvas(b: &crate::content::Board) -> kalem_plugin::canvas_view_2::Canvas {
     use crate::content::BoardKind as B;
-    use kalem_plugin::canvas_view::{Canvas, Connector, Point, Shape, ShapeKind};
+    use kalem_plugin::canvas_view::{Connector, Point, ShapeKind};
+    use kalem_plugin::canvas_view_2::{Canvas, Shape};
     let point = |p: [f32; 2]| Point { x: p[0], y: p[1] };
     Canvas {
         shapes: b
@@ -738,6 +741,7 @@ fn canvas(b: &crate::content::Board) -> kalem_plugin::canvas_view::Canvas {
                 stroke: s.stroke.clone(),
                 dashed: s.dashed,
                 target: s.target.clone(),
+                text_size: s.text_size,
             })
             .collect(),
         connectors: b

@@ -50,10 +50,11 @@ fn the_manifest() {
     assert_eq!(m["id"], "org.kalem.graph");
     assert_eq!(m["main"], "dist/graph.wasm");
     // The release imports the plugin API of the kalem-plugin it is built
-    // with: 0.2.18, lines under lines typed into as an outline, its state
-    // kept between sessions, canvases (whiteboards drawn), lines under lines
-    // typed into, completer, clocks, graph views and moves.
-    assert_eq!(m["api"], "^0.2.18");
+    // with: 0.2.19, a canvas shape's text size, then lines under lines
+    // typed into as an outline, its state kept between sessions, canvases
+    // (whiteboards drawn), lines under lines typed into, completer, clocks,
+    // graph views and moves.
+    assert_eq!(m["api"], "^0.2.19");
     assert_eq!(m["activation"], serde_json::json!(["onStartup"]));
     // A large graph is indexed in one call: a viewer's limits, not an
     // extension's 64 MB and 100 ms (GR11).

@@ -58,6 +58,23 @@ fn logseq_color(c: &str) -> String {
     }
 }
 
+/// The size a Logseq shape's text is written in, in the board's pixels:
+/// its `fontSize`, else its `scaleLevel` (from `xs` to `xxl`) as Logseq
+/// 0.10.9's sizes them; none when it says neither.
+fn logseq_text_size(s: &Value) -> Option<f32> {
+    number(s.get("fontSize")).filter(|f| *f > 0.0).or_else(|| {
+        Some(match text(s.get("scaleLevel")).as_str() {
+            "xs" => 10.0,
+            "sm" => 16.0,
+            "md" => 20.0,
+            "lg" => 32.0,
+            "xl" => 48.0,
+            "xxl" => 60.0,
+            _ => return None,
+        })
+    })
+}
+
 fn number(v: Option<&Value>) -> Option<f32> {
     match v? {
         Value::Int(n) => Some(*n as f32),
@@ -141,6 +158,7 @@ pub fn logseq(edn: &str, index: &Index, rel: &str) -> Board {
             stroke,
             dashed,
             target: None,
+            text_size: logseq_text_size(s),
         };
         match kind.as_str() {
             "box" => {
@@ -328,6 +346,7 @@ pub fn obsidian(json: &str, index: &Index) -> Board {
             stroke: color,
             dashed: false,
             target: None,
+            text_size: None,
         };
         match node["type"].as_str().unwrap_or_default() {
             "text" => shape.text = s(node, "text"),
@@ -456,7 +475,8 @@ mod tests {
         let edn = r#"{:blocks ({:block/properties {:logseq.tldraw.shape {:id "i1", :type "image", :index "a1", :point [0 0], :size [80 60], :assetId "d"}}}
  {:block/properties {:logseq.tldraw.shape {:id "i2", :type "image", :index "a2", :point [100 0], :size [80 60], :assetId "w"}}}
  {:block/properties {:logseq.tldraw.shape {:id "t1", :type "text", :index "a3", :point [0 100], :size [101 22], :fontSize 10, :text "Double Click on the Canvas"}}}
- {:block/properties {:logseq.tldraw.shape {:id "t2", :type "text", :index "a4", :point [0 200], :fontSize 40, :text "Big"}}}),
+ {:block/properties {:logseq.tldraw.shape {:id "t2", :type "text", :index "a4", :point [0 200], :fontSize 40, :text "Big"}}}
+ {:block/properties {:logseq.tldraw.shape {:id "t3", :type "text", :index "a5", :point [0 300], :size [120 60], :scaleLevel "xl", :text "Title"}}}),
  :pages ({:block/properties {:logseq.tldraw.page {:assets [{:id "d", :src "data:image/png;base64,iVBORw0KGgo="} {:id "w", :src "https://example.com/a.png"}]}}})}"#;
         let b = logseq(edn, &i, "whiteboards/W.edn");
         // Pictures are drawn from files only: one kept in the board (as
@@ -474,6 +494,11 @@ mod tests {
         // A text where its file sizes it, though its font is small (as
         // Logseq 0.10.9 wrote it); at its font's size when it is not.
         assert_eq!(b.shapes[2].rect, [0.0, 100.0, 101.0, 22.0]);
+        // Its text at the size Logseq gives it (Kalem's plugin API 0.2.19).
+        assert_eq!(
+            b.shapes.iter().map(|s| s.text_size).collect::<Vec<_>>(),
+            [None, None, Some(10.0), Some(40.0), Some(48.0)]
+        );
         assert_eq!(
             b.shapes[3].rect,
             [0.0, 200.0, 3.0 * 40.0 * 0.55, 1.0 * 40.0 * 1.3]

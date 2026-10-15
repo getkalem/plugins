@@ -131,6 +131,9 @@ pub struct BoardShape {
     pub dashed: bool,
     /// Where opening it leads (`crate::board::Target`, encoded).
     pub target: Option<String>,
+    /// The size its text is written in, in the board's units (Logseq's
+    /// `fontSize`); none for Kalem's own (an Obsidian canvas's).
+    pub text_size: Option<f32>,
 }
 
 /// A connector between shapes, by their ids, or points.
