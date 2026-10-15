@@ -1255,6 +1255,12 @@ plugin's section 9 followed).
   `languages::for_path` knows the plugin's language and could answer
   first. The design (§11.2) says plugins extend the vocabulary. Until
   then the plugin scopes by both (PT1).
+  Done 2026-10-15 on Kalem's branch `plugin-text-types` (4046db01,
+  for Kalem 0.6.30): a file of a language a plugin declares is of
+  that language's text type, `2026.journal` `hledger` and `x.bean`
+  `beancount`, the status bar naming the language (`Beancount`); a
+  mode line or `#!` line naming another wins. The plugin keeps
+  scoping by both (`TEXT_TYPES`), which costs nothing.
 - K8 A server's `initializationOptions` from the user's settings: the
   user's `servers.KEY.initializationOptions` merged over the
   manifest's, as `settings` and `servers.KEY.command` already are,
@@ -1329,6 +1335,13 @@ plugin's section 9 followed).
   only where it has work. Not a blocker for 0.1.0 (the git session's
   word, 2026-10-11): one instance a session, its commands scoped to
   their text types.
+  Built 2026-10-15 on Kalem's branch `plugin-on-open` (e74d04b4, for
+  Kalem 0.6.30): `onOpen:GLOB`, a file's name matched (`*`, `?`, any
+  case). The plugin keeps `onEvent:document:open` all the same: it
+  works with bank statements of any kind a user's importer reads
+  (CSV, OFX, text) and with the Org and Markdown notes it inserts
+  tables and runs blocks in, which together are most documents, so
+  the patterns would start it nearly as often and miss some.
 
 ## Open for the owner
 
