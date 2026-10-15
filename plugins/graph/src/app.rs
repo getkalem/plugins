@@ -759,6 +759,10 @@ pub struct App {
     not: BTreeSet<String>,
     /// The file of the current document.
     current: Option<String>,
+    /// Kalem tells which document has the focus (its plugin API 0.2.18,
+    /// `focus`): from its first word on, the current document is the one
+    /// with the focus, not the one opened last.
+    focus_told: bool,
     /// The graph used last, for commands outside any graph.
     last: Option<String>,
     today: Option<Date>,
@@ -842,6 +846,7 @@ impl App {
             indexes: BTreeMap::new(),
             not: BTreeSet::new(),
             current: None,
+            focus_told: false,
             last: None,
             today: None,
             docs: BTreeMap::new(),
@@ -1061,16 +1066,50 @@ impl App {
         }
     }
 
-    /// A document opened in the editor.
+    /// A document opened in the editor: its graph found, and indexed.
+    /// Until Kalem tells which document has the focus ([`App::focused`]),
+    /// the document opened last is the current one.
     pub fn opened(&mut self, files: &dyn Files, path: &str) -> Vec<Effect> {
-        let mut out = Vec::new();
         let path = files::normalize(path);
-        self.current = Some(path.clone());
+        if self.focus_told {
+            let mut out = Vec::new();
+            let known = self.indexes.len();
+            self.graph_soon(files, &path, &mut out);
+            // A graph indexed just now: the note was drawn without it.
+            if self.indexes.len() > known {
+                out.push(Effect::RefreshLayers);
+            }
+            return out;
+        }
+        self.show(files, &path)
+    }
+
+    /// A document got the focus in the editor (Kalem's plugin API 0.2.18,
+    /// `focus`): one opened, or one open already switched back to, which
+    /// no opening tells. It is the current one; a document with no file
+    /// (one of the plugin's) leaves the current one as it is.
+    pub fn focused(&mut self, files: &dyn Files, path: Option<&str>) -> Vec<Effect> {
+        self.focus_told = true;
+        let Some(path) = path.map(files::normalize) else {
+            return Vec::new();
+        };
+        if self.current.as_deref() == Some(path.as_str()) {
+            return Vec::new();
+        }
+        self.show(files, &path)
+    }
+
+    /// The document of `path` (absolute, normalized) current: its graph
+    /// the one used last, its page first among the recent ones, in the
+    /// panel and its graph in the status bar.
+    fn show(&mut self, files: &dyn Files, path: &str) -> Vec<Effect> {
+        let mut out = Vec::new();
+        self.current = Some(path.to_string());
         let known = self.indexes.len();
-        if let Some(root) = self.graph_soon(files, &path, &mut out) {
+        if let Some(root) = self.graph_soon(files, path, &mut out) {
             self.last = Some(root);
         }
-        self.track_recent(&path);
+        self.track_recent(path);
         out.extend(self.panel_effects());
         out.push(self.status());
         // A graph indexed just now: the note was drawn without it.
