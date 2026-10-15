@@ -1322,7 +1322,9 @@ pub fn graph(index: &Index) -> Content {
 /// An entry of the backlinks panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanelNode {
-    /// Its key, unique in the panel (Kalem asks so of what is clicked).
+    /// Its key, unique in the panel (Kalem asks so of what is clicked)
+    /// and the same while references come and go: Kalem keeps the entry
+    /// chosen by keys by its key, and the plugin what is folded.
     pub key: String,
     /// Where a click goes.
     pub target: Option<Target>,
@@ -1334,10 +1336,6 @@ pub struct PanelNode {
     pub expanded: Option<bool>,
     /// The entries under it.
     pub children: Vec<PanelNode>,
-    /// What it is folded by, the same while references come and go: a
-    /// section's number, a page's references by their section and the
-    /// page's file. None: it does not fold.
-    pub fold: Option<String>,
 }
 
 impl PanelNode {
@@ -1350,22 +1348,13 @@ impl PanelNode {
             c.targets(out);
         }
     }
-
-    /// Every key with what it is folded by, this node's and those under
-    /// it.
-    pub fn folds(&self, out: &mut Vec<(String, String)>) {
-        if let Some(f) = &self.fold {
-            out.push((self.key.clone(), f.clone()));
-        }
-        for c in &self.children {
-            c.folds(out);
-        }
-    }
 }
 
-/// A section of the backlinks panel, its entries in `folded` folded
-/// (their [`PanelNode::fold`]): the section, or a page's references, as
-/// Logseq folds them.
+/// A section of the backlinks panel, its entries whose keys are in
+/// `folded` folded: the section, or a page's references, as Logseq folds
+/// them. A section's key is its number, a page's its section and its file
+/// (`1/pages/Rust.md`), a reference's its page's and its place under it
+/// (`1/pages/Rust.md#0`): a page put before them leaves them as they are.
 fn panel_section(
     index: &Index,
     n: usize,
@@ -1375,35 +1364,31 @@ fn panel_section(
 ) -> PanelNode {
     let groups = grouped(index, refs);
     let count: usize = groups.iter().map(|(_, r)| r.len()).sum();
-    let fold = n.to_string();
+    let key = n.to_string();
     PanelNode {
-        key: format!("{n}"),
         target: None,
         label: title.to_string(),
         detail: Some(count.to_string()),
-        expanded: Some(!folded.contains(&fold)),
-        fold: Some(fold),
+        expanded: Some(!folded.contains(&key)),
+        key,
         children: groups
             .into_iter()
-            .enumerate()
-            .map(|(g, (rel, refs))| {
+            .map(|(rel, refs)| {
                 let path = index.graph.path(&rel);
-                let fold = format!("{n}/{rel}");
+                let key = format!("{n}/{rel}");
                 PanelNode {
-                    key: format!("{n}.{g}"),
                     target: Some(Target::File {
                         path: path.clone(),
                         line: 0,
                     }),
                     label: title_of(index, &rel),
                     detail: Some(refs.len().to_string()),
-                    expanded: Some(!folded.contains(&fold)),
-                    fold: Some(fold),
+                    expanded: Some(!folded.contains(&key)),
                     children: refs
                         .into_iter()
                         .enumerate()
                         .map(|(i, r)| PanelNode {
-                            key: format!("{n}.{g}.{i}"),
+                            key: format!("{key}#{i}"),
                             target: Some(Target::File {
                                 path: path.clone(),
                                 line: r.line,
@@ -1412,9 +1397,9 @@ fn panel_section(
                             detail: None,
                             expanded: None,
                             children: Vec::new(),
-                            fold: None,
                         })
                         .collect(),
+                    key,
                 }
             })
             .collect(),
@@ -1422,8 +1407,8 @@ fn panel_section(
 }
 
 /// The backlinks panel for the page `key`: its unlinked references
-/// searched for if `unlinked`, the entries in `folded` folded (their
-/// [`PanelNode::fold`]).
+/// searched for if `unlinked`, the entries whose keys are in `folded`
+/// folded.
 pub fn backlinks_panel(
     index: &Index,
     key: &str,
@@ -1441,7 +1426,6 @@ pub fn backlinks_panel(
             detail: Some(index.graph.kind.title().into()),
             expanded: None,
             children: Vec::new(),
-            fold: None,
         },
         panel_section(index, 1, "Linked references", index.backlinks(key), folded),
         if unlinked {
@@ -1463,10 +1447,7 @@ pub fn backlinks_panel(
                     detail: None,
                     expanded: None,
                     children: Vec::new(),
-                    fold: None,
                 }],
-                // Opened by searching for them (`unlinked`).
-                fold: None,
             }
         },
     ]
@@ -2180,6 +2161,17 @@ mod tests {
         assert_eq!(c.targets.len(), c.text.lines().count());
     }
 
+    /// Every entry of `nodes` and those under them, in the panel's
+    /// order.
+    fn entries(nodes: &[PanelNode]) -> Vec<&PanelNode> {
+        let mut out = Vec::new();
+        for n in nodes {
+            out.push(n);
+            out.extend(entries(&n.children));
+        }
+        out
+    }
+
     #[test]
     fn the_other_documents() {
         let i = index();
@@ -2226,42 +2218,45 @@ mod tests {
         assert_eq!(panel[2].detail.as_deref(), Some("1"));
         assert_eq!(panel.len(), 3);
         assert_eq!(panel[1].detail.as_deref(), Some("3"));
-        assert_eq!(panel[1].children[0].key, "1.0");
+        assert_eq!(panel[1].children[0].key, "1/journals/2026_10_03.md");
+        let reference = &panel[1].children[1].children[1];
+        assert_eq!(reference.key, "1/pages/Other.md#1");
         assert_eq!(
-            panel[1].children[1].children[1].target,
+            reference.target,
             Some(Target::File {
                 path: "/g/pages/Other.md".into(),
                 line: 1
             })
         );
-        let mut keys = Vec::new();
-        for n in &panel {
-            n.targets(&mut keys);
+        // Every key unique and not empty, the unlinked references opened
+        // or not: Kalem refuses a panel otherwise.
+        for nodes in [&closed, &panel] {
+            let keys: Vec<&str> = entries(nodes).iter().map(|n| &n.key[..]).collect();
+            let unique: BTreeSet<&str> = keys.iter().copied().collect();
+            assert_eq!(unique.len(), keys.len(), "keys are unique: {keys:?}");
+            assert!(keys.iter().all(|k| !k.is_empty()), "{keys:?}");
         }
-        let mut unique: Vec<&String> = keys.iter().map(|(k, _)| k).collect();
-        unique.sort();
-        unique.dedup();
-        assert_eq!(unique.len(), keys.len(), "keys are unique");
     }
 
     #[test]
     fn the_panels_sections_and_pages_fold() {
         let i = index();
-        // Each section folds by its number, each page's references by
-        // their section and the page's file.
-        let mut folds = Vec::new();
-        for n in &backlinks_panel(&i, "kalem", true, &BTreeSet::new()) {
-            n.folds(&mut folds);
-        }
-        let folds: Vec<(&str, &str)> = folds.iter().map(|(k, f)| (&k[..], &f[..])).collect();
+        // Each section folds by its key, its number, each page's
+        // references by theirs, the section and the page's file.
+        let panel = backlinks_panel(&i, "kalem", true, &BTreeSet::new());
+        let folds: Vec<&str> = entries(&panel)
+            .iter()
+            .filter(|n| n.expanded.is_some())
+            .map(|n| &n.key[..])
+            .collect();
         assert_eq!(
             folds,
             [
-                ("1", "1"),
-                ("1.0", "1/journals/2026_10_03.md"),
-                ("1.1", "1/pages/Other.md"),
-                ("2", "2"),
-                ("2.0", "2/pages/Mention.md"),
+                "1",
+                "1/journals/2026_10_03.md",
+                "1/pages/Other.md",
+                "2",
+                "2/pages/Mention.md",
             ]
         );
         // A page's references folded: its arrow closed, its references
