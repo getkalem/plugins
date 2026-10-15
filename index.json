@@ -71,20 +71,20 @@
     {
       "id": "org.kalem.git",
       "name": "Git",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "description": "The repository's status as a document, lazygit's panels in magit's form: changed files with their diffs under them (Tab), staged by file, hunk or line with magit's keys, committed, pushed and pulled; branches and stashes; changed lines marked beside the lines; on Doom's SPC g keys, with the arrows, Enter and Escape",
       "api": "^0.2.13",
       "permissions": [
         "subprocess:git"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/git",
-      "download": "https://github.com/getkalem/plugins/releases/download/git-v0.0.12/git.wasm",
-      "sha256": "d5849264f74acc398ac88e4d21e9d2b2445edf4bcf74bdb0ae16c7d84ce02372"
+      "download": null,
+      "sha256": null
     },
     {
       "id": "org.kalem.graph",
       "name": "Note graphs",
-      "version": "0.18.1",
+      "version": "0.19.0",
       "description": "Logseq graphs and Obsidian vaults opened as themselves: pages, journals, backlinks, block references, tags, tasks and queries, edited as an outliner, on Doom's SPC n r keys; nothing converted, logseq/ and .obsidian/ never written",
       "api": "^0.2.19",
       "permissions": [
@@ -92,8 +92,8 @@
         "fs:write:workspace"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
-      "download": "https://github.com/getkalem/plugins/releases/download/graph-v0.18.1/graph.wasm",
-      "sha256": "db461d1cdb9302ec466f360d026b7850d2f92b288b1f6e4fea4136e37b7fd775",
+      "download": null,
+      "sha256": null,
       "layers": [
         {
           "id": "logseq",
