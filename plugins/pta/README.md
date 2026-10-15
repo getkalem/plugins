@@ -233,7 +233,7 @@ Kalem takes at most 16 MB of what a program prints. An output past it is not sho
 
 ## Platforms
 
-Built and tried on macOS; on Linux and Windows the plugin runs the same tools, untried yet. A journal with Windows's line endings (CRLF) reads as any other, and what the plugin writes in it (a transaction, a balance assertion, a block's results) ends its lines the same way. A path a tool prints with `\` names the same file as the editor's with `/`, in any case. A Beancount block (Run the Journal Block) gives its text to `bean-query` as `/dev/stdin`, which Windows lacks: there it does not run.
+Built and tried on macOS, and on Linux (Debian 13, aarch64) with Debian's hledger 1.32 and Ledger 3.3 and Beancount 3.2 from pip: the tests pass, and in the terminal editor the checks, the Balance, Format Document, completion and a reconciliation work. On Linux, install Kalem's full build (`kalem-editor-…`, which wants `libxkbcommon` even for `kalem tui`): the terminal-only release (`kalem-terminal-…`) has no plugin host, so there only the plugin's languages load (highlighting, the servers), not its commands. Where the locale is not UTF-8 (a server or a container without `LANG`), Debian's hledger cannot read a journal's letters past ASCII; the plugin then runs it with `LC_ALL=C.UTF-8`. Windows is untried. A journal with Windows's line endings (CRLF) reads as any other, and what the plugin writes in it (a transaction, a balance assertion, a block's results) ends its lines the same way. A path a tool prints with `\` names the same file as the editor's with `/`, in any case. A Beancount block (Run the Journal Block) gives its text to `bean-query` as `/dev/stdin`, which Windows lacks: there it does not run.
 
 ## The servers, measured
 
