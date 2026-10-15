@@ -82,6 +82,9 @@ struct Checked {
 }
 
 thread_local! {
+    /// hledger run with `LC_ALL=C.UTF-8`: set once it could not read a
+    /// journal's text in a locale that is not UTF-8 ([`run_input`]).
+    static UTF8: Cell<bool> = const { Cell::new(false) };
     /// The documents open, by number: their files.
     static DOCS: RefCell<BTreeMap<u64, String>> = const { RefCell::new(BTreeMap::new()) };
     /// The names each main journal knows, as its tool listed them, for
@@ -207,7 +210,11 @@ fn run(
     run_input(program, args, dir, None, done);
 }
 
-/// [`run`], `input` given on the program's standard input.
+/// [`run`], `input` given on the program's standard input. hledger in a
+/// locale that is not UTF-8 (a Linux session without `LANG`; Debian's
+/// hledger 1.32 reads by the locale) cannot read a journal's letters past
+/// ASCII: when it says so it runs once more with `LC_ALL=C.UTF-8`, and so
+/// from then on, a locale that works left as it is.
 fn run_input(
     program: &'static str,
     args: Vec<String>,
@@ -215,17 +222,33 @@ fn run_input(
     input: Option<Vec<u8>>,
     done: impl FnOnce(Result<process::Exit, NotRun>) + 'static,
 ) {
+    let utf8 = program == "hledger" && UTF8.with(Cell::get);
     let done = Rc::new(RefCell::new(Some(done)));
     running(program, true);
+    let again = (args.clone(), dir.to_string(), input.clone());
     let finish = move |r: Result<process::Exit, NotRun>| {
         running(program, false);
-        if let Some(f) = done.borrow_mut().take() {
-            f(r);
+        let Some(f) = done.borrow_mut().take() else {
+            return;
+        };
+        if program == "hledger"
+            && !utf8
+            && let Ok(e) = &r
+            && e.status != Some(0)
+            && journal::undecoded(&String::from_utf8_lossy(&e.stderr))
+        {
+            UTF8.with(|u| u.set(true));
+            let (args, dir, input) = again.clone();
+            return run_input(program, args, &dir, input, f);
         }
+        f(r);
     };
-    let with_input = |c: process::Command| match &input {
-        Some(i) => c.stdin(i.clone()),
-        None => c,
+    let with_input = |c: process::Command| {
+        let c = if utf8 { c.env("LC_ALL", "C.UTF-8") } else { c };
+        match &input {
+            Some(i) => c.stdin(i.clone()),
+            None => c,
+        }
     };
     let here = with_input(process::Command::new(program).args(args.clone()).cwd(dir));
     let first = finish.clone();
