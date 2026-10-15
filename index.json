@@ -178,8 +178,8 @@
         "subprocess:python3"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pta",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/pta-v0.7.1/pta.wasm",
+      "sha256": "bbf584ab1f555037ec85680028f9cd5ee048da056872aa34527c09cd4bb20b96",
       "languages": [
         {
           "id": "hledger",
