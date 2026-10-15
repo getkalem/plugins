@@ -707,7 +707,13 @@ fn ref_counts(
         // Each block once; a reference in no block, each line once.
         let from: std::collections::HashSet<(&str, Option<usize>, u32)> = refs
             .iter()
-            .map(|r| (&*r.path, r.block, if r.block.is_some() { 0 } else { r.line }))
+            .map(|r| {
+                (
+                    &*r.path,
+                    r.block,
+                    if r.block.is_some() { 0 } else { r.line },
+                )
+            })
             .collect();
         let at = start + line.strip_suffix('\r').unwrap_or(line).len();
         o.inserts.push(Insert {
