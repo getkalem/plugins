@@ -93,7 +93,7 @@ fn panel(i: &Index) -> String {
         }
     }
     let mut out = String::new();
-    for n in views::backlinks_panel(i, "kalem", true) {
+    for n in views::backlinks_panel(i, "kalem", true, &Default::default()) {
         lines(&n, 0, &mut out);
     }
     out
