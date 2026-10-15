@@ -576,7 +576,7 @@ enum After {
     Commit(CommitKind),
     /// Offer the branches to switch to.
     SwitchBranch,
-    /// Ask for a new branch's name.
+    /// Ask where a new branch starts, then its name.
     NewBranch,
     /// Stash the changes.
     Stash,
@@ -683,8 +683,11 @@ enum Question {
         root: String,
         branches: Vec<(String, bool)>,
     },
-    /// A new branch's name.
-    NewBranch { root: String },
+    /// Where a new branch starts: where HEAD is first, then the other
+    /// local branches and the remotes' (Magit's `b c`).
+    NewBranchStart { root: String, starts: Vec<String> },
+    /// A new branch's name, and where it starts (`None`: at HEAD).
+    NewBranch { root: String, from: Option<String> },
     /// What to do with a stash.
     Stash { root: String, index: u32 },
     /// Which discard to run, as `d` offers them; past the plans, Cancel.
@@ -821,6 +824,26 @@ impl App {
         let token = self.token();
         self.questions.insert(token, q);
         token
+    }
+
+    /// The name of a new branch that starts at `from` (`None`: at HEAD),
+    /// shown as `shown`.
+    fn ask_branch_name(
+        &mut self,
+        out: &mut Vec<Effect>,
+        root: &str,
+        from: Option<String>,
+        shown: &str,
+    ) {
+        let token = self.ask(Question::NewBranch {
+            root: root.to_string(),
+            from,
+        });
+        out.push(Effect::Prompt {
+            token,
+            title: format!("A new branch from {shown}, switched to: its name"),
+            value: None,
+        });
     }
 
     fn fail(&mut self, out: &mut Vec<Effect>, message: String) {
@@ -1432,14 +1455,44 @@ impl App {
                 });
             }
             After::NewBranch => {
-                let token = self.ask(Question::NewBranch {
+                // As Magit's `b c`, where it starts first: where HEAD is,
+                // the other local branches, the remotes'.
+                let here = repo.status.branch.clone();
+                let mut starts = vec![here.clone().unwrap_or_else(|| "HEAD".into())];
+                starts.extend(
+                    repo.local_branches()
+                        .into_iter()
+                        .filter(|b| !b.current)
+                        .map(|b| b.name.clone()),
+                );
+                starts.extend(
+                    repo.branches
+                        .iter()
+                        .filter(|b| b.remote)
+                        .map(|b| b.name.clone()),
+                );
+                if starts.len() == 1 {
+                    self.ask_branch_name(out, root, None, &starts[0]);
+                    return;
+                }
+                let first = if here.is_some() {
+                    "The current branch"
+                } else {
+                    "The commit checked out"
+                };
+                let items = starts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| (s.clone(), (i == 0).then(|| first.to_string())))
+                    .collect();
+                let token = self.ask(Question::NewBranchStart {
                     root: root.to_string(),
+                    starts,
                 });
-                let from = repo.status.branch.as_deref().unwrap_or("HEAD");
-                out.push(Effect::Prompt {
+                out.push(Effect::Pick {
                     token,
-                    title: format!("A new branch from {from}, switched to: its name"),
-                    value: None,
+                    title: "A new branch starting at".into(),
+                    items,
                 });
             }
             After::Stash => {
@@ -1892,17 +1945,30 @@ impl App {
                 };
                 self.run_plan(out, &root, vec![command], done);
             }
-            (Question::NewBranch { root }, Answer::Text(Some(name))) => {
+            (Question::NewBranchStart { root, starts }, Answer::Picked(p)) => {
+                let Some(i) = p.first().map(|i| *i as usize).filter(|i| *i < starts.len()) else {
+                    return;
+                };
+                // The first is where HEAD is: the branch is made there.
+                let from = (i > 0).then(|| starts[i].clone());
+                self.ask_branch_name(out, &root, from, &starts[i]);
+            }
+            (Question::NewBranch { root, from }, Answer::Text(Some(name))) => {
                 let name = name.trim();
                 if name.is_empty() {
                     return;
                 }
-                self.run_plan(
-                    out,
-                    &root,
-                    vec![cmd::switch_create(name, None)],
-                    format!("Made the branch {name}, and switched to it"),
-                );
+                let (command, done) = match &from {
+                    Some(start) => (
+                        cmd::switch_create_from(name, start),
+                        format!("Made the branch {name} from {start}, and switched to it"),
+                    ),
+                    None => (
+                        cmd::switch_create(name, None),
+                        format!("Made the branch {name}, and switched to it"),
+                    ),
+                };
+                self.run_plan(out, &root, vec![command], done);
             }
             (Question::Stash { root, index }, Answer::Picked(p)) => {
                 let name = format!("stash@{{{index}}}");

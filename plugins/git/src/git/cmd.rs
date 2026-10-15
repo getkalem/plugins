@@ -655,6 +655,12 @@ pub fn switch_create(name: &str, track: Option<&str>) -> GitCommand {
     GitCommand::new(args)
 }
 
+/// Makes a branch at `start` (a branch, or a remote's) and switches to
+/// it, Magit's `b c` from elsewhere than HEAD.
+pub fn switch_create_from(name: &str, start: &str) -> GitCommand {
+    GitCommand::new(["switch", "-c", name, start])
+}
+
 /// The URL of a remote.
 pub fn remote_url(remote: &str) -> GitCommand {
     GitCommand::read(["remote", "get-url", remote])

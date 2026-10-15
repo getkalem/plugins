@@ -834,6 +834,39 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
 }
 
 #[test]
+fn a_new_branch_starts_where_asked() {
+    let mut k = Kalem::new("branch-start");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    k.git_ok(&["branch", "old"]);
+    k.write("a.txt", "two\n");
+    k.commit_all("Second");
+    k.command("git.status", Some("a.txt"));
+    // Where HEAD is, then `old`: picked, the branch is made there.
+    k.answers.push_back(Answer::Picked(vec![1]));
+    k.answers.push_back(Answer::Text(Some("fix".into())));
+    k.on("git.newBranch", "repo → ");
+    assert!(
+        k.asked.iter().any(|a| a.ends_with(" | old")),
+        "{:?}",
+        k.asked
+    );
+    assert_eq!(
+        k.asked.last().map(String::as_str),
+        Some("A new branch from old, switched to: its name")
+    );
+    assert_eq!(
+        k.last_note(),
+        "Made the branch fix from old, and switched to it"
+    );
+    assert_eq!(
+        k.git_ok(&["rev-parse", "fix"]),
+        k.git_ok(&["rev-parse", "old"])
+    );
+    assert_eq!(k.git_ok(&["branch", "--show-current"]).trim(), "fix");
+}
+
+#[test]
 fn branches_stashes_and_amends_from_the_status() {
     let mut k = Kalem::new("branches");
     k.write("a.txt", "one\n");
@@ -853,9 +886,18 @@ fn branches_stashes_and_amends_from_the_status() {
     assert!(k.doc_text().contains(" repo → feature"), "{}", k.doc_text());
     assert!(k.doc_text().contains("\n * feature"), "{}", k.doc_text());
 
-    // `b c` makes one; `b b` offers the others.
+    // `b c` asks where the branch starts, where HEAD is first, then its
+    // name; `b b` offers the others.
+    k.answers.push_back(Answer::Picked(vec![0]));
     k.answers.push_back(Answer::Text(Some("topic".into())));
     k.on("git.newBranch", "repo → ");
+    assert!(
+        k.asked
+            .iter()
+            .any(|a| a.starts_with("A new branch starting at: feature | ")),
+        "{:?}",
+        k.asked
+    );
     assert_eq!(k.last_note(), "Made the branch topic, and switched to it");
     k.answers.push_back(Answer::Picked(vec![1]));
     k.on("git.switchBranch", "repo → ");
