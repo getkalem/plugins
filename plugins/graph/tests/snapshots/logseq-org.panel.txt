@@ -1,0 +1,8 @@
+Kalem  Logseq
+▾ Linked references  3
+  ▾ Oct 3rd, 2026  1
+    TODO Write to Editor
+  ▾ Project/Plugins  2
+    The plugins of Kalem
+    A file link: Kalem and a web one site
+▾ Unlinked references  0

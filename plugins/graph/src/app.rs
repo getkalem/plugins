@@ -222,6 +222,9 @@ pub const COMMANDS: &[CommandInfo] = &[
     // Run by the plugin once files of a graph changed on disk (Logseq,
     // Obsidian, a sync, a `git pull`): read again together.
     n("graph.filesChanged", "Read the Changed Files", &[]),
+    // Run by the plugin a moment after a note one of its commands edited
+    // changed again (an Undo, typing): its text taken into the index.
+    n("graph.noteEdited", "Take the Edited Note's Text", &[]),
     // The graph drawn (Kalem's plugin API 0.2.12): all its pages, or the
     // note's page and the pages two links away.
     m!("graph.graphView", "Graph View", &["space n r v"], "g"),
@@ -786,11 +789,22 @@ pub struct App {
     panel_targets: BTreeMap<String, Target>,
     /// The panel's unlinked references opened for its page: searched for.
     panel_unlinked: bool,
+    /// What the panel has folded for its page (`PanelNode::fold`): a
+    /// section, a page's references.
+    panel_folded: BTreeSet<String>,
+    /// What each of the panel's entries that fold is folded by, by key.
+    panel_folds: BTreeMap<String, String>,
     /// The documents open in Kalem, by number: their files.
     open: BTreeMap<u64, String>,
     /// The files open with changes not saved: never written by the
     /// plugin, which would make Kalem ask which copy to keep.
     dirty: BTreeSet<String>,
+    /// The notes whose text the index took from a command's edits, not
+    /// saved since, with that text: their changes after it (an Undo,
+    /// typing) are taken too, by `graph.noteEdited`.
+    edited: BTreeMap<String, String>,
+    /// `graph.noteEdited` is queued and has not run yet.
+    edited_queued: bool,
     /// A counter mixed into new block IDs.
     made: u64,
     /// Random bits, when Kalem gives the plugin its clock (API 0.2.10).
@@ -859,8 +873,12 @@ impl App {
             panel: None,
             panel_targets: BTreeMap::new(),
             panel_unlinked: false,
+            panel_folded: BTreeSet::new(),
+            panel_folds: BTreeMap::new(),
             open: BTreeMap::new(),
             dirty: BTreeSet::new(),
+            edited: BTreeMap::new(),
+            edited_queued: false,
             made: 0,
             random: None,
             now: None,
@@ -1045,16 +1063,25 @@ impl App {
         let page = self.current.as_deref().and_then(|p| self.page_of(p));
         match page {
             Some((root, key)) => {
-                // Another page: its unlinked references closed again.
+                // Another page: its unlinked references closed again,
+                // nothing folded.
                 if self.panel.as_ref() != Some(&(root.clone(), key.clone())) {
                     self.panel_unlinked = false;
+                    self.panel_folded.clear();
                 }
-                let nodes = views::backlinks_panel(&self.indexes[&root], &key, self.panel_unlinked);
-                let mut targets = Vec::new();
+                let nodes = views::backlinks_panel(
+                    &self.indexes[&root],
+                    &key,
+                    self.panel_unlinked,
+                    &self.panel_folded,
+                );
+                let (mut targets, mut folds) = (Vec::new(), Vec::new());
                 for n in &nodes {
                     n.targets(&mut targets);
+                    n.folds(&mut folds);
                 }
                 self.panel_targets = targets.into_iter().collect();
+                self.panel_folds = folds.into_iter().collect();
                 self.panel = Some((root, key));
                 vec![Effect::Panel(nodes)]
             }
@@ -1650,6 +1677,10 @@ impl App {
             }
             return out;
         }
+        if id == outline::NOTE_EDITED {
+            out.extend(self.take_changed_edited(ctx));
+            return out;
+        }
         self.take_unsaved(ctx);
         if id == "graph.insertText" {
             if let Some(t) = serde_json::from_str::<serde_json::Value>(&ctx.args)
@@ -1941,7 +1972,10 @@ impl App {
             | "graph.insertDate"
             | "graph.zoom"
             | "graph.refBlockNow" => {
-                out.extend(self.outline_command(files, id, &root, rel.as_deref(), ctx));
+                let done = self.outline_command(files, id, &root, rel.as_deref(), ctx);
+                let again = self.take_edited(&root, rel.as_deref(), ctx, &done);
+                out.extend(done);
+                out.extend(again);
             }
             _ => {}
         }
@@ -2227,12 +2261,27 @@ impl App {
     }
 
     /// An entry of the backlinks panel opened or closed: its unlinked
-    /// references searched for when they are opened.
+    /// references searched for when they are opened; a section or a
+    /// page's references folded, as long as the panel shows its page.
     pub fn panel_expanded(&mut self, key: &str, open: bool) -> Vec<Effect> {
-        if key != "2" || open == self.panel_unlinked {
+        if key == "2" {
+            if open == self.panel_unlinked {
+                return Vec::new();
+            }
+            self.panel_unlinked = open;
+            return self.panel_effects();
+        }
+        let Some(fold) = self.panel_folds.get(key) else {
+            return Vec::new();
+        };
+        let changed = if open {
+            self.panel_folded.remove(fold)
+        } else {
+            self.panel_folded.insert(fold.clone())
+        };
+        if !changed {
             return Vec::new();
         }
-        self.panel_unlinked = open;
         self.panel_effects()
     }
 

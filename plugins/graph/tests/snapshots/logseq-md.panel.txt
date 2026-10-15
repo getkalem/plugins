@@ -1,0 +1,17 @@
+Kalem  Logseq
+▾ Linked references  5
+  ▾ Oct 3rd, 2026  1
+    TODO Read Kalem docs
+  ▾ Program  1
+    A page named by a property: Kalem is one
+  ▾ Project/Plugins  1
+    The plugins of Kalem, in getkalem/plugins
+  ▾ Project/Plugins/Graph  1
+    Logseq graphs and Obsidian vaults in Kalem
+  ▾ Queries  1
+    note: An admonition naming Kalem
+▾ Unlinked references  2
+  ▾ Oct 10th, 2026  1
+    Unlinked: the graph plugin and kalem
+  ▾ Questions?  1
+    It mentions kalem without a link

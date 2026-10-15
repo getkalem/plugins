@@ -967,6 +967,70 @@ fn a_task_cycled_from_the_tasks_document() {
 }
 
 #[test]
+fn a_task_cycled_in_its_note_answers_the_query_there_at_once() {
+    let m = logseq();
+    let note =
+        "- TODO ship [[Kalem]]\n- DOING test [[Kalem]]\n- Open work\n\t- {{query (task DOING)}}\n";
+    m.write("/w/notes/pages/Work.md", note).unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Work.md");
+    app.track_open(4, "/w/notes/pages/Work.md");
+    let count = |app: &App, text: &str| {
+        let o = app.overlays("logseq", Some("/w/notes/pages/Work.md"), text);
+        o.spans
+            .iter()
+            .find_map(|s| match &s.effect {
+                crate::layer::Effect::Replace(t, _) if t.starts_with('⌕') => Some(t.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    assert_eq!(count(&app, note), "⌕ 1 block");
+    // Cycle Task on the first block, TODO to DOING, not saved: the query
+    // on the same page answers again at the cycle, as Logseq's does.
+    let out = app.command(
+        &m,
+        "graph.cycleTodo",
+        &ctx("/w/notes/pages/Work.md", note, 2),
+    );
+    let cycled = crate::edit::apply(note, &edits_of(&out));
+    assert!(cycled.starts_with("- DOING ship"), "{cycled}");
+    assert!(out.contains(&Effect::RefreshLayers), "{out:?}");
+    assert_eq!(count(&app, &cycled), "⌕ 2 blocks");
+    // Kalem applies the edit: the note's text is taken again a moment
+    // later, once however often it changes meanwhile; the same, nothing
+    // to draw.
+    let later = Effect::Later {
+        id: "graph.noteEdited".into(),
+        args: "{}".into(),
+        after_ms: 300,
+    };
+    assert_eq!(app.track_changed(4), vec![later.clone()]);
+    assert!(app.track_changed(4).is_empty());
+    let c = ctx("/w/notes/pages/Work.md", &cycled, 2);
+    assert!(app.command(&m, "graph.noteEdited", &c).is_empty());
+    // Undone in Kalem: the query answers as before the cycle.
+    assert_eq!(app.track_changed(4), vec![later]);
+    let c = ctx("/w/notes/pages/Work.md", note, 2);
+    let out = app.command(&m, "graph.noteEdited", &c);
+    assert!(out.contains(&Effect::RefreshLayers), "{out:?}");
+    assert_eq!(count(&app, note), "⌕ 1 block");
+    // Cycled again and closed without a save: the file's text again.
+    app.command(&m, "graph.cycleTodo", &c);
+    assert_eq!(count(&app, &cycled), "⌕ 2 blocks");
+    app.closed_document(&m, 4);
+    assert_eq!(count(&app, note), "⌕ 1 block");
+    // Saved, or a note no command edited: typing is taken at the next
+    // command, or the save.
+    app.track_open(5, "/w/notes/pages/Work.md");
+    app.command(&m, "graph.cycleTodo", &c);
+    m.write("/w/notes/pages/Work.md", &cycled).unwrap();
+    app.saved(&m, "/w/notes/pages/Work.md");
+    assert!(app.track_changed(5).is_empty());
+    assert_eq!(count(&app, &cycled), "⌕ 2 blocks");
+}
+
+#[test]
 fn searching_headings_recent_pages_and_whiteboards() {
     let m = logseq();
     m.write("/w/notes/whiteboards/Plan.edn", "{:blocks () :pages ()}")
@@ -1171,7 +1235,54 @@ fn the_panels_unlinked_references_searched_when_opened() {
     assert_eq!(p[2].expanded, Some(false));
     let p = panel(&app.panel_clicked(views::UNLINKED_SEARCH));
     assert_eq!(p[2].expanded, Some(true));
-    assert!(app.panel_expanded("1", false).is_empty());
+    assert!(app.panel_expanded("nothing", false).is_empty());
+}
+
+#[test]
+fn a_pages_references_fold_in_the_panel() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    let panel = |out: &[Effect]| {
+        out.iter()
+            .find_map(|e| match e {
+                Effect::Panel(p) => Some(p.clone()),
+                _ => None,
+            })
+            .expect("the panel")
+    };
+    let p = panel(&app.opened(&m, "/w/notes/pages/Kalem.md"));
+    assert_eq!(p[1].children[1].label, "Other");
+    assert_eq!(p[1].children[1].expanded, Some(true));
+    // A click or Enter on Other's line: its references folded, kept
+    // under it; Oct 3rd's open.
+    let p = panel(&app.panel_expanded("1.1", false));
+    assert_eq!(p[1].children[1].expanded, Some(false));
+    assert_eq!(p[1].children[1].children.len(), 1);
+    assert_eq!(p[1].children[0].expanded, Some(true));
+    assert!(app.panel_expanded("1.1", false).is_empty());
+    // Kept folded when another file's save puts a newer journal before
+    // it: folded by its file, not its place.
+    m.write("/w/notes/journals/2026_10_05.md", "- more of [[Kalem]]\n")
+        .unwrap();
+    let p = panel(&app.saved(&m, "/w/notes/journals/2026_10_05.md"));
+    let labels: Vec<&str> = p[1].children.iter().map(|g| &g.label[..]).collect();
+    assert_eq!(labels, ["Oct 5th, 2026", "Oct 3rd, 2026", "Other"]);
+    let open: Vec<_> = p[1].children.iter().map(|g| g.expanded).collect();
+    assert_eq!(open, [Some(true), Some(true), Some(false)]);
+    // Unfolded by its key now.
+    let p = panel(&app.panel_expanded("1.2", true));
+    assert_eq!(p[1].children[2].expanded, Some(true));
+    // The section folded: its pages kept under it.
+    app.panel_expanded("1.0", false);
+    let p = panel(&app.panel_expanded("1", false));
+    assert_eq!(p[1].expanded, Some(false));
+    assert_eq!(p[1].children.len(), 3);
+    // Another page, then back: nothing folded.
+    let p = panel(&app.opened(&m, "/w/notes/pages/Other.md"));
+    assert_eq!(p[1].expanded, Some(true));
+    let p = panel(&app.opened(&m, "/w/notes/pages/Kalem.md"));
+    assert_eq!(p[1].expanded, Some(true));
+    assert!(p[1].children.iter().all(|g| g.expanded == Some(true)));
 }
 
 #[test]

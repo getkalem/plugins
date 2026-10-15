@@ -42,6 +42,7 @@ fn documents(name: &str) -> Vec<(&'static str, String)> {
         ("graph", views::graph(&i).text),
         ("drawing", views::drawing(&i, None).text),
         ("backlinks", views::backlinks(&i, "kalem", g).text),
+        ("panel", panel(&i)),
         // The menu, its folder written as the corpus's name: a page opened
         // and another graph known, so that each part shows.
         (
@@ -68,6 +69,34 @@ fn documents(name: &str) -> Vec<(&'static str, String)> {
         ));
     }
     docs
+}
+
+/// The backlinks panel of page Kalem, its unlinked references searched
+/// for, as Kalem draws its entries on lines: each indented by its depth,
+/// an arrow before those with entries under them, its detail after.
+fn panel(i: &Index) -> String {
+    fn lines(n: &views::PanelNode, depth: usize, out: &mut String) {
+        let arrow = match n.expanded {
+            Some(true) => "▾ ",
+            Some(false) => "▸ ",
+            None => "",
+        };
+        out.push_str(&format!("{}{arrow}{}", "  ".repeat(depth), n.label));
+        if let Some(d) = &n.detail {
+            out.push_str(&format!("  {d}"));
+        }
+        out.push('\n');
+        if n.expanded != Some(false) {
+            for c in &n.children {
+                lines(c, depth + 1, out);
+            }
+        }
+    }
+    let mut out = String::new();
+    for n in views::backlinks_panel(i, "kalem", true, &Default::default()) {
+        lines(&n, 0, &mut out);
+    }
+    out
 }
 
 fn snapshot(name: &str, doc: &str) -> PathBuf {
