@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use kalem_plugin_graph::config::{Fallbacks, Graph, Kind};
 use kalem_plugin_graph::files::{Files, Memory};
-use kalem_plugin_graph::index::Index;
+use kalem_plugin_graph::index::{Building, Index};
 use kalem_plugin_graph::{datalog, layer, query, views};
 
 /// The heap in use, and the most it held.
@@ -368,6 +368,27 @@ fn a_million_blocks() {
         },
     );
     assert!(!found.is_empty());
+    drop(app);
+    // The index built a slice at a time, as the plugin builds it in Kalem
+    // (its plugin API 0.2.17, `later`): no slice much past its 30 ms.
+    let mut b = Building::new(Graph::load(&m, "/big", Kind::Logseq, &Fallbacks::default()));
+    let (mut slices, mut longest) = (0, Duration::ZERO);
+    loop {
+        let start = Instant::now();
+        let done = b.step(&m, &mut || start.elapsed() < Duration::from_millis(30));
+        longest = longest.max(start.elapsed());
+        slices += 1;
+        if done {
+            break;
+        }
+    }
+    eprintln!("built a slice at a time: {slices} slices, the longest {longest:.2?} (budget 50ms)");
+    if longest > Duration::from_millis(50) {
+        over(format!("a slice of the index: {longest:?} over 50ms"));
+    }
+    let sliced = b.into_index();
+    assert_eq!(sliced.counts().2, blocks + 1);
+    assert_eq!(sliced.backlinks("hub").len(), HUB_REFS + 1);
     let over = OVER.lock().unwrap();
     assert!(over.is_empty(), "{over:#?}");
 }

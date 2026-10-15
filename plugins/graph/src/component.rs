@@ -217,6 +217,15 @@ fn apply(effect: Effect) {
                 ui::notify(&e, ui::Level::Error);
             }
         }
+        // A slice of a graph's index (Kalem's plugin API 0.2.17): at the
+        // editor's next tick, once it drew; else at once.
+        Effect::Later { id, args, after_ms } => {
+            if kalem_plugin::later::run(&id, &args, after_ms).is_err()
+                && let Err(e) = kalem::run(&id, &args)
+            {
+                ui::notify(&e, ui::Level::Error);
+            }
+        }
         Effect::Insert(text) => editor::insert(None, &text),
         Effect::Edits { edits, label, line } => {
             // Places of the text as the command found it; Kalem applies
@@ -335,6 +344,9 @@ impl Plugin for Graph {
                 app.kept = Some(kalem_plugin::state::get);
                 app.keep = Some(kalem_plugin::state::set);
                 app.restore();
+                // A large graph indexed in slices of 30 ms, the editor
+                // answering between them (API 0.2.17, `later`).
+                app.slice_ms = Some(30);
             }
         });
         for c in app::COMMANDS {

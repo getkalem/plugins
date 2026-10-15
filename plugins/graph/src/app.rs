@@ -215,6 +215,10 @@ pub const COMMANDS: &[CommandInfo] = &[
     // Run by the plugin when a note its layer serves became readable (its
     // folder added to Kalem's projects).
     n("graph.noteOpened", "Index the Note's Graph", &[]),
+    // Run by the plugin for each slice of a large graph's index, the next
+    // slice asked for at the editor's next tick (Kalem's plugin API
+    // 0.2.17, `later`).
+    n("graph.indexing", "Go On Indexing", &[]),
     // Run by the plugin once files of a graph changed on disk (Logseq,
     // Obsidian, a sync, a `git pull`): read again together.
     n("graph.filesChanged", "Read the Changed Files", &[]),
@@ -616,6 +620,17 @@ pub enum Effect {
         /// Its arguments, JSON.
         args: String,
     },
+    /// Runs one of the plugin's own commands at an editor's tick once
+    /// `after_ms` milliseconds have passed, the editor drawing and taking
+    /// keys meanwhile (`later.run`, Kalem's plugin API 0.2.17).
+    Later {
+        /// Its ID.
+        id: String,
+        /// Its arguments, JSON.
+        args: String,
+        /// How long it waits at least.
+        after_ms: u32,
+    },
     /// Inserts text at the cursor of the document the command runs in.
     Insert(String),
     /// A whiteboard or canvas `app` draws: shown in the file manager, to
@@ -802,6 +817,13 @@ pub struct App {
     /// Notes a layer serves whose graph is not indexed, its indexing asked
     /// for (`graph.noteOpened`) and not done yet.
     pub(crate) unindexed: std::cell::RefCell<BTreeSet<String>>,
+    /// The graphs being indexed a slice at a time, by root: a first index,
+    /// or another while the one in `indexes` serves.
+    building: BTreeMap<String, indexing::Build>,
+    /// The milliseconds of work in a slice of an index built so, when
+    /// Kalem runs the plugin's commands later (plugin API 0.2.17,
+    /// `later`); none: indexes are built at once.
+    pub slice_ms: Option<u32>,
     /// Files of the graphs changed on disk and not read again yet, read
     /// together by `graph.filesChanged` (queued for them) or before the
     /// next command, whichever comes first.
@@ -846,6 +868,8 @@ impl App {
             queries: std::cell::RefCell::new(BTreeMap::new()),
             properties: std::cell::RefCell::new(BTreeMap::new()),
             unindexed: std::cell::RefCell::new(BTreeSet::new()),
+            building: BTreeMap::new(),
+            slice_ms: None,
             changed: BTreeSet::new(),
         }
     }
@@ -900,17 +924,33 @@ impl App {
     }
 
     /// The root of the graph `path` (absolute) is in, its index built the
-    /// first time; notices of what could not be read go to `out`.
+    /// first time, or the rest of it when it is being built a slice at a
+    /// time; notices of what could not be read go to `out`.
     fn graph_of(&mut self, files: &dyn Files, path: &str, out: &mut Vec<Effect>) -> Option<String> {
         let path = files::normalize(path);
-        if let Some(root) = self
-            .indexes
-            .keys()
-            .filter(|r| files::relative(r, &path).is_some())
-            .max_by_key(|r| r.len())
-        {
-            return Some(root.clone());
+        if let Some(root) = self.indexed_root(&path) {
+            return Some(root);
         }
+        if let Some(root) = self.building_root(&path) {
+            self.finish_now(files, &root, out);
+            return Some(root);
+        }
+        let (root, kind) = self.find_graph(files, &path)?;
+        Some(self.load(files, &root, kind, out))
+    }
+
+    /// The root of the indexed graph `path` (absolute, normalized) is in.
+    fn indexed_root(&self, path: &str) -> Option<String> {
+        self.indexes
+            .keys()
+            .filter(|r| files::relative(r, path).is_some())
+            .max_by_key(|r| r.len())
+            .cloned()
+    }
+
+    /// The root and kind of the graph `path` (absolute, normalized) is
+    /// in, a graph known or found from it.
+    fn find_graph(&mut self, files: &dyn Files, path: &str) -> Option<(String, Kind)> {
         let mut known = self.known.clone();
         known.extend(self.settings.graphs.iter().map(|(root, kind)| {
             let kind = kind.unwrap_or_else(|| config::kind_by_content(files, root));
@@ -918,18 +958,23 @@ impl App {
         }));
         // A folder (Kalem's listing of it, `kalem run … FOLDER`) is looked
         // for from itself.
-        let from = if files.list(&path).is_ok() {
-            files::join(&path, ".")
+        let from = if files.list(path).is_ok() {
+            files::join(path, ".")
         } else {
-            path.clone()
+            path.to_string()
         };
-        let (root, kind) = config::find_root(files, &from, &known, &mut self.not)?;
-        Some(self.load(files, &root, kind, out))
+        config::find_root(files, &from, &known, &mut self.not)
     }
 
     fn load(&mut self, files: &dyn Files, root: &str, kind: Kind, out: &mut Vec<Effect>) -> String {
         let graph = Graph::load(files, root, kind, &self.settings.fallbacks);
         let index = Index::build(files, graph);
+        self.put_index(index, kind, out)
+    }
+
+    /// Index `index` of a graph of `kind` put in place: what could not be
+    /// read said, the graph known, what was kept of it restored; its root.
+    fn put_index(&mut self, index: Index, kind: Kind, out: &mut Vec<Effect>) -> String {
         let mut problems = index.graph.problems.clone();
         problems.extend(index.problems.iter().cloned());
         if let Some(first) = problems.first() {
@@ -950,19 +995,27 @@ impl App {
     }
 
     fn status(&self) -> Effect {
-        let root = self.current.as_ref().and_then(|p| {
-            self.indexes
-                .keys()
-                .filter(|r| files::relative(r, p).is_some())
-                .max_by_key(|r| r.len())
-        });
-        Effect::Status(root.and_then(|r| self.indexes.get(r)).map(|i| {
+        let mark = if self.settings.glyphs == "ascii" {
+            "graph:"
+        } else {
+            "⌬"
+        };
+        // A graph being indexed a slice at a time: how far it is.
+        if let Some(b) = self
+            .current
+            .as_deref()
+            .and_then(|p| self.building_root(p))
+            .and_then(|r| self.building.get(&r))
+        {
+            let name = b.building.graph().name();
+            return Effect::Status(Some(format!(
+                "{mark} {name} · indexing {}%",
+                b.building.percent()
+            )));
+        }
+        let root = self.current.as_deref().and_then(|p| self.indexed_root(p));
+        Effect::Status(root.and_then(|r| self.indexes.get(&r)).map(|i| {
             let (pages, ..) = i.counts();
-            let mark = if self.settings.glyphs == "ascii" {
-                "graph:"
-            } else {
-                "⌬"
-            };
             let noun = if pages == 1 { "page" } else { "pages" };
             format!("{mark} {} · {pages} {noun}", i.graph.name())
         }))
@@ -1014,7 +1067,7 @@ impl App {
         let path = files::normalize(path);
         self.current = Some(path.clone());
         let known = self.indexes.len();
-        if let Some(root) = self.graph_of(files, &path, &mut out) {
+        if let Some(root) = self.graph_soon(files, &path, &mut out) {
             self.last = Some(root);
         }
         self.track_recent(&path);
@@ -1039,12 +1092,13 @@ impl App {
     /// A file changed on disk (`workspace-file-changed`): noted, to be
     /// read with the others changed with it; whether it is the first
     /// noted, for which `graph.filesChanged` is to be queued. A file of
-    /// no graph indexed is not noted.
+    /// no graph indexed or being indexed is not noted.
     pub fn file_changed(&mut self, path: &str) -> bool {
         let path = files::normalize(path);
         if !self
             .indexes
             .keys()
+            .chain(self.building.keys())
             .any(|r| files::relative(r, &path).is_some())
         {
             return false;
@@ -1069,6 +1123,12 @@ impl App {
         for p in paths {
             self.track_saved(p);
         }
+        // A graph being indexed reads them again once built.
+        for b in self.building.values_mut() {
+            let root = &b.building.graph().root;
+            let theirs = paths.iter().filter(|p| files::relative(root, p).is_some());
+            b.changed.extend(theirs.cloned());
+        }
         let roots: Vec<String> = self
             .indexes
             .keys()
@@ -1084,8 +1144,7 @@ impl App {
                 .filter_map(|p| files::relative(&root, p))
                 .any(config::is_settings);
             if settings && let Some(kind) = self.indexes.get(&root).map(|i| i.graph.kind) {
-                self.load(files, &root, kind, &mut out);
-                out.extend(self.refresh(&root));
+                self.index_again(files, &root, kind, false, &mut out);
                 continue;
             }
             let changed = self
@@ -1107,15 +1166,21 @@ impl App {
         }
         self.settings = settings;
         self.not.clear();
-        let roots: Vec<(String, Kind)> = self
+        let mut roots: Vec<(String, Kind)> = self
             .indexes
             .values()
             .map(|i| (i.graph.root.clone(), i.graph.kind))
             .collect();
+        // Those being indexed the first time, again.
+        roots.extend(
+            self.building
+                .iter()
+                .filter(|(r, _)| !self.indexes.contains_key(*r))
+                .map(|(r, b)| (r.clone(), b.kind)),
+        );
         let mut out = Vec::new();
         for (root, kind) in roots {
-            self.load(files, &root, kind, &mut out);
-            out.extend(self.refresh(&root));
+            self.index_again(files, &root, kind, false, &mut out);
         }
         out
     }
@@ -1258,6 +1323,7 @@ impl App {
             .keys()
             .any(|r| files::relative(r, &path).is_some())
             && !self.unindexed.borrow().contains(&path)
+            && self.building_root(&path).is_none()
     }
 
     /// The indexing of the note at `path`'s graph asked for.
@@ -1494,6 +1560,23 @@ impl App {
         if id == "graph.filesChanged" {
             return out;
         }
+        // A slice of a graph's index (Kalem's plugin API 0.2.17, `later`),
+        // and the index of a note's graph its layer asked for: neither
+        // waits for a graph indexed.
+        if id == indexing::INDEXING {
+            out.extend(self.index_slice(files, &ctx.args));
+            return out;
+        }
+        if id == "graph.noteOpened" {
+            if let Some(path) = serde_json::from_str::<serde_json::Value>(&ctx.args)
+                .ok()
+                .and_then(|v| v["path"].as_str().map(str::to_string))
+            {
+                self.unindexed.borrow_mut().remove(&files::normalize(&path));
+                out.extend(self.opened(files, &path));
+            }
+            return out;
+        }
         self.take_unsaved(ctx);
         if id == "graph.insertText" {
             if let Some(t) = serde_json::from_str::<serde_json::Value>(&ctx.args)
@@ -1557,15 +1640,6 @@ impl App {
                     Level::Info,
                 )),
             },
-            "graph.noteOpened" => {
-                if let Some(path) = serde_json::from_str::<serde_json::Value>(&ctx.args)
-                    .ok()
-                    .and_then(|v| v["path"].as_str().map(str::to_string))
-                {
-                    self.unindexed.borrow_mut().remove(&files::normalize(&path));
-                    out.extend(self.opened(files, &path));
-                }
-            }
             "graph.viewJournals" | "graph.viewOrphans" => {
                 if let Some(base) = self.indexes.get(&root).map(|i| i.graph.graph_view) {
                     let gv = self.graph_view.entry(root.clone()).or_insert(base);
@@ -1654,13 +1728,7 @@ impl App {
             }
             "graph.reindex" => {
                 let kind = self.indexes[&root].graph.kind;
-                self.load(files, &root, kind, &mut out);
-                let (pages, journals, blocks, refs) = self.indexes[&root].counts();
-                out.push(Effect::Notify(
-                    format!("{}: {pages} pages, {journals} of them journals, {blocks} blocks, {refs} references", self.indexes[&root].graph.name()),
-                    Level::Info,
-                ));
-                out.extend(self.refresh(&root));
+                self.index_again(files, &root, kind, true, &mut out);
             }
             "graph.follow" => out.extend(self.follow(files, &root, rel.as_deref(), ctx)),
             "graph.openLink" => {
@@ -2371,6 +2439,7 @@ fn relative_path(from: &str, to: &str) -> String {
 mod browse;
 mod cards;
 pub mod complete;
+mod indexing;
 mod kept;
 mod outline;
 mod queries;

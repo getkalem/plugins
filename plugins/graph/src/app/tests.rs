@@ -2479,3 +2479,123 @@ fn recent_pages_and_a_graphs_toggles_kept_between_sessions() {
     );
     assert_eq!(app.page_sort.get("/w/notes"), Some(&views::PageSort::Links));
 }
+
+/// A clock a millisecond on at each look: a slice of a millisecond is a
+/// folder listed, a file read or a file's references added.
+fn ticking() -> i64 {
+    static NOW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1_790_000_000_000);
+    NOW.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The arguments of the slice of an index asked for.
+fn slice_asked(out: &[Effect]) -> Option<String> {
+    out.iter().find_map(|e| match e {
+        Effect::Later { id, args, after_ms } if id == "graph.indexing" && *after_ms == 0 => {
+            Some(args.clone())
+        }
+        _ => None,
+    })
+}
+
+/// The slices run from the one asked for with `args`, until none is
+/// asked for: their number and the last's effects.
+fn slices(m: &Memory, app: &mut App, mut args: String) -> (usize, Vec<Effect>) {
+    let mut n = 0;
+    loop {
+        let mut c = ctx("/w/notes/pages/Kalem.md", "", 0);
+        c.args = args;
+        let out = app.command(m, "graph.indexing", &c);
+        n += 1;
+        match slice_asked(&out) {
+            Some(next) => args = next,
+            None => return (n, out),
+        }
+    }
+}
+
+#[test]
+fn a_graph_indexed_a_slice_at_a_time_where_kalem_runs_commands_later() {
+    let m = logseq();
+    let sliced = || {
+        let mut app = App::new(Settings::default());
+        app.now = Some(ticking);
+        app.slice_ms = Some(1);
+        app
+    };
+    let mut app = sliced();
+    // A note opened: its graph not indexed yet, the first slice asked
+    // for, the status bar saying how far it is; the layer waits.
+    let out = app.opened(&m, "/w/notes/pages/Kalem.md");
+    assert!(app.index("/w/notes").is_none());
+    assert!(
+        out.contains(&Effect::Status(Some("⌬ notes · indexing 0%".into()))),
+        "{out:?}"
+    );
+    assert!(!app.index_wanted("/w/notes/pages/Other.md"));
+    let args = slice_asked(&out).expect("a slice asked for");
+    // Each slice asks for the next until the index is in place, as it
+    // is built in one go: the note's status, panel and layers then.
+    let (n, out) = slices(&m, &mut app, args);
+    assert!(n > 10, "{n}");
+    assert!(
+        out.contains(&Effect::Status(Some("⌬ notes · 4 pages".into()))),
+        "{out:?}"
+    );
+    assert!(out.contains(&Effect::RefreshLayers), "{out:?}");
+    assert!(
+        out.iter()
+            .any(|e| matches!(e, Effect::Panel(p) if !p.is_empty())),
+        "{out:?}"
+    );
+    let mut whole = App::new(Settings::default());
+    whole.opened(&m, "/w/notes/pages/Kalem.md");
+    let counts = |app: &App| app.index("/w/notes").map(Index::counts);
+    assert_eq!(counts(&app), counts(&whole));
+    // Index Again: a slice at a time too, the index it has serving
+    // meanwhile; its counts said once done.
+    let out = app.command(&m, "graph.reindex", &ctx("/w/notes/pages/Kalem.md", "", 0));
+    assert!(app.index("/w/notes").is_some());
+    let (_, out) = slices(&m, &mut app, slice_asked(&out).expect("a slice"));
+    assert!(
+        out.iter()
+            .any(|e| matches!(e, Effect::Notify(t, _) if t.starts_with("notes: 4 pages"))),
+        "{out:?}"
+    );
+    // A command that needs the graph meanwhile: the rest built at once;
+    // the slice asked for before finds nothing left to do.
+    let mut app = sliced();
+    let args = slice_asked(&app.opened(&m, "/w/notes/pages/Kalem.md")).unwrap();
+    let out = app.command(&m, "graph.pages", &ctx("/w/notes/pages/Kalem.md", "", 0));
+    assert_eq!(counts(&app), counts(&whole));
+    assert!(
+        out.iter().any(|e| matches!(e, Effect::Document { .. })),
+        "{out:?}"
+    );
+    let (n, out) = slices(&m, &mut app, args);
+    assert!(n == 1 && out.is_empty(), "{out:?}");
+    // A file changed on disk once read, while the references are added:
+    // read again once the index is built.
+    let mut app = sliced();
+    let mut args = slice_asked(&app.opened(&m, "/w/notes/pages/Kalem.md")).unwrap();
+    while app.building.values().all(|b| b.building.percent() < 50) {
+        let mut c = ctx("/w/notes/pages/Kalem.md", "", 0);
+        c.args = args;
+        args = slice_asked(&app.command(&m, "graph.indexing", &c)).unwrap();
+    }
+    m.write(
+        "/w/notes/pages/Other.md",
+        "- uses [[Kalem]] twice: [[Kalem]]\n",
+    )
+    .unwrap();
+    assert!(app.file_changed("/w/notes/pages/Other.md"));
+    app.command(
+        &m,
+        "graph.filesChanged",
+        &ctx("/w/notes/pages/Kalem.md", "", 0),
+    );
+    slices(&m, &mut app, args);
+    let mut whole = App::new(Settings::default());
+    whole.opened(&m, "/w/notes/pages/Kalem.md");
+    let kalem = |app: &App| app.index("/w/notes").unwrap().backlinks("kalem").len();
+    assert_eq!(kalem(&app), kalem(&whole));
+}

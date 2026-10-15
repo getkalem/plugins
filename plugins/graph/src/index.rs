@@ -215,53 +215,9 @@ impl Index {
 
     /// The index of `graph`, its files read.
     pub fn build(files: &dyn Files, graph: Graph) -> Index {
-        let mut index = Index::new(graph);
-        // The whole folder, as Logseq and Obsidian read it: Logseq a note
-        // anywhere but `logseq/` and the hidden folders, not only its pages
-        // and journals.
-        let folders = vec![String::new()];
-        let mut seen = std::collections::BTreeSet::new();
-        for folder in folders {
-            let mut todo = vec![index.graph.path(&folder)];
-            while let Some(dir) = todo.pop() {
-                let Ok(entries) = files.list(&dir) else {
-                    continue;
-                };
-                for e in entries {
-                    // The entry under the folder asked for: Kalem lists a
-                    // folder by its real path (`/private/tmp` for `/tmp`
-                    // on macOS, a link's target), and the graph's files
-                    // keep its root's.
-                    let path = files::join(&dir, files::file_name(&files::normalize(&e)));
-                    let Some(rel) = files::relative(&index.graph.root, &path).map(str::to_string)
-                    else {
-                        continue;
-                    };
-                    if index.graph.is_hidden(&rel) || !seen.insert(rel.clone()) {
-                        continue;
-                    }
-                    if e.ends_with('/') {
-                        todo.push(path);
-                        continue;
-                    }
-                    let (_, ext) = files::stem_ext(&rel);
-                    if drawn_elsewhere(&index.graph, &rel) {
-                        index.add_drawing(&rel);
-                        continue;
-                    }
-                    if readable(index.graph.kind, &ext).is_none() {
-                        continue;
-                    }
-                    match files.read(&path) {
-                        Ok(text) => index.add(&rel, &text),
-                        Err(e) => index.problems.push(e),
-                    }
-                }
-            }
-        }
-        index.read_times(files);
-        index.derive();
-        index
+        let mut b = Building::new(graph);
+        while !b.step(files, &mut || true) {}
+        b.into_index()
     }
 
     /// Reads `path` (absolute) again, or forgets it when it is gone or no
@@ -508,6 +464,15 @@ impl Index {
     /// The maps built from the files: names, block ids, the pages only
     /// referenced, what links where.
     fn derive(&mut self) {
+        for rel in self.derive_begin() {
+            self.contribute(&rel);
+        }
+    }
+
+    /// What [`Index::derive`] does before the files' references are added
+    /// ([`Index::contribute`], each in turn): a new version, the names
+    /// worked out again, the maps emptied; those files, in order.
+    fn derive_begin(&mut self) -> Vec<String> {
         self.version = VERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.pages.retain(|_, p| p.path.is_some());
         self.derive_names();
@@ -515,10 +480,7 @@ impl Index {
         self.incoming.clear();
         self.block_incoming.clear();
         self.tags.clear();
-        let rels: Vec<String> = self.files.keys().cloned().collect();
-        for rel in rels {
-            self.contribute(&rel);
-        }
+        self.files.keys().cloned().collect()
     }
 
     /// The names pages go by: Logseq's titles, file names and aliases,
@@ -1354,6 +1316,150 @@ fn whole_word(text: &str, word: &str) -> bool {
     false
 }
 
+/// An index built a slice at a time ([`Building::step`]), so that a large
+/// graph's first index leaves the editor answering between slices (Kalem's
+/// plugin API 0.2.17, `later`): the folders listed, the files read in the
+/// order they were found, then their references worked out. It is the
+/// index [`Index::build`] makes, which builds it so in one go.
+#[derive(Debug)]
+pub struct Building {
+    index: Index,
+    /// The folders not listed yet, the last found first.
+    folders: Vec<String>,
+    /// What was listed, relative to the root.
+    seen: std::collections::BTreeSet<String>,
+    /// The files listed, relative to the root and absolute, in order.
+    found: Vec<(String, String)>,
+    /// How many of them were read.
+    read: usize,
+    /// Once all are read: the files whose references are added, and how
+    /// many of them were.
+    linking: Option<(Vec<String>, usize)>,
+}
+
+impl Building {
+    /// The index of `graph`, to be built.
+    pub fn new(graph: Graph) -> Building {
+        // The whole folder, as Logseq and Obsidian read it: Logseq a note
+        // anywhere but `logseq/` and the hidden folders, not only its pages
+        // and journals.
+        let root = graph.path("");
+        Building {
+            index: Index::new(graph),
+            folders: vec![root],
+            seen: std::collections::BTreeSet::new(),
+            found: Vec::new(),
+            read: 0,
+            linking: None,
+        }
+    }
+
+    /// The graph built.
+    pub fn graph(&self) -> &Graph {
+        &self.index.graph
+    }
+
+    /// Builds on, a folder listed, a file read or a file's references
+    /// added at a time, until it is done or `more`, asked after each, says
+    /// to stop; whether it is done.
+    pub fn step(&mut self, files: &dyn Files, more: &mut dyn FnMut() -> bool) -> bool {
+        loop {
+            if let Some(dir) = self.folders.pop() {
+                self.list(files, &dir);
+            } else if self.read < self.found.len() {
+                let (rel, path) = std::mem::take(&mut self.found[self.read]);
+                self.read += 1;
+                self.read_file(files, &rel, &path);
+            } else if let Some((rels, at)) = &mut self.linking {
+                if let Some(rel) = rels.get_mut(*at) {
+                    let rel = std::mem::take(rel);
+                    *at += 1;
+                    self.index.contribute(&rel);
+                }
+            } else {
+                self.index.read_times(files);
+                self.linking = Some((self.index.derive_begin(), 0));
+            }
+            if self.done() {
+                return true;
+            }
+            if !more() {
+                return false;
+            }
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.folders.is_empty()
+            && self.read == self.found.len()
+            && self
+                .linking
+                .as_ref()
+                .is_some_and(|(rels, at)| *at == rels.len())
+    }
+
+    /// How far it is, from 0 to 99: the files read, then their references
+    /// added, each half of the way.
+    pub fn percent(&self) -> u32 {
+        let half = |n: usize, of: usize| n * 50 / of.max(1);
+        let linked = self
+            .linking
+            .as_ref()
+            .map_or(0, |(rels, at)| half(*at, rels.len()));
+        u32::try_from((half(self.read, self.found.len()) + linked).min(99)).unwrap_or(99)
+    }
+
+    /// The index, once [`Building::step`] said it is done.
+    pub fn into_index(self) -> Index {
+        self.index
+    }
+
+    /// Folder `dir` listed: its folders to be listed, its files to be
+    /// read.
+    fn list(&mut self, files: &dyn Files, dir: &str) {
+        let Ok(entries) = files.list(dir) else {
+            return;
+        };
+        for e in entries {
+            // The entry under the folder asked for: Kalem lists a folder by
+            // its real path (`/private/tmp` for `/tmp` on macOS, a link's
+            // target), and the graph's files keep its root's.
+            let path = files::join(dir, files::file_name(&files::normalize(&e)));
+            let Some(rel) = files::relative(&self.index.graph.root, &path).map(str::to_string)
+            else {
+                continue;
+            };
+            if self.index.graph.is_hidden(&rel) || !self.seen.insert(rel.clone()) {
+                continue;
+            }
+            if e.ends_with('/') {
+                self.folders.push(path);
+            } else {
+                self.found.push((rel, path));
+            }
+        }
+    }
+
+    /// File `rel` (at `path`) read into the index: a whiteboard or a
+    /// canvas as a page without blocks, a note with its blocks; others
+    /// left out.
+    fn read_file(&mut self, files: &dyn Files, rel: &str, path: &str) {
+        let index = &mut self.index;
+        if drawn_elsewhere(&index.graph, rel) {
+            index.add_drawing(rel);
+            return;
+        }
+        let (_, ext) = files::stem_ext(rel);
+        if readable(index.graph.kind, &ext).is_none() {
+            return;
+        }
+        match files.read(path) {
+            Ok(text) => index.add(rel, &text),
+            Err(e) => index.problems.push(e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1552,5 +1658,35 @@ mod tests {
         assert!(!whole_word("kalemler", "kalem"));
         assert!(!whole_word("see [[kalem", "kalem"));
         assert_eq!(normalize_dots("a/./b/../c"), "a/c");
+    }
+
+    #[test]
+    fn built_a_slice_at_a_time_as_in_one_go() {
+        let (m, whole) = logseq();
+        let mut b = Building::new(Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()));
+        // A folder, a file or a file's references at a time.
+        let (mut steps, mut last) = (1, 0);
+        while !b.step(&m, &mut || false) {
+            steps += 1;
+            let p = b.percent();
+            assert!(p >= last && p < 100, "{p} after {last}");
+            last = p;
+        }
+        assert!(steps > 10 && last >= 50, "{steps} {last}");
+        let sliced = b.into_index();
+        assert_eq!(sliced.counts(), whole.counts());
+        let pages = |i: &Index| {
+            i.pages()
+                .map(|p| (p.key.clone(), p.title.clone(), p.path.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pages(&sliced), pages(&whole));
+        for p in whole.pages() {
+            let n = |i: &Index| i.backlinks(&p.key).len();
+            assert_eq!(n(&sliced), n(&whole), "{}", p.key);
+        }
+        let id = "11111111-2222-3333-4444-555555555555";
+        assert_eq!(sliced.block(id), whole.block(id));
+        assert_eq!(sliced.problems, whole.problems);
     }
 }
