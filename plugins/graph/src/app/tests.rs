@@ -2349,11 +2349,18 @@ fn zoom_narrows_the_note_to_a_block_and_the_blocks_under_it() {
     // its `collapsed::` line).
     let folded = hidden(&app);
     assert_eq!(folded, 2);
-    // A block deeper in: lines 5 to 5, from 1.
-    assert_eq!(run(&mut app, "four"), narrow(r#"{"end":5,"start":5}"#));
+    // A block deeper in: lines 5 to 5, from 1, under Logseq's breadcrumb
+    // of its page and the blocks above it.
+    assert_eq!(
+        run(&mut app, "four"),
+        narrow(r#"{"end":5,"label":"Kalem › two › three","start":5}"#)
+    );
     // Lines 2 to 5: the block, its properties and its children, shown
     // though it is collapsed, as Logseq shows the block zoomed into.
-    assert_eq!(run(&mut app, "two"), narrow(r#"{"end":5,"start":2}"#));
+    assert_eq!(
+        run(&mut app, "two"),
+        narrow(r#"{"end":5,"label":"Kalem","start":2}"#)
+    );
     assert_eq!(hidden(&app), folded - 1);
     let out = app.command(
         &m,

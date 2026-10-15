@@ -1198,8 +1198,10 @@ user groups; the gaps that code can close, in this order.
     note narrowed to the block at the cursor and the blocks under it by
     Kalem's Narrow to Lines (K20, Kalem 0.6.24); Zoom Out (`SPC m s N`,
     `SPC b -` again: Kalem's Widen). In Org notes Kalem's own `SPC m s n`
-    narrows to the headline, which is Logseq's block there. Not yet: the
-    breadcrumb of the block's parents Logseq shows above it.
+    narrows to the headline, which is Logseq's block there. The
+    breadcrumb Logseq shows above it (the page, then the blocks above the
+    block) as the label of Kalem's narrowed part, drawn over it (Kalem
+    branch `narrow-label`, `view.narrowToLines`'s `label`, 2026-10-15).
   - [x] GR16j Embeds and query results typed into in place (K21, Kalem's
     `layer-3`, plugin API 0.2.15): the rows of an embedded block's
     children, an embedded page's blocks and a query's blocks name their
