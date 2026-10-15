@@ -1221,8 +1221,8 @@ plugin's section 9 followed).
 - K5 An outline provider and a completer from a plugin (design §11.11
   and §11.12's bindings), for the `.rules` files' accounts and for a
   journal whose server is missing. The completer came with Kalem 0.6.13
-  (plugin API 0.2.11, a component's `completer` export); the outline
-  provider has not. The plugin's completer came on 2026-10-14
+  (plugin API 0.2.11, a component's `completer` export), the outline
+  provider with Kalem 0.6.30 (below). The plugin's completer came on 2026-10-14
   (`src/complete.rs`, the feature `completer`): an account on a posting
   and in Beancount's directives, a payee on a transaction's line, a
   commodity in an amount, from the tool's lists of the main journal
@@ -1235,6 +1235,16 @@ plugin's section 9 followed).
   dialects (Enter takes an item: not of the word kind, which Enter
   leaves to prose); `word: 1`, so the plugin answers before
   hledger-lsp's menu at an amount, which offered accounts there.
+  The outline came on 2026-10-15: Kalem's plugin API 0.2.18 `outline`
+  export (Kalem branch `plugin-outline`, for Kalem 0.6.30), a
+  component's outlines declared in the manifest by text type and asked
+  by both editors' outline sidebars where the mode and a pack give none,
+  once a version of the text; the plugin's (`src/outline.rs`, branch
+  `pta-outline`, api ^0.2.18) gives Org's headings where the journal
+  writes them (a line of stars and a blank, which all three tools read
+  as a comment), else its transactions' months, under their years when
+  there are several; 130 headings of the accountant's 20 MB in 0.04 s
+  (`tests/large.rs`).
 - K6 Babel executors from plugins (R5.6), for `hledger` and
   `beancount` source blocks in Org (PT11b).
 - K7 A plugin language's id as the text type of the files it serves:
@@ -1245,6 +1255,12 @@ plugin's section 9 followed).
   `languages::for_path` knows the plugin's language and could answer
   first. The design (§11.2) says plugins extend the vocabulary. Until
   then the plugin scopes by both (PT1).
+  Done 2026-10-15 on Kalem's branch `plugin-text-types` (4046db01,
+  for Kalem 0.6.30): a file of a language a plugin declares is of
+  that language's text type, `2026.journal` `hledger` and `x.bean`
+  `beancount`, the status bar naming the language (`Beancount`); a
+  mode line or `#!` line naming another wins. The plugin keeps
+  scoping by both (`TEXT_TYPES`), which costs nothing.
 - K8 A server's `initializationOptions` from the user's settings: the
   user's `servers.KEY.initializationOptions` merged over the
   manifest's, as `settings` and `servers.KEY.command` already are,
@@ -1319,6 +1335,13 @@ plugin's section 9 followed).
   only where it has work. Not a blocker for 0.1.0 (the git session's
   word, 2026-10-11): one instance a session, its commands scoped to
   their text types.
+  Built 2026-10-15 on Kalem's branch `plugin-on-open` (e74d04b4, for
+  Kalem 0.6.30): `onOpen:GLOB`, a file's name matched (`*`, `?`, any
+  case). The plugin keeps `onEvent:document:open` all the same: it
+  works with bank statements of any kind a user's importer reads
+  (CSV, OFX, text) and with the Org and Markdown notes it inserts
+  tables and runs blocks in, which together are most documents, so
+  the patterns would start it nearly as often and miss some.
 
 ## Open for the owner
 

@@ -36,11 +36,11 @@ kalem-highlight = { git = "https://github.com/getkalem/kalem", rev = "dec56dcbcb
 # test through the servers (`tests/server.rs`).
 kalem-lsp = { git = "https://github.com/getkalem/kalem", rev = "dec56dcbcbbf138af17a2651833e094cf1bd3583" }
 
-# The component: Kalem's `extension-formatter` world (the feature
-# `formatter`, plugin API 0.2.16: its completer and its formatter) with
-# its `process` interface.
+# The component: Kalem's `extension-outline` world (the feature
+# `outline`, plugin API 0.2.18: its completer, its formatter and its
+# outline) with its `process` interface.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main", features = ["formatter"] }
+kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main", features = ["outline"] }
 
 [lints]
 workspace = true

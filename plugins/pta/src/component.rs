@@ -1714,6 +1714,22 @@ impl Plugin for Pta {
         let column = align::Settings::read(settings::own).column;
         Ok(align::format(&request.text, d, column))
     }
+    /// The outline sidebar's headings (plugin API 0.2.18, K5): Org's
+    /// headings where the journal writes them, else its years and months.
+    fn outline(
+        _outline: &str,
+        request: &kalem_plugin::outline::Request,
+    ) -> Vec<kalem_plugin::outline::Heading> {
+        let Some(d) = Dialect::of_language(&request.text_type)
+            .or_else(|| request.path.as_deref().and_then(Dialect::of_path))
+        else {
+            return Vec::new();
+        };
+        crate::outline::headings(&request.text, d)
+            .into_iter()
+            .map(|h| kalem_plugin::outline::heading(h.level, &h.title, h.start))
+            .collect()
+    }
     fn activate() -> Result<(), String> {
         let journal = crate::journal_when();
         let leader = format!("{journal} && vimCommand");

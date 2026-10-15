@@ -4,7 +4,7 @@
   "version": "0.7.2",
   "description": "hledger, Ledger and Beancount journals in Kalem: checked, reported, reconciled, imported and priced by the tool you already have, completed by their language servers",
   "main": "dist/pta.wasm",
-  "api": "^0.2.16",
+  "api": "^0.2.18",
   "activation": ["onEvent:document:open"],
   "permissions": [
     "subprocess",
@@ -49,6 +49,12 @@
     }
   ],
   "formatters": [
+    {
+      "id": "journal",
+      "types": ["hledger", "journal", "j", "ledger", "ldg", "beancount", "bean"]
+    }
+  ],
+  "outlines": [
     {
       "id": "journal",
       "types": ["hledger", "journal", "j", "ledger", "ldg", "beancount", "bean"]
