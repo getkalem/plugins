@@ -117,6 +117,33 @@ fn the_note_with_the_focus_is_the_current_one() {
 }
 
 #[test]
+fn a_note_shown_again_on_a_kalem_that_does_not_tell_the_focus() {
+    // Before Kalem's plugin API 0.2.18: the cursor's event in a note open
+    // already, which Kalem 0.6.23 and later send when it is shown again.
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    let panel = |out: &[Effect]| {
+        out.iter().find_map(|e| match e {
+            Effect::Panel(p) => p.first().map(|n| n.label.clone()),
+            _ => None,
+        })
+    };
+    let (kalem, other) = ("/w/notes/pages/Kalem.md", "/w/notes/pages/Other.md");
+    app.track_open(1, kalem);
+    app.opened(&m, kalem);
+    app.track_open(2, other);
+    assert_eq!(panel(&app.opened(&m, other)).as_deref(), Some("Other"));
+    // The cursor in the note opened last: nothing new.
+    assert!(app.selected_in(&m, 2).is_empty());
+    assert_eq!(panel(&app.selected_in(&m, 1)).as_deref(), Some("Kalem"));
+    // A document of no file Kalem told of (one of the plugin's): nothing.
+    assert!(app.selected_in(&m, 3).is_empty());
+    // Once Kalem tells the focus, the selection says nothing of it.
+    app.focused(&m, Some(kalem));
+    assert!(app.selected_in(&m, 2).is_empty());
+}
+
+#[test]
 fn following_references() {
     let m = logseq();
     let mut app = App::new(Settings::default());
