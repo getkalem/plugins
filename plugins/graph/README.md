@@ -2,7 +2,9 @@
 
 A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem), opened as itself: its pages, journals, links, block references, tags and tasks indexed, what links to a page shown beside it, today's journal a key away. Nothing is converted: Logseq's `logseq/` and Obsidian's `.obsidian/` are never written, and a note is written only when the user saves it or runs a command that writes one (see [What it writes](#what-it-writes)). The work list is [`graph_todo.md`](graph_todo.md).
 
-**Status: 0.13.0**, for Kalem 0.6.27 and later (plugin API 0.2.16). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below, the graph drawn among them; it edits a graph as an outliner, runs Logseq's simple and advanced queries and searches the graph; its layer draws a note as Logseq or Obsidian draws it, embeds and query results in place, and its completer offers pages, tags, blocks and properties as the user types (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+**Status: 0.14.0**, for Kalem 0.6.28 and later (plugin API 0.2.17). The plugin finds a graph, indexes it and gives the commands, the backlinks panel and the documents below, the graph drawn among them; it edits a graph as an outliner, runs Logseq's simple and advanced queries and searches the graph; its layer draws a note as Logseq or Obsidian draws it, embeds and query results in place, and its completer offers pages, tags, blocks and properties as the user types (below). Its list of tasks is [`graph_todo.md`](graph_todo.md).
+
+0.13.0, for Kalem 0.6.27 (plugin API 0.2.16), has everything but what 0.14.0 brings: the pages opened last and each graph's graph view toggles and sort kept from one session to the next, and a graph indexed in slices of 30 ms so that a large one opens at once and keys answer while it indexes.
 
 0.12.0, for Kalem 0.6.15 and later (plugin API 0.2.13; Zoom into Block from Kalem 0.6.24, typing into an embed from 0.6.26), has everything but what 0.13.0 brings: Logseq's whiteboards and Obsidian's canvases drawn (read only), a shape followed to its page, block or file.
 
@@ -44,7 +46,7 @@ A Logseq graph or an Obsidian vault in [Kalem](https://github.com/getkalem/kalem
 
 - **The graph's folder is one of Kalem's projects.** Kalem lets a plugin read only its projects' folders (`fs:read:workspace`). Opening a note of a graph outside the projects, Kalem offers to add its folder (Enter adds it, and the graph is indexed at once; with Kalem before 0.6.15, Projects: Add Project).
 - A Logseq graph is found by its `logseq/config.edn`, an Obsidian vault by its `.obsidian/` folder, a Logseq database graph's mirror by its `mirror/markdown/.index.edn`, from the folder of any note opened in it upwards. A folder without any is a graph when the setting `graphs` names it: a Logseq graph when it has `pages/` or `journals/`, else a vault, unless the setting gives its kind.
-- Kalem 0.6.27 or later (plugin API 0.2.16); 0.12.0 runs on Kalem 0.6.15 and later (0.6.24 or later for Zoom into Block, 0.6.26 or later for typing into an embed); 0.4.0 runs on Kalem 0.6.14, 0.3.1 on 0.6.13, 0.2.0 on 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
+- Kalem 0.6.28 or later (plugin API 0.2.17); 0.13.0 runs on Kalem 0.6.27, 0.12.0 on Kalem 0.6.15 and later (0.6.24 or later for Zoom into Block, 0.6.26 or later for typing into an embed); 0.4.0 runs on Kalem 0.6.14, 0.3.1 on 0.6.13, 0.2.0 on 0.6.11 and 0.6.12, 0.1.0 on 0.6.8 to 0.6.10, without the layer.
 - Room to index a large graph: the plugin asks Kalem for 1 GB and 10 s a call (see Speed and size).
 
 ## Commands and keys
