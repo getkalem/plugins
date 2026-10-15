@@ -689,7 +689,7 @@ below replace the earlier GR4a to GR4d.
   `→ DONE`, `DONE →` none), and none, `WAITING` or `CANCELED` to the
   workflow's first keyword.)
 
-- [ ] GR8b Completion, through GR4a's `complete` hook: `[[` offers the
+- [x] GR8b Completion, through GR4a's `complete` hook: `[[` offers the
   graph's pages and aliases by title (the core's wiki completer offers
   file names; the layer's items replace them in a graph), closing
   `]]`; `((` offers blocks by their first line, full-text, inserting
