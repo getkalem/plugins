@@ -26,7 +26,7 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 | `d`, `x` | Discard, as lazygit asks: the file's name, then Discard all changes (Discard unstaged changes when it has both), Cancel |
 | `c c`, `c a`, `c e`, `c w` | Commit; amend (the last message's first line offered, its body kept); extend; reword |
 | `P p`, `p` or `F p`, `f p` | Push, pull, fetch (`P u`, `F u`, `f u`, `f a` too) |
-| `b b`, `b c` | Switch branch; a new branch |
+| `b b`, `b c` | Switch branch; a new branch, where it starts asked first (where HEAD is, another branch, a remote's) |
 | `Z z` | Stash the changes |
 | Escape, `q` | Close the status |
 
