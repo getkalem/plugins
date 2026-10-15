@@ -948,7 +948,7 @@ fn searching_headings_recent_pages_and_whiteboards() {
     assert_eq!(titles, ["Other", "Kalem"]);
     let out = app.answer(&m, *token, Answer::Picked(Some(vec![1])));
     assert_eq!(opens(&out), [("/w/notes/pages/Kalem.md".to_string(), 1)]);
-    // A whiteboard followed: shown in the file manager, Logseq draws it.
+    // A whiteboard followed: drawn by Kalem (its plugin API 0.2.16).
     let out = app.command(
         &m,
         "graph.follow",
@@ -956,11 +956,52 @@ fn searching_headings_recent_pages_and_whiteboards() {
     );
     assert_eq!(
         out,
-        [Effect::Reveal {
-            path: "/w/notes/whiteboards/Plan.edn".into(),
-            app: "Logseq"
+        [Effect::Run {
+            id: "graph.openBoard".into(),
+            args: r#"{"path":"/w/notes/whiteboards/Plan.edn"}"#.into(),
         }]
     );
+}
+
+#[test]
+fn a_whiteboard_drawn_and_its_shapes_opened() {
+    let m = logseq();
+    let board = r#"{:blocks ({:block/properties {:ls-type :whiteboard-shape, :logseq.tldraw.shape {:id "p1", :type "logseq-portal", :index "a1", :point [0 0], :size [300 100], :pageId "Kalem", :blockType "P"}}} {:block/properties {:ls-type :whiteboard-shape, :logseq.tldraw.shape {:id "t1", :type "text", :index "a2", :point [0 200], :size [200 40], :text "Notes on it"}}}), :pages ({:block/name "plan", :block/original-name "Plan", :block/properties {:ls-type :whiteboard-page}})}"#;
+    m.write("/w/notes/whiteboards/Plan.edn", board).unwrap();
+    DISK.with(|d| {
+        d.borrow_mut()
+            .insert("/w/notes/whiteboards/Plan.edn".into(), board.into())
+    });
+    let mut app = App::new(Settings::default());
+    app.read = Some(disk);
+    app.opened(&m, "/w/notes/pages/Kalem.md");
+    let args = r#"{"path":"/w/notes/whiteboards/Plan.edn"}"#;
+    let c = Ctx {
+        args: args.into(),
+        ..ctx("/w/notes/pages/Kalem.md", "", 0)
+    };
+    let out = app.command(&m, "graph.openBoard", &c);
+    let (id, key, kind, content) = document(&out);
+    assert_eq!((id.as_str(), kind.as_str()), ("graph.board", "graph-board"));
+    let b = content.board.expect("drawn as a canvas");
+    assert_eq!(b.command, "graph.openShape");
+    assert_eq!(b.shapes.len(), 2);
+    // Its text: the shapes' in reading order, a portal's page leading there.
+    assert!(
+        content.text.contains("Kalem\nNotes on it"),
+        "{}",
+        content.text
+    );
+    // A shape opened: the page it shows.
+    let doc = Ctx {
+        path: None,
+        text: None,
+        cursor: 0,
+        doc: Some((id, key)),
+        args: r#"{"shape":"page:Kalem"}"#.into(),
+    };
+    let out = app.command(&m, "graph.openShape", &doc);
+    assert_eq!(opens(&out), [("/w/notes/pages/Kalem.md".to_string(), 1)]);
 }
 
 #[test]

@@ -1190,9 +1190,9 @@ user groups; the gaps that code can close, in this order.
     `logseq/srs-of-matrix.edn`, never written), and the `card-*`
     properties are written as Logseq writes them, in place or after the
     block's others (an Org headline's drawer).
-  - GR16h What waits on Kalem's core: whiteboards and canvases drawn
-    (K22), the first index of a very large graph off the editor's thread
-    (K13), the pages opened last kept across sessions (K23).
+  - GR16h What waits on Kalem's core: the first index of a very large
+    graph off the editor's thread (K13), the pages opened last kept across
+    sessions (K23).
   - [x] GR16i Zoom into Block (`SPC m s n` and `SPC b -` in Markdown
     notes, Doom's narrowing keys; the palette and the Graph menu): the
     note narrowed to the block at the cursor and the blocks under it by
@@ -1209,6 +1209,17 @@ user groups; the gaps that code can close, in this order.
     reads it again. Not yet: the embedded block's own line (drawn in
     place of `{{embed ((…))}}`), and new blocks or indenting from an
     embed.
+  - [x] GR16k Whiteboards and canvases drawn (K22, Kalem's `canvas-view`,
+    plugin API 0.2.16): a Logseq whiteboard's tldraw shapes as Logseq
+    0.10.9 writes them (`:logseq.tldraw.shape`: box, ellipse, polygon,
+    text, group, pencil and highlighter, line bound to shapes through the
+    page's `:bindings`, logseq-portal, image from the page's `:assets`,
+    the web shapes) and an Obsidian canvas (JSON Canvas: text, file,
+    link and group nodes, edges with labels, colors 1 to 6); following one
+    draws it (`graph.openBoard`), a shape opened leads to its page, block
+    or file (`graph.openShape`). Read from a hand-written board after the
+    shapes' properties in Logseq 0.10.9's tldraw: not yet checked against
+    a board Logseq drew.
   - Not done, by choice: Obsidian's `showAttachments` in the graph view
     (a picture embedded is no reference in the index; the view has no
     use for it yet).
@@ -1367,8 +1378,13 @@ Each is the plugin's gate or its ask, written for every plugin.
 - K22 A drawing of shapes where a file places them (text boxes, pictures,
   arrows, at their coordinates), beside the graph drawing of API 0.2.12
   that lays out nodes itself: Logseq's whiteboards (`whiteboards/*.edn`)
-  and Obsidian's canvases (`*.canvas`) drawn, read only at first. Until
-  then they are listed and opened in their application.
+  and Obsidian's canvases (`*.canvas`) drawn, read only at first. Done
+  2026-10-15 on Kalem's branch `canvas-view` (plugin API 0.2.16, the
+  import `canvas-view`): shapes (box, ellipse, text, frame, picture, pen
+  stroke) with their text, colors and targets, and connectors with
+  labels and arrows, drawn in the window and in the terminal; Tab, Enter
+  and a double click open a shape's target by the plugin's command
+  (GR16k).
 - K23 State a plugin keeps between sessions (a small key-value store in
   Kalem's state folder, per plugin): the pages opened last, the graph
   view's toggles, a review under way. Until then they last a session.

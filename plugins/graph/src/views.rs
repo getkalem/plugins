@@ -682,6 +682,56 @@ pub fn cards(
     c
 }
 
+/// A whiteboard or a canvas, drawn by Kalem where its file places its
+/// shapes (its plugin API 0.2.16); its text, for the source view, search
+/// and copying: the shapes' text in reading order, each line opening where
+/// its shape leads.
+pub fn board(index: &Index, rel: &str, mut b: crate::content::Board) -> Content {
+    let mut c = Content::new();
+    let title = index.page_of(rel).map_or(rel, |p| p.title.as_str());
+    c.line(&[(title, Style::Heading)], None);
+    c.line(
+        &[(
+            &format!("{} shapes, {} connectors", b.shapes.len(), b.lines.len()),
+            Style::Muted,
+        )],
+        None,
+    );
+    c.blank();
+    let mut order: Vec<&crate::content::BoardShape> = b
+        .shapes
+        .iter()
+        .filter(|s| !s.text.trim().is_empty() || s.target.is_some())
+        .collect();
+    order.sort_by(|a, z| {
+        a.rect[1]
+            .total_cmp(&z.rect[1])
+            .then(a.rect[0].total_cmp(&z.rect[0]))
+    });
+    for s in order {
+        let shown = s
+            .text
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| s.target.clone())
+            .unwrap_or_default();
+        let target = s.target.as_ref().map(|t| Target::Command {
+            id: "graph.openShape".into(),
+            args: serde_json::json!({ "shape": t }).to_string(),
+        });
+        let style = if target.is_some() {
+            Style::Link
+        } else {
+            Style::Normal
+        };
+        c.line(&[(shown.trim(), style)], target);
+    }
+    b.command = "graph.openShape".into();
+    c.board = Some(Box::new(b));
+    c
+}
+
 /// "Tasks": what is being done, what is to do by priority, what waits,
 /// and, when the day is known, what is scheduled or due within a week.
 pub fn tasks(index: &Index, today: Option<Date>) -> Content {
