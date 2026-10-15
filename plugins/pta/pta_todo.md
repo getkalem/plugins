@@ -1167,7 +1167,9 @@ first.
   the tool reads (an alias, `apply account`); `api` `^0.2.16` as in
   0.7.0.
   0.7.2 prepared 2026-10-15: CR LF journals written as they end, Windows
-  paths (PT15, partly); `api` `^0.2.16`.)
+  paths (PT15, partly); `api` `^0.2.16`.
+  0.8.0 prepared 2026-10-15, for Kalem 0.6.30: K5's outline (the
+  `outline` export, API 0.2.18); `api` `^0.2.18`.)
 
 ## PT15. Linux and Windows
 
