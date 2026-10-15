@@ -1252,7 +1252,7 @@ user groups; the gaps that code can close, in this order.
     (a picture embedded is no reference in the index; the view has no
     use for it yet).
 
-- [~] GR17 Found recording the one-minute video (2026-10-15, its
+- [x] GR17 Found recording the one-minute video (2026-10-15, its
   `graph-video.md` in `graph-demo/video`), each seen again in
   `kalem tui` on the video's demo graph.
   - [x] GR17a A query answers again when a command edits its page:
@@ -1269,12 +1269,13 @@ user groups; the gaps that code can close, in this order.
     query went 5, 4, 5, 4 blocks at Cycle Task, Undo and Redo, nothing
     saved. Typing in a note no command edited is still taken at the
     next command or the save, as the README says.
-  - [ ] GR17b A heading block (`- ## Notes`) drawn in the terminal as
+  - [x] GR17b A heading block (`- ## Notes`) drawn in the terminal as
     Logseq draws it: drawn `○ - Notes`, the level's mark at the line's
     start, before the bullet. Kalem's to change (K27): a layer cannot
     take the mark away. The window draws it larger and without a mark,
-    as Logseq does.
-  - [ ] GR17c A graph whose project is named through a link follows
+    as Logseq does. (Done 2026-10-15 in Kalem, K27: `- Kalem meeting`
+    in the terminal, its text in the heading's look.)
+  - [x] GR17c A graph whose project is named through a link follows
     changes on disk: with `/tmp/graph-video/notes` in `projects.toml`
     (macOS's `/tmp` links to `/private/tmp`), a line written to a
     journal from outside never reached the panel. Kalem's to change
@@ -1282,7 +1283,9 @@ user groups; the gaps that code can close, in this order.
     path Kalem was started with does not matter, only the project's;
     and Add Project, or a graph's folder added on opening one of its
     notes, writes the real path, so only an entry written by hand has
-    it. The README says so.
+    it. The README says so. (Done 2026-10-15 in Kalem, K26: with
+    `/tmp/…` in `projects.toml`, a line written to a journal from
+    outside reached the panel in a few seconds.)
 
 ## What Kalem's core must gain
 
@@ -1506,7 +1509,10 @@ Each is the plugin's gate or its ask, written for every plugin.
   project's root compared in its real form (resolved when the list is
   read, or in `Project::contains`), with a test that a project written
   as a link's path holds its files and its graph is watched. The plugin
-  cannot help: it has no `fs` call to resolve a link (K18).
+  cannot help: it has no `fs` call to resolve a link (K18). Done
+  2026-10-15 on Kalem's branch `graph-k26-k27`: the list takes the
+  folder a link leads to when it is read (`list::normal`), under the
+  name written, with that test.
 - K27 A Markdown heading in a list item, drawn in the terminal. Kalem's
   Markdown view (`kalem-core/src/markdown.rs`, `view_line`) makes
   `- ## Notes` a heading line of level 2, and the terminal's `glyphs`
@@ -1520,7 +1526,11 @@ Each is the plugin's gate or its ask, written for every plugin.
   bullet), for every Markdown list, CommonMark allowing a heading in a
   list item; a test of `- ## Notes` drawn so. A layer cannot do it: its
   overlays change a line's runs, not its `heading` (GR17b). Not
-  blocking: a template's headings can be written without `##`.
+  blocking: a template's headings can be written without `##`. Done
+  2026-10-15 on Kalem's branch `graph-k26-k27` (`render::glyphs`,
+  `heading_marker`): the bullet, a number's `1.` or the `>` first in
+  its own look, the text in the heading's, no mark, with that test.
+  Kalem's Markdown does not take `1. ## Steps` for a heading yet.
 
 ## Decisions, and what waits in Kalem's repository
 
