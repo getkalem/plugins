@@ -72,6 +72,51 @@ fn a_note_of_a_graph_opened() {
 }
 
 #[test]
+fn the_note_with_the_focus_is_the_current_one() {
+    // Kalem.md opened, Other.md opened, then Find Page back to Kalem,
+    // open already: no opening tells it, Kalem's focus does (its plugin
+    // API 0.2.18), and the panel, the status bar and Recent Pages follow.
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    let panel = |out: &[Effect]| {
+        out.iter().find_map(|e| match e {
+            Effect::Panel(p) => p.first().map(|n| n.label.clone()),
+            _ => None,
+        })
+    };
+    let (kalem, other) = ("/w/notes/pages/Kalem.md", "/w/notes/pages/Other.md");
+    let journal = "/w/notes/journals/2026_10_03.md";
+    // As Kalem tells them: an opening, then its focus.
+    let out = app.opened(&m, kalem);
+    assert_eq!(panel(&out).as_deref(), Some("Kalem"));
+    assert!(app.focused(&m, Some(kalem)).is_empty(), "current already");
+    // Once the focus is told, a note opened waits for it.
+    assert_eq!(panel(&app.opened(&m, other)), None);
+    assert_eq!(
+        panel(&app.focused(&m, Some(other))).as_deref(),
+        Some("Other")
+    );
+    app.opened(&m, journal);
+    app.focused(&m, Some(journal));
+    // Back to the page open already.
+    let out = app.focused(&m, Some(kalem));
+    assert_eq!(panel(&out).as_deref(), Some("Kalem"), "{out:?}");
+    assert!(
+        out.contains(&Effect::Status(Some("⌬ notes · 4 pages".into()))),
+        "{out:?}"
+    );
+    // One of the plugin's documents has no file: the note stays current.
+    assert!(app.focused(&m, None).is_empty());
+    // The pages opened last, newest first, the current one left out.
+    let out = app.command(&m, "graph.recent", &ctx(journal, "", 0));
+    let Effect::Pick { items, .. } = &out[0] else {
+        panic!("{out:?}")
+    };
+    let titles: Vec<&str> = items.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(titles, ["Kalem", "Other"]);
+}
+
+#[test]
 fn following_references() {
     let m = logseq();
     let mut app = App::new(Settings::default());

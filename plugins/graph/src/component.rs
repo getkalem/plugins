@@ -407,6 +407,13 @@ impl Plugin for Graph {
             }
             Reply::Proceed
         })?;
+        // The note in front, a switch back to one open already included
+        // (plugin API 0.2.18; an earlier Kalem calls none, and the note
+        // opened last stays the current one).
+        kalem_plugin::focus::on(|_, path| {
+            let path = path.map(str::to_string);
+            with_app(|app| app.focused(&Fs, path.as_deref()));
+        });
         // Which files Kalem holds with unsaved changes: never written by
         // the plugin.
         kalem::on(EventKind::DocumentChanged, |e| {
