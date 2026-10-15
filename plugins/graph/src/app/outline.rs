@@ -11,6 +11,10 @@ use crate::edit::{self, Change, Edit};
 use crate::files::{self, Files};
 use crate::scan::{self, Flavor, RefKind};
 
+/// The command that takes the text of a note a command edited, changed
+/// since (`App::track_changed`).
+pub(super) const NOTE_EDITED: &str = "graph.noteEdited";
+
 /// A block offered to refer to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Choice {
@@ -42,39 +46,116 @@ impl App {
         self.open.insert(number, files::normalize(path));
     }
 
-    /// A document's text changed: unsaved until it is saved.
-    pub fn track_changed(&mut self, number: u64) {
-        if let Some(p) = self.open.get(&number) {
-            self.dirty.insert(p.clone());
+    /// A document's text changed: unsaved until it is saved. A note whose
+    /// text the index took from a command's edits has this change taken
+    /// too, once the editor is idle a moment (`graph.noteEdited`): an Undo
+    /// of the command, or typing after it.
+    pub fn track_changed(&mut self, number: u64) -> Vec<Effect> {
+        let Some(p) = self.open.get(&number) else {
+            return Vec::new();
+        };
+        self.dirty.insert(p.clone());
+        if !self.edited.contains_key(p) || self.edited_queued {
+            return Vec::new();
         }
+        self.edited_queued = true;
+        vec![Effect::Later {
+            id: NOTE_EDITED.into(),
+            args: "{}".into(),
+            after_ms: 300,
+        }]
     }
 
     /// The note a command runs in, with changes not saved: its text as the
     /// editor holds it goes into the index first, so that the command
-    /// sees what the user typed.
-    pub(super) fn take_unsaved(&mut self, ctx: &Ctx) {
+    /// sees what the user typed. The graph's root, when it was taken.
+    pub(super) fn take_unsaved(&mut self, ctx: &Ctx) -> Option<String> {
         let (None, Some(path), Some(text)) = (&ctx.doc, &ctx.path, &ctx.text) else {
-            return;
+            return None;
         };
         let path = files::normalize(path);
         if !self.dirty.contains(&path) {
-            return;
+            return None;
         }
-        let Some(root) = self
+        let root = self
             .indexes
             .keys()
             .filter(|r| files::relative(r, &path).is_some())
             .max_by_key(|r| r.len())
-            .cloned()
-        else {
-            return;
-        };
+            .cloned()?;
         let rel = files::relative(&root, &path)
             .unwrap_or_default()
             .to_string();
-        if let Some(index) = self.indexes.get_mut(&root) {
-            index.update_unsaved(&rel, text);
+        if !self
+            .indexes
+            .get_mut(&root)
+            .is_some_and(|i| i.update_unsaved(&rel, text))
+        {
+            return None;
         }
+        if let Some(held) = self.edited.get_mut(&path) {
+            held.clone_from(text);
+        }
+        Some(root)
+    }
+
+    /// `graph.noteEdited`: the note a command edited, changed since (an
+    /// Undo, typing): its text as the editor holds it taken, and what
+    /// shows its graph drawn again.
+    pub(super) fn take_changed_edited(&mut self, ctx: &Ctx) -> Vec<Effect> {
+        self.edited_queued = false;
+        let (None, Some(path), Some(text)) = (&ctx.doc, &ctx.path, &ctx.text) else {
+            return Vec::new();
+        };
+        let path = files::normalize(path);
+        if self.edited.get(&path).is_none_or(|held| held == text) {
+            return Vec::new();
+        }
+        match self.take_unsaved(ctx) {
+            Some(root) => self.refresh(&root),
+            None => Vec::new(),
+        }
+    }
+
+    /// The note a command edits (Cycle Task, Set Priority, a block moved):
+    /// its text as `effects`' edits leave it goes into the index at once,
+    /// unsaved, so that the queries and embeds showing its blocks answer
+    /// again at the edit, not at its save. What to draw again.
+    pub(super) fn take_edited(
+        &mut self,
+        root: &str,
+        rel: Option<&str>,
+        ctx: &Ctx,
+        effects: &[Effect],
+    ) -> Vec<Effect> {
+        let (None, Some(rel), Some(path), Some(text)) = (&ctx.doc, rel, &ctx.path, &ctx.text)
+        else {
+            return Vec::new();
+        };
+        let edits: Vec<Edit> = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Edits { edits, .. } => Some(edits.iter().cloned()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        if edits.is_empty() {
+            return Vec::new();
+        }
+        let edited = edit::apply(text, &edits);
+        if !self
+            .indexes
+            .get_mut(root)
+            .is_some_and(|i| i.update_unsaved(rel, &edited))
+        {
+            return Vec::new();
+        }
+        // Unsaved now: closed without a save, its file is read again.
+        let path = files::normalize(path);
+        self.dirty.insert(path.clone());
+        self.edited.insert(path, edited);
+        self.refresh(root)
     }
 
     /// A document closed: one closed with changes not saved is read again
@@ -113,12 +194,14 @@ impl App {
             && !self.open.values().any(|o| *o == p)
         {
             self.dirty.remove(&p);
+            self.edited.remove(&p);
         }
     }
 
     /// A file saved: no longer unsaved.
     pub(super) fn track_saved(&mut self, path: &str) {
         self.dirty.remove(path);
+        self.edited.remove(path);
     }
 
     /// How the file `rel` of graph `root` is read.

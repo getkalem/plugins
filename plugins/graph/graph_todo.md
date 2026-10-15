@@ -1252,6 +1252,38 @@ user groups; the gaps that code can close, in this order.
     (a picture embedded is no reference in the index; the view has no
     use for it yet).
 
+- [~] GR17 Found recording the one-minute video (2026-10-15, its
+  `graph-video.md` in `graph-demo/video`), each seen again in
+  `kalem tui` on the video's demo graph.
+  - [x] GR17a A query answers again when a command edits its page:
+    Cycle Task under a `{{query}}` of the same page kept the block's old
+    keyword in the results until a save, as the index took a note's
+    unsaved text only when the next command started. The edits a
+    command makes to the note it runs in now go into the index with
+    them, unsaved (the file read again when the note is closed without
+    a save), and what shows the graph is drawn again: Cycle Task, Set
+    Priority, Schedule, a block moved or indented. The note's changes
+    after them (an Undo of the command, typing) are taken 300 ms later
+    (`graph.noteEdited`, run by `later`), once however often it changes
+    meanwhile, until it is saved or closed: in `kalem tui` the video's
+    query went 5, 4, 5, 4 blocks at Cycle Task, Undo and Redo, nothing
+    saved. Typing in a note no command edited is still taken at the
+    next command or the save, as the README says.
+  - [ ] GR17b A heading block (`- ## Notes`) drawn in the terminal as
+    Logseq draws it: drawn `○ - Notes`, the level's mark at the line's
+    start, before the bullet. Kalem's to change (K27): a layer cannot
+    take the mark away. The window draws it larger and without a mark,
+    as Logseq does.
+  - [ ] GR17c A graph whose project is named through a link follows
+    changes on disk: with `/tmp/graph-video/notes` in `projects.toml`
+    (macOS's `/tmp` links to `/private/tmp`), a line written to a
+    journal from outside never reached the panel. Kalem's to change
+    (K26): the folder is never watched. The plugin is not involved: the
+    path Kalem was started with does not matter, only the project's;
+    and Add Project, or a graph's folder added on opening one of its
+    notes, writes the real path, so only an entry written by hand has
+    it. The README says so.
+
 ## What Kalem's core must gain
 
 Each is the plugin's gate or its ask, written for every plugin.
@@ -1455,6 +1487,40 @@ Each is the plugin's gate or its ask, written for every plugin.
   new block's bullet, a step of indentation, whether it may move), Kalem
   writes the change as K21's text and types into the block where it went
   (GR16j).
+
+- K26 A project named through a link (`/tmp/x` on macOS, a link to a
+  synced folder) in `projects.toml`, as a person or a tool writes it.
+  Kalem's `Projects::parse` (`kalem-project/src/list.rs`) keeps a
+  project's path as written, while `containing` compares the path it is
+  asked about in its real form (`normal`), so such a project contains
+  none of its files: `ProjectState::entered`
+  (`kalem-core/src/projects.rs`) returns at `self.list.containing(path)?`
+  before `tree_watch::watch`, and nothing another program writes in the
+  graph reaches the plugin (nor do the project's last file and file
+  listing follow). Seen
+  2026-10-15 (GR17c) with Kalem 0.6.28, the four spellings tried: the
+  project as `/tmp/graph-video/notes`, opened as `/tmp/…` or as
+  `/private/tmp/…`, never heard a line appended to a journal; as
+  `/private/tmp/graph-video/notes`, opened either way, heard it within
+  a second. Add Project and the auto-add write the real path. Asks: a
+  project's root compared in its real form (resolved when the list is
+  read, or in `Project::contains`), with a test that a project written
+  as a link's path holds its files and its graph is watched. The plugin
+  cannot help: it has no `fs` call to resolve a link (K18).
+- K27 A Markdown heading in a list item, drawn in the terminal. Kalem's
+  Markdown view (`kalem-core/src/markdown.rs`, `view_line`) makes
+  `- ## Notes` a heading line of level 2, and the terminal's `glyphs`
+  (`kalem-tui/src/render.rs`) draws the level's mark, indented by the
+  level, at the line's start, before the list's bullet: `  ○ - Notes`.
+  A Logseq heading block keeps its bullet where its block is and shows
+  its text as a heading, as Kalem's window draws it (larger, no mark).
+  Asks: in the terminal, a heading after a list's bullet (or a quote's
+  `>`) drawn with the bullet first and its text in the heading's look,
+  without the level's indent and its mark (or with the mark after the
+  bullet), for every Markdown list, CommonMark allowing a heading in a
+  list item; a test of `- ## Notes` drawn so. A layer cannot do it: its
+  overlays change a line's runs, not its `heading` (GR17b). Not
+  blocking: a template's headings can be written without `##`.
 
 ## Decisions, and what waits in Kalem's repository
 

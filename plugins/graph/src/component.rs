@@ -435,14 +435,12 @@ impl Plugin for Graph {
             with_app(|app| app.focused(&Fs, path.as_deref()));
         });
         // Which files Kalem holds with unsaved changes: never written by
-        // the plugin.
+        // the plugin. A note one of its commands edited, changed again:
+        // its text taken a moment later.
         kalem::on(EventKind::DocumentChanged, |e| {
             if let Event::DocumentChanged(d) = e {
                 let n = d.document;
-                with_app(|app| {
-                    app.track_changed(n);
-                    Vec::new()
-                });
+                with_app(|app| app.track_changed(n));
             }
             Reply::Proceed
         })?;

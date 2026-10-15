@@ -222,6 +222,9 @@ pub const COMMANDS: &[CommandInfo] = &[
     // Run by the plugin once files of a graph changed on disk (Logseq,
     // Obsidian, a sync, a `git pull`): read again together.
     n("graph.filesChanged", "Read the Changed Files", &[]),
+    // Run by the plugin a moment after a note one of its commands edited
+    // changed again (an Undo, typing): its text taken into the index.
+    n("graph.noteEdited", "Take the Edited Note's Text", &[]),
     // The graph drawn (Kalem's plugin API 0.2.12): all its pages, or the
     // note's page and the pages two links away.
     m!("graph.graphView", "Graph View", &["space n r v"], "g"),
@@ -796,6 +799,12 @@ pub struct App {
     /// The files open with changes not saved: never written by the
     /// plugin, which would make Kalem ask which copy to keep.
     dirty: BTreeSet<String>,
+    /// The notes whose text the index took from a command's edits, not
+    /// saved since, with that text: their changes after it (an Undo,
+    /// typing) are taken too, by `graph.noteEdited`.
+    edited: BTreeMap<String, String>,
+    /// `graph.noteEdited` is queued and has not run yet.
+    edited_queued: bool,
     /// A counter mixed into new block IDs.
     made: u64,
     /// Random bits, when Kalem gives the plugin its clock (API 0.2.10).
@@ -868,6 +877,8 @@ impl App {
             panel_folds: BTreeMap::new(),
             open: BTreeMap::new(),
             dirty: BTreeSet::new(),
+            edited: BTreeMap::new(),
+            edited_queued: false,
             made: 0,
             random: None,
             now: None,
@@ -1666,6 +1677,10 @@ impl App {
             }
             return out;
         }
+        if id == outline::NOTE_EDITED {
+            out.extend(self.take_changed_edited(ctx));
+            return out;
+        }
         self.take_unsaved(ctx);
         if id == "graph.insertText" {
             if let Some(t) = serde_json::from_str::<serde_json::Value>(&ctx.args)
@@ -1957,7 +1972,10 @@ impl App {
             | "graph.insertDate"
             | "graph.zoom"
             | "graph.refBlockNow" => {
-                out.extend(self.outline_command(files, id, &root, rel.as_deref(), ctx));
+                let done = self.outline_command(files, id, &root, rel.as_deref(), ctx);
+                let again = self.take_edited(&root, rel.as_deref(), ctx, &done);
+                out.extend(done);
+                out.extend(again);
             }
             _ => {}
         }
