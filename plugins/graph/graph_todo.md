@@ -1208,9 +1208,14 @@ user groups; the gaps that code can close, in this order.
     block's first line as its page holds it (read once for each version
     of the index), past the bullet or an Org headline's stars; Kalem
     types into them where they show and writes the page, and the plugin
-    reads it again. Not yet: the embedded block's own line (drawn in
-    place of `{{embed ((…))}}`), and new blocks or indenting from an
-    embed.
+    reads it again. The embedded block's own line too (2026-10-15): the
+    embed's line names the block's page, the block shown under it with
+    its children. New blocks and indenting from an embed too (K25,
+    2026-10-15, Kalem's plugin API 0.2.18 `layer-4`): Enter makes a new
+    block under the embed's own block or after the one typed into, Tab
+    and Shift+Tab move a block with the blocks under it, never out of the
+    embed; checked in Kalem's terminal editor and read back by Logseq
+    0.10.9.
   - [x] GR16k Whiteboards and canvases drawn (K22, Kalem's `canvas-view`,
     plugin API 0.2.16): a Logseq whiteboard's tldraw shapes as Logseq
     0.10.9 writes them (`:logseq.tldraw.shape`: box, ellipse, polygon,
@@ -1428,6 +1433,15 @@ Each is the plugin's gate or its ask, written for every plugin.
   texts go from xs to xl (10 to 48 pixels) and a diagram has headings.
   Asks: a size for a shape's text (pixels at the canvas's scale), for
   every plugin that draws a canvas. Not blocking.
+- K25 Lines under lines typed into as an outline: an embed's blocks
+  split by Enter and moved by Tab and Shift+Tab where they show, as
+  Logseq's embeds are edited. Done 2026-10-15 on Kalem's branch
+  `row-outline` (plugin API 0.2.18, the export `layer-4`): a line's
+  source names the block of its file's outline it starts (where its
+  block and the blocks under it end, where Enter puts a new block, the
+  new block's bullet, a step of indentation, whether it may move), Kalem
+  writes the change as K21's text and types into the block where it went
+  (GR16j).
 
 ## Decisions, and what waits in Kalem's repository
 

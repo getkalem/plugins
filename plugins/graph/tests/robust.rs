@@ -100,10 +100,7 @@ fn embeds_of_themselves_are_one_line() {
             _ => None,
         })
         .collect();
-    assert!(
-        shown.contains(&"↳ me {{embed ((6512c0de-0000-4000-8000-000000000001))}}"),
-        "{shown:?}"
-    );
+    assert!(shown.contains(&"↳ Loop"), "{shown:?}");
     let a = query::run(&query::parse("\"embed\"").unwrap(), &i, None);
     for h in &a.hits {
         assert!(query::hit_text(&i, h).len() < 200);

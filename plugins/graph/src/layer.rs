@@ -212,6 +212,14 @@ fn block_text(index: Option<&Index>, id: &str) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
+/// The title of the page block `id` is in: what an embed of the block
+/// names on its line, the block itself shown under it.
+fn block_page(index: Option<&Index>, id: &str) -> Option<String> {
+    let index = index?;
+    let (rel, _) = index.block_place(id)?;
+    index.page_of(rel).map(|p| p.shown_title().to_string())
+}
+
 /// A task keyword's look.
 fn keyword_look(marker: &str) -> Look {
     if scan::is_closed(marker) {
@@ -282,14 +290,14 @@ fn inline(
                         if let (Some(i), Some(id)) = (index, &id) {
                             o.rows(start, rows::embedded_block(i, id));
                         }
-                        id.and_then(|id| block_text(index, &id))
+                        id.and_then(|id| block_page(index, &id))
                             .unwrap_or_else(|| r.target.clone())
                     }
                     (RefKind::EmbedBlock, _) => {
                         if let Some(i) = index {
                             o.rows(start, rows::embedded_block(i, &r.target));
                         }
-                        block_text(index, &r.target).unwrap_or_else(|| "a block".into())
+                        block_page(index, &r.target).unwrap_or_else(|| "a block".into())
                     }
                     _ => {
                         if let (Some(i), Some(rel)) = (index, rel) {
@@ -1210,6 +1218,8 @@ mod tests {
             parts: vec![(t.to_string(), Look::default())],
             block: None,
             source: None,
+            floor: None,
+            root: false,
         };
         let o = queries(
             Overlays::default(),
@@ -1250,10 +1260,10 @@ mod tests {
             "alias:: X\n\n▸ TODO [#A] see The core #tag\n  type:: book\n  SCHEDULED: <2026-10-12 Mon>\n  :LOGBOOK:\n  CLOCK: [2026-10-10 Sat 09:00]\n  :END:\n- ```\n  ((6512c0de-0001-4000-8000-000000000001))\n  ```\n"
         );
         // The block is collapsed: its child, an embed, is hidden, and
-        // shown as its block's text where it shows.
+        // names the page of its block, shown under it.
         assert!(o.spans.iter().any(|s| s.effect
             == Effect::Replace(
-                "↳ The core".into(),
+                "↳ A".into(),
                 Look {
                     link: true,
                     ..Look::default()

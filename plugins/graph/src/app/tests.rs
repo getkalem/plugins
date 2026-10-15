@@ -2411,20 +2411,48 @@ fn an_embeds_blocks_are_given_to_type_into_where_they_show() {
             .collect()
     };
     // Without Kalem's files, none.
-    assert_eq!(sources(&app), [None, None]);
-    // The embedded block's children: their first lines, after the bullet.
+    assert_eq!(sources(&app), [None, None, None]);
+    // The embedded block and its children: their first lines, after the
+    // bullet.
     app.read = Some(disk);
-    let source = |line: u32, text: &str| crate::rows::Source {
-        path: "/w/notes/pages/Plan.md".into(),
-        line,
-        column: 3,
-        text: text.into(),
+    let shown = |app: &App| -> Vec<Option<(u32, u32, String)>> {
+        sources(app)
+            .into_iter()
+            .map(|s| s.map(|s| (s.line, s.column, s.text)))
+            .collect()
     };
     assert_eq!(
-        sources(&app),
+        shown(&app),
         [
-            Some(source(2, "TODO buy milk")),
-            Some(source(3, "[[Kalem]] notes"))
+            Some((0, 2, "Goals".to_string())),
+            Some((2, 3, "TODO buy milk".to_string())),
+            Some((3, 3, "[[Kalem]] notes".to_string())),
+        ]
+    );
+    assert!(
+        sources(&app)
+            .iter()
+            .flatten()
+            .all(|s| s.path == "/w/notes/pages/Plan.md")
+    );
+    // Each the block of the page's outline it starts (Kalem's plugin API
+    // 0.2.18): Enter under the embed's own block makes its first child,
+    // under a child a block after it; Tab puts the second child under the
+    // first; Shift+Tab takes none out of the embed.
+    let outlines: Vec<_> = sources(&app)
+        .into_iter()
+        .map(|s| {
+            let o = s.and_then(|s| s.outline).expect("an outline");
+            (o.end, o.next, o.bullet, o.step, o.indent, o.outdent)
+        })
+        .collect();
+    let t = |s: &str| s.to_string();
+    assert_eq!(
+        outlines,
+        [
+            (4, 2, t("\t- "), t("\t"), false, false),
+            (3, 3, t("\t- "), t("\t"), false, false),
+            (4, 4, t("\t- "), t("\t"), true, false),
         ]
     );
     assert_eq!(crate::rows::content_column("** TODO x"), 3);

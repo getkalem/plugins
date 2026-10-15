@@ -1257,7 +1257,8 @@ impl App {
     /// The rows of `o` that show a block given the block's first line as
     /// its file holds it, to be typed into where they are drawn (Kalem's
     /// plugin API 0.2.15): the file read once for each version of the
-    /// index.
+    /// index; in a Logseq note, the block of its outline the line starts
+    /// (Kalem's plugin API 0.2.18).
     fn sources(&self, index: &Index, o: &mut crate::layer::Overlays) {
         let Some(read) = self.read else {
             return;
@@ -1281,11 +1282,26 @@ impl App {
                     continue;
                 };
                 let column = crate::rows::content_column(raw);
+                // The block it starts in a Logseq note's outline (Kalem's
+                // plugin API 0.2.18), for Enter, Tab and Shift+Tab there.
+                let outline = index
+                    .file(rel)
+                    .filter(|f| f.flavor == Flavor::LogseqMarkdown)
+                    .and_then(|f| {
+                        crate::rows::outline(
+                            &f.scanned.blocks,
+                            &texts[&path].1,
+                            *line,
+                            r.floor,
+                            r.root,
+                        )
+                    });
                 r.source = Some(crate::rows::Source {
                     path,
                     line: *line,
                     column: column as u32,
                     text: raw[column..].to_string(),
+                    outline,
                 });
             }
         }

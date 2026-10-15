@@ -20,10 +20,10 @@ serde_json = "1"
 
 # The component (`src/component.rs`): Kalem's `extension` world with its
 # `fs`, `documents`, `ui`, `editor` and `clock` interfaces, and the
-# `layer`, `completer`, `layer-2` and `layer-3` it exports (plugin API
-# 0.2.15, `kalem-plugin`'s feature `layer-3`).
+# `layer`, `completer`, `layer-2`, `layer-3` and `layer-4` it exports
+# (plugin API 0.2.18, `kalem-plugin`'s feature `layer-4`).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main", features = ["layer-3"] }
+kalem-plugin = { git = "https://github.com/getkalem/kalem", branch = "main", features = ["layer-4"] }
 
 [lints]
 workspace = true
