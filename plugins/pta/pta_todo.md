@@ -1010,7 +1010,7 @@ first.
   setting `journal` beside the note, else `LEDGER_FILE`'s, else the
   journal last opened. A test turns every table report of each tool
   on the corpus into an aligned table. Waits on Kalem: Babel (K6).
-  The blocks run on 2026-10-14 without Kalem's Babel (K6 still open):
+  The blocks run on 2026-10-14 without Kalem's Babel (K6, done since):
   Run the Journal Block (`pta.runBlock`, `SPC m x` where the text type
   is a journal's inside an Org document) gives the block's text to its
   tool on standard input (`hledger -f -`, `ledger -f -`, `bean-query
@@ -1269,6 +1269,16 @@ plugin's section 9 followed).
   (`tests/large.rs`).
 - K6 Babel executors from plugins (R5.6), for `hledger` and
   `beancount` source blocks in Org (PT11b).
+  Done 2026-10-15: Kalem's plugin API 0.2.21, the export `executor`
+  (Kalem branch `babel-executors`), and the plugin's languages
+  (`plugin.json`'s `executors`, `prepare_block` and `finish_block` in
+  `src/component.rs`, `blocks::tool_command`): an `hledger`, `ledger` or
+  `beancount` block runs under Babel's rules (`babel.load_languages`,
+  Kalem's yes or no question, `:eval`), `:cmdline` `bal` by default as
+  ob-ledger's, the output written as Org writes ob-ledger's text.
+  Checked in the terminal editor with an hledger and a Ledger block; a
+  Beancount block not named in `babel.load_languages` refused with
+  Emacs's message. The manifest keeps `api` ^0.2.18.
 - K7 A plugin language's id as the text type of the files it serves:
   `DocumentState::text_type` takes a plain text file's language from
   its extension through `command::canonical_type`'s fixed table (where

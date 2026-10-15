@@ -113,11 +113,6 @@ In `settings.toml`, under `[plugins."org.kalem.pta"]`:
 
 ## Not yet
 
-Waiting on Kalem:
-
-- Org's own Babel (`C-c C-c`) for journal blocks, which the plugin's Run the Journal Block does meanwhile (K6).
-
-Not done yet:
 
 - **Reports as trees**: Report… shows the tool's text as it prints it; only the Balance folds.
 
@@ -170,7 +165,7 @@ The setting `reports` puts reports of your own before the tool's (after the Bala
 
 ## Reports in notes
 
-In an Org or Markdown document, *Insert a Report as a Table* (the palette's Journal group) offers the reports the tool writes as CSV (hledger's balance reports, register and `print`; Ledger's balance, register and `print`; Beancount's queries, its saved ones too), asks the period where the report takes one, and writes the table under the cursor's line with a caption naming the report, the journal and the period, one undo step: a monthly note keeps its figures. The journal is the setting `journal` (beside the note when relative), else `LEDGER_FILE`'s, else the journal you last opened. *Run the Journal Block* (`SPC m x` in Vim's command mode, or the palette), with the cursor in an Org document's `hledger`, `ledger` or `beancount` source block, gives the block's text to its tool on standard input with the block's `:cmdline` (ob-ledger's header argument; `:cmd` too; for Beancount, a query, `BALANCES` without one) and writes the output under the block as `#+RESULTS:` in fixed-width lines, replacing the results of the last run. Kalem's Babel does not run plugins' languages yet; this is the plugin's own command.
+In an Org or Markdown document, *Insert a Report as a Table* (the palette's Journal group) offers the reports the tool writes as CSV (hledger's balance reports, register and `print`; Ledger's balance, register and `print`; Beancount's queries, its saved ones too), asks the period where the report takes one, and writes the table under the cursor's line with a caption naming the report, the journal and the period, one undo step: a monthly note keeps its figures. The journal is the setting `journal` (beside the note when relative), else `LEDGER_FILE`'s, else the journal you last opened. *Run the Journal Block* (`SPC m x` in Vim's command mode, or the palette), with the cursor in an Org document's `hledger`, `ledger` or `beancount` source block, gives the block's text to its tool on standard input with the block's `:cmdline` (ob-ledger's header argument; `:cmd` too; for Beancount, a query, `BALANCES` without one) and writes the output under the block as `#+RESULTS:` in fixed-width lines, replacing the results of the last run. Kalem's own Babel runs the same blocks too, with Kalem's plugin API 0.2.21 and later: name `hledger`, `ledger` or `beancount` in Kalem's setting `babel.load_languages`, and Enter in Vim's Normal mode (`C-c C-c` with the Emacs keys) asks before it runs the block as Emacs's ob-ledger does, `:cmdline` `bal` by default, and writes the tool's output under `#+RESULTS:` as Org writes it (an example block from ten lines on).
 
 ## From the command line
 
