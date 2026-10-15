@@ -1167,6 +1167,24 @@ first.
   the tool reads (an alias, `apply account`); `api` `^0.2.16` as in
   0.7.0.)
 
+## PT15. Linux and Windows
+
+- [~] PT15 Linux and Windows: the plugin runs the same tools there,
+  untried.
+  (Partly done 2026-10-15 without either machine: journals with
+  Windows's line endings (CRLF), which Kalem hands a plugin as they
+  are, read alike and are written in their own endings: `tests/crlf.rs`
+  compares transactions, accounts, completion, alignment, Sort, Finish
+  and a block's results on every corpus journal with CRLF against LF,
+  and the component ends what it writes as the document does
+  (`write::ended_as`, `edits_ended_as`); checked in Kalem's terminal
+  editor on a CRLF hledger journal, Reconcile and Finish leaving every
+  line CRLF. Windows's paths: `journal::same_file` takes `\` and `/`
+  and any case for a path with a drive's letter or `\`, `resolve`
+  keeps `\`; the tools' `PATH:LINE` was already read from the right,
+  past a drive's colon. Left: a Beancount block gives `bean-query`
+  `/dev/stdin`, which Windows lacks; trying both systems.)
+
 ## What Kalem's core must gain
 
 Each is marked "waits on Kalem" in the task that needs it, and is
