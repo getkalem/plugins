@@ -1208,9 +1208,9 @@ user groups; the gaps that code can close, in this order.
     block's first line as its page holds it (read once for each version
     of the index), past the bullet or an Org headline's stars; Kalem
     types into them where they show and writes the page, and the plugin
-    reads it again. Not yet: the embedded block's own line (drawn in
-    place of `{{embed ((…))}}`), and new blocks or indenting from an
-    embed.
+    reads it again. The embedded block's own line too (2026-10-15): the
+    embed's line names the block's page, the block shown under it with
+    its children. Not yet: new blocks or indenting from an embed (K25).
   - [x] GR16k Whiteboards and canvases drawn (K22, Kalem's `canvas-view`,
     plugin API 0.2.16): a Logseq whiteboard's tldraw shapes as Logseq
     0.10.9 writes them (`:logseq.tldraw.shape`: box, ellipse, polygon,

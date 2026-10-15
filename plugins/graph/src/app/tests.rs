@@ -2411,8 +2411,9 @@ fn an_embeds_blocks_are_given_to_type_into_where_they_show() {
             .collect()
     };
     // Without Kalem's files, none.
-    assert_eq!(sources(&app), [None, None]);
-    // The embedded block's children: their first lines, after the bullet.
+    assert_eq!(sources(&app), [None, None, None]);
+    // The embedded block and its children: their first lines, after the
+    // bullet.
     app.read = Some(disk);
     let source = |line: u32, text: &str| crate::rows::Source {
         path: "/w/notes/pages/Plan.md".into(),
@@ -2423,6 +2424,10 @@ fn an_embeds_blocks_are_given_to_type_into_where_they_show() {
     assert_eq!(
         sources(&app),
         [
+            Some(crate::rows::Source {
+                column: 2,
+                ..source(0, "Goals")
+            }),
             Some(source(2, "TODO buy milk")),
             Some(source(3, "[[Kalem]] notes"))
         ]

@@ -194,8 +194,9 @@ pub fn pieces(index: &Index, text: &str) -> Vec<(String, Look)> {
     out
 }
 
-/// What `{{embed ((id))}}` shows under its line, which shows the block
-/// itself: its children, a level in for each.
+/// What `{{embed ((id))}}` shows under its line, which names the block's
+/// page: the block, then its children a level in for each, each typed
+/// into where it shows.
 pub fn embedded_block(index: &Index, id: &str) -> Vec<Row> {
     let Some((rel, i)) = index.block_place(id) else {
         return Vec::new();
@@ -206,10 +207,11 @@ pub fn embedded_block(index: &Index, id: &str) -> Vec<Row> {
     let Some(depth) = blocks.get(i).map(|b| b.depth) else {
         return Vec::new();
     };
-    let rows = blocks[i + 1..]
+    let rows = blocks[i..]
         .iter()
-        .take_while(|b| b.depth > depth)
-        .map(|b| block_row(index, rel, b, 2 + 2 * u32::from(b.depth - depth)))
+        .enumerate()
+        .take_while(|(k, b)| *k == 0 || b.depth > depth)
+        .map(|(_, b)| block_row(index, rel, b, 2 + 2 * u32::from(b.depth - depth)))
         .collect();
     capped(rows, 4)
 }
@@ -383,25 +385,26 @@ mod tests {
     }
 
     #[test]
-    fn an_embedded_blocks_children() {
+    fn an_embedded_block_and_its_children() {
         let i = index();
         let rows = embedded_block(&i, "6512c0de-0001-4000-8000-000000000001");
         assert_eq!(
             texts(&rows),
             [
+                (2, "• The core".to_string()),
                 (4, "• TODO [#A] its first part, see B #idea".to_string()),
                 (6, "• deeper, code".to_string()),
                 (4, "• DONE a second".to_string()),
             ]
         );
         // Looks: the keyword, the link, the tag; a done block struck.
-        let first = &rows[0].parts;
+        let first = &rows[1].parts;
         assert!(first.iter().any(|(t, l)| t == "TODO " && l.todo));
         assert!(first.iter().any(|(t, l)| t == "first" && l.bold));
         assert!(first.iter().any(|(t, l)| t == "B" && l.link));
         assert!(first.iter().any(|(t, l)| t == "#idea" && l.tag));
         assert!(
-            rows[2]
+            rows[3]
                 .parts
                 .iter()
                 .any(|(t, l)| t == "a second" && l.strike)
