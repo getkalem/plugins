@@ -45,6 +45,10 @@ impl Files for Fs {
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
     static STATUS: RefCell<Option<kalem::Disposable>> = const { RefCell::new(None) };
+    /// The subscription to the selection, by which a Kalem that does not
+    /// tell the focus says a note was shown again; dropped at its first
+    /// focus.
+    static SELECTIONS: RefCell<Option<kalem::Disposable>> = const { RefCell::new(None) };
     /// The documents open: `(id, key)` to Kalem's number.
     static DOCS: RefCell<BTreeMap<(String, String), u64>> = const { RefCell::new(BTreeMap::new()) };
 }
@@ -407,10 +411,24 @@ impl Plugin for Graph {
             }
             Reply::Proceed
         })?;
+        // On a Kalem that does not tell the focus (before plugin API
+        // 0.2.18), a note open already shown again: the cursor's event in
+        // it, which Kalem 0.6.23 and later send at once.
+        let selections = kalem::on(EventKind::SelectionChanged, |e| {
+            if let Event::SelectionChanged(s) = e {
+                let n = s.document;
+                with_app(|app| app.selected_in(&Fs, n));
+            }
+            Reply::Proceed
+        })?;
+        SELECTIONS.with(|s| *s.borrow_mut() = Some(selections));
         // The note in front, a switch back to one open already included
-        // (plugin API 0.2.18; an earlier Kalem calls none, and the note
-        // opened last stays the current one).
+        // (plugin API 0.2.18): the selection's events are no longer
+        // needed for it.
         kalem_plugin::focus::on(|_, path| {
+            if let Some(d) = SELECTIONS.with(|s| s.borrow_mut().take()) {
+                d.dispose();
+            }
             let path = path.map(str::to_string);
             with_app(|app| app.focused(&Fs, path.as_deref()));
         });

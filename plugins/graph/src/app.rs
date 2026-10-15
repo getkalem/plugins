@@ -1099,6 +1099,24 @@ impl App {
         self.show(files, &path)
     }
 
+    /// The cursor moved in document `number` (`selection-changed`). On a
+    /// Kalem that does not tell the focus (before its plugin API 0.2.18),
+    /// a note open already that is shown again says so this way (Kalem
+    /// 0.6.23 and later at once, earlier ones at the cursor's next move):
+    /// it becomes the current one.
+    pub fn selected_in(&mut self, files: &dyn Files, number: u64) -> Vec<Effect> {
+        if self.focus_told {
+            return Vec::new();
+        }
+        let Some(path) = self.open.get(&number).cloned() else {
+            return Vec::new();
+        };
+        if self.current.as_deref() == Some(path.as_str()) {
+            return Vec::new();
+        }
+        self.show(files, &path)
+    }
+
     /// The document of `path` (absolute, normalized) current: its graph
     /// the one used last, its page first among the recent ones, in the
     /// panel and its graph in the status bar.
