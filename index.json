@@ -78,8 +78,8 @@
         "subprocess:git"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/git",
-      "download": null,
-      "sha256": null
+      "download": "https://github.com/getkalem/plugins/releases/download/git-v0.0.13/git.wasm",
+      "sha256": "8eef3caf67ca9232da98aee2f971dfe8f5504d2adbc9e2c920988369b915b9b7"
     },
     {
       "id": "org.kalem.graph",
@@ -92,8 +92,8 @@
         "fs:write:workspace"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/graph-v0.19.0/graph.wasm",
+      "sha256": "d41542b80c4c883fab9cfdb6bd22a40e4276a18d56691bcf40da8410caa98f21",
       "layers": [
         {
           "id": "logseq",
