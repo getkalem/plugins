@@ -1188,6 +1188,25 @@ first.
   keeps `\`; the tools' `PATH:LINE` was already read from the right,
   past a drive's colon. Left: a Beancount block gives `bean-query`
   `/dev/stdin`, which Windows lacks; trying both systems.)
+  Linux tried 2026-10-15 (the owner's word, downloads allowed): Debian
+  13 on aarch64 in Docker, Debian's hledger 1.32.3 (the official
+  binaries are x64 only, and GHC's runtime does not start under
+  emulation) and Ledger 3.3.2, Beancount 3.2.3 and beanquery 0.2.0 from
+  pip, Kalem 0.6.29's Linux releases. The tests pass with a UTF-8
+  locale (the servers' corpus tests skipped, none installed). Found:
+  hledger 1.32 reads a journal by the locale, so with no `LANG` it
+  cannot read `Ş` ("hGetContents: invalid argument (cannot decode byte
+  sequence)", 1.52 on macOS reads it): the plugin runs it once more
+  with `LC_ALL=C.UTF-8` when it says so (`journal::undecoded`, branch
+  `pta-linux`); and Kalem's terminal-only release has no plugin host
+  (`--no-default-features --features tui`), so the component does not
+  start there, though `kalem plugin install pta` installs it without a
+  word (told to the git session), while the full build wants
+  `libxkbcommon0` and `libxkbcommon-x11-0` for `kalem tui`. In the full
+  build's terminal editor, pta 0.7.2 with the fix: the three dialects'
+  checks (clean and erring files, places read), the Balance, Format
+  Document, completion from `hledger accounts`, and Reconcile and
+  Finish through an alias with the journal on standard input.
 
 ## What Kalem's core must gain
 

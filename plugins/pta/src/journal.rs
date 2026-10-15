@@ -201,6 +201,14 @@ fn resolve(dir: &str, p: &str) -> String {
     parts.join(if whole.contains('\\') { "\\" } else { "/" })
 }
 
+/// Whether a tool's error says it could not read a file's text in the
+/// locale's encoding: GHC's `hGetContents: invalid argument (cannot
+/// decode byte sequence starting from 197)` (hledger 1.32 in a locale
+/// that is not UTF-8), or `invalid byte sequence`.
+pub fn undecoded(said: &str) -> bool {
+    said.contains("cannot decode byte sequence") || said.contains("invalid byte sequence")
+}
+
 /// Whether `a` and `b` name one file: macOS's `/private/tmp` and `/tmp`
 /// (the tools print the first, the editor may hold the second) taken as
 /// one; and a Windows path (a drive's letter, or `\`) with either
@@ -437,5 +445,19 @@ mod tests {
             resolve("C:\\Users\\a\\Money", "2026.journal"),
             "C:\\Users\\a\\Money\\2026.journal"
         );
+    }
+
+    #[test]
+    fn a_text_not_decoded() {
+        // Debian's hledger 1.32 with no `LANG`, on a journal's `Ş`.
+        assert!(undecoded(
+            "hledger: /j/2026.journal: hGetContents: invalid argument (cannot decode byte sequence starting from 197)\n"
+        ));
+        assert!(undecoded(
+            "hledger: x: hGetContents: invalid byte sequence\n"
+        ));
+        assert!(!undecoded(
+            "hledger: Error: /j/a.journal:13:49:\nBalance assertion failed\n"
+        ));
     }
 }
