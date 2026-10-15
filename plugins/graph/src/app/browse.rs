@@ -40,6 +40,14 @@ impl App {
             .and_then(|(r, i)| i.page_of(files::relative(r, path)?))
             .is_some();
         if !is_page {
+            // A note of a graph being indexed: noted once it is.
+            if let Some(b) = self
+                .building_root(path)
+                .and_then(|r| self.building.get_mut(&r))
+                && !b.opened.iter().any(|p| p == path)
+            {
+                b.opened.push(path.to_string());
+            }
             return;
         }
         self.recent.retain(|p| p != path);
@@ -48,9 +56,8 @@ impl App {
         self.keep_recent();
     }
 
-    /// The file `path` at `line` (from 1) opened, or, for a whiteboard or
-    /// a canvas, shown in the file manager to be opened in its
-    /// application.
+    /// The file `path` at `line` (from 1) opened, or a whiteboard or a
+    /// canvas drawn (`graph.openBoard`).
     pub(super) fn open_or_reveal(&self, path: String, line: u32) -> Vec<Effect> {
         let drawn = self
             .indexes

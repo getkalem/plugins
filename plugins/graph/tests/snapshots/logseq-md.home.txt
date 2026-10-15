@@ -17,7 +17,7 @@ Favorites
 Recent
   • Kalem
 
-Whiteboards (shown in the file manager, to open there)
+Whiteboards
   • Design
 
 Other graphs

@@ -2349,11 +2349,18 @@ fn zoom_narrows_the_note_to_a_block_and_the_blocks_under_it() {
     // its `collapsed::` line).
     let folded = hidden(&app);
     assert_eq!(folded, 2);
-    // A block deeper in: lines 5 to 5, from 1.
-    assert_eq!(run(&mut app, "four"), narrow(r#"{"end":5,"start":5}"#));
+    // A block deeper in: lines 5 to 5, from 1, under Logseq's breadcrumb
+    // of its page and the blocks above it.
+    assert_eq!(
+        run(&mut app, "four"),
+        narrow(r#"{"end":5,"label":"Kalem › two › three","start":5}"#)
+    );
     // Lines 2 to 5: the block, its properties and its children, shown
     // though it is collapsed, as Logseq shows the block zoomed into.
-    assert_eq!(run(&mut app, "two"), narrow(r#"{"end":5,"start":2}"#));
+    assert_eq!(
+        run(&mut app, "two"),
+        narrow(r#"{"end":5,"label":"Kalem","start":2}"#)
+    );
     assert_eq!(hidden(&app), folded - 1);
     let out = app.command(
         &m,
@@ -2549,6 +2556,9 @@ fn a_graph_indexed_a_slice_at_a_time_where_kalem_runs_commands_later() {
     );
     let mut whole = App::new(Settings::default());
     whole.opened(&m, "/w/notes/pages/Kalem.md");
+    // The note opened before its graph was indexed: among the pages
+    // opened last once it is.
+    assert_eq!(app.recent, ["/w/notes/pages/Kalem.md"]);
     let counts = |app: &App| app.index("/w/notes").map(Index::counts);
     assert_eq!(counts(&app), counts(&whole));
     // Index Again: a slice at a time too, the index it has serving

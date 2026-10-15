@@ -432,7 +432,7 @@ pub fn pages(index: &Index, sort: PageSort) -> Content {
     c.blank();
     let mut drawings: Vec<_> = index.pages().filter(|p| drawn(p)).collect();
     if !drawings.is_empty() {
-        drawings.sort_by_key(|p| p.title.to_lowercase());
+        drawings.sort_by_key(|p| p.shown_title().to_lowercase());
         let (what, app) = match index.graph.kind {
             Kind::Logseq => ("Whiteboards", "Logseq"),
             Kind::Obsidian => ("Canvases", "Obsidian"),
@@ -441,7 +441,7 @@ pub fn pages(index: &Index, sort: PageSort) -> Content {
             &[
                 (&format!("{what} ({})", drawings.len()), Style::Heading),
                 (
-                    &format!("  drawn by {app}: Enter shows the file, to open it there"),
+                    &format!("  drawn by {app}: Enter draws one here, read only"),
                     Style::Muted,
                 ),
             ],
@@ -451,8 +451,8 @@ pub fn pages(index: &Index, sort: PageSort) -> Content {
             let links = index.backlinks(&p.key).len();
             c.line(
                 &[
-                    (&p.title, Style::Link),
-                    (&format!("  {links} links · opens in {app}"), Style::Muted),
+                    (p.shown_title(), Style::Link),
+                    (&format!("  {links} links"), Style::Muted),
                 ],
                 p.path.as_ref().map(|r| Target::File {
                     path: index.graph.path(r),
@@ -1812,7 +1812,7 @@ fn open_node(key: &str) -> Target {
 /// graph does not have, each opened by Enter; `none` when there are none.
 fn menu_pages(c: &mut Content, index: &Index, keys: &[(String, String)], none: &str, g: Glyphs) {
     for (key, name) in keys {
-        let title = index.page(key).map_or(name.as_str(), |p| p.title.as_str());
+        let title = index.page(key).map_or(name.as_str(), |p| p.shown_title());
         c.line(
             &[
                 ("  ", Style::Normal),
@@ -1894,7 +1894,7 @@ pub fn home(index: &Index, recent: &[String], others: &[(String, String)], g: Gl
         &mut c,
         index,
         &recent,
-        "None yet: the pages opened in this session",
+        "None yet: the pages opened show here",
         g,
     );
     let drawings: Vec<(String, String)> = index
@@ -1907,13 +1907,7 @@ pub fn home(index: &Index, recent: &[String], others: &[(String, String)], g: Gl
             Kind::Logseq => "Whiteboards",
             Kind::Obsidian => "Canvases",
         };
-        c.line(
-            &[
-                (title, Style::Heading),
-                (" (shown in the file manager, to open there)", Style::Muted),
-            ],
-            None,
-        );
+        c.line(&[(title, Style::Heading)], None);
         menu_pages(&mut c, index, &drawings, "", g);
     }
     if !others.is_empty() {

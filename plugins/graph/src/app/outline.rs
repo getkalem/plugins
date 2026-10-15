@@ -538,6 +538,17 @@ impl App {
                 let line = text[..cursor].matches('\n').count() as u32;
                 match edit::block_at(&s, line) {
                     Some(i) => {
+                        // Logseq's breadcrumb over it: the page, then the
+                        // blocks it is under (the label of Kalem's
+                        // narrowed part; an older Kalem leaves it out).
+                        let page = self
+                            .indexes
+                            .get(root)
+                            .and_then(|ix| ix.page_of(rel))
+                            .map_or_else(
+                                || files::stem_ext(rel).0.to_string(),
+                                |p| p.shown_title().to_string(),
+                            );
                         let (first, end) = edit::subtree(&s.blocks, i);
                         if flavor == Flavor::LogseqMarkdown
                             && let Some(p) = &ctx.path
@@ -547,8 +558,12 @@ impl App {
                         vec![
                             Effect::Run {
                                 id: "view.narrowToLines".into(),
-                                args: serde_json::json!({ "start": first + 1, "end": end })
-                                    .to_string(),
+                                args: serde_json::json!({
+                                    "start": first + 1,
+                                    "end": end,
+                                    "label": breadcrumb(&page, &s.blocks, i),
+                                })
+                                .to_string(),
                             },
                             Effect::RefreshLayers,
                         ]
@@ -791,6 +806,26 @@ impl App {
         out.extend(self.refresh(root));
         out
     }
+}
+/// Logseq's breadcrumb of block `i` zoomed into: page `page`, then the
+/// blocks it is under, each by its first line, cut at 48 characters.
+fn breadcrumb(page: &str, blocks: &[scan::Block], i: usize) -> String {
+    let short = |t: &str| {
+        let t = t.trim();
+        match t.char_indices().nth(48) {
+            Some((at, _)) => format!("{}…", &t[..at]),
+            None => t.to_string(),
+        }
+    };
+    let mut parts = Vec::new();
+    let mut p = blocks[i].parent;
+    while let Some(x) = p {
+        parts.push(short(&blocks[x].text));
+        p = blocks[x].parent;
+    }
+    parts.push(page.to_string());
+    parts.reverse();
+    parts.join(" › ")
 }
 
 /// The edits renaming the vault's note `key`, called `old` by its file,

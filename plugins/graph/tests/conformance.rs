@@ -497,10 +497,15 @@ fn drawings_highlights_and_unlinked_mentions() {
         Some("Board.canvas")
     );
     assert_eq!(titles(&o, "board.canvas"), ["Graph"]);
-    // All pages lists them apart, with the application that draws them.
+    // All pages lists them apart, with the application that draws them,
+    // Kalem drawing them too.
     let text = views::pages(&l, views::PageSort::Title).text;
     assert!(text.contains("Whiteboards (1)"), "{text}");
-    assert!(text.contains("Design  1 links · opens in Logseq"), "{text}");
+    assert!(
+        text.contains("drawn by Logseq: Enter draws one here"),
+        "{text}"
+    );
+    assert!(text.contains("Design  1 links"), "{text}");
     let text = views::pages(&o, views::PageSort::Title).text;
     assert!(text.contains("Canvases (1)"), "{text}");
     // A PDF's highlights are a page of blocks, named for the PDF.

@@ -1198,8 +1198,10 @@ user groups; the gaps that code can close, in this order.
     note narrowed to the block at the cursor and the blocks under it by
     Kalem's Narrow to Lines (K20, Kalem 0.6.24); Zoom Out (`SPC m s N`,
     `SPC b -` again: Kalem's Widen). In Org notes Kalem's own `SPC m s n`
-    narrows to the headline, which is Logseq's block there. Not yet: the
-    breadcrumb of the block's parents Logseq shows above it.
+    narrows to the headline, which is Logseq's block there. The
+    breadcrumb Logseq shows above it (the page, then the blocks above the
+    block) as the label of Kalem's narrowed part, drawn over it (Kalem
+    branch `narrow-label`, `view.narrowToLines`'s `label`, 2026-10-15).
   - [x] GR16j Embeds and query results typed into in place (K21, Kalem's
     `layer-3`, plugin API 0.2.15): the rows of an embedded block's
     children, an embedded page's blocks and a query's blocks name their
@@ -1218,8 +1220,20 @@ user groups; the gaps that code can close, in this order.
     link and group nodes, edges with labels, colors 1 to 6); following one
     draws it (`graph.openBoard`), a shape opened leads to its page, block
     or file (`graph.openShape`). Read from a hand-written board after the
-    shapes' properties in Logseq 0.10.9's tldraw: not yet checked against
-    a board Logseq drew.
+    shapes' properties in Logseq 0.10.9's tldraw, then checked
+    (2026-10-15) against the first whiteboard Logseq 0.10.9 draws itself,
+    its tour of 79 shapes: the place and size of its 60 shapes and its 19
+    connectors, their ends, the shapes they are bound to, arrows and
+    labels as Logseq's own tldraw holds them. Fixed on the way: a picture
+    kept in the board as a `data:` address (that tour's own) read as a
+    file of that name, its target some 100 kB long (now a box saying a
+    picture is there; one on the web its address), a text's size grown
+    past Logseq's at a small font (now its file's), a whiteboard Logseq
+    named by its UUID shown as Untitled as Logseq shows it, the graph's
+    menu and All pages still saying a whiteboard opens in its
+    application, and a note opened while its graph was indexed missing
+    from Recent Pages (K13). Open: a text drawn at Kalem's one size, not
+    its own (Logseq's xs to xl, 10 to 48 pixels; K24).
   - [x] GR16l The pages opened last, and each graph's graph view toggles
     (`J`, `O`) and sort of All pages, kept from one session to the next
     (K23, Kalem's `state`, plugin API 0.2.17): written as they change,
@@ -1409,6 +1423,11 @@ Each is the plugin's gate or its ask, written for every plugin.
   `plugin-state/ID.json`, written at once, keys of 256 bytes, 1 MB in
   all). The plugin keeps its pages opened last and each graph's toggles
   and sort (GR16l).
+- K24 A shape's text size in `canvas-view`: Kalem draws every shape's
+  text at one size that grows with the zoom, where a Logseq whiteboard's
+  texts go from xs to xl (10 to 48 pixels) and a diagram has headings.
+  Asks: a size for a shape's text (pixels at the canvas's scale), for
+  every plugin that draws a canvas. Not blocking.
 
 ## Decisions, and what waits in Kalem's repository
 

@@ -1471,7 +1471,7 @@ impl App {
             }
             "graph.board" => {
                 let rel = page?;
-                let title = index.page_of(rel).map_or(rel, |p| p.title.as_str());
+                let title = index.page_of(rel).map_or(rel, |p| p.shown_title());
                 // Read as it is now: a whiteboard is written by its app.
                 let text = self
                     .read
