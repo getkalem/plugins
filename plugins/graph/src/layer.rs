@@ -1218,6 +1218,8 @@ mod tests {
             parts: vec![(t.to_string(), Look::default())],
             block: None,
             source: None,
+            floor: None,
+            root: false,
         };
         let o = queries(
             Overlays::default(),

@@ -27,6 +27,13 @@ pub struct Row {
     /// plugin API 0.2.15): the block's first line, set by the app from
     /// `block` as the file holds it.
     pub source: Option<Source>,
+    /// For a row that shows a block: the least depth Shift+Tab may leave
+    /// it at (an embed keeps its blocks under its own block, a page's embed
+    /// at the page's top level); none: any.
+    pub floor: Option<u16>,
+    /// The block an embed shows: Enter makes new blocks under it, which
+    /// the embed shows, not after it.
+    pub root: bool,
 }
 
 /// The text of a file a row shows (Kalem's `layer-3`): in file `path`,
@@ -42,6 +49,85 @@ pub struct Source {
     pub column: u32,
     /// The text, to the line's end.
     pub text: String,
+    /// The block of the file's outline the line starts (Kalem's plugin API
+    /// 0.2.18, `layer-4`), for a Logseq note's block.
+    pub outline: Option<Outline>,
+}
+
+/// The block of a file's outline a row's line starts (Kalem's `layer-4`):
+/// what Enter, Tab and Shift+Tab do where the row is typed into.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outline {
+    /// The line after the block and the blocks under it, from 0: Tab and
+    /// Shift+Tab move the lines from the block's to it.
+    pub end: u32,
+    /// The line Enter puts a new block at.
+    pub next: u32,
+    /// What the new block's line starts with.
+    pub bullet: String,
+    /// A step of indentation as the file writes it.
+    pub step: String,
+    /// Whether Tab may indent the block (a block before it at its level).
+    pub indent: bool,
+    /// Whether Shift+Tab may take it out a step.
+    pub outdent: bool,
+}
+
+/// The block of its file's outline that starts at line `line` of `text`, a
+/// Logseq note's (its blocks as scanned in `blocks`), as a row showing it
+/// gives it to Kalem (plugin API 0.2.18): Enter makes a block after it and
+/// the blocks under it, or the first block under it when it has some or is
+/// the block an embed shows (`root`), as Logseq does; Tab puts it under
+/// the block before it at its level; Shift+Tab takes it out a step, not to
+/// a depth below `floor`. None for a line that starts no block.
+pub fn outline(
+    blocks: &[Block],
+    text: &str,
+    line: u32,
+    floor: Option<u16>,
+    root: bool,
+) -> Option<Outline> {
+    let i = blocks.iter().position(|b| b.line == line)?;
+    let b = &blocks[i];
+    let raw = text.lines().nth(line as usize)?;
+    let column = content_column(raw);
+    let lead = raw.len() - raw.trim_start().len();
+    if column <= lead {
+        return None;
+    }
+    // A step of indentation as the file writes a block's under another: a
+    // tab, as Logseq does, or the spaces one takes.
+    let bullets = ["- ", "* ", "+ "];
+    let step = text
+        .lines()
+        .map(|l| (l, l.len() - l.trim_start().len()))
+        .find(|(l, w)| *w > 0 && bullets.iter().any(|p| l[*w..].starts_with(p)))
+        .map_or_else(
+            || "\t".to_string(),
+            |(l, w)| {
+                if l.starts_with('\t') {
+                    "\t".to_string()
+                } else {
+                    l[..w].to_string()
+                }
+            },
+        );
+    let (_, end) = crate::edit::subtree(blocks, i);
+    let own = b.end.max(b.line + 1);
+    let (next, bullet) = if root || end > own {
+        (own, format!("{}{step}{}", &raw[..lead], &raw[lead..column]))
+    } else {
+        (end, raw[..column].to_string())
+    };
+    let before = blocks[..i].iter().rev().find(|x| x.depth <= b.depth);
+    Some(Outline {
+        end,
+        next,
+        bullet,
+        step,
+        indent: before.is_some_and(|x| x.depth == b.depth),
+        outdent: b.depth > 0 && floor.is_none_or(|f| b.depth > f),
+    })
 }
 
 /// Where a block's text starts in its first line `raw`: after its
@@ -95,6 +181,8 @@ fn capped(mut rows: Vec<Row>, indent: u32) -> Vec<Row> {
             )],
             block: None,
             source: None,
+            floor: None,
+            root: false,
         });
     }
     rows
@@ -127,6 +215,8 @@ fn block_row(index: &Index, rel: &str, b: &Block, indent: u32) -> Row {
         parts,
         block: Some((rel.to_string(), b.line)),
         source: None,
+        floor: None,
+        root: false,
     }
 }
 
@@ -211,7 +301,13 @@ pub fn embedded_block(index: &Index, id: &str) -> Vec<Row> {
         .iter()
         .enumerate()
         .take_while(|(k, b)| *k == 0 || b.depth > depth)
-        .map(|(_, b)| block_row(index, rel, b, 2 + 2 * u32::from(b.depth - depth)))
+        .map(|(k, b)| {
+            let mut r = block_row(index, rel, b, 2 + 2 * u32::from(b.depth - depth));
+            // Its own block, and the blocks under it, kept the embed's.
+            r.root = k == 0;
+            r.floor = Some(if k == 0 { depth } else { depth + 1 });
+            r
+        })
         .collect();
     capped(rows, 4)
 }
@@ -252,7 +348,11 @@ pub fn embedded_page(index: &Index, key: &str, anchor: Option<&str>) -> Vec<Row>
     let top = blocks.iter().map(|b| b.depth).min().unwrap_or(0);
     let rows = blocks
         .iter()
-        .map(|b| block_row(index, rel, b, 2 + 2 * u32::from(b.depth - top)))
+        .map(|b| {
+            let mut r = block_row(index, rel, b, 2 + 2 * u32::from(b.depth - top));
+            r.floor = Some(top);
+            r
+        })
         .collect();
     capped(rows, 2)
 }
@@ -274,6 +374,8 @@ pub fn hits(index: &Index, answer: &Answer) -> Vec<Row> {
                     ],
                     block: None,
                     source: None,
+                    floor: None,
+                    root: false,
                 });
             }
             Hit::Block { rel, block } => {
@@ -299,6 +401,8 @@ pub fn hits(index: &Index, answer: &Answer) -> Vec<Row> {
                         )],
                         block: None,
                         source: None,
+                        floor: None,
+                        root: false,
                     });
                 }
                 rows.push(block_row(index, rel, b, 4));
@@ -325,6 +429,8 @@ pub fn hits(index: &Index, answer: &Answer) -> Vec<Row> {
                     ],
                     block: None,
                     source: None,
+                    floor: None,
+                    root: false,
                 });
             }
         }
@@ -349,6 +455,8 @@ pub fn table(columns: &[String], values: &[Vec<String>]) -> Vec<Row> {
             parts,
             block: None,
             source: None,
+            floor: None,
+            root: false,
         }
     };
     let mut rows = vec![line(columns, look(|l| l.bold = true))];
