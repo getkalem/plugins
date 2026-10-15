@@ -577,6 +577,7 @@ below replace the earlier GR4a to GR4d.
   | `:LOGBOOK:` … `:END:` | folded to its first line |
   | `#tag`, `#[[two words]]` | a tag |
   | `#+BEGIN_NOTE` … `#+END_NOTE` and the others | their lines dimmed |
+  | A block with an id that blocks refer to | after its first line, the number of blocks referring to it (each once, an embed too), as Logseq 0.10.9 shows it beside the block, not in an embed of it (K6) |
   | `[[page]]`, `$$…$$`, pictures, tables | Kalem's Markdown, unchanged |
 
   (Done 2026-10-10 but for what follows. Open: an embed's block or
@@ -1275,7 +1276,13 @@ Each is the plugin's gate or its ask, written for every plugin.
   Until then `fs.write` for files not open, a notice for open ones.
 - K6 Virtual text in `decorations` (the git design's 9.3): backlink
   and reference counts at a block's end, as Logseq shows them. Not
-  blocking.
+  blocking. Done 2026-10-15 on Kalem's branch `layer-5` (plugin API
+  0.2.20, the export `layer-5`): a layer's text at places of a line, a
+  line of at most 200 characters after what ends at a byte, drawn as a
+  language server's inlay hints are, the cursor stepping over it. Logseq
+  shows a block's number of references only, no backlinks: the plugin
+  shows it after the block's first line, each block referring to it
+  once, an embed too, as Logseq 0.10.9 counts them (GR5).
 - K7 The permission consent on first use (R5.11): a plugin that reads
   every file of a project should be consented to in the editor, not
   only at install, before `graph-v0.1.0` reaches users. Recommended,

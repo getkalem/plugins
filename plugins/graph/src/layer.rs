@@ -5,7 +5,8 @@
 //! links, wiki links, tables, lists); the layer hides what the
 //! applications hide (a block's `id::` and `collapsed::` lines, a `^id`, a
 //! `%%comment%%`), shows a block reference as its block's text, styles
-//! tags, task keywords and dates, and folds a `:LOGBOOK:`.
+//! tags, task keywords and dates, folds a `:LOGBOOK:` and shows a
+//! block's number of references at its first line's end.
 //!
 //! Pure: the text and, when the graph is indexed, the index in, the
 //! overlays out; the component turns them into the API's records.
@@ -94,6 +95,18 @@ pub struct Below {
     pub rows: Vec<Row>,
 }
 
+/// Text shown at byte `at` of a line, after what ends there, not part of
+/// the text (Kalem's API 0.2.20): a block's number of references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Insert {
+    /// The byte.
+    pub at: usize,
+    /// The text.
+    pub text: String,
+    /// Its look.
+    pub look: Look,
+}
+
 /// The overlays of a note.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Overlays {
@@ -103,6 +116,9 @@ pub struct Overlays {
     pub lines: Vec<Lines>,
     /// Rows under lines, in order.
     pub below: Vec<Below>,
+    /// Text at places of lines, in order; those at one place in the
+    /// order given.
+    pub inserts: Vec<Insert>,
 }
 
 impl Overlays {
@@ -137,6 +153,7 @@ impl Overlays {
             keep
         });
         self.below.sort_by_key(|b| b.at);
+        self.inserts.sort_by_key(|i| i.at);
         self.lines.sort_by_key(|l| l.start);
         let mut end = 0;
         self.lines.retain(|l| {
@@ -628,6 +645,7 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
     let starts: Vec<usize> = ls.iter().map(|(s, _)| *s).collect();
     let at = |n: u32| starts.get(n as usize).copied().unwrap_or(text.len());
     numbered(&mut o, &s.blocks, &ls);
+    ref_counts(&mut o, &s.blocks, &ls, index);
     for (i, b) in s.blocks.iter().enumerate() {
         if b.collapsed && s.blocks.get(i + 1).is_some_and(|c| c.parent == Some(i)) {
             // Its bullet a closed arrow, as Logseq marks a folded block.
@@ -660,6 +678,52 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
         }
     }
     o.finish()
+}
+
+/// After the first line of each block with an id, the number of blocks
+/// referring to it, as Logseq shows it beside the block (not where the
+/// block is embedded): a block referring to it twice, or embedding it,
+/// counts once (Kalem's API 0.2.20, the work list's K6).
+fn ref_counts(
+    o: &mut Overlays,
+    blocks: &[scan::Block],
+    ls: &[(usize, &str)],
+    index: Option<&Index>,
+) {
+    let Some(index) = index else {
+        return;
+    };
+    for b in blocks {
+        let Some(id) = &b.id else {
+            continue;
+        };
+        let refs = index.block_backlinks(id);
+        let Some((start, line)) = ls.get(b.line as usize) else {
+            continue;
+        };
+        if refs.is_empty() {
+            continue;
+        }
+        // Each block once; a reference in no block, each line once.
+        let from: std::collections::HashSet<(&str, Option<usize>, u32)> = refs
+            .iter()
+            .map(|r| (&*r.path, r.block, if r.block.is_some() { 0 } else { r.line }))
+            .collect();
+        let at = start + line.strip_suffix('\r').unwrap_or(line).len();
+        o.inserts.push(Insert {
+            at,
+            text: " ".into(),
+            look: Look::default(),
+        });
+        o.inserts.push(Insert {
+            at,
+            text: from.len().to_string(),
+            look: Look {
+                code: true,
+                ..Look::default()
+            },
+        });
+    }
 }
 
 /// The blocks with `logseq.order-list-type:: number` numbered as Logseq
@@ -998,6 +1062,8 @@ pub fn logseq_org(text: &str, index: Option<&Index>, rel: Option<&str>) -> Overl
         }
         inline(&mut o, line, start, Flavor::LogseqOrg, index, rel);
     }
+    let s = scan::scan(text, Flavor::LogseqOrg, &scan::Options::default());
+    ref_counts(&mut o, &s.blocks, &lines(text), index);
     o.finish()
 }
 /// The blocks under the block at line `line` of a Logseq note in
@@ -1327,6 +1393,52 @@ mod tests {
             o.spans[0].effect,
             Effect::Style(Look { dim: true, .. })
         ));
+    }
+
+    #[test]
+    fn a_block_shows_the_number_of_blocks_referring_to_it() {
+        // As Logseq 0.10.9 counts them beside the block: a block that
+        // refers to it twice, and one that embeds it, once each.
+        let id = "6512c0de-0001-4000-8000-000000000010";
+        let a = format!(
+            "- Counted\n  id:: {id}\n- Plain\n- twice (({id})) (({id}))\n\t- a child (({id}))\n"
+        );
+        let b = format!("- another (({id}))\n- {{{{embed (({id}))}}}}\n");
+        let c = "* Org\n:PROPERTIES:\n:id: 6512c0de-0001-4000-8000-000000000011\n:END:\n* cites ((6512c0de-0001-4000-8000-000000000011))\n";
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            ("/g/pages/A.md", &a),
+            ("/g/pages/B.md", &b),
+            ("/g/pages/C.org", c),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        let count = |n: &str, at: usize| {
+            vec![
+                Insert {
+                    at,
+                    text: " ".into(),
+                    look: Look::default(),
+                },
+                Insert {
+                    at,
+                    text: n.into(),
+                    look: Look {
+                        code: true,
+                        ..Look::default()
+                    },
+                },
+            ]
+        };
+        let o = logseq_markdown(&a, Some(&i), Some("pages/A.md"));
+        assert_eq!(o.inserts, count("4", "- Counted".len()));
+        // In Org, at the end of the headline.
+        let o = logseq_org(c, Some(&i), Some("pages/C.org"));
+        assert_eq!(o.inserts, count("1", "* Org".len()));
+        // Without the index, none.
+        assert!(logseq_markdown(&a, None, None).inserts.is_empty());
     }
 
     #[test]
