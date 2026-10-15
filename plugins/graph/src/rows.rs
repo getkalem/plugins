@@ -8,10 +8,14 @@
 use crate::index::Index;
 use crate::layer::Look;
 use crate::query::{Answer, Hit};
-use crate::scan::{self, Block};
+use crate::scan::{self, Block, Flavor, RefKind};
 
 /// The rows one embed or query shows at most.
 pub const MAX: usize = 24;
+
+/// How many embeds deep an embed's rows go (an embed in an embed in …),
+/// as Logseq 0.10.9 draws them; deeper, a row says so, as Logseq does.
+const DEPTH: usize = 6;
 
 /// A line drawn under a line of the note.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,7 +241,29 @@ pub fn pieces(index: &Index, text: &str) -> Vec<(String, Look)> {
             let e = inner.find(close)?;
             Some((&inner[..e], open.len() + e + close.len()))
         };
-        if let Some((name, n)) = pair("[[", "]]") {
+        if let Some((inner, n)) = pair("{{embed ", "}}") {
+            // An embed, shown under its row: its block's page or its page.
+            flush(&mut plain, &mut out);
+            let inner = inner.trim();
+            let shown = match inner.strip_prefix("((").and_then(|i| i.strip_suffix("))")) {
+                Some(id) => index
+                    .block_place(&id.to_lowercase())
+                    .and_then(|(rel, _)| index.page_of(rel))
+                    .map_or_else(|| "a block".to_string(), |p| p.shown_title().to_string()),
+                None => inner
+                    .trim_start_matches("[[")
+                    .trim_end_matches("]]")
+                    .to_string(),
+            };
+            out.push((format!("↳ {shown}"), look(|l| l.link = true)));
+            rest = &rest[n..];
+        } else if let Some((name, n)) = pair("![[", "]]") {
+            // Obsidian's embed.
+            flush(&mut plain, &mut out);
+            let name = name.split_once('|').map_or(name, |(note, _)| note);
+            out.push((format!("↳ {name}"), look(|l| l.link = true)));
+            rest = &rest[n..];
+        } else if let Some((name, n)) = pair("[[", "]]") {
             flush(&mut plain, &mut out);
             let shown = name.split_once('|').map_or(name, |(_, label)| label);
             out.push((shown.to_string(), look(|l| l.link = true)));
@@ -286,35 +312,48 @@ pub fn pieces(index: &Index, text: &str) -> Vec<(String, Look)> {
 
 /// What `{{embed ((id))}}` shows under its line, which names the block's
 /// page: the block, then its children a level in for each, each typed
-/// into where it shows.
+/// into where it shows, and under a block the embeds in it.
 pub fn embedded_block(index: &Index, id: &str) -> Vec<Row> {
+    capped(block_rows(index, id, 1), 4)
+}
+
+/// [`embedded_block`]'s rows, not capped, for an embed `depth` embeds deep.
+fn block_rows(index: &Index, id: &str, depth: usize) -> Vec<Row> {
     let Some((rel, i)) = index.block_place(id) else {
         return Vec::new();
     };
     let Some(blocks) = index.file(rel).map(|f| &f.scanned.blocks) else {
         return Vec::new();
     };
-    let Some(depth) = blocks.get(i).map(|b| b.depth) else {
+    let Some(level) = blocks.get(i).map(|b| b.depth) else {
         return Vec::new();
     };
-    let rows = blocks[i..]
+    let mut rows = Vec::new();
+    for (k, b) in blocks[i..]
         .iter()
         .enumerate()
-        .take_while(|(k, b)| *k == 0 || b.depth > depth)
-        .map(|(k, b)| {
-            let mut r = block_row(index, rel, b, 2 + 2 * u32::from(b.depth - depth));
-            // Its own block, and the blocks under it, kept the embed's.
-            r.root = k == 0;
-            r.floor = Some(if k == 0 { depth } else { depth + 1 });
-            r
-        })
-        .collect();
-    capped(rows, 4)
+        .take_while(|(k, b)| *k == 0 || b.depth > level)
+    {
+        let mut r = block_row(index, rel, b, 2 + 2 * u32::from(b.depth - level));
+        // Its own block, and the blocks under it, kept the embed's.
+        r.root = k == 0;
+        r.floor = Some(if k == 0 { level } else { level + 1 });
+        let indent = r.indent;
+        rows.push(r);
+        rows.extend(nested(index, rel, b, indent, depth));
+    }
+    rows
 }
 
 /// What `{{embed [[page]]}}` shows under its line: the page's blocks, or
-/// those under its heading `anchor` (Obsidian's `![[note#Heading]]`).
+/// those under its heading `anchor` (Obsidian's `![[note#Heading]]`), and
+/// under a block the embeds in it.
 pub fn embedded_page(index: &Index, key: &str, anchor: Option<&str>) -> Vec<Row> {
+    capped(page_rows(index, key, anchor, 1), 2)
+}
+
+/// [`embedded_page`]'s rows, not capped, for an embed `depth` embeds deep.
+fn page_rows(index: &Index, key: &str, anchor: Option<&str>, depth: usize) -> Vec<Row> {
     let Some(rel) = index.page(key).and_then(|p| p.path.as_deref()) else {
         return Vec::new();
     };
@@ -346,15 +385,68 @@ pub fn embedded_page(index: &Index, key: &str, anchor: Option<&str>) -> Vec<Row>
         .filter(|b| b.line >= from && b.line < to && !b.text.trim().is_empty())
         .collect();
     let top = blocks.iter().map(|b| b.depth).min().unwrap_or(0);
-    let rows = blocks
-        .iter()
-        .map(|b| {
-            let mut r = block_row(index, rel, b, 2 + 2 * u32::from(b.depth - top));
-            r.floor = Some(top);
-            r
-        })
-        .collect();
-    capped(rows, 2)
+    let mut rows = Vec::new();
+    for b in blocks {
+        let mut r = block_row(index, rel, b, 2 + 2 * u32::from(b.depth - top));
+        r.floor = Some(top);
+        let indent = r.indent;
+        rows.push(r);
+        rows.extend(nested(index, rel, b, indent, depth));
+    }
+    rows
+}
+
+/// The rows of the embeds in the first line of block `b` of file `rel`,
+/// itself in an embed `depth` embeds deep, under its row at `indent`: an
+/// embed in an embed, drawn as Logseq draws it; past [`DEPTH`], a row
+/// saying so (a block that embeds itself ends there).
+fn nested(index: &Index, rel: &str, b: &Block, indent: u32, depth: usize) -> Vec<Row> {
+    let line = b.text.lines().next().unwrap_or("");
+    if !line.contains("{{") && !line.contains("![[") {
+        return Vec::new();
+    }
+    let flavor = match index.graph.kind {
+        crate::config::Kind::Obsidian => Flavor::Obsidian,
+        _ if rel.to_lowercase().ends_with(".org") => Flavor::LogseqOrg,
+        _ => Flavor::LogseqMarkdown,
+    };
+    let mut out = Vec::new();
+    for r in scan::references(line, flavor) {
+        if !matches!(r.kind, RefKind::EmbedBlock | RefKind::EmbedPage) {
+            continue;
+        }
+        let rows = if depth >= DEPTH {
+            vec![Row {
+                indent: 2,
+                parts: vec![(
+                    "Embed depth is too deep".to_string(),
+                    look(|l| l.dim = true),
+                )],
+                block: None,
+                source: None,
+                floor: None,
+                root: false,
+            }]
+        } else if r.kind == RefKind::EmbedBlock {
+            let id = match flavor {
+                Flavor::Obsidian => format!(
+                    "{}#^{}",
+                    index.resolve(&r.target, rel),
+                    r.anchor.as_deref().unwrap_or("").to_lowercase()
+                ),
+                _ => r.target.clone(),
+            };
+            block_rows(index, &id, depth + 1)
+        } else {
+            let key = index.resolve(&r.target, rel);
+            page_rows(index, &key, r.anchor.as_deref(), depth + 1)
+        };
+        out.extend(rows.into_iter().map(|mut row| {
+            row.indent += indent;
+            row
+        }));
+    }
+    out
 }
 
 /// A query's results under its line: its pages, or its blocks under the
@@ -531,6 +623,57 @@ mod tests {
             ]
         );
         assert!(embedded_page(&i, "nowhere", None).is_empty());
+    }
+
+    /// An embed in an embed, as Logseq 0.10.9 draws it: the block or page
+    /// it embeds under the row of the block holding it; a block that
+    /// embeds itself six deep, then a row saying so, as Logseq's.
+    #[test]
+    fn an_embed_in_an_embed() {
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            (
+                "/g/pages/Nest.md",
+                "- Outer\n  id:: 6512c0de-0002-4000-8000-000000000001\n\t- {{embed ((6512c0de-0002-4000-8000-000000000002))}}\n\t- {{embed [[Plain]]}}\n- Self {{embed ((6512c0de-0002-4000-8000-000000000003))}}\n  id:: 6512c0de-0002-4000-8000-000000000003\n",
+            ),
+            (
+                "/g/pages/Inner.md",
+                "- Inner\n  id:: 6512c0de-0002-4000-8000-000000000002\n\t- its child\n",
+            ),
+            ("/g/pages/Plain.md", "- one\n- two\n"),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        assert_eq!(
+            texts(&embedded_block(&i, "6512c0de-0002-4000-8000-000000000001")),
+            [
+                (2, "• Outer".to_string()),
+                (4, "• ↳ Inner".to_string()),
+                (6, "• Inner".to_string()),
+                (8, "• its child".to_string()),
+                (4, "• ↳ Plain".to_string()),
+                (6, "• one".to_string()),
+                (6, "• two".to_string()),
+            ]
+        );
+        let rows = embedded_block(&i, "6512c0de-0002-4000-8000-000000000003");
+        let selves: Vec<u32> = rows
+            .iter()
+            .filter(|r| r.text() == "• Self ↳ Nest")
+            .map(|r| r.indent)
+            .collect();
+        assert_eq!(selves, [2, 4, 6, 8, 10, 12]);
+        assert_eq!(
+            rows.last().map(|r| (r.indent, r.text())),
+            Some((14, "Embed depth is too deep".to_string()))
+        );
+        // The rows of a nested embed are its blocks', typed into in their
+        // own page.
+        let inner = &embedded_block(&i, "6512c0de-0002-4000-8000-000000000001")[2];
+        assert_eq!(inner.block, Some(("pages/Inner.md".to_string(), 0)));
+        assert!(inner.root);
     }
 
     #[test]

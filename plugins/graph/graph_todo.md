@@ -1064,8 +1064,14 @@ user groups; the gaps that code can close, in this order.
   advanced queries found trying 0.5.0 as released: Follow Reference on a
   query's first line stopped the plugin, and a title with a letter whose
   upper case is shorter (Turkish ı) broke the query's span.
-  [~] An embed in an embed shows as written, not drawn again; the rows
-  are text, not blocks to edit in place, as Logseq's are.
+  [x] An embed in an embed shows as written, not drawn again; the rows
+  are text, not blocks to edit in place, as Logseq's are. (Done: the
+  rows typed into in place since GR16j; 2026-10-15, an embed in an
+  embed drawn under its block's row, its own rows typed into in their
+  page, as Logseq 0.10.9 draws it on a test page, six embeds deep at
+  most, then "Embed depth is too deep" as Logseq says it, for a block
+  that embeds itself; the row's text shows the embed as `↳` and its
+  page, as the note's line does.)
 - [x] GR14d Logseq and Kalem on one graph at once: a file Logseq writes
   while Kalem holds it, and the other way round, tested; what breaks
   fixed. (Done 2026-10-11, with external writes standing in for Logseq,
