@@ -1237,8 +1237,9 @@ user groups; the gaps that code can close, in this order.
     named by its UUID shown as Untitled as Logseq shows it, the graph's
     menu and All pages still saying a whiteboard opens in its
     application, and a note opened while its graph was indexed missing
-    from Recent Pages (K13). Open: a text drawn at Kalem's one size, not
-    its own (Logseq's xs to xl, 10 to 48 pixels; K24).
+    from Recent Pages (K13). A text at its own size
+    since K24 (2026-10-15, Kalem's plugin API 0.2.19, `canvas-view-2`):
+    Logseq's `fontSize` or `scaleLevel`, xs to xl.
   - [x] GR16l The pages opened last, and each graph's graph view toggles
     (`J`, `O`) and sort of All pages, kept from one session to the next
     (K23, Kalem's `state`, plugin API 0.2.17): written as they change,
@@ -1432,7 +1433,12 @@ Each is the plugin's gate or its ask, written for every plugin.
   text at one size that grows with the zoom, where a Logseq whiteboard's
   texts go from xs to xl (10 to 48 pixels) and a diagram has headings.
   Asks: a size for a shape's text (pixels at the canvas's scale), for
-  every plugin that draws a canvas. Not blocking.
+  every plugin that draws a canvas. Not blocking. Done 2026-10-15 on
+  Kalem's branch `shape-text-size` (plugin API 0.2.19, the import
+  `canvas-view-2`: a shape's `text-size`, which the window draws times
+  the zoom, no more than three times it; the terminal a character a
+  cell). The plugin gives Logseq's `fontSize`, else its `scaleLevel`
+  (GR16k).
 - K25 Lines under lines typed into as an outline: an embed's blocks
   split by Enter and moved by Tab and Shift+Tab where they show, as
   Logseq's embeds are edited. Done 2026-10-15 on Kalem's branch
