@@ -20,7 +20,7 @@ kalem-viewer = { git = "https://github.com/getkalem/kalem", branch = "main" }
 # The rasterizer (D56). Its default features embed the base-14 fonts'
 # substitutes (Foxit's CFF fonts) and the predefined CMaps, so a file that
 # does not embed its fonts draws inside the sandbox too.
-hayro = "0.7"
+hayro = "0.8"
 kurbo = "0.13"
 
 # The component's exports (`kalem plugin build`): the Rust contract
