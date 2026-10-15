@@ -1,7 +1,7 @@
 //! The documents the plugin writes (backlinks, all pages, journals, tags,
 //! tasks, the graph) and the backlinks panel's tree, from the index.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::Kind;
 use crate::content::{Content, Style, Target};
@@ -1334,6 +1334,10 @@ pub struct PanelNode {
     pub expanded: Option<bool>,
     /// The entries under it.
     pub children: Vec<PanelNode>,
+    /// What it is folded by, the same while references come and go: a
+    /// section's number, a page's references by their section and the
+    /// page's file. None: it does not fold.
+    pub fold: Option<String>,
 }
 
 impl PanelNode {
@@ -1346,22 +1350,45 @@ impl PanelNode {
             c.targets(out);
         }
     }
+
+    /// Every key with what it is folded by, this node's and those under
+    /// it.
+    pub fn folds(&self, out: &mut Vec<(String, String)>) {
+        if let Some(f) = &self.fold {
+            out.push((self.key.clone(), f.clone()));
+        }
+        for c in &self.children {
+            c.folds(out);
+        }
+    }
 }
 
-fn panel_section(index: &Index, n: usize, title: &str, refs: &[BackRef]) -> PanelNode {
+/// A section of the backlinks panel, its entries in `folded` folded
+/// (their [`PanelNode::fold`]): the section, or a page's references, as
+/// Logseq folds them.
+fn panel_section(
+    index: &Index,
+    n: usize,
+    title: &str,
+    refs: &[BackRef],
+    folded: &BTreeSet<String>,
+) -> PanelNode {
     let groups = grouped(index, refs);
     let count: usize = groups.iter().map(|(_, r)| r.len()).sum();
+    let fold = n.to_string();
     PanelNode {
         key: format!("{n}"),
         target: None,
         label: title.to_string(),
         detail: Some(count.to_string()),
-        expanded: Some(true),
+        expanded: Some(!folded.contains(&fold)),
+        fold: Some(fold),
         children: groups
             .into_iter()
             .enumerate()
             .map(|(g, (rel, refs))| {
                 let path = index.graph.path(&rel);
+                let fold = format!("{n}/{rel}");
                 PanelNode {
                     key: format!("{n}.{g}"),
                     target: Some(Target::File {
@@ -1370,7 +1397,8 @@ fn panel_section(index: &Index, n: usize, title: &str, refs: &[BackRef]) -> Pane
                     }),
                     label: title_of(index, &rel),
                     detail: Some(refs.len().to_string()),
-                    expanded: Some(true),
+                    expanded: Some(!folded.contains(&fold)),
+                    fold: Some(fold),
                     children: refs
                         .into_iter()
                         .enumerate()
@@ -1384,6 +1412,7 @@ fn panel_section(index: &Index, n: usize, title: &str, refs: &[BackRef]) -> Pane
                             detail: None,
                             expanded: None,
                             children: Vec::new(),
+                            fold: None,
                         })
                         .collect(),
                 }
@@ -1392,8 +1421,15 @@ fn panel_section(index: &Index, n: usize, title: &str, refs: &[BackRef]) -> Pane
     }
 }
 
-/// The backlinks panel for the page `key`.
-pub fn backlinks_panel(index: &Index, key: &str, unlinked: bool) -> Vec<PanelNode> {
+/// The backlinks panel for the page `key`: its unlinked references
+/// searched for if `unlinked`, the entries in `folded` folded (their
+/// [`PanelNode::fold`]).
+pub fn backlinks_panel(
+    index: &Index,
+    key: &str,
+    unlinked: bool,
+    folded: &BTreeSet<String>,
+) -> Vec<PanelNode> {
     let Some(page) = index.page(key) else {
         return Vec::new();
     };
@@ -1405,10 +1441,12 @@ pub fn backlinks_panel(index: &Index, key: &str, unlinked: bool) -> Vec<PanelNod
             detail: Some(index.graph.kind.title().into()),
             expanded: None,
             children: Vec::new(),
+            fold: None,
         },
-        panel_section(index, 1, "Linked references", index.backlinks(key)),
+        panel_section(index, 1, "Linked references", index.backlinks(key), folded),
         if unlinked {
-            panel_section(index, 2, "Unlinked references", &index.unlinked(key))
+            let refs = index.unlinked(key);
+            panel_section(index, 2, "Unlinked references", &refs, folded)
         } else {
             // Searched for when opened, as Logseq does: every block of the
             // graph is read.
@@ -1425,7 +1463,10 @@ pub fn backlinks_panel(index: &Index, key: &str, unlinked: bool) -> Vec<PanelNod
                     detail: None,
                     expanded: None,
                     children: Vec::new(),
+                    fold: None,
                 }],
+                // Opened by searching for them (`unlinked`).
+                fold: None,
             }
         },
     ]
@@ -2178,10 +2219,10 @@ mod tests {
             g.text
         );
         // The unlinked references searched for when opened.
-        let closed = backlinks_panel(&i, "kalem", false);
+        let closed = backlinks_panel(&i, "kalem", false, &BTreeSet::new());
         assert_eq!(closed[2].expanded, Some(false));
         assert_eq!(closed[2].children[0].key, UNLINKED_SEARCH);
-        let panel = backlinks_panel(&i, "kalem", true);
+        let panel = backlinks_panel(&i, "kalem", true, &BTreeSet::new());
         assert_eq!(panel[2].detail.as_deref(), Some("1"));
         assert_eq!(panel.len(), 3);
         assert_eq!(panel[1].detail.as_deref(), Some("3"));
@@ -2201,5 +2242,46 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), keys.len(), "keys are unique");
+    }
+
+    #[test]
+    fn the_panels_sections_and_pages_fold() {
+        let i = index();
+        // Each section folds by its number, each page's references by
+        // their section and the page's file.
+        let mut folds = Vec::new();
+        for n in &backlinks_panel(&i, "kalem", true, &BTreeSet::new()) {
+            n.folds(&mut folds);
+        }
+        let folds: Vec<(&str, &str)> = folds.iter().map(|(k, f)| (&k[..], &f[..])).collect();
+        assert_eq!(
+            folds,
+            [
+                ("1", "1"),
+                ("1.0", "1/journals/2026_10_03.md"),
+                ("1.1", "1/pages/Other.md"),
+                ("2", "2"),
+                ("2.0", "2/pages/Mention.md"),
+            ]
+        );
+        // A page's references folded: its arrow closed, its references
+        // kept under it, the others open.
+        let folded = BTreeSet::from(["1/pages/Other.md".to_string()]);
+        let panel = backlinks_panel(&i, "kalem", true, &folded);
+        let other = &panel[1].children[1];
+        assert_eq!(other.label, "Other");
+        assert_eq!(other.expanded, Some(false));
+        assert_eq!(other.detail.as_deref(), Some("2"));
+        assert_eq!(other.children.len(), 2);
+        assert_eq!(panel[1].expanded, Some(true));
+        assert_eq!(panel[1].children[0].expanded, Some(true));
+        assert_eq!(panel[2].children[0].expanded, Some(true));
+        // The section folded: its pages kept under it.
+        let folded = BTreeSet::from(["1".to_string()]);
+        let panel = backlinks_panel(&i, "kalem", true, &folded);
+        assert_eq!(panel[1].expanded, Some(false));
+        assert_eq!(panel[1].detail.as_deref(), Some("3"));
+        assert_eq!(panel[1].children.len(), 2);
+        assert_eq!(panel[2].expanded, Some(true));
     }
 }

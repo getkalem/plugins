@@ -1171,7 +1171,54 @@ fn the_panels_unlinked_references_searched_when_opened() {
     assert_eq!(p[2].expanded, Some(false));
     let p = panel(&app.panel_clicked(views::UNLINKED_SEARCH));
     assert_eq!(p[2].expanded, Some(true));
-    assert!(app.panel_expanded("1", false).is_empty());
+    assert!(app.panel_expanded("nothing", false).is_empty());
+}
+
+#[test]
+fn a_pages_references_fold_in_the_panel() {
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    let panel = |out: &[Effect]| {
+        out.iter()
+            .find_map(|e| match e {
+                Effect::Panel(p) => Some(p.clone()),
+                _ => None,
+            })
+            .expect("the panel")
+    };
+    let p = panel(&app.opened(&m, "/w/notes/pages/Kalem.md"));
+    assert_eq!(p[1].children[1].label, "Other");
+    assert_eq!(p[1].children[1].expanded, Some(true));
+    // A click or Enter on Other's line: its references folded, kept
+    // under it; Oct 3rd's open.
+    let p = panel(&app.panel_expanded("1.1", false));
+    assert_eq!(p[1].children[1].expanded, Some(false));
+    assert_eq!(p[1].children[1].children.len(), 1);
+    assert_eq!(p[1].children[0].expanded, Some(true));
+    assert!(app.panel_expanded("1.1", false).is_empty());
+    // Kept folded when another file's save puts a newer journal before
+    // it: folded by its file, not its place.
+    m.write("/w/notes/journals/2026_10_05.md", "- more of [[Kalem]]\n")
+        .unwrap();
+    let p = panel(&app.saved(&m, "/w/notes/journals/2026_10_05.md"));
+    let labels: Vec<&str> = p[1].children.iter().map(|g| &g.label[..]).collect();
+    assert_eq!(labels, ["Oct 5th, 2026", "Oct 3rd, 2026", "Other"]);
+    let open: Vec<_> = p[1].children.iter().map(|g| g.expanded).collect();
+    assert_eq!(open, [Some(true), Some(true), Some(false)]);
+    // Unfolded by its key now.
+    let p = panel(&app.panel_expanded("1.2", true));
+    assert_eq!(p[1].children[2].expanded, Some(true));
+    // The section folded: its pages kept under it.
+    app.panel_expanded("1.0", false);
+    let p = panel(&app.panel_expanded("1", false));
+    assert_eq!(p[1].expanded, Some(false));
+    assert_eq!(p[1].children.len(), 3);
+    // Another page, then back: nothing folded.
+    let p = panel(&app.opened(&m, "/w/notes/pages/Other.md"));
+    assert_eq!(p[1].expanded, Some(true));
+    let p = panel(&app.opened(&m, "/w/notes/pages/Kalem.md"));
+    assert_eq!(p[1].expanded, Some(true));
+    assert!(p[1].children.iter().all(|g| g.expanded == Some(true)));
 }
 
 #[test]

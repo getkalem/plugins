@@ -276,12 +276,12 @@ fn a_million_blocks() {
     time(
         "the backlinks panel of a page with 1,000 references",
         Duration::from_millis(50),
-        || views::backlinks_panel(&index, "hub", false),
+        || views::backlinks_panel(&index, "hub", false, &Default::default()),
     );
     time(
         "its unlinked references opened",
         Duration::from_millis(500),
-        || views::backlinks_panel(&index, "hub", true),
+        || views::backlinks_panel(&index, "hub", true, &Default::default()),
     );
     let g = views::Glyphs::new("unicode");
     time(
