@@ -1,8 +1,8 @@
-//! Align Amounts (PT4) on every corpus journal, whole: only the blanks
-//! between accounts and amounts change, a second alignment changes
-//! nothing, and the journal's own tool reads the aligned file as it read
-//! the original (`hledger print`, `ledger register`, `bean-query`), where
-//! the tool is installed.
+//! Align Amounts (PT4) on every corpus journal, whole, as Format Document
+//! aligns it (K11): only the blanks between accounts and amounts change,
+//! a second alignment changes nothing, and the journal's own tool reads
+//! the aligned file as it read the original (`hledger print`, `ledger
+//! register`, `bean-query`), where the tool is installed.
 
 // A comparison skipped (the tool not installed) is said on standard error.
 #![allow(clippy::print_stderr)]
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use kalem_plugin_pta::Dialect;
-use kalem_plugin_pta::align::{apply, edits};
+use kalem_plugin_pta::align::{apply, edits, format};
 
 fn corpus(d: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus").join(d)
@@ -116,6 +116,11 @@ fn every_journal_aligned_reads_as_before() {
             let text = std::fs::read_to_string(dir.join(file)).expect("corpus");
             let e = edits(&text, 0..text.len(), *dialect, column);
             let aligned = apply(&text, &e);
+            assert_eq!(
+                format(&text, *dialect, column),
+                aligned,
+                "{file}: formatted"
+            );
             assert_eq!(unblanked(&aligned), unblanked(&text), "{file} at {column}");
             assert_eq!(
                 aligned.lines().count(),

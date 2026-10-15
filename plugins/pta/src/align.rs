@@ -381,6 +381,14 @@ pub fn apply(text: &str, edits: &[(Range<usize>, String)]) -> String {
     out
 }
 
+/// `text` with every transaction's amounts aligned at `column`
+/// (`amount_column`), as [`edits`] aligns a selection: Format Document's
+/// and format on save's (K11). Only blanks between an account and its
+/// amount change.
+pub fn format(text: &str, dialect: Dialect, column: usize) -> String {
+    apply(text, &edits(text, 0..text.len(), dialect, column))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

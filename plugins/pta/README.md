@@ -42,7 +42,7 @@ Then the tool you use, and, if you like, a server and a price program:
 | Completion of accounts, payees and commodities (the plugin, from the tool's lists) | `hledger accounts`, `payees`, `commodities` | `ledger accounts`, `payees`, `commodities` | `bean-query` |
 | Hover, definition, references, rename, and the server's own completion (tags, dates) (the server) | hledger-lsp | none | beancount-language-server |
 | Check Journal, on each save (the tool) | `hledger check --strict` and the setting `checks` | `ledger --pedantic --explicit balance` | `bean-check` |
-| Align Amounts, Format Document (the plugin) | aligns; the server's formatting turned off | aligns | aligns; Format Document is the server's or `bean-format` |
+| Align Amounts, Format Document (the plugin) | aligns; the server's formatting turned off | aligns | aligns; Format Document is the server's when it runs |
 | New Transaction, drafted from the payee's last (the tool) | `hledger print --match` | `ledger xact` | the payee's last entry |
 | Toggle Status, Copy, Sort, Next, Previous, Date ±1 (the plugin) | yes | yes | yes |
 | Balance and Register (the tool) | `hledger balance`, `register -O json` | `ledger balance`, `register` | `bean-query` |
@@ -214,7 +214,7 @@ The tool's problems are also drawn in the journal as a language server's diagnos
 
 With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode: in the Word-like profile, and in Vim's insert mode too.
 
-Format Document (`SPC c f`) in an hledger or Ledger journal: none (hledger-lsp's is left unused, and `hledger print` rewrites a journal); Align Amounts, with the whole file selected, is the formatter. In a Beancount journal: its server's, else set `[formatters] beancount = "bean-format -"`.
+Format Document (`SPC c f`), and saving with `editor.format_on_save` on, align every transaction's amounts at `amount_column`, as Align Amounts aligns the transactions selected; nothing else of the journal changes (hledger-lsp's formatting is left unused, and `hledger print` rewrites a journal). In a Beancount journal the server's formatting comes first when the server runs. A formatter set in Kalem's settings comes before both: `[formatters] beancount = "bean-format -"`, or `off`.
 
 ## Large journals
 
