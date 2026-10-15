@@ -395,8 +395,10 @@ fn inline(line: &str, flavor: Flavor) -> Vec<Raw> {
                 i = line[i..].find("}}").map_or(b.len(), |p| i + p + 2);
             }
             b'{' if line[i..].starts_with("{{embed") => {
-                let end = line[i..].find("}}").map_or(b.len(), |p| i + p + 2);
-                let inner = &line[i + 7..end.saturating_sub(2).max(i + 7)];
+                // Never closed: to the line's end, not two bytes before it.
+                let close = line[i..].find("}}").map_or(b.len(), |p| i + p);
+                let end = (close + 2).min(b.len());
+                let inner = &line[i + 7..close.max(i + 7)];
                 if let Some(p) = inner.find("((")
                     && let Some(q) = inner[p..].find("))")
                 {
@@ -561,7 +563,13 @@ fn inline(line: &str, flavor: Flavor) -> Vec<Raw> {
                         end: i + 1 + name.len(),
                     });
                 }
-                i += 1 + len.max(1).min(rest.len().max(1));
+                // Past the mark and the tag, or the character after the
+                // mark when no tag starts there (`#😀` in Obsidian).
+                i += 1 + if len == 0 {
+                    rest.chars().next().map_or(0, char::len_utf8)
+                } else {
+                    len
+                };
             }
             _ => {
                 i += line[i..].chars().next().map_or(1, char::len_utf8);
@@ -1272,7 +1280,13 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
             // Org's tags at the end: `:a:b:`, tags as Logseq reads them.
             let mut tags = Vec::new();
             let content = match content.rfind(" :") {
-                Some(p) if content.ends_with(':') && !content[p + 2..].contains(' ') => {
+                // At least `:x:` (`org-tag-line-re`): ` :` alone ends no
+                // tags.
+                Some(p)
+                    if content.ends_with(':')
+                        && p + 4 <= content.len()
+                        && !content[p + 2..].contains(' ') =>
+                {
                     let end = line.trim_end().len();
                     let mut at = end - (content.len() - p - 1);
                     for t in content[p + 2..content.len() - 1].split(':') {
@@ -1665,6 +1679,19 @@ mod tests {
 
     fn targets(s: &Scanned) -> Vec<(RefKind, &str)> {
         s.refs.iter().map(|r| (r.kind, r.target.as_str())).collect()
+    }
+
+    #[test]
+    fn broken_lines_keep_to_characters() {
+        // What tests/robust.rs found with more rounds: a tag's mark before
+        // a character that ends tags, an embed never closed before a
+        // character of more bytes, a heading that ends ` :`.
+        for flavor in [Flavor::LogseqMarkdown, Flavor::LogseqOrg, Flavor::Obsidian] {
+            let _ = references("#😀 and #é", flavor);
+            let _ = references("{{embed ((日本", flavor);
+        }
+        let s = scan("* x :\n", Flavor::LogseqOrg, &Options::default());
+        assert_eq!(s.blocks.len(), 1);
     }
 
     #[test]
