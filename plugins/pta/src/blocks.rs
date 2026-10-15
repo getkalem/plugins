@@ -3,8 +3,9 @@
 //! (`hledger -f -`, `ledger -f -`, `bean-query /dev/stdin`) with the
 //! block's `:cmdline` (ob-ledger's header argument; `:cmd` too), the
 //! output written under the block as Org's `#+RESULTS:`, in fixed-width
-//! lines, a block's results run again replaced. Kalem has no Babel
-//! executors for plugins yet (K6); this is the plugin's own command.
+//! lines, a block's results run again replaced: the plugin's own command.
+//! Kalem's Babel runs the same blocks through the plugin's executor (plugin
+//! API 0.2.21, K6), with [`tool_command`].
 
 use std::ops::Range;
 
@@ -135,8 +136,15 @@ pub fn block_at(text: &str, at: usize) -> Option<Block> {
 /// The tool's run of a block: program and arguments, the block's text
 /// on standard input.
 pub fn command(b: &Block) -> (&'static str, Vec<String>) {
-    let words = crate::other::words(&b.cmdline);
-    match b.dialect {
+    tool_command(b.dialect, &b.cmdline)
+}
+
+/// The tool of `dialect` run over a journal on its standard input with
+/// `cmdline` (ob-ledger's `:cmdline`): the balance report without one,
+/// `BALANCES` for Beancount.
+pub fn tool_command(dialect: Dialect, cmdline: &str) -> (&'static str, Vec<String>) {
+    let words = crate::other::words(cmdline);
+    match dialect {
         Dialect::Hledger => {
             let mut a = vec!["-f".to_string(), "-".to_string()];
             if words.is_empty() {
@@ -154,10 +162,10 @@ pub fn command(b: &Block) -> (&'static str, Vec<String>) {
             ("ledger", a)
         }
         Dialect::Beancount => {
-            let query = if b.cmdline.trim().is_empty() {
+            let query = if cmdline.trim().is_empty() {
                 "BALANCES".to_string()
             } else {
-                b.cmdline.trim().trim_matches('"').to_string()
+                cmdline.trim().trim_matches('"').to_string()
             };
             ("bean-query", vec!["/dev/stdin".into(), query])
         }
@@ -214,6 +222,17 @@ mod tests {
                 && ORG[b.body.clone()].ends_with("assets:cash")
         );
         assert_eq!(command(&b).1, ["-f", "-", "bal", "-M"]);
+        assert_eq!(
+            tool_command(Dialect::Ledger, ""),
+            ("ledger", vec!["-f".into(), "-".into(), "balance".into()])
+        );
+        assert_eq!(
+            tool_command(Dialect::Beancount, "SELECT account"),
+            (
+                "bean-query",
+                vec!["/dev/stdin".into(), "SELECT account".into()]
+            )
+        );
         assert!(block_at(ORG, ORG.find("More").unwrap()).is_none());
         assert!(block_at("#+begin_src python\nx\n#+end_src\n", 20).is_none());
     }

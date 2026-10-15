@@ -1753,6 +1753,31 @@ impl Plugin for Pta {
             .map(|h| kalem_plugin::outline::heading(h.level, &h.title, h.start))
             .collect()
     }
+    /// Babel's journal blocks (plugin API 0.2.21, K6): an `hledger`,
+    /// `ledger` or `beancount` source block of an Org document run by its
+    /// tool, its text on standard input with its `:cmdline` (ob-ledger's;
+    /// `:cmd` too), as `org-babel-execute:ledger` runs it.
+    fn prepare_block(
+        block: &kalem_plugin::executor::Block,
+    ) -> Result<kalem_plugin::executor::Step, String> {
+        use kalem_plugin::executor;
+        let d = Dialect::of_language(&block.language.to_ascii_lowercase())
+            .ok_or_else(|| format!("{} is not a journal's language", block.language))?;
+        let cmdline = executor::header(block, ":cmdline")
+            .or_else(|| executor::header(block, ":cmd"))
+            .unwrap_or("");
+        let (program, args) = crate::blocks::tool_command(d, cmdline);
+        Ok(executor::run(program, args, Some(&block.body)))
+    }
+    /// The tool's report as the block's value: text, as ob-ledger gives
+    /// it, which Babel writes in `: ` lines or an example block.
+    fn finish_block(
+        _block: &kalem_plugin::executor::Block,
+        output: &str,
+        _status: Option<i32>,
+    ) -> Result<kalem_plugin::executor::Value, String> {
+        Ok(kalem_plugin::executor::Value::Text(output.to_string()))
+    }
     fn activate() -> Result<(), String> {
         let journal = crate::journal_when();
         let leader = format!("{journal} && vimCommand");

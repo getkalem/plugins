@@ -60,6 +60,11 @@
       "types": ["hledger", "journal", "j", "ledger", "ldg", "beancount", "bean"]
     }
   ],
+  "executors": [
+    { "language": "hledger", "headers": ":results output :cmdline bal" },
+    { "language": "ledger", "headers": ":results output :cmdline bal" },
+    { "language": "beancount", "headers": ":results output" }
+  ],
   "syntaxes": [
     "syntaxes/hledger.sublime-syntax",
     "syntaxes/Ledger.sublime-syntax",
