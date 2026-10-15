@@ -750,7 +750,18 @@ first.
   totals (hledger and Ledger), a broken line shows the note, undo
   takes it away, Enter after a line added above lands on the moved
   line. Found: `SPC m R` on a posting written with a Ledger alias
-  (`chk`) takes the alias as the account; pick the account then.)
+  (`chk`) takes the alias as the account; pick the account then.
+  Fixed 2026-10-15: the account of the posting at the cursor is the
+  one the tool reads there (`reconcile::accounts_in`: Ledger's
+  register with each posting's file, line and account, hledger's
+  `print` JSON, a transaction's posting lines in order), an alias or
+  `apply account` resolved, the main journal's text on the standard
+  input; Finish's check and its clearing take the same accounts, read
+  again by the command once the tool answers (a process's answer has
+  no current document), and a journal edited meanwhile is not written
+  in. Checked in the terminal editor on the corpus's `chk` (Ledger)
+  and an hledger alias: the pending transaction cleared, the
+  assertion on the account, the check passing.)
 - [x] PT8b `pta.finishReconcile` (`SPC m C`; ledger-mode's `C-c C-c` in
   the reconcile buffer), in the journal or the reconcile document:
   when the difference is zero, every pending posting of the account

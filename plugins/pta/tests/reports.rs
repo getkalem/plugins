@@ -437,3 +437,41 @@ fn a_narrowed_register() {
         assert!(rows[0].description.starts_with(payee), "{tool:?}: {rows:?}");
     }
 }
+
+/// A posting written with an alias or under `apply account` is the
+/// account the tool reads, as Reconcile and Finish take it: Ledger's
+/// corpus (`chk`, `apply account Assets`), and an hledger journal with
+/// both.
+#[test]
+fn accounts_the_tools_read() {
+    use kalem_plugin_pta::reconcile;
+    let line = |text: &str, s: &str| text.lines().position(|l| l == s).expect(s) as u32 + 1;
+    let dir = corpus("ledger");
+    let main = dir.join("business.ledger").to_string_lossy().into_owned();
+    let text = std::fs::read_to_string(&main).expect("corpus");
+    let (p, a) = reconcile::accounts_command(Dialect::Ledger, &main).expect("a run");
+    if let Some(out) = run(p, &a, &dir) {
+        let accounts = reconcile::accounts_in(Dialect::Ledger, &out, &main, &text);
+        let chk = text
+            .lines()
+            .position(|l| l.starts_with("    chk "))
+            .unwrap() as u32
+            + 1;
+        assert_eq!(accounts[&chk], "Assets:Checking");
+        assert_eq!(accounts[&line(&text, "    Checking")], "Assets:Checking");
+    }
+    let dir = std::env::temp_dir().join(format!("pta-accounts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("a.journal").to_string_lossy().into_owned();
+    let text = "alias chk = assets:checking\n\n2026-01-05 Grocer\n    expenses:food  $42.35\n    ; a note\n    chk\n\napply account assets\n2026-01-06 Move\n    savings  $10\n    checking\nend apply account\n";
+    std::fs::write(&main, text).unwrap();
+    let (p, a) = reconcile::accounts_command(Dialect::Hledger, &main).expect("a run");
+    if let Some(out) = run(p, &a, &dir) {
+        let accounts = reconcile::accounts_in(Dialect::Hledger, &out, &main, text);
+        assert_eq!(accounts[&line(text, "    chk")], "assets:checking");
+        assert_eq!(accounts[&line(text, "    savings  $10")], "assets:savings");
+        assert_eq!(accounts[&line(text, "    checking")], "assets:checking");
+        assert_eq!(accounts.len(), 4, "{accounts:?}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

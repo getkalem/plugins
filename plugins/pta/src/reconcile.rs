@@ -10,6 +10,7 @@
 //! places and the commodity's style), Ledger's and Beancount's read from
 //! their text with the decimal mark they write.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use serde_json::Value;
@@ -789,8 +790,15 @@ pub fn layout(
 /// themselves nor on their transaction and dated on or before `date`: a
 /// balance assertion of the statement's balance at `date` would count
 /// them, and fail. Beancount's transactions are all marked (`*`, `!` or
-/// `txn`): none there.
-pub fn unmarked_by(text: &str, dialect: Dialect, account: &str, date: Date) -> Vec<Date> {
+/// `txn`): none there. A posting's account is the tool's (`accounts`,
+/// [`account_of`]).
+pub fn unmarked_by(
+    text: &str,
+    dialect: Dialect,
+    account: &str,
+    date: Date,
+    accounts: &Accounts,
+) -> Vec<Date> {
     let mut out = Vec::new();
     if dialect == Dialect::Beancount {
         return out;
@@ -806,7 +814,7 @@ pub fn unmarked_by(text: &str, dialect: Dialect, account: &str, date: Date) -> V
         let mut offset = t.range.start;
         for line in text[t.range.clone()].split_inclusive('\n') {
             if offset > t.range.start
-                && let Some(a) = write::account_at(text, offset, dialect)
+                && let Some(a) = account_of(text, offset, dialect, accounts)
                 && under(&a, account)
             {
                 let own = line.trim_start();
@@ -828,6 +836,118 @@ fn under(posting_account: &str, account: &str) -> bool {
             .is_some_and(|r| r.starts_with(':'))
 }
 
+/// The account the tool reads at each posting line of a file, by line
+/// from 1: an alias (`alias chk=Assets:Checking`) and `apply account`
+/// resolved, which the text alone does not show.
+pub type Accounts = BTreeMap<u32, String>;
+
+/// Ledger's register line of a posting's place and account.
+const LEDGER_ACCOUNTS: &str = "%(filename)\u{1f}%(beg_line)\u{1f}%(account)\\n";
+
+/// The run of the tool that names every posting's place and account:
+/// Ledger's register in a form of its own, hledger's `print` as JSON
+/// (each transaction's lines, its postings in order). Beancount has no
+/// aliases: none.
+pub fn accounts_command(tool: Dialect, main: &str) -> Option<(&'static str, Vec<String>)> {
+    match tool {
+        Dialect::Hledger => Some((
+            "hledger",
+            vec![
+                "-f".into(),
+                main.into(),
+                "print".into(),
+                "-O".into(),
+                "json".into(),
+            ],
+        )),
+        Dialect::Ledger => Some((
+            "ledger",
+            vec![
+                "-f".into(),
+                main.into(),
+                "register".into(),
+                "--empty".into(),
+                "--register-format".into(),
+                LEDGER_ACCOUNTS.into(),
+            ],
+        )),
+        Dialect::Beancount => None,
+    }
+}
+
+/// The accounts of `file`'s posting lines in the output of a run of
+/// [`accounts_command`], `text` being the file's text the tool read;
+/// `file` `-` for a text the tool read on its standard input (hledger
+/// names it `-`, Ledger nothing).
+pub fn accounts_in(tool: Dialect, out: &str, file: &str, text: &str) -> Accounts {
+    let here = |name: &str| {
+        crate::journal::same_file(name, file)
+            || (file == "-" && matches!(name, "" | "-" | "/dev/stdin"))
+    };
+    let mut accounts = Accounts::new();
+    match tool {
+        Dialect::Ledger => {
+            for l in out.lines() {
+                let mut f = l.split('\u{1f}');
+                if let (Some(name), Some(line), Some(account)) = (f.next(), f.next(), f.next())
+                    && here(name)
+                    && let Ok(n) = line.trim().parse::<u32>()
+                {
+                    accounts.insert(n, account.trim().to_string());
+                }
+            }
+        }
+        Dialect::Hledger => {
+            // A transaction's posting lines, in order, are its postings.
+            let starts: Vec<usize> = std::iter::once(0)
+                .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+                .collect();
+            let all: Value = serde_json::from_str(out).unwrap_or_default();
+            for t in all.as_array().into_iter().flatten() {
+                let pos = &t["tsourcepos"];
+                let (Some(name), Some(first), Some(end)) = (
+                    pos[0]["sourceName"].as_str(),
+                    pos[0]["sourceLine"].as_u64(),
+                    pos[1]["sourceLine"].as_u64(),
+                ) else {
+                    continue;
+                };
+                if !here(name) {
+                    continue;
+                }
+                let postings = t["tpostings"].as_array().map_or(&[][..], |p| &p[..]);
+                let mut i = 0;
+                for n in first + 1..end {
+                    let Some(&offset) = starts.get(n as usize - 1) else {
+                        break;
+                    };
+                    if write::account_at(text, offset, Dialect::Hledger).is_some() {
+                        if let Some(a) = postings.get(i).and_then(|p| p["paccount"].as_str()) {
+                            accounts.insert(n as u32, a.to_string());
+                        }
+                        i += 1;
+                    }
+                }
+            }
+        }
+        Dialect::Beancount => {}
+    }
+    accounts
+}
+
+/// The account of the posting at `offset` in `text`: the tool's where
+/// `accounts` names one for its line, else as written.
+pub fn account_of(
+    text: &str,
+    offset: usize,
+    dialect: Dialect,
+    accounts: &Accounts,
+) -> Option<String> {
+    let written = write::account_at(text, offset, dialect)?;
+    let line = text[..offset.min(text.len())].matches('\n').count() as u32 + 1;
+    Some(accounts.get(&line).cloned().unwrap_or(written))
+}
+
 /// Finish: the edits that clear the pending postings of `account` in
 /// `text` (a pending transaction's mark, or a pending posting's), and
 /// the balance assertion written at `date`'s place: hledger's and
@@ -835,7 +955,8 @@ fn under(posting_account: &str, account: &str) -> bool {
 /// asserting `target`, Beancount's a `balance` directive the day after
 /// (Beancount checks at the day's start). hledger's and Ledger's
 /// assertion is aligned at `column` (`amount_column`; 0 leaves it near
-/// the account), as Align Amounts aligns.
+/// the account), as Align Amounts aligns. A posting's account is the
+/// tool's (`accounts`, [`account_of`]).
 pub fn finish(
     text: &str,
     dialect: Dialect,
@@ -843,6 +964,7 @@ pub fn finish(
     targets: &[Amount],
     date: Date,
     column: usize,
+    accounts: &Accounts,
 ) -> Vec<(Range<usize>, String)> {
     let mut edits = Vec::new();
     for t in write::transactions(text, dialect) {
@@ -852,7 +974,7 @@ pub fn finish(
         for line in body.split_inclusive('\n') {
             let line_end = offset + line.len();
             if offset > t.range.start
-                && let Some(a) = write::account_at(text, offset, dialect)
+                && let Some(a) = account_of(text, offset, dialect, accounts)
                 && under(&a, account)
             {
                 touches = true;
@@ -1004,6 +1126,7 @@ mod tests {
                 d: 31,
             },
             0,
+            &Accounts::new(),
         );
         let out = crate::align::apply(text, &edits);
         assert!(out.contains("2026-01-03 * Market"), "{out}");
@@ -1032,6 +1155,7 @@ mod tests {
                     d: 31,
                 },
                 52,
+                &Accounts::new(),
             ),
         );
         let last = at52.lines().last().unwrap();
@@ -1052,6 +1176,7 @@ mod tests {
                     d: 31,
                 },
                 52,
+                &Accounts::new(),
             ),
         );
         assert!(out.starts_with("2026-01-15 * \"M\""), "{out}");
@@ -1131,7 +1256,15 @@ mod tests {
         };
         let out = crate::align::apply(
             text,
-            &finish(text, Dialect::Hledger, "assets:cash", &targets, date, 0),
+            &finish(
+                text,
+                Dialect::Hledger,
+                "assets:cash",
+                &targets,
+                date,
+                0,
+                &Accounts::new(),
+            ),
         );
         // Aligned with each other (column 0: as near the accounts as they go).
         let tail = out
@@ -1152,7 +1285,15 @@ mod tests {
         let bean = "2026-01-01 * \"Opening\"\n  Assets:Cash  200.00 EUR\n  Equity:Opening\n";
         let out = crate::align::apply(
             bean,
-            &finish(bean, Dialect::Beancount, "Assets:Cash", &targets, date, 0),
+            &finish(
+                bean,
+                Dialect::Beancount,
+                "Assets:Cash",
+                &targets,
+                date,
+                0,
+                &Accounts::new(),
+            ),
         );
         assert!(
             out.ends_with("\n2026-02-01 balance Assets:Cash  180.00 EUR\n2026-02-01 balance Assets:Cash  $100.00\n"),
@@ -1170,16 +1311,46 @@ mod tests {
         };
         // A pending transaction's postings are marked; so is a posting's
         // own mark; another account's posting does not count.
-        assert!(unmarked_by(text, Dialect::Hledger, "assets:wallet", d(6)).is_empty());
+        assert!(
+            unmarked_by(
+                text,
+                Dialect::Hledger,
+                "assets:wallet",
+                d(6),
+                &Accounts::new()
+            )
+            .is_empty()
+        );
         assert_eq!(
-            unmarked_by(text, Dialect::Hledger, "assets:wallet", d(7)),
+            unmarked_by(
+                text,
+                Dialect::Hledger,
+                "assets:wallet",
+                d(7),
+                &Accounts::new()
+            ),
             [d(7)]
         );
         assert_eq!(
-            unmarked_by(text, Dialect::Hledger, "assets:wallet", d(31)),
+            unmarked_by(
+                text,
+                Dialect::Hledger,
+                "assets:wallet",
+                d(31),
+                &Accounts::new()
+            ),
             [d(7)]
         );
-        assert!(unmarked_by(text, Dialect::Beancount, "assets:wallet", d(31)).is_empty());
+        assert!(
+            unmarked_by(
+                text,
+                Dialect::Beancount,
+                "assets:wallet",
+                d(31),
+                &Accounts::new()
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1212,5 +1383,74 @@ mod tests {
             files,
             ["/j/m.journal", "/j/m.journal", "/j/accounts.journal"]
         );
+    }
+
+    #[test]
+    fn accounts_the_tool_reads() {
+        // Ledger's register lines: the file's postings only, `-` for a
+        // text read on the standard input (Ledger names it nothing).
+        let out = "/j/a.ledger\u{1f}5\u{1f}Assets:Checking\n/j/b.ledger\u{1f}2\u{1f}Expenses:Food\n\u{1f}7\u{1f}Assets:Cash\n";
+        assert_eq!(
+            accounts_in(Dialect::Ledger, out, "/j/a.ledger", ""),
+            Accounts::from([(5, "Assets:Checking".to_string())])
+        );
+        assert_eq!(
+            accounts_in(Dialect::Ledger, out, "-", ""),
+            Accounts::from([(7, "Assets:Cash".to_string())])
+        );
+        // hledger's print: a transaction's posting lines in order, a
+        // comment line skipped.
+        let text = "alias chk = assets:checking\n\n2026-01-05 ! Grocer\n    expenses:food  $42.35\n    ; note\n    chk\n\n2026-01-06 Kiosk\n    expenses:food  $1.00\n    chk\n";
+        let pos = |a, b| {
+            format!(
+                r#"[{{"sourceName": "-", "sourceLine": {a}, "sourceColumn": 1}}, {{"sourceName": "-", "sourceLine": {b}, "sourceColumn": 1}}]"#
+            )
+        };
+        let json = format!(
+            r#"[{{"tsourcepos": {}, "tpostings": [{{"paccount": "expenses:food"}}, {{"paccount": "assets:checking"}}]}}, {{"tsourcepos": {}, "tpostings": [{{"paccount": "expenses:food"}}, {{"paccount": "assets:checking"}}]}}]"#,
+            pos(3, 7),
+            pos(8, 11)
+        );
+        let accounts = accounts_in(Dialect::Hledger, &json, "-", text);
+        assert_eq!(
+            accounts,
+            Accounts::from([
+                (4, "expenses:food".to_string()),
+                (6, "assets:checking".to_string()),
+                (9, "expenses:food".to_string()),
+                (10, "assets:checking".to_string()),
+            ])
+        );
+        // Finish and its check take the tool's account: `chk` is
+        // assets:checking.
+        let d = Date {
+            y: 2026,
+            m: 1,
+            d: 31,
+        };
+        let none = Accounts::new();
+        assert!(unmarked_by(text, Dialect::Hledger, "assets:checking", d, &none).is_empty());
+        let kiosk = Date { d: 6, ..d };
+        assert_eq!(
+            unmarked_by(text, Dialect::Hledger, "assets:checking", d, &accounts),
+            [kiosk]
+        );
+        let target = text_amount("$43.35").unwrap();
+        let cleared = |accounts: &Accounts| {
+            crate::align::apply(
+                text,
+                &finish(
+                    text,
+                    Dialect::Hledger,
+                    "assets:checking",
+                    std::slice::from_ref(&target),
+                    d,
+                    0,
+                    accounts,
+                ),
+            )
+        };
+        assert!(cleared(&accounts).contains("2026-01-05 * Grocer"));
+        assert!(cleared(&none).contains("2026-01-05 ! Grocer"));
     }
 }
