@@ -789,11 +789,9 @@ pub struct App {
     panel_targets: BTreeMap<String, Target>,
     /// The panel's unlinked references opened for its page: searched for.
     panel_unlinked: bool,
-    /// What the panel has folded for its page (`PanelNode::fold`): a
-    /// section, a page's references.
+    /// What the panel has folded for its page, by key: a section, a
+    /// page's references.
     panel_folded: BTreeSet<String>,
-    /// What each of the panel's entries that fold is folded by, by key.
-    panel_folds: BTreeMap<String, String>,
     /// The documents open in Kalem, by number: their files.
     open: BTreeMap<u64, String>,
     /// The files open with changes not saved: never written by the
@@ -874,7 +872,6 @@ impl App {
             panel_targets: BTreeMap::new(),
             panel_unlinked: false,
             panel_folded: BTreeSet::new(),
-            panel_folds: BTreeMap::new(),
             open: BTreeMap::new(),
             dirty: BTreeSet::new(),
             edited: BTreeMap::new(),
@@ -1075,13 +1072,11 @@ impl App {
                     self.panel_unlinked,
                     &self.panel_folded,
                 );
-                let (mut targets, mut folds) = (Vec::new(), Vec::new());
+                let mut targets = Vec::new();
                 for n in &nodes {
                     n.targets(&mut targets);
-                    n.folds(&mut folds);
                 }
                 self.panel_targets = targets.into_iter().collect();
-                self.panel_folds = folds.into_iter().collect();
                 self.panel = Some((root, key));
                 vec![Effect::Panel(nodes)]
             }
@@ -2262,7 +2257,8 @@ impl App {
 
     /// An entry of the backlinks panel opened or closed: its unlinked
     /// references searched for when they are opened; a section or a
-    /// page's references folded, as long as the panel shows its page.
+    /// page's references folded by its key, the same while references
+    /// come and go, as long as the panel shows its page.
     pub fn panel_expanded(&mut self, key: &str, open: bool) -> Vec<Effect> {
         if key == "2" {
             if open == self.panel_unlinked {
@@ -2271,13 +2267,14 @@ impl App {
             self.panel_unlinked = open;
             return self.panel_effects();
         }
-        let Some(fold) = self.panel_folds.get(key) else {
+        // Linked references, or a page's line: one the panel has.
+        if key != "1" && !self.panel_targets.contains_key(key) {
             return Vec::new();
-        };
+        }
         let changed = if open {
-            self.panel_folded.remove(fold)
+            self.panel_folded.remove(key)
         } else {
-            self.panel_folded.insert(fold.clone())
+            self.panel_folded.insert(key.to_string())
         };
         if !changed {
             return Vec::new();

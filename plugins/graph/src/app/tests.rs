@@ -473,7 +473,7 @@ fn documents_and_enter() {
     }
     // A click in the panel: a file's entry, then the page's title.
     assert_eq!(
-        app.panel_clicked("1.0.0"),
+        app.panel_clicked("1/journals/2026_10_03.md#0"),
         [Effect::Open {
             path: "/w/notes/journals/2026_10_03.md".into(),
             line: 1
@@ -1255,13 +1255,16 @@ fn a_pages_references_fold_in_the_panel() {
     assert_eq!(p[1].children[1].expanded, Some(true));
     // A click or Enter on Other's line: its references folded, kept
     // under it; Oct 3rd's open.
-    let p = panel(&app.panel_expanded("1.1", false));
+    let p = panel(&app.panel_expanded("1/pages/Other.md", false));
     assert_eq!(p[1].children[1].expanded, Some(false));
     assert_eq!(p[1].children[1].children.len(), 1);
     assert_eq!(p[1].children[0].expanded, Some(true));
+    assert!(app.panel_expanded("1/pages/Other.md", false).is_empty());
+    // A key the panel does not have, or no longer has: nothing folded.
     assert!(app.panel_expanded("1.1", false).is_empty());
+    assert!(app.panel_expanded("1/pages/Gone.md", false).is_empty());
     // Kept folded when another file's save puts a newer journal before
-    // it: folded by its file, not its place.
+    // it: folded by its key, its file, not its place.
     m.write("/w/notes/journals/2026_10_05.md", "- more of [[Kalem]]\n")
         .unwrap();
     let p = panel(&app.saved(&m, "/w/notes/journals/2026_10_05.md"));
@@ -1269,11 +1272,11 @@ fn a_pages_references_fold_in_the_panel() {
     assert_eq!(labels, ["Oct 5th, 2026", "Oct 3rd, 2026", "Other"]);
     let open: Vec<_> = p[1].children.iter().map(|g| g.expanded).collect();
     assert_eq!(open, [Some(true), Some(true), Some(false)]);
-    // Unfolded by its key now.
-    let p = panel(&app.panel_expanded("1.2", true));
+    // Unfolded by the same key.
+    let p = panel(&app.panel_expanded("1/pages/Other.md", true));
     assert_eq!(p[1].children[2].expanded, Some(true));
     // The section folded: its pages kept under it.
-    app.panel_expanded("1.0", false);
+    app.panel_expanded("1/journals/2026_10_05.md", false);
     let p = panel(&app.panel_expanded("1", false));
     assert_eq!(p[1].expanded, Some(false));
     assert_eq!(p[1].children.len(), 3);
@@ -1283,6 +1286,64 @@ fn a_pages_references_fold_in_the_panel() {
     let p = panel(&app.opened(&m, "/w/notes/pages/Kalem.md"));
     assert_eq!(p[1].expanded, Some(true));
     assert!(p[1].children.iter().all(|g| g.expanded == Some(true)));
+}
+
+#[test]
+fn the_panels_keys_stay_on_their_entries_when_a_page_comes_before_them() {
+    // Kalem keeps the panel's entry chosen by keys by its key, in its
+    // terminal and its window: a newer journal put before the others
+    // leaves every key on its entry, so Enter folds the page chosen and
+    // not the one now in its place (seen in kalem tui, 2026-10-15).
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    let panel = |out: &[Effect]| {
+        out.iter()
+            .find_map(|e| match e {
+                Effect::Panel(p) => Some(p.clone()),
+                _ => None,
+            })
+            .expect("the panel")
+    };
+    fn labels(nodes: &[PanelNode], out: &mut BTreeMap<String, String>) {
+        for n in nodes {
+            out.insert(n.key.clone(), n.label.clone());
+            labels(&n.children, out);
+        }
+    }
+    let p = panel(&app.opened(&m, "/w/notes/pages/Kalem.md"));
+    let (mut before, mut after) = (BTreeMap::new(), BTreeMap::new());
+    labels(&p, &mut before);
+    let other = &p[1].children[1];
+    assert_eq!(other.label, "Other");
+    let (chosen, reference) = (other.key.clone(), other.children[0].key.clone());
+    m.write("/w/notes/journals/2026_10_05.md", "- more of [[Kalem]]\n")
+        .unwrap();
+    let p = panel(&app.saved(&m, "/w/notes/journals/2026_10_05.md"));
+    assert_eq!(p[1].children[0].label, "Oct 5th, 2026");
+    labels(&p, &mut after);
+    for (key, label) in &before {
+        assert_eq!(after.get(key), Some(label), "{key}");
+    }
+    // Enter on the chosen line: Other folded, the journals open.
+    let p = panel(&app.panel_expanded(&chosen, false));
+    let open: Vec<_> = p[1]
+        .children
+        .iter()
+        .map(|g| (&g.label[..], g.expanded))
+        .collect();
+    assert_eq!(
+        open,
+        [
+            ("Oct 5th, 2026", Some(true)),
+            ("Oct 3rd, 2026", Some(true)),
+            ("Other", Some(false)),
+        ]
+    );
+    // Its reference still opens Other's line.
+    assert_eq!(
+        opens(&app.panel_clicked(&reference)),
+        [("/w/notes/pages/Other.md".to_string(), 1)]
+    );
 }
 
 #[test]
