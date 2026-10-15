@@ -1380,7 +1380,7 @@ fn panel_section(index: &Index, n: usize, title: &str, refs: &[BackRef]) -> Pane
                                 path: path.clone(),
                                 line: r.line,
                             }),
-                            label: block_text(index, &rel, r.block, r.line),
+                            label: crate::drawn::block_line(index, &rel, r.block, r.line),
                             detail: None,
                             expanded: None,
                             children: Vec::new(),

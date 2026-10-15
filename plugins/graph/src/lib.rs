@@ -24,6 +24,7 @@ pub mod config;
 pub mod content;
 pub mod datalog;
 pub mod date;
+pub mod drawn;
 pub mod edit;
 pub mod edn;
 pub mod files;

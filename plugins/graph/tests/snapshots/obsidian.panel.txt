@@ -1,0 +1,10 @@
+Kalem  Obsidian
+▾ Linked references  5
+  ▾ Graph  1
+    Logseq graphs and Obsidian vaults in Kalem. Embeds Home#^intro.
+  ▾ Home  4
+    The vault of the corpus, linking to Kalem, to the graph plugin
+    The vault of the corpus, linking to Kalem, to the graph plugin
+    [!note] A callout naming Kalem
+    CANCELED Dropped
+▾ Unlinked references  0
