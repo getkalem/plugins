@@ -130,8 +130,9 @@ Kalem's Markdown and Org draw the note; the plugin's layer changes what Logseq a
 | Shown as other text | `((uuid))` as its block's text; `{{embed …}}` as `↳` and the block or the page; `{{query …}}` and `#+BEGIN_QUERY` as `⌕`, how many blocks or pages the query finds, and its results under the line; `#+BEGIN_NOTE`, `TIP`, `IMPORTANT`, `CAUTION`, `WARNING`, `PINNED` as the admonition's icon and name, its `#+END_` line hidden; a numbered block's bullet (`logseq.order-list-type:: number`) as `1.`, nested `a.` and `I.` | a callout's `[!note]` as its icon and name; `![[note]]` as `↳` and the note or the block |
 | Styled | task keywords and priorities as Org's (in Org notes `LATER`, `NOW`, `DOING`, `WAITING`, `CANCELED` too), dates, `#tags`, `^^highlights^^`, property keys dimmed | `==highlights==`, `#tags`, Dataview's keys dimmed |
 | Folded | `:LOGBOOK:` to its first line; the blocks under a block with `collapsed:: true` hidden | a callout with `-` to its first line |
+| Added | a block's number of references at the end of its first line, each block referring to it once, as Logseq shows it beside the block (with Kalem's plugin API 0.2.20) | |
 
-The layer uses plugin API 0.2.13's `layer-2`, which the plugin is built with (`kalem-plugin`'s feature `layer-2`, which brings `layer` and `completer` too).
+The layer uses plugin API 0.2.20's `layer-5`, which the plugin is built with (`kalem-plugin`'s feature `layer-5`, which brings `layer`, `completer` and the layers between too); an earlier Kalem asks the layer it knows, without what came after it.
 
 ## Completion
 

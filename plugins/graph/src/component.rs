@@ -532,8 +532,9 @@ impl Plugin for Graph {
     /// `layer-2`): an embed's blocks, a query's results; those showing a
     /// block with its first line as its file holds it, typed into in place
     /// (API 0.2.15, `layer-3`), as an outline in a Logseq note (API 0.2.18,
-    /// `layer-4`).
-    fn overlays_4(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet4 {
+    /// `layer-4`); and a block's number of references after its first line
+    /// (API 0.2.20, `layer-5`).
+    fn overlays_5(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet5 {
         use crate::layer::{Effect as E, LineEffect as L};
         use kalem_plugin::layer as api;
         let (o, wanted) = APP
@@ -580,7 +581,7 @@ impl Plugin for Graph {
             }
             f
         };
-        api::OverlaySet4 {
+        api::OverlaySet5 {
             spans: o
                 .spans
                 .into_iter()
@@ -645,6 +646,26 @@ impl Plugin for Graph {
                         .collect(),
                 })
                 .collect(),
+            inserts: o
+                .inserts
+                .into_iter()
+                .map(|i| api::Insert {
+                    at: i.at as u64,
+                    text: i.text,
+                    style: look(i.look),
+                })
+                .collect(),
+        }
+    }
+
+    /// The same for a Kalem before API 0.2.20, which asks `layer-4`: no
+    /// text at places of a line.
+    fn overlays_4(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet4 {
+        let o = Self::overlays_5(layer, path, text);
+        kalem_plugin::layer::OverlaySet4 {
+            spans: o.spans,
+            lines: o.lines,
+            below: o.below,
         }
     }
 
