@@ -1165,7 +1165,9 @@ first.
   `^0.2.16`.
   0.7.1 prepared 2026-10-15: Reconcile and Finish take the account
   the tool reads (an alias, `apply account`); `api` `^0.2.16` as in
-  0.7.0.)
+  0.7.0.
+  0.7.2 prepared 2026-10-15: CR LF journals written as they end, Windows
+  paths (PT15, partly); `api` `^0.2.16`.)
 
 ## PT15. Linux and Windows
 

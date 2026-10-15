@@ -164,7 +164,7 @@
     {
       "id": "org.kalem.pta",
       "name": "Plain text accounting",
-      "version": "0.7.1",
+      "version": "0.7.2",
       "description": "hledger, Ledger and Beancount journals in Kalem: checked, reported, reconciled, imported and priced by the tool you already have, completed by their language servers",
       "api": "^0.2.16",
       "permissions": [
@@ -178,8 +178,8 @@
         "subprocess:python3"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pta",
-      "download": "https://github.com/getkalem/plugins/releases/download/pta-v0.7.1/pta.wasm",
-      "sha256": "bbf584ab1f555037ec85680028f9cd5ee048da056872aa34527c09cd4bb20b96",
+      "download": null,
+      "sha256": null,
       "languages": [
         {
           "id": "hledger",
