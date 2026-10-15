@@ -61,6 +61,12 @@ struct Reconciliation {
 #[derive(Debug)]
 struct Finish {
     journal: String,
+    /// The main journal the tool reads, and the tool.
+    main: String,
+    tool: Dialect,
+    /// The journal's text the tool read and the accounts it read there
+    /// (`reconcile::accounts_in`), once it has answered.
+    read: Option<(String, reconcile::Accounts)>,
     account: String,
     targets: Vec<reconcile::Amount>,
     date: Date,
@@ -115,12 +121,51 @@ pub(super) fn command() -> Result<String, String> {
     let text = editor::text(None);
     let at = editor::selected().head as usize;
     let account = crate::write::account_at(&text, at, d);
+    let line = text[..at.min(text.len())].matches('\n').count() as u32 + 1;
     let journal = path.clone();
     resolve(path, d, move |tool, main| match account {
-        Some(a) => ask_target(tool, main, journal, a),
+        Some(a) => account_read(tool, main, journal, text, line, a),
         None => pick(tool, main, journal),
     });
     Ok("null".into())
+}
+
+/// The account of the posting at `line` of `journal` (its text `text`)
+/// as the tool reads it, an alias or `apply account` resolved
+/// (`reconcile::accounts_in`), else as written; then its target asked.
+fn account_read(
+    tool: Dialect,
+    main: Main,
+    journal: String,
+    text: String,
+    line: u32,
+    written: String,
+) {
+    let Some((program, mut args)) = reconcile::accounts_command(tool, &main.path) else {
+        return ask_target(tool, main, journal, written);
+    };
+    // The main journal's text as typed, on the standard input.
+    let live = journal::same_file(&journal, &main.path);
+    if live {
+        args = reconcile::from_input(args, &main.path);
+    }
+    let file = if live {
+        "-".to_string()
+    } else {
+        journal.clone()
+    };
+    let input = live.then(|| text.clone().into_bytes());
+    let dir = journal::folder(&main.path).to_string();
+    run_input(program, args, &dir, input, move |r| {
+        let read = match r {
+            Ok(e) if e.status == Some(0) => {
+                let out = String::from_utf8_lossy(&e.stdout);
+                reconcile::accounts_in(tool, &out, &file, &text).remove(&line)
+            }
+            _ => None,
+        };
+        ask_target(tool, main, journal, read.unwrap_or(written));
+    });
 }
 
 /// The asset and liability accounts, to pick one.
@@ -921,10 +966,10 @@ pub(super) fn finish() -> Result<String, String> {
         );
         return Ok("null".into());
     };
-    let Some((journal, blocks)) = RECONCILES.with(|r| {
+    let Some((journal, blocks, tool)) = RECONCILES.with(|r| {
         let r = r.borrow();
         let e = r.get(&key)?;
-        Some((e.journal.clone(), e.figures.clone()))
+        Some((e.journal.clone(), e.figures.clone(), e.tool))
     }) else {
         ui::notify("The reconciliation has no total yet", ui::Level::Info);
         return Ok("null".into());
@@ -972,6 +1017,9 @@ pub(super) fn finish() -> Result<String, String> {
             FINISH.with(|f| {
                 *f.borrow_mut() = Some(Finish {
                     journal: journal.clone(),
+                    main: key.0.clone(),
+                    tool,
+                    read: None,
                     account: key.1.clone(),
                     targets,
                     date,
@@ -1008,9 +1056,61 @@ pub(super) fn finish_write() -> Result<String, String> {
         return Ok("null".into());
     };
     let text = editor::text(None);
+    // Once the tool has read the accounts: written where it read them.
+    if let Some((read, accounts)) = &f.read {
+        if *read != text {
+            ui::notify(
+                "The journal changed while the tool read it: finish again",
+                ui::Level::Warning,
+            );
+        } else {
+            finish_with(d, &f, &text, accounts);
+        }
+        return Ok("null".into());
+    }
+    // The accounts as the tool reads them: a posting written with an
+    // alias or under `apply account` is the account's too.
+    let Some((program, mut args)) = reconcile::accounts_command(f.tool, &f.main) else {
+        finish_with(d, &f, &text, &reconcile::Accounts::new());
+        return Ok("null".into());
+    };
+    let live = journal::same_file(&f.journal, &f.main);
+    if live {
+        args = reconcile::from_input(args, &f.main);
+    }
+    let file = if live {
+        "-".to_string()
+    } else {
+        f.journal.clone()
+    };
+    let input = live.then(|| text.clone().into_bytes());
+    let dir = journal::folder(&f.main).to_string();
+    run_input(program, args, &dir, input, move |r| {
+        let accounts = match r {
+            Ok(e) if e.status == Some(0) => {
+                let out = String::from_utf8_lossy(&e.stdout);
+                reconcile::accounts_in(f.tool, &out, &file, &text)
+            }
+            _ => reconcile::Accounts::new(),
+        };
+        // Written by the command again, where the journal is the
+        // document (a process's answer has none).
+        let mut f = f;
+        f.read = Some((text, accounts));
+        FINISH.with(|x| *x.borrow_mut() = Some(f));
+        if let Err(why) = kalem::run("pta.finishReconcileWrite", "{}") {
+            ui::notify(&why, ui::Level::Warning);
+        }
+    });
+    Ok("null".into())
+}
+
+/// Finish's check and edits in its journal, `text`, a posting's
+/// account the tool's (`accounts`): one undo step.
+fn finish_with(d: Dialect, f: &Finish, text: &str, accounts: &reconcile::Accounts) {
     let column = crate::align::Settings::read(kalem_plugin::settings::own).column;
     // A posting not marked that the assertion would count: it would fail.
-    let early = reconcile::unmarked_by(&text, d, &f.account, f.date);
+    let early = reconcile::unmarked_by(text, d, &f.account, f.date, accounts);
     if let Some(first) = early.first() {
         ui::notify(
             &format!(
@@ -1026,9 +1126,9 @@ pub(super) fn finish_write() -> Result<String, String> {
             ),
             ui::Level::Warning,
         );
-        return Ok("null".into());
+        return;
     }
-    let edits = reconcile::finish(&text, d, &f.account, &f.targets, f.date, column);
+    let edits = reconcile::finish(text, d, &f.account, &f.targets, f.date, column, accounts);
     let cleared = edits.len().saturating_sub(1);
     super::edit(&edits, "Finish Reconciliation");
     ui::notify(
@@ -1043,7 +1143,6 @@ pub(super) fn finish_write() -> Result<String, String> {
         ),
         ui::Level::Info,
     );
-    Ok("null".into())
 }
 
 /// Closes the document.
