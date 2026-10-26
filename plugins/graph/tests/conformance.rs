@@ -426,13 +426,11 @@ fn queries_on_the_corpus() {
             "NOW Review The core: Org, Markdown, CSV, LaTeX",
         ]
     );
-    // A journal's day and a SCHEDULED date within the coming week.
+    // A journal's day within the coming week, as Logseq's rule has it: a
+    // task SCHEDULED within it on a page is not.
     assert_eq!(
         found("(and (task NOW LATER TODO DOING) (between today +7d))"),
-        [
-            "NOW Start [[Project/Plugins/Graph]]",
-            "TODO [#A] Write the graph plugin [[Project/Plugins/Graph]]",
-        ]
+        ["NOW Start [[Project/Plugins/Graph]]"]
     );
     // A namespace's children, not their children, as Logseq 0.10.9.
     assert_eq!(found("(namespace [[Project]])"), ["Project/Plugins"]);

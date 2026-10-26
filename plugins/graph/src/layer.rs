@@ -466,6 +466,9 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
     let mut o = Overlays::default();
     let ls = lines(text);
     let mut fence = false;
+    // Inside a `#+BEGIN_SRC`, `EXAMPLE` or `EXPORT` block: text, no
+    // references, as the scanner reads it.
+    let mut raw = false;
     let mut drawer: Option<usize> = None;
     // A block's first line seen, its properties may follow.
     let mut in_props = false;
@@ -477,6 +480,13 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
         if fence {
             if trimmed.starts_with("```") {
                 fence = false;
+            }
+            continue;
+        }
+        if raw {
+            if trimmed.to_ascii_uppercase().starts_with("#+END_") {
+                raw = false;
+                block_marker(&mut o, text, (start, line), start + indent, trimmed);
             }
             continue;
         }
@@ -566,6 +576,7 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
                 );
             }
             if block_marker(&mut o, text, (start, line), start + at, rest.trim_end()) {
+                raw = scan::opens_raw(rest);
                 continue;
             }
             if let Some((ks, ke, key)) = property(content) {
@@ -628,6 +639,7 @@ pub fn logseq_markdown(text: &str, index: Option<&Index>, rel: Option<&str>) -> 
         }
         in_props = false;
         if block_marker(&mut o, text, (start, line), start + indent, trimmed) {
+            raw = scan::opens_raw(trimmed);
             continue;
         }
         inline(
@@ -895,10 +907,11 @@ pub fn obsidian(text: &str, index: Option<&Index>, rel: Option<&str>) -> Overlay
             fence = true;
             continue;
         }
-        // `%%` on this line.
+        // `%%` on this line, outside its code spans (`` `%%timeit` ``,
+        // which hid the rest of the note).
         let mut at = 0;
         let mut rest = line;
-        while let Some(p) = rest.find("%%") {
+        while let Some(p) = scan::comment_mark(rest) {
             match rest[p + 2..].find("%%") {
                 Some(q) => {
                     let s = start + at + p;
@@ -1046,7 +1059,7 @@ pub fn logseq_org(text: &str, index: Option<&Index>, rel: Option<&str>) -> Overl
             }
             continue;
         }
-        if upper.starts_with("#+BEGIN_SRC") || upper.starts_with("#+BEGIN_EXAMPLE") {
+        if scan::opens_raw(&upper) {
             src = true;
             continue;
         }
@@ -1462,6 +1475,33 @@ mod tests {
             end,
             effect: LineEffect::Folded
         }));
+    }
+
+    #[test]
+    fn an_obsidian_comment_opens_in_no_code() {
+        // A code span's `%%` hid the rest of the note; a code block's
+        // stays code.
+        let text = "run `%%timeit` then [[B]] %%hidden%% end\nnext [[C]]\n```\n100%%\n```\nafter\n";
+        let o = obsidian(text, None, None);
+        assert_eq!(
+            shown(text, &o),
+            "run `%%timeit` then [[B]]  end\nnext [[C]]\n```\n100%%\n```\nafter\n"
+        );
+    }
+
+    #[test]
+    fn a_source_block_draws_no_references() {
+        // A `#+BEGIN_SRC` block's lines are text in Markdown as in Org:
+        // its `((uuid))` was drawn as a reference, as the one after it is.
+        let text = "- a\n  #+BEGIN_SRC\n  ((6512c0de-0001-4000-8000-000000000001))\n  #+END_SRC\n- ((6512c0de-0001-4000-8000-000000000001))\n";
+        let o = logseq_markdown(text, None, None);
+        let refs: Vec<usize> = o
+            .spans
+            .iter()
+            .filter(|s| text[s.start..].starts_with("(("))
+            .map(|s| s.start)
+            .collect();
+        assert_eq!(refs, [text.rfind("((").unwrap()]);
     }
 
     #[test]

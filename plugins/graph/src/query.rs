@@ -2,10 +2,11 @@
 //! query names read from its text, and the blocks or pages that match.
 //!
 //! The clauses: `[[page]]`, `#tag` (blocks referring to the page, or
-//! under a block that does), `"text"` and `(full-text-search "text")`,
+//! under a block that does), `"text"` (Logseq's `block-content`, the case
+//! as written), a word and `(full-text-search "text")` (in either case),
 //! `(and …)`, `(or …)`, `(not …)`, `(task TODO DOING)` (`todo` too),
-//! `(priority A B)`, `(between -7d today)` (a journal's day, a
-//! `SCHEDULED:` or a `DEADLINE:`), `(property key value)`,
+//! `(priority A B)`, `(between -7d today)` (the blocks of a journal of
+//! those days, as Logseq's rule), `(property key value)`,
 //! `(page-property key value)`, `(page-tags tag …)`, `(page name)`,
 //! `(namespace name)`, `(sort-by key asc|desc)` and `(sample n)`. A query
 //! of page clauses only finds pages. Advanced queries (Datalog) are not
@@ -29,13 +30,16 @@ pub enum Expr {
     Not(Box<Expr>),
     /// Blocks referring to the page (or under one that does).
     Ref(String),
-    /// Blocks whose text holds this, ignoring case.
+    /// Blocks whose content holds this, its case as written: Logseq's
+    /// `block-content`, `clojure.string/includes?` on `:block/content`.
     Text(String),
+    /// Blocks whose content holds this, in either case: Logseq's search.
+    Search(String),
     /// Blocks with one of these task keywords.
     Task(Vec<String>),
     /// Blocks with one of these priorities.
     Priority(Vec<char>),
-    /// Blocks of a day between these two, both included.
+    /// Blocks of a journal of a day between these two, both included.
     Between(String, String),
     /// Blocks with this property (and value).
     Property(String, Option<String>),
@@ -163,7 +167,8 @@ impl Parser {
         match t {
             Token::Ref(r) => Ok(Some(Expr::Ref(r))),
             Token::Str(s) => Ok(Some(Expr::Text(s))),
-            Token::Word(w) => Ok(Some(Expr::Text(w))),
+            // A word, which Logseq's window gives its search.
+            Token::Word(w) => Ok(Some(Expr::Search(w))),
             Token::Close => Err("a ) too many".into()),
             Token::Open => {
                 let Some(Token::Word(head)) = self.t.get(self.at).cloned() else {
@@ -247,7 +252,7 @@ impl Parser {
                     "page-tags" => Expr::PageTags(words),
                     "page" => Expr::Page(words.first().cloned().unwrap_or_default()),
                     "namespace" => Expr::Namespace(words.first().cloned().unwrap_or_default()),
-                    "full-text-search" => Expr::Text(words.join(" ")),
+                    "full-text-search" => Expr::Search(words.join(" ")),
                     "sort-by" => {
                         let key = words.first().map(|k| k.to_lowercase()).unwrap_or_default();
                         let desc = words.get(1).is_some_and(|d| d.eq_ignore_ascii_case("desc"));
@@ -434,6 +439,8 @@ struct Ctx<'a> {
     index: &'a Index,
     rel: &'a str,
     block: Option<&'a scan::Block>,
+    /// The block's file, for its content.
+    file: Option<&'a crate::index::FileData>,
     /// The block's number in its file.
     at: usize,
     page: &'a str,
@@ -458,9 +465,17 @@ fn eval(e: &Expr, c: &Ctx<'_>, notes: &mut BTreeSet<String>) -> bool {
             .refs
             .get(name.as_str())
             .is_some_and(|v| v.get(c.at).copied().unwrap_or(false)),
+        // Logseq's `block-content`: on the block's whole content, its case
+        // as written.
         Expr::Text(t) => c
-            .block
-            .is_some_and(|b| b.text.to_lowercase().contains(&t.to_lowercase())),
+            .file
+            .filter(|_| c.block.is_some())
+            .is_some_and(|d| d.block_content(c.at).contains(t.as_str())),
+        Expr::Search(t) => c.file.filter(|_| c.block.is_some()).is_some_and(|d| {
+            d.block_content(c.at)
+                .to_lowercase()
+                .contains(&t.to_lowercase())
+        }),
         Expr::Task(list) => c
             .block
             .and_then(|b| b.marker)
@@ -475,10 +490,10 @@ fn eval(e: &Expr, c: &Ctx<'_>, notes: &mut BTreeSet<String>) -> bool {
                 return false;
             };
             let (a, z) = if a <= z { (a, z) } else { (z, a) };
-            let within = |d: Option<Date>| d.is_some_and(|d| a <= d && d <= z);
-            within(page.and_then(|p| p.journal))
-                || c.block
-                    .is_some_and(|b| within(b.scheduled) || within(b.deadline))
+            // A journal's day only, as Logseq's rule: a block's
+            // `SCHEDULED:` or `DEADLINE:` is not.
+            page.and_then(|p| p.journal)
+                .is_some_and(|d| a <= d && d <= z)
         }
         Expr::Property(k, v) if c.props => page.is_some_and(|p| {
             p.props
@@ -629,6 +644,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
                 index,
                 rel: p.path.as_deref().unwrap_or(""),
                 block: None,
+                file: None,
                 at: 0,
                 page: &p.key,
                 page_data: Some(p),
@@ -666,6 +682,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
                     index,
                     rel,
                     block: Some(b),
+                    file: Some(d),
                     at: i,
                     page: &d.key,
                     page_data,
@@ -686,6 +703,7 @@ pub fn run(q: &Query, index: &Index, today: Option<Date>) -> Answer {
                     index,
                     rel,
                     block: None,
+                    file: Some(d),
                     at: d.scanned.blocks.len(),
                     page: &d.key,
                     page_data,
@@ -1129,7 +1147,8 @@ mod tests {
             q(&i, "(page [[Kalem]])"),
             ["An editor", "child of the editor", "ship #release"]
         );
-        // Days: journals and dates within.
+        // Days: the journals within, as Logseq's rule; a page's block
+        // scheduled within is not (`graph plugin`, on Oct 12th).
         assert_eq!(
             q(&i, "(between -7d today)"),
             [
@@ -1139,7 +1158,7 @@ mod tests {
                 "shipped [[Kalem]]"
             ]
         );
-        assert_eq!(q(&i, "(between today +7d)"), ["graph plugin"]);
+        assert!(q(&i, "(between today +7d)").is_empty());
         assert_eq!(
             q(&i, "(between [[Oct 9th, 2026]] [[Oct 9th, 2026]])"),
             ["shipped [[Kalem]]"]
@@ -1150,6 +1169,55 @@ mod tests {
         assert_eq!(q(&i, "(namespace kalem)"), ["Kalem/Plugins"]);
         // A page clause with a block clause: blocks of those pages.
         assert_eq!(q(&i, "(and (page-tags work) (task DOING))"), ["review"]);
+    }
+
+    #[test]
+    fn text_and_days_as_logseq_finds_them() {
+        // `"text"` is Logseq's `block-content`: `clojure.string/includes?`
+        // on the block's content, its lines after the first, its keyword
+        // and its priority too, the case as written (it was the first
+        // line, in either case); a word and `(full-text-search …)` are its
+        // search, in either case. `(between …)` is a journal's day, not a
+        // block scheduled on another page.
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            (
+                "/g/pages/Notes.md",
+                "- TODO [#A] first line\n  a Second line [[X]]\n  SCHEDULED: <2026-10-12 Mon>\n- other\n",
+            ),
+            ("/g/journals/2026_10_12.md", "- on the day\n"),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        assert_eq!(q(&i, "\"Second line\""), ["first line"]);
+        assert!(q(&i, "\"second line\"").is_empty());
+        assert_eq!(q(&i, "\"TODO [#A] first\""), ["first line"]);
+        assert_eq!(q(&i, "(full-text-search \"SECOND\")"), ["first line"]);
+        assert_eq!(q(&i, "second"), ["first line"]);
+        assert_eq!(q(&i, "(between today +7d)"), ["on the day"]);
+    }
+
+    #[test]
+    fn an_org_pages_text_before_its_headlines_refers_alone() {
+        // Logseq's level-1 pre-block, beside the headlines: its link is
+        // not theirs. Before, every headline was under it and found.
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            (
+                "/g/pages/Notes.org",
+                "Intro about [[Project]]\n* A\n** B\n* C [[Project]]\n",
+            ),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        assert_eq!(
+            q(&i, "[[Project]]"),
+            ["C [[Project]]", "Intro about [[Project]]"]
+        );
     }
 
     #[test]

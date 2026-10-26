@@ -64,6 +64,23 @@ impl FileData {
             Err(_) => first.into(),
         }
     }
+
+    /// Block `i`'s content as near as the index keeps Logseq's
+    /// `:block/content`: its keyword and priority, its first line and the
+    /// lines of text after it. Logseq's `"text"` looks in it.
+    pub fn block_content(&self, i: usize) -> String {
+        let b = &self.scanned.blocks[i];
+        let mut out = String::new();
+        if let Some(m) = b.marker {
+            out.push_str(m);
+            out.push(' ');
+        }
+        if let Some(p) = b.priority {
+            out.push_str(&format!("[#{p}] "));
+        }
+        out.push_str(&self.block_text(i));
+        out
+    }
 }
 
 /// A reference to a page or a block, where it is.
@@ -333,6 +350,21 @@ impl Index {
         self.remove(rel);
         self.add(rel, text);
         self.derive();
+    }
+
+    /// The file `path` (absolute) left out without reading it: one renamed
+    /// in its name's case only, which a file system that ignores case
+    /// (macOS's) still reads at its old path. Whether it was there.
+    pub fn forget(&mut self, path: &str) -> bool {
+        let path = files::normalize(path);
+        let Some(rel) = files::relative(&self.graph.root, &path).map(str::to_string) else {
+            return false;
+        };
+        let gone = self.remove(&rel);
+        if gone {
+            self.derive();
+        }
+        gone
     }
 
     fn in_folders(&self, rel: &str) -> bool {
@@ -805,7 +837,8 @@ impl Index {
 
     /// The key of the page `target` names from the file `from`
     /// (relative): an existing page, or the key a page of that name would
-    /// have.
+    /// have. In a vault, no name (`[[#Heading]]`, `[[#^id]]`) is the note
+    /// `from` itself.
     pub fn resolve(&self, target: &str, from: &str) -> String {
         match self.graph.kind {
             Kind::Logseq => {
@@ -820,6 +853,12 @@ impl Index {
             }
             Kind::Obsidian => {
                 let t = target.trim().trim_start_matches('/');
+                if t.is_empty() {
+                    return match files::stem_ext(from) {
+                        (_, ext) if ext == "md" => from[..from.len() - 3].to_lowercase(),
+                        _ => from.to_lowercase(),
+                    };
+                }
                 let t = t.strip_suffix(".md").unwrap_or(t).to_lowercase();
                 if t.contains('/') {
                     if self.pages.get(&t).is_some_and(|p| p.path.is_some()) {

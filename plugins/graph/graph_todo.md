@@ -789,7 +789,7 @@ below replace the earlier GR4a to GR4d.
   block `Embed`'s text: the matching blocks grouped by page with their
   first lines, or a table
   when `query-table:: true` with the columns `query-properties::`
-  names; `(between …)` over journal dates and `SCHEDULED`/`DEADLINE`;
+  names; `(between …)` over journal dates, as Logseq's rule;
   recomputed when the index changes. Advanced queries
   (`#+BEGIN_QUERY` with Datalog) are shown as source with a note that
   Kalem does not run them (a non-goal: no Datascript). Tests: each

@@ -538,6 +538,43 @@ fn obsidian_links_as_the_vault_writes_them() {
 }
 
 #[test]
+fn a_vaults_links_into_the_note_they_are_in() {
+    // `[[#Heading]]` and `[[#^id]]` name the note they are in: they made
+    // a page of no name, which Follow Reference opened as `/v/.md`.
+    let note = "# Part\ntext ^b1\nsee [[#Part]], [[#^b1]] and ![[#^b1]]\n";
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        ("/v/Note.md", note),
+        ("/v/Other.md", "[[Note#^b1]] [[]]\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Note.md");
+    let follow = |app: &mut App, link: &str| {
+        let at = note.find(link).unwrap() + 3;
+        app.command(&m, "graph.follow", &ctx("/v/Note.md", note, at))
+    };
+    let out = follow(&mut app, "[[#Part]]");
+    assert_eq!(opens(&out), [("/v/Note.md".to_string(), 1)]);
+    let out = follow(&mut app, "[[#^b1]]");
+    assert_eq!(opens(&out), [("/v/Note.md".to_string(), 2)]);
+    assert_eq!(m.get("/v/.md"), None);
+    // No page without a name; the block referred to from both notes.
+    let i = app.index("/v").unwrap();
+    assert!(
+        i.pages().all(|p| !p.key.is_empty() && !p.title.is_empty()),
+        "{:?}",
+        i.pages().map(|p| &p.key).collect::<Vec<_>>()
+    );
+    assert_eq!(i.pages().count(), 2);
+    let from: Vec<&str> = i
+        .block_backlinks("note#^b1")
+        .iter()
+        .map(|b| &*b.path)
+        .collect();
+    assert_eq!(from, ["Note.md", "Note.md", "Other.md"]);
+}
+
+#[test]
 fn settings_and_paths() {
     let s = Settings::read(|k| match k {
         "graphs" => Some(r#"["/a", {"path": "/b/", "kind": "obsidian"}]"#.into()),
@@ -1950,6 +1987,134 @@ fn a_page_with_a_title_keeps_its_file_and_a_vaults_note_is_renamed_with_it() {
         matches!(&out[0], Effect::Notify(_, Level::Warning)),
         "{out:?}"
     );
+}
+
+#[test]
+fn a_vaults_note_renamed_after_a_dotted_capital_i() {
+    // `İ` is two bytes and its lower case `i̇` three: the name was found
+    // in a copy in lower case, a byte off in the link (`[[İş/ONew]`), or
+    // inside a character (a panic).
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        (
+            "/v/Home.md",
+            "[[İş/Old]] and [[İ/Çay|tea]] ![[İş/Old#Part]]\n",
+        ),
+        ("/v/İş/Old.md", "# Part\n"),
+        ("/v/İ/Çay.md", "x\n"),
+        ("/v/Other.md", "nothing\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Home.md");
+    let mut c = ctx("/v/Other.md", "nothing\n", 0);
+    let rename = |app: &mut App, c: &mut Ctx, key: &str, title: &str| {
+        c.args = format!(r#"{{"root":"/v","key":"{key}","title":"{title}"}}"#);
+        app.command(&m, "graph.renameNow", c)
+    };
+    rename(&mut app, &mut c, &"İş/Old".to_lowercase(), "New");
+    assert_eq!(m.get("/v/İş/New.md").as_deref(), Some("# Part\n"));
+    assert_eq!(
+        m.get("/v/Home.md").unwrap(),
+        "[[İş/New]] and [[İ/Çay|tea]] ![[İş/New#Part]]\n"
+    );
+    rename(&mut app, &mut c, &"İ/Çay".to_lowercase(), "Kahve");
+    assert_eq!(m.get("/v/İ/Kahve.md").as_deref(), Some("x\n"));
+    assert_eq!(
+        m.get("/v/Home.md").unwrap(),
+        "[[İş/New]] and [[İ/Kahve|tea]] ![[İş/New#Part]]\n"
+    );
+}
+
+/// Files in memory found by their names in either case, as macOS's file
+/// system finds them.
+struct NoCase(Memory);
+
+impl NoCase {
+    /// `path` as a file there writes it, in whatever case.
+    fn real(&self, path: &str) -> String {
+        files::parent(path)
+            .and_then(|dir| self.0.list(dir).ok())
+            .and_then(|l| {
+                l.into_iter()
+                    .find(|p| p.to_lowercase() == path.to_lowercase())
+            })
+            .unwrap_or_else(|| path.to_string())
+    }
+}
+
+impl Files for NoCase {
+    fn read(&self, path: &str) -> Result<String, String> {
+        self.0.read(&self.real(path))
+    }
+
+    fn list(&self, dir: &str) -> Result<Vec<String>, String> {
+        self.0.list(dir)
+    }
+
+    fn write(&self, path: &str, text: &str) -> Result<(), String> {
+        self.0.write(&self.real(path), text)
+    }
+
+    fn rename(&self, from: &str, to: &str) -> Result<(), String> {
+        if self.0.get(&self.real(to)).is_some() {
+            return Err(format!("{to} exists already"));
+        }
+        self.0.rename(&self.real(from), to)
+    }
+}
+
+#[test]
+fn a_logseq_page_renamed_keeps_its_folder_and_its_extension() {
+    // As Logseq's compute-new-file-path: an Org page of a Markdown graph
+    // stays Org (it became `pages/Diary.md`), a page in a folder of its
+    // own stays there (it went to `pages/`); and a name in another case
+    // only renames the same file, which macOS finds at the new path too
+    // (it was refused as existing).
+    let m = NoCase(Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{}"),
+        ("/w/notes/pages/Notes.org", "* x\n"),
+        ("/w/notes/pages/projects/Old.md", "- y\n"),
+        ("/w/notes/pages/kalem.md", "- z\n"),
+        ("/w/notes/pages/Other.md", "- [[Notes]] [[Old]] [[kalem]]\n"),
+        ("/w/notes/pages/Free.md", "- free\n"),
+    ]));
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Free.md");
+    let rename = |app: &mut App, key: &str, title: &str| {
+        let mut c = ctx("/w/notes/pages/Free.md", "- free\n", 0);
+        c.args = format!(r#"{{"root":"/w/notes","key":"{key}","title":"{title}"}}"#);
+        app.command(&m, "graph.renameNow", &c)
+    };
+    rename(&mut app, "notes", "Diary");
+    assert_eq!(
+        m.0.get("/w/notes/pages/Diary.org").as_deref(),
+        Some("* x\n")
+    );
+    rename(&mut app, "old", "New");
+    assert_eq!(
+        m.0.get("/w/notes/pages/projects/New.md").as_deref(),
+        Some("- y\n")
+    );
+    let out = rename(&mut app, "kalem", "Kalem");
+    assert_eq!(
+        m.0.get("/w/notes/pages/Kalem.md").as_deref(),
+        Some("- z\n"),
+        "{out:?}"
+    );
+    assert_eq!(m.0.get("/w/notes/pages/kalem.md"), None);
+    assert_eq!(
+        m.0.get("/w/notes/pages/Other.md").unwrap(),
+        "- [[Diary]] [[New]] [[Kalem]]\n"
+    );
+    // One file for it in the index, at its new path, though its old one
+    // still reads.
+    let i = app.index("/w/notes").unwrap();
+    assert_eq!(
+        i.page("kalem").and_then(|p| p.path.as_deref()),
+        Some("pages/Kalem.md")
+    );
+    assert!(i.file("pages/kalem.md").is_none());
+    assert!(i.problems.is_empty(), "{:?}", i.problems);
 }
 
 #[test]
