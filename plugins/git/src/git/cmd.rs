@@ -275,6 +275,15 @@ pub struct LogSpec {
     pub path: Option<String>,
 }
 
+/// A commit's message and the files it changed, with their counts of
+/// lines (`--stat`), for its line of the log unfolded.
+pub fn message_and_stat(hash: &str) -> GitCommand {
+    let mut args = vec!["show", "--format=%B", "--stat"];
+    args.extend(PLAIN_DIFF);
+    args.push(hash);
+    GitCommand::read(args)
+}
+
 /// A log in [`crate::git::log::FORMAT`].
 pub fn log(spec: &LogSpec) -> GitCommand {
     let mut args = vec![
@@ -587,6 +596,30 @@ pub fn commit(message: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
             GitCommand::new(args).with_stdin(message.as_bytes().to_vec())
         }
     }
+}
+
+/// A commit of kind `kind` whose message git reads from the file `path`,
+/// a message written in the editor: its `#` lines left out (`#` the
+/// comment character whatever the user's `core.commentChar`, as the
+/// plugin writes its comments with it), its blank lines at either end too.
+pub fn commit_file(path: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
+    let mut args = vec!["-c", "core.commentChar=#", "commit"];
+    match kind {
+        CommitKind::Amend | CommitKind::Extend | CommitKind::Fixup(_) => args.push("--amend"),
+        CommitKind::Reword => args.extend(["--amend", "--only"]),
+        CommitKind::New => {}
+    }
+    if signoff {
+        args.push("--signoff");
+    }
+    args.extend(["--cleanup=strip", "-F", path]);
+    GitCommand::new(args)
+}
+
+/// Where git keeps the message of a commit being made
+/// (`COMMIT_EDITMSG`, in the repository's own folder, a worktree's own).
+pub fn message_file() -> GitCommand {
+    GitCommand::read(["rev-parse", "--git-path", "COMMIT_EDITMSG"])
 }
 
 /// The last commit's message, for amending and rewording.

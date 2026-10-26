@@ -419,6 +419,8 @@ In the user's `settings.toml`, under `[plugins."org.kalem.git"]`, read through `
 | `signoff` | `false` | `--signoff` on commits |
 | `glyphs` | `"unicode"` | Fold marks and arrows as `▸ ▾ ↑ ↓`, or as `> v` and words for a terminal font without them |
 
+**As built** (git 0.0.15, 2026-10-26): the message document is the repository's own `COMMIT_EDITMSG` opened in the editor, since a plugin's documents are read only (9.8 not built): the plugin fills it after `file.open` (`git.writeMessage`), and git reads it on save with `--cleanup=strip -F FILE` (`core.commentChar=#`); so no staged diff below a scissors line, which git would keep with `-F`, and `commit.template` is not read (the plugin reads no file). The setting `commit_message = "prompt"` keeps phase 0's one-line prompt. The log is written as a commit's view is, under the key `log:WHAT`, and takes its keys (Enter, Right, Left, Tab, Alt+Up and Alt+Down, Escape); no graph yet, and Alt+Enter's commit menu is not built.
+
 **As built** (git 0.0.10, 2026-10-11): `plugin.json` declares only the settings the plugin reads, so Kalem's settings panel lists none that does nothing; `status_placement` (needs a split in Kalem's `documents`), `log_graph`, `log_count` (the log) and `remote_link` (the remote's links) were taken out until their features come, and `remote_hosts` was never declared. `context_lines` sets the status's and a commit view's diffs (0 stages through `git apply --unidiff-zero`); `panel = false` takes the Git panel out of the side panels.
 
 The settings panel of Kalem lists them from the manifest's `settings` table (`plugin_settings.rs` reads it: a type, a default, a description, choices or a range), as it lists the Elixir plugin's.

@@ -17,6 +17,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod commit_view;
 mod document;
+mod log_view;
+mod message;
 
 use crate::actions::{self, Act};
 use crate::content::Content;
@@ -30,6 +32,19 @@ use crate::target::Target;
 use crate::views::Glyphs;
 
 pub use document::{CYCLE_FILES, Keep};
+pub use message::{WRITE as WRITE_MESSAGE, template as message_template};
+
+/// Whether two paths name one file, as Kalem and git write them: macOS's
+/// `/tmp` is `/private/tmp`.
+pub fn same_path(a: &str, b: &str) -> bool {
+    let plain = |p: &str| {
+        p.strip_prefix("/private")
+            .unwrap_or(p)
+            .trim_end_matches('/')
+            .to_string()
+    };
+    plain(a) == plain(b)
+}
 
 /// The panel's ID.
 pub const PANEL: &str = "git.panel";
@@ -215,6 +230,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     )
     .doc(&["r a", "m a", "shift+a a"]),
     CommandInfo::new("git.blameLine", "Git: Blame This Line").keys(&["space g shift+b"]),
+    CommandInfo::new("git.log", "Git: Log").keys(&["space g shift+l"]),
     CommandInfo::new("git.refresh", "Git: Refresh"),
     CommandInfo::new("git.fileMenu", "Git: This File").keys(&["space g ."]),
     CommandInfo::new("git.dispatch", "Git: Commands")
@@ -286,6 +302,7 @@ pub const COMMANDS: &[CommandInfo] = &[
 /// The settings [`Settings::read`] reads, which the component watches:
 /// those of `plugin.json` but `programs.git`, Kalem's own.
 pub const SETTINGS: &[&str] = &[
+    "commit_message",
     "confirm_discard",
     "pull",
     "fetch_prune",
@@ -322,6 +339,9 @@ pub struct Settings {
     pub context_lines: u32,
     /// The Git side panel is there.
     pub panel: bool,
+    /// A commit's message is written as a document (`COMMIT_EDITMSG` in
+    /// the editor), else asked for as one line.
+    pub message_document: bool,
 }
 
 impl Default for Settings {
@@ -337,6 +357,7 @@ impl Default for Settings {
             gutter_head: false,
             context_lines: 3,
             panel: true,
+            message_document: true,
         }
     }
 }
@@ -370,6 +391,7 @@ impl Settings {
             gutter_head: text("gutter_base").is_some_and(|v| v == "head"),
             context_lines: number("context_lines", d.context_lines, 20),
             panel: boolean("panel", d.panel),
+            message_document: text("commit_message").map_or(d.message_document, |v| v != "prompt"),
         }
     }
 }
@@ -635,6 +657,9 @@ enum After {
     },
     /// Offer the file's commands.
     FileMenu(Doc),
+    /// Show the log of a file, by its path in the repository, else of the
+    /// branch.
+    Log(Option<String>),
 }
 
 /// What a run is for.
@@ -673,6 +698,26 @@ enum Pending {
     },
     /// The last commit's message, to amend or reword it.
     LastMessage { root: String, kind: CommitKind },
+    /// Where git keeps a commit's message, to write it as a document.
+    MessageFile {
+        root: String,
+        kind: CommitKind,
+        old: String,
+    },
+    /// The commit of the message written as a document.
+    MessageCommit { root: String, done: String },
+    /// A page of a log, for its document (shown when `show`).
+    Log {
+        root: String,
+        key: String,
+        show: bool,
+    },
+    /// A commit's message and stat, under its line of a log.
+    LogDetails {
+        root: String,
+        key: String,
+        hash: String,
+    },
     /// The changes of the files of a repository open, for the marks
     /// beside their lines.
     Marks { root: String, paths: Vec<String> },
@@ -784,6 +829,8 @@ struct RepoState {
     written: Option<BTreeMap<(Section, String), crate::git::diff::FileDiff>>,
     /// The commits shown as documents, by hash.
     commits: BTreeMap<String, ShownCommit>,
+    /// The logs shown as documents, by their key.
+    logs: BTreeMap<String, log_view::ShownLog>,
 }
 
 /// A commit shown as a document (`commit_view.rs`).
@@ -824,6 +871,11 @@ pub struct App {
     running: BTreeMap<u64, (Option<String>, GitCommand)>,
     /// The runs waiting for one of those to end ([`MAX_RUNS`]).
     queued: VecDeque<(u64, Option<String>, GitCommand)>,
+    /// The commit message being written as a document.
+    message: Option<message::Message>,
+    /// The file of a message whose commit failed once its document was
+    /// closed: opened as it is for the next commit.
+    kept_message: Option<String>,
 }
 
 /// The files the panel lists in a section at most: 20,000 changed files
@@ -960,6 +1012,11 @@ impl App {
                 }
             }
             Input::Panel { key, event } => self.panel_event(&mut out, &key, &event),
+            Input::Saved(path) if self.is_message(&path) => self.message_saved(&mut out),
+            Input::Closed(path) if self.is_message(&path) => self.message_closed(&mut out),
+            // The repository's own folder (the message's file) has no
+            // status of its own.
+            Input::Opened(path) | Input::Saved(path) if path.contains("/.git/") => {}
             Input::Opened(path) | Input::Saved(path) => {
                 let (folder, name) = parent(&path);
                 let after = if self.settings.gutter {
@@ -1037,6 +1094,7 @@ impl App {
                     match commit {
                         Some(hash) => {
                             s.commits.remove(&hash);
+                            s.logs.remove(&hash);
                         }
                         None => {
                             s.shown = false;
@@ -1127,6 +1185,7 @@ impl App {
                     text: d.text,
                 }
             }
+            "git.log" => After::Log(file.as_ref().map(|_| String::new())),
             "git.fileMenu" => {
                 if file.is_none() {
                     return needs_file(out);
@@ -1385,8 +1444,22 @@ impl App {
                 path,
             } => self.diff_done(out, &root, generation, section, &path, result),
             Pending::Show { root, hash } => self.show_done(out, &root, &hash, result),
+            Pending::MessageFile { root, kind, old } => {
+                self.message_file_done(out, root, kind, old, result);
+            }
+            Pending::MessageCommit { root, done } => {
+                self.message_commit_done(out, &root, done, result);
+            }
+            Pending::Log { root, key, show } => self.log_done(out, &root, &key, show, result),
+            Pending::LogDetails { root, key, hash } => {
+                self.log_details_done(out, &root, &key, hash, result);
+            }
             Pending::Markers { root, plan } => self.markers_done(out, &root, plan, result),
             Pending::LastMessage { root, kind } => match result {
+                Ok(o) if o.success() && self.settings.message_document => {
+                    let text = String::from_utf8_lossy(&o.stdout).into_owned();
+                    self.message_open(out, &root, kind, text);
+                }
                 Ok(o) if o.success() => {
                     let text = String::from_utf8_lossy(&o.stdout).into_owned();
                     let (first, rest) = text
@@ -1536,6 +1609,7 @@ impl App {
             // Done by `refreshed`.
             After::Marks(_) => {}
             After::Commit(kind) => self.commit(out, root, &repo, kind),
+            After::Log(path) => self.log_open(out, root, path, None),
             After::SwitchBranch => {
                 let mut branches: Vec<(String, bool)> = repo
                     .local_branches()
@@ -1781,6 +1855,9 @@ impl App {
                         Level::Warning,
                     ));
                     return;
+                }
+                if self.settings.message_document {
+                    return self.message_open(out, root, kind, String::new());
                 }
                 let token = self.ask(Question::Message {
                     root: root.to_string(),
@@ -2487,6 +2564,7 @@ fn with_path(after: After, prefix: &str, file: Option<&str>) -> After {
         After::Act(act, _) => After::Act(act, path),
         After::Blame { line, text, .. } => After::Blame { path, line, text },
         After::Marks(_) => After::Marks(path),
+        After::Log(Some(_)) => After::Log(Some(path)),
         other => other,
     }
 }

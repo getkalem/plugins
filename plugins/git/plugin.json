@@ -80,6 +80,12 @@
       "default": true,
       "description": "The Git side panel"
     },
+    "commit_message": {
+      "type": "string",
+      "enum": ["document", "prompt"],
+      "default": "document",
+      "description": "How a commit's message is written: as a document in the editor (saving commits, closing cancels), or as one line asked for"
+    },
     "confirm_discard": {
       "type": "boolean",
       "default": true,

@@ -404,6 +404,34 @@ fn document(command: &str) -> Option<Doc> {
     })
 }
 
+/// Writes the commit message's first text into its document
+/// (`git.writeMessage`, queued after the plugin's `file.open`), when that
+/// is the one in front: one undo step, the cursor on the first line.
+fn write_message() {
+    let Some((path, text)) = APP.with(|a| a.borrow_mut().as_mut().and_then(App::message_fill))
+    else {
+        return;
+    };
+    let Some(info) = editor::document() else {
+        return;
+    };
+    if !info
+        .path
+        .as_deref()
+        .is_some_and(|p| app::same_path(p, &path))
+    {
+        return;
+    }
+    let all = editor::Range {
+        start: 0,
+        end: info.length,
+    };
+    if editor::replace(all, &text).is_ok() {
+        editor::transact("Commit Message");
+        let _ = kalem::run("edit.gotoLine", "{\"line\":1}");
+    }
+}
+
 fn read_settings() -> Settings {
     Settings::read(settings::own)
 }
@@ -458,6 +486,18 @@ impl Plugin for Git {
                 kalem::keymap(k, c.id, Some(&when))?;
             }
         }
+        // The commit message's first text, written into its document once
+        // Kalem has opened it (the plugin queues `file.open`, then this).
+        let mut spec = kalem::spec(
+            app::WRITE_MESSAGE,
+            "Git: Write the Commit Message",
+            Scope::all(),
+        );
+        spec.category = "Git".into();
+        kalem::command(spec, |_| {
+            write_message();
+            Ok("null".into())
+        })?;
         kalem::on(EventKind::DocumentOpen, |e| {
             if let Event::DocumentOpen(d) = e
                 && let Some(p) = &d.path
