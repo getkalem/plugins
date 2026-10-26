@@ -2992,3 +2992,60 @@ fn completion_of_blocks_stops_when_its_time_is_up() {
     app.now = Some(late);
     assert_eq!(labels(&app), ["needle here", "see ((needle"]);
 }
+
+#[test]
+fn todays_journal_shows_the_graphs_default_queries() {
+    // The NOW query of the config.edn Logseq writes for a new graph, and a
+    // simple query folded: under today's journal, each its line and the
+    // first its results, as Logseq shows them there; under another day's
+    // journal, nothing.
+    let m = Memory::new(&[
+        (
+            "/w/g/logseq/config.edn",
+            r#"{:default-queries
+ {:journals
+  [{:title "🔨 NOW"
+    :query [:find (pull ?h [*])
+            :in $ ?start ?today
+            :where
+            [?h :block/marker ?marker]
+            [(contains? #{"NOW" "DOING"} ?marker)]
+            [?h :block/page ?p]
+            [?p :block/journal? true]
+            [?p :block/journal-day ?d]
+            [(>= ?d ?start)]
+            [(<= ?d ?today)]]
+    :inputs [:14d :today]
+    :collapsed? false}
+   {:title "Later" :query "(task LATER)" :collapsed? true}]}}"#,
+        ),
+        (
+            "/w/g/journals/2026_10_20.md",
+            "- NOW write the plugin\n- LATER read\n",
+        ),
+        ("/w/g/journals/2026_10_26.md", "- a day\n"),
+        ("/w/g/pages/Other.md", "- DOING elsewhere\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.set_today(Date::new(2026, 10, 26).unwrap());
+    let today = "/w/g/journals/2026_10_26.md";
+    app.opened(&m, today);
+    let rows = |path: &str, text: &str| -> Vec<String> {
+        app.overlays("logseq", Some(path), text)
+            .below
+            .iter()
+            .flat_map(|b| &b.rows)
+            .map(|r| r.parts.iter().map(|(t, _)| t.as_str()).collect())
+            .collect()
+    };
+    let shown = rows(today, "- a day\n");
+    assert_eq!(shown[0], "⌕ 🔨 NOW · 1 block", "{shown:?}");
+    assert!(
+        shown.iter().any(|r| r.contains("write the plugin")),
+        "{shown:?}"
+    );
+    assert!(!shown.iter().any(|r| r.contains("elsewhere")), "{shown:?}");
+    assert_eq!(shown.last().map(String::as_str), Some("⌕ Later · 1 block"));
+    let other = "- NOW write the plugin\n- LATER read\n";
+    assert!(rows("/w/g/journals/2026_10_20.md", other).is_empty());
+}

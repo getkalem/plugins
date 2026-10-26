@@ -13,7 +13,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 use super::{App, Effect, Shown};
+use crate::date::Date;
+use crate::edn::Value;
 use crate::index::Index;
+use crate::layer::{Look, Overlays};
+use crate::rows::Row;
 
 /// The command that works out the answers asked for.
 pub(super) const ANSWER: &str = "graph.answerQueries";
@@ -39,6 +43,9 @@ pub(super) enum Asked {
         query: String,
         current: Option<String>,
     },
+    /// The graph's `n`th query of `:default-queries`, under today's
+    /// journal.
+    Journals(usize),
 }
 
 impl Asked {
@@ -49,6 +56,7 @@ impl Asked {
             Asked::Advanced { query, current } => {
                 format!("{}\u{1f}{query}", current.as_deref().unwrap_or(""))
             }
+            Asked::Journals(n) => format!("\u{1f}journals {n}"),
         }
     }
 }
@@ -182,6 +190,7 @@ impl App {
             Asked::Advanced { query, current } => {
                 crate::datalog::shown(index, query, self.day(), current.as_deref(), mark)
             }
+            Asked::Journals(n) => journals_query(index, *n, self.day(), mark),
         });
         let at = self.now.map_or(0, |n| n());
         let mut kept = self.answers.kept.borrow_mut();
@@ -200,6 +209,46 @@ impl App {
         shown
     }
 
+    /// Under the note at `rel` when it is today's journal, the queries
+    /// Logseq shows there (`:default-queries`): each its line, and its
+    /// results unless `:collapsed?`, after what the note's last line
+    /// shows.
+    pub(super) fn journal_queries(&self, index: &Index, rel: &str, text: &str, o: &mut Overlays) {
+        let queries = &index.graph.default_queries;
+        let Some(today) = self.day() else {
+            return;
+        };
+        if queries.is_empty() || index.page_of(rel).and_then(|p| p.journal) != Some(today) {
+            return;
+        }
+        let mut rows = Vec::new();
+        for (n, q) in queries.iter().enumerate() {
+            let shown = self.query_answer(index, Asked::Journals(n));
+            rows.push(Row {
+                indent: 0,
+                parts: vec![(
+                    shown.0.clone(),
+                    Look {
+                        bold: true,
+                        ..Look::default()
+                    },
+                )],
+                block: None,
+                source: None,
+                floor: None,
+                root: false,
+            });
+            if !q
+                .get("collapsed?")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                rows.extend(shown.1.iter().cloned());
+            }
+        }
+        crate::layer::rows_at_end(o, text, rows);
+    }
+
     /// The mark a query's line starts with.
     fn query_mark(&self) -> &'static str {
         if self.settings.glyphs == "ascii" {
@@ -207,5 +256,25 @@ impl App {
         } else {
             "⌕"
         }
+    }
+}
+
+/// What the graph's `n`th query of `:default-queries` shows: an advanced
+/// query's map, or a simple query's text (`:query "(task NOW)"`), its line
+/// then named by the map's `:title`, as an advanced query's is.
+fn journals_query(index: &Index, n: usize, today: Option<Date>, mark: &str) -> (String, Vec<Row>) {
+    let Some(map) = index.graph.default_queries.get(n) else {
+        return (format!("{mark} no query"), Vec::new());
+    };
+    let Some(Value::Str(q)) = map.get("query") else {
+        return crate::datalog::shown_map(index, map, today, None, mark);
+    };
+    let (line, rows) = crate::query::shown(index, q, today, mark);
+    match map.get("title").and_then(Value::as_str) {
+        Some(title) => {
+            let rest = line.strip_prefix(mark).unwrap_or(&line).trim_start();
+            (format!("{mark} {title} · {rest}"), rows)
+        }
+        None => (line, rows),
     }
 }

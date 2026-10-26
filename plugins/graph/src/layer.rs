@@ -1103,6 +1103,19 @@ pub fn overlays(kind: Kind, text: &str, index: Option<&Index>, rel: Option<&str>
     }
 }
 
+/// `rows` under the last line of `text`, after those drawn there already:
+/// what Logseq shows under today's journal.
+pub fn rows_at_end(o: &mut Overlays, text: &str, rows: Vec<Row>) {
+    let last = text
+        .trim_end_matches(['\n', '\r'])
+        .rfind('\n')
+        .map_or(0, |i| i + 1);
+    match o.below.last_mut() {
+        Some(b) if b.at >= last => b.rows.extend(rows),
+        _ => o.rows(last, rows),
+    }
+}
+
 /// The `{{query …}}` macros of a Logseq note shown as what `summary`
 /// says of each, and an advanced query (`#+BEGIN_QUERY` … `#+END_QUERY`)
 /// as what `advanced` says of it, its lines hidden (away from the

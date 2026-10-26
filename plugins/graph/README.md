@@ -165,6 +165,8 @@ The results are grouped by page, journals newest first, with each block's first 
 
 Advanced queries (`#+BEGIN_QUERY` … `#+END_QUERY`, Datalog) run too, as Logseq's file version runs them: the note shows the query's title and how many it finds, its results under it, its EDN hidden until the cursor goes into it, and Follow Reference on it opens the results. The graph is seen as Logseq's schema has it (`:block/name`, `:block/original-name`, `:block/journal?`, `:block/journal-day`, `:block/properties`, `:block/tags`, `:block/alias`, `:block/namespace` of a page; `:block/content`, `:block/marker`, `:block/priority`, `:block/page`, `:block/parent`, `:block/refs`, `:block/path-refs`, `:block/scheduled`, `:block/deadline`, `:block/uuid`, `:block/pre-block?` of a block, a page's pre-block among them). `:where` takes data patterns, `not`, `not-join`, `or`, `or-join`, `and`, the comparisons, `contains?`, `clojure.string/includes?`, `starts-with?`, `ends-with?` and `blank?`, `get`, `get-else`, `missing?`, `str`, and Logseq's rules (`page-ref`, `task`, `priority`, `property`, `page-property`, `page-tags`, `between`, `namespace`, `page`, `block-content`); `:inputs` takes `:today`, `:yesterday`, `:tomorrow`, `:-7d`, `:+7d`, `:7d-before`, `:7d-after` and `:current-page`; `:find` a variable, `(pull ?b [*])` or `(count ?b)`, other values as a table.
 
+Under today's journal, the queries of `:default-queries {:journals …}` in `logseq/config.edn` show as Logseq shows them there, Logseq's NOW and NEXT in a new graph's: each its title and how many it finds, and its results unless `:collapsed? true`; a simple query's text (`:query "(task LATER)"`) too.
+
 ## What is read
 
 | | Logseq | Obsidian |

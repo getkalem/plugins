@@ -1311,6 +1311,21 @@ user groups; the gaps that code can close, in this order.
   `::` completed, the plugin running. Tests: app's
   a_notes_queries_are_answered_away_from_the_drawing and
   completion_of_blocks_stops_when_its_time_is_up.
+- [x] GR19 Today's journal shows the graph's `:default-queries
+  {:journals [...]}` (2026-10-26), as Logseq 0.10.9 shows them under
+  it: a new graph's config.edn has NOW and NEXT, so every Logseq user
+  has them. Each its title and count on a line under the note's last
+  line, its results under it unless `:collapsed? true`; an advanced
+  query's map, or a simple query's text. Answered as the note's own
+  queries are (GR18). Logseq's NOW query takes `:inputs [:14d :today]`,
+  `:14d` Logseq's older form of 14 days before today (its
+  resolve-input), which the plugin now reads too. Seen in a release
+  `kalem tui` of 0.6.49 on the demo graph with Logseq's own config:
+  NOW (a DOING of six days ago) and NEXT (a TODO two days on) under
+  today's journal. Tests: app's
+  todays_journal_shows_the_graphs_default_queries, config's
+  logseq_journals_default_queries, datalog's
+  logseqs_own_now_query_as_its_config_writes_it.
 
 ## What Kalem's core must gain
 

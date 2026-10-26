@@ -1322,7 +1322,7 @@ impl App {
                     o
                 } else {
                     let current = index.page_of(&rel).map(|p| p.key.clone());
-                    crate::layer::queries(
+                    let mut o = crate::layer::queries(
                         o,
                         text,
                         &|q| {
@@ -1336,7 +1336,9 @@ impl App {
                             };
                             (*self.query_answer(index, ask)).clone()
                         },
-                    )
+                    );
+                    self.journal_queries(index, &rel, text, &mut o);
+                    o
                 };
                 self.sources(index, &mut o);
                 o

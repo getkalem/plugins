@@ -54,7 +54,12 @@ pub fn parse(text: &str) -> Result<Advanced, String> {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let v = crate::edn::parse(&body)?;
+    from_map(&crate::edn::parse(&body)?)
+}
+
+/// An advanced query's map read: a note's, or one of Logseq's
+/// `:default-queries`.
+pub fn from_map(v: &Edn) -> Result<Advanced, String> {
     let Edn::Map(_) = v else {
         return Err("an advanced query is a map: {:query [...]}".into());
     };
@@ -992,6 +997,11 @@ fn input(e: &Edn, db: &Db<'_>, today: Option<Date>, current: Option<&str>) -> Re
             if let Some(n) = other.strip_suffix("d-after").and_then(num) {
                 return day(n);
             }
+            // Logseq's older form, which its own NOW query still uses
+            // (`:inputs [:14d :today]`): so many days before today.
+            if let Some(n) = other.strip_suffix('d').and_then(num) {
+                return day(-n);
+            }
             Ok(V::Kw(other.to_string()))
         }
     }
@@ -1166,7 +1176,30 @@ pub fn shown(
     current: Option<&str>,
     mark: &str,
 ) -> (String, Vec<crate::rows::Row>) {
-    let found = parse(text).and_then(|a| {
+    shown_of(index, parse(text), today, current, mark)
+}
+
+/// The same for an advanced query's map: one of Logseq's
+/// `:default-queries`.
+pub fn shown_map(
+    index: &Index,
+    map: &Edn,
+    today: Option<Date>,
+    current: Option<&str>,
+    mark: &str,
+) -> (String, Vec<crate::rows::Row>) {
+    shown_of(index, from_map(map), today, current, mark)
+}
+
+/// What query `a`, as read, shows.
+fn shown_of(
+    index: &Index,
+    a: Result<Advanced, String>,
+    today: Option<Date>,
+    current: Option<&str>,
+    mark: &str,
+) -> (String, Vec<crate::rows::Row>) {
+    let found = a.and_then(|a| {
         let title = a.title.clone();
         run(&a, index, today, current).map(|f| (title, f))
     });
@@ -1289,6 +1322,16 @@ mod tests {
         let a = parse(q).unwrap();
         assert_eq!(a.title.as_deref(), Some("🔨 NOW"));
         assert_eq!(a.ignored, [":result-transform"]);
+    }
+
+    #[test]
+    fn logseqs_own_now_query_as_its_config_writes_it() {
+        // `:14d`, Logseq's older form of `:14d-before`, in the NOW query
+        // of the config.edn Logseq writes for a new graph.
+        let q = "{:query [:find (pull ?h [*]) :in $ ?start ?today :where [?h :block/marker ?marker] [(contains? #{\"NOW\" \"DOING\"} ?marker)] [?h :block/page ?p] [?p :block/journal? true] [?p :block/journal-day ?d] [(>= ?d ?start)] [(<= ?d ?today)]] :inputs [:14d :today]}";
+        assert_eq!(ask(q), ["DOING a day of [[Kalem]]"]);
+        let a = from_map(&crate::edn::parse(q).unwrap()).unwrap();
+        assert_eq!(a, parse(q).unwrap());
     }
 
     #[test]
