@@ -589,6 +589,30 @@ pub fn commit(message: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
     }
 }
 
+/// A commit of kind `kind` whose message git reads from the file `path`,
+/// a message written in the editor: its `#` lines left out (`#` the
+/// comment character whatever the user's `core.commentChar`, as the
+/// plugin writes its comments with it), its blank lines at either end too.
+pub fn commit_file(path: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
+    let mut args = vec!["-c", "core.commentChar=#", "commit"];
+    match kind {
+        CommitKind::Amend | CommitKind::Extend | CommitKind::Fixup(_) => args.push("--amend"),
+        CommitKind::Reword => args.extend(["--amend", "--only"]),
+        CommitKind::New => {}
+    }
+    if signoff {
+        args.push("--signoff");
+    }
+    args.extend(["--cleanup=strip", "-F", path]);
+    GitCommand::new(args)
+}
+
+/// Where git keeps the message of a commit being made
+/// (`COMMIT_EDITMSG`, in the repository's own folder, a worktree's own).
+pub fn message_file() -> GitCommand {
+    GitCommand::read(["rev-parse", "--git-path", "COMMIT_EDITMSG"])
+}
+
 /// The last commit's message, for amending and rewording.
 pub fn last_message() -> GitCommand {
     GitCommand::read(["log", "-1", "--format=%B"])

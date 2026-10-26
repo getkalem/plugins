@@ -266,6 +266,15 @@ impl Kalem {
         assert!(self.answers.is_empty(), "answers left: {:?}", self.answers);
     }
 
+    /// The message asked for as one line (the setting `commit_message =
+    /// "prompt"`), as the tests of that way write it.
+    fn prompt_messages(&mut self) {
+        self.feed(Input::Settings(Settings {
+            message_document: false,
+            ..Settings::default()
+        }));
+    }
+
     /// Runs the git runs held back, and hands their ends to the plugin.
     fn release(&mut self) {
         for (token, cwd, command) in std::mem::take(&mut self.held) {
@@ -538,6 +547,7 @@ fn the_panel_stages_by_its_boxes_and_opens_files() {
 #[test]
 fn commit_asks_for_its_message() {
     let mut k = Kalem::new("commit");
+    k.prompt_messages();
     k.write("a.txt", "one\n");
     // Nothing staged: said, not asked.
     k.command("git.commit", Some("a.txt"));
@@ -562,6 +572,7 @@ fn commit_asks_for_its_message() {
 #[test]
 fn a_message_keeps_its_lines_starting_with_a_hash() {
     let mut k = Kalem::new("hash");
+    k.prompt_messages();
     k.write("a.txt", "one\n");
     k.command("git.stageFile", Some("a.txt"));
     k.answers
@@ -589,6 +600,68 @@ fn a_message_keeps_its_lines_starting_with_a_hash() {
         k.git_ok(&["log", "-1", "--format=%B"]),
         "Second, reworded\n\n# Why\nBecause.\n\n#42 closes it\n\n"
     );
+}
+
+/// The message as a document (DESIGN.md, G7): `c c` opens the
+/// repository's COMMIT_EDITMSG filled as git fills it; saving commits with
+/// what it says, its `#` lines left out, and closes it; closing it unsaved
+/// cancels; a commit git refuses leaves it open to fix; Amend starts from
+/// the last message.
+#[test]
+fn the_message_is_written_as_a_document() {
+    let mut k = Kalem::new("message");
+    k.write("a.txt", "one\n");
+    k.command("git.stageFile", Some("a.txt"));
+    k.command("git.commit", Some("a.txt"));
+    let (path, text) = k.app.message_fill().expect("the message's first text");
+    assert!(path.ends_with("/.git/COMMIT_EDITMSG"), "{path}");
+    assert!(
+        text.starts_with("\n# Please enter the commit message"),
+        "{text}"
+    );
+    assert!(text.contains("#\tnew file:   a.txt\n"), "{text}");
+    let ids: Vec<&str> = k.commands.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids[ids.len() - 2..], ["file.open", "git.writeMessage"]);
+    // Written and saved: committed, the comments left out, the document
+    // closed.
+    std::fs::write(&path, format!("Add a\n\nBecause.\n{text}")).unwrap();
+    k.commands.clear();
+    k.feed(Input::Saved(path.clone()));
+    assert_eq!(k.last_note(), "Committed");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%B"]),
+        "Add a\n\nBecause.\n\n"
+    );
+    let ids: Vec<&str> = k.commands.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["file.open", "file.close"]);
+    // Closed unsaved: cancelled.
+    k.write("a.txt", "two\n");
+    k.command("git.stageFile", Some("a.txt"));
+    k.command("git.commit", Some("a.txt"));
+    k.feed(Input::Closed(path.clone()));
+    assert!(
+        k.last_note().starts_with("The commit is cancelled"),
+        "{}",
+        k.last_note()
+    );
+    assert_eq!(k.git_ok(&["rev-list", "--count", "HEAD"]).trim(), "1");
+    // Saved without a message: git refuses, the document stays to fix.
+    k.command("git.commit", Some("a.txt"));
+    let (_, text) = k.app.message_fill().unwrap();
+    std::fs::write(&path, &text).unwrap();
+    k.feed(Input::Saved(path.clone()));
+    assert!(
+        k.last_note().starts_with("Not committed"),
+        "{}",
+        k.last_note()
+    );
+    std::fs::write(&path, format!("Second\n{text}")).unwrap();
+    k.feed(Input::Saved(path.clone()));
+    assert_eq!(k.last_note(), "Committed");
+    // Amend: the last message first.
+    k.command("git.amend", Some("a.txt"));
+    let (_, text) = k.app.message_fill().unwrap();
+    assert!(text.starts_with("Second\n\n# Please"), "{text}");
 }
 
 /// A bare repository beside the test's, its `origin`.
@@ -752,6 +825,7 @@ fn outside_a_repository() {
 #[test]
 fn the_status_document_folds_opens_and_acts_with_its_keys() {
     let mut k = Kalem::new("doc");
+    k.prompt_messages();
     let long: String = (1..=30).map(|n| format!("line {n}\n")).collect();
     k.write("a.txt", &long);
     k.write("b.txt", "bee\n");
@@ -1346,6 +1420,7 @@ fn a_new_branch_starts_where_asked() {
 #[test]
 fn branches_stashes_and_amends_from_the_status() {
     let mut k = Kalem::new("branches");
+    k.prompt_messages();
     k.write("a.txt", "one\n");
     k.commit_all("First\n\nThe body stays.");
     k.git_ok(&["branch", "feature"]);

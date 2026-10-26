@@ -24,7 +24,7 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 | `a` | Stage everything, untracked files too; everything staged, unstage everything (lazygit's `a`) |
 | `S`, `U` | Stage every change of a tracked file; unstage everything (magit's) |
 | `d`, `x` | Discard, as lazygit asks: the file's name, then Discard all changes (Discard unstaged changes when it has both), Cancel |
-| `c c`, `c a`, `c e`, `c w` | Commit; amend (the last message's first line offered, its body kept); extend; reword |
+| `c c`, `c a`, `c e`, `c w` | Commit; amend (the last message first); extend; reword: the message written as a document (below) |
 | `P p`, `p` or `F p`, `f p` | Push, pull, fetch (`P u`, `F u`, `f u`, `f a` too) |
 | `b b`, `b c` | Switch branch; a new branch, where it starts asked first (where HEAD is, another branch, a remote's) |
 | `Z z` | Stash the changes |
@@ -49,9 +49,9 @@ The letters are magit's (as Doom's evil-collection has them: `x` discards) and a
 
 The marks beside the lines compare with the index (what `s` would stage; the setting `gutter_base = "head"` compares with the last commit) and come again on each save; the setting `gutter = false` takes them away. The log, blame, the time machine and the remote's links come later (DESIGN.md, section 8).
 
-The status is read again when it opens, after each save and when a file of the working tree changes. A change inside `.git` alone (a commit or a checkout made in a terminal) shows when the cursor comes back into the status from another document, and after `SPC g g`. A commit's message is one line, asked at the bottom (Enter commits, Escape cancels); amend keeps the old message's body.
+The status is read again when it opens, after each save and when a file of the working tree changes. A change inside `.git` alone (a commit or a checkout made in a terminal) shows when the cursor comes back into the status from another document, and after `SPC g g`. A commit's message is written as a document, as `git commit` and Magit write it: `c c` opens the repository's `COMMIT_EDITMSG` in the editor, filled as git fills it (the branch and what is staged in `#` lines; for amend and reword, the last message first); saving it commits (Ctrl+S, `:w`, `:wq`), the `#` lines left out, and closes it; closing it without saving cancels. A commit git refuses (an empty message, a hook) leaves it open to fix. With the setting `commit_message = "prompt"` the message is one line, asked at the bottom (Enter commits, Escape cancels; a `#` there is text), amend keeping the old message's body.
 
-The other settings: `confirm_discard` (Revert asks first; on), `pull` (`config`, `rebase`, `merge` or `ff-only`; with `config`, a pull of branches that have parted asks which, and writes the answer here), `fetch_prune` (on), `untracked` (`normal`, `all` or `no`), `signoff` (off), `glyphs`, `context_lines` (the lines around each change of a diff, in the status and a commit view; 3, and 0 for none), `panel` (the Git side panel; on) and `programs.git`.
+The other settings: `commit_message` (`document` or `prompt`, above), `confirm_discard` (Revert asks first; on), `pull` (`config`, `rebase`, `merge` or `ff-only`; with `config`, a pull of branches that have parted asks which, and writes the answer here), `fetch_prune` (on), `untracked` (`normal`, `all` or `no`), `signoff` (off), `glyphs`, `context_lines` (the lines around each change of a diff, in the status and a commit view; 3, and 0 for none), `panel` (the Git side panel; on) and `programs.git`.
 
 ## Try it
 
