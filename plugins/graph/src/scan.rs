@@ -361,6 +361,12 @@ fn wiki(inner: &str, flavor: Flavor, embed: bool) -> Option<(RefKind, String, Op
             if !note_target(name) || inner.contains("://") {
                 return None;
             }
+            // `[[#Heading]]` and `[[#^id]]` name the note they are in (the
+            // index resolves the empty name to it); no name and no anchor
+            // is no link.
+            if name.is_empty() && anchor.as_deref().is_none_or(str::is_empty) {
+                return None;
+            }
             let block = anchor.as_deref().is_some_and(|a| a.starts_with('^'));
             let kind = match (embed, block) {
                 (true, true) => RefKind::EmbedBlock,

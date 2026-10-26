@@ -538,6 +538,43 @@ fn obsidian_links_as_the_vault_writes_them() {
 }
 
 #[test]
+fn a_vaults_links_into_the_note_they_are_in() {
+    // `[[#Heading]]` and `[[#^id]]` name the note they are in: they made
+    // a page of no name, which Follow Reference opened as `/v/.md`.
+    let note = "# Part\ntext ^b1\nsee [[#Part]], [[#^b1]] and ![[#^b1]]\n";
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        ("/v/Note.md", note),
+        ("/v/Other.md", "[[Note#^b1]] [[]]\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Note.md");
+    let follow = |app: &mut App, link: &str| {
+        let at = note.find(link).unwrap() + 3;
+        app.command(&m, "graph.follow", &ctx("/v/Note.md", note, at))
+    };
+    let out = follow(&mut app, "[[#Part]]");
+    assert_eq!(opens(&out), [("/v/Note.md".to_string(), 1)]);
+    let out = follow(&mut app, "[[#^b1]]");
+    assert_eq!(opens(&out), [("/v/Note.md".to_string(), 2)]);
+    assert_eq!(m.get("/v/.md"), None);
+    // No page without a name; the block referred to from both notes.
+    let i = app.index("/v").unwrap();
+    assert!(
+        i.pages().all(|p| !p.key.is_empty() && !p.title.is_empty()),
+        "{:?}",
+        i.pages().map(|p| &p.key).collect::<Vec<_>>()
+    );
+    assert_eq!(i.pages().count(), 2);
+    let from: Vec<&str> = i
+        .block_backlinks("note#^b1")
+        .iter()
+        .map(|b| &*b.path)
+        .collect();
+    assert_eq!(from, ["Note.md", "Note.md", "Other.md"]);
+}
+
+#[test]
 fn settings_and_paths() {
     let s = Settings::read(|k| match k {
         "graphs" => Some(r#"["/a", {"path": "/b/", "kind": "obsidian"}]"#.into()),

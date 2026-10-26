@@ -820,7 +820,8 @@ impl Index {
 
     /// The key of the page `target` names from the file `from`
     /// (relative): an existing page, or the key a page of that name would
-    /// have.
+    /// have. In a vault, no name (`[[#Heading]]`, `[[#^id]]`) is the note
+    /// `from` itself.
     pub fn resolve(&self, target: &str, from: &str) -> String {
         match self.graph.kind {
             Kind::Logseq => {
@@ -835,6 +836,12 @@ impl Index {
             }
             Kind::Obsidian => {
                 let t = target.trim().trim_start_matches('/');
+                if t.is_empty() {
+                    return match files::stem_ext(from) {
+                        (_, ext) if ext == "md" => from[..from.len() - 3].to_lowercase(),
+                        _ => from.to_lowercase(),
+                    };
+                }
                 let t = t.strip_suffix(".md").unwrap_or(t).to_lowercase();
                 if t.contains('/') {
                     if self.pages.get(&t).is_some_and(|p| p.path.is_some()) {
