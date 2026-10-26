@@ -265,15 +265,70 @@ pub fn hledger_register(json: &str) -> Vec<Posting> {
         .unwrap_or_default()
 }
 
+/// The first number of an amount as `s` writes it: a run of digits and
+/// their marks outside a quoted commodity (`"VWRL2"`) and a commodity's
+/// name (`VWRL2`), ending with a digit; a blank in it only before a group
+/// of three digits (`1 000,00`). Its start and end.
+fn number_run(s: &str) -> Option<(usize, usize)> {
+    let chars: Vec<(usize, char)> = s.char_indices().collect();
+    let mut k = 0;
+    while k < chars.len() {
+        let c = chars[k].1;
+        if c == '"' {
+            // A quoted commodity, to its closing quote.
+            k += 1;
+            while k < chars.len() && chars[k].1 != '"' {
+                k += 1;
+            }
+            k += 1;
+        } else if c.is_alphabetic() {
+            // A commodity's name, its digits too.
+            while k < chars.len() && (chars[k].1.is_alphanumeric() || chars[k].1 == '_') {
+                k += 1;
+            }
+        } else if c.is_ascii_digit() {
+            let start = chars[k].0;
+            let mut end = start;
+            while let Some(&(i, c)) = chars.get(k) {
+                let group = |rest: &[u8]| {
+                    rest.len() >= 3
+                        && rest[..3].iter().all(u8::is_ascii_digit)
+                        && !rest.get(3).is_some_and(u8::is_ascii_digit)
+                };
+                if c.is_ascii_digit() {
+                    end = i + 1;
+                } else if !(matches!(
+                    c,
+                    '.' | ',' | '\'' | '_' | '\u{a0}' | '\u{2009}' | '\u{202f}'
+                ) || (c == ' ' && group(&s.as_bytes()[i + 1..])))
+                {
+                    break;
+                }
+                k += 1;
+            }
+            return Some((start, end));
+        } else {
+            k += 1;
+        }
+    }
+    None
+}
+
 /// An amount Ledger or Beancount wrote (`$11,619.00`, `EUR 120.00`,
-/// `-45000.00 TRY`): its number and style, the decimal mark the last of
-/// `.` and `,` not followed by exactly three digits and another group.
+/// `-45000.00 TRY`, `10 "VWRL2"`): its number the first one written, its
+/// commodity what is before or after it (quoted, or a name with digits,
+/// as written), and the style; the decimal mark the last of `.` and `,`
+/// not followed by exactly three digits and another group.
 pub fn text_amount(s: &str) -> Option<Amount> {
     let s = s.trim();
-    let start = s.find(|c: char| c.is_ascii_digit() || c == '-')?;
-    let end = s.rfind(|c: char| c.is_ascii_digit())? + 1;
+    let (mut start, end) = number_run(s)?;
+    // The sign before the number (`-45000.00 TRY`, `$-19.00`), or before
+    // the symbol (`-$19.00`).
+    if s[..start].ends_with('-') {
+        start -= 1;
+    }
     let (before, number, after) = (&s[..start], &s[start..end], &s[end..]);
-    let (sign_before, before) = match before.trim_end().strip_suffix('-') {
+    let (sign_before, before) = match before.strip_prefix('-') {
         Some(b) => (true, b),
         None => (false, before),
     };
@@ -1097,6 +1152,38 @@ mod tests {
                 scale: 1
             }
         );
+        // A commodity with digits, quoted (Ledger) or not (Beancount).
+        let fund = text_amount("10 \"VWRL2\"").unwrap();
+        assert_eq!(
+            (fund.quantity, fund.style.symbol.as_str(), fund.style.left),
+            (
+                Decimal {
+                    mantissa: 10,
+                    scale: 0
+                },
+                "\"VWRL2\"",
+                false
+            )
+        );
+        assert_eq!(fund.written(), "10 \"VWRL2\"");
+        assert_eq!(text_amount("-2.5 VWRL2").unwrap().written(), "-2.5 VWRL2");
+        assert_eq!(
+            text_amount("\"FUND 1\" 3.25").unwrap().written(),
+            "\"FUND 1\" 3.25"
+        );
+        let minus = text_amount("-$19.00").unwrap();
+        assert_eq!(
+            (minus.written(), minus.style.symbol.as_str()),
+            ("$-19.00".into(), "$")
+        );
+        assert_eq!(
+            text_amount("1 000,50 EUR").unwrap().quantity,
+            Decimal {
+                mantissa: 100050,
+                scale: 2
+            }
+        );
+        assert!(text_amount("\"V2\"").is_none());
     }
 
     #[test]

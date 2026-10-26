@@ -475,3 +475,24 @@ fn accounts_the_tools_read() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Ledger's total of a commodity with digits in its name (`"VWRL2"`,
+/// quoted as Ledger writes it) reads, and so does its difference.
+#[test]
+fn a_commodity_with_digits() {
+    use kalem_plugin_pta::reconcile::{self, Which};
+    let dir = std::env::temp_dir().join(format!("pta-digits-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("a.ledger").to_string_lossy().into_owned();
+    let text = "2026/01/01 * Buy\n    Assets:Broker  10 \"VWRL2\" @ $100.00\n    Assets:Cash\n\n2026/01/02 ! Buy\n    Assets:Broker  5 \"VWRL2\" @ $100.00\n    Assets:Cash\n";
+    std::fs::write(&main, text).unwrap();
+    let (p, a) = reconcile::total_command(Dialect::Ledger, &main, "Assets:Broker", Which::Both);
+    if let Some(out) = run(p, &a, &dir) {
+        let totals = reconcile::total_of(Dialect::Ledger, &out);
+        assert_eq!(totals.len(), 1, "{out}");
+        assert_eq!(totals[0].written(), "15 \"VWRL2\"");
+        let d = reconcile::difference("15 \"VWRL2\"", &totals[0]).expect("the target reads");
+        assert!(d.quantity.is_zero(), "{}", d.written());
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
