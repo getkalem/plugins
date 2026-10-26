@@ -567,6 +567,22 @@ fn weekday(d: Date) -> &'static str {
     ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][usize::from(d.weekday())]
 }
 
+/// What a timestamp holds after its day and its weekday, each with a space
+/// before it: ` 10:00 .+1d` of `<2026-10-01 Thu 10:00 .+1d>`.
+fn stamp_rest(stamp: &str) -> String {
+    let inner = stamp
+        .split_once(['<', '['])
+        .map_or("", |(_, r)| r.split(['>', ']']).next().unwrap_or(""));
+    let mut words = inner.split_whitespace().skip(1).peekable();
+    if words
+        .peek()
+        .is_some_and(|w| w.chars().all(char::is_alphabetic))
+    {
+        words.next();
+    }
+    words.map(|w| format!(" {w}")).collect()
+}
+
 /// The block's continuation indentation: its first line's, and two spaces
 /// past its bullet (Logseq's), or none under an Org headline.
 fn continuation(text: &str, st: &[usize], b: &Block, flavor: Flavor) -> String {
@@ -679,8 +695,9 @@ fn property_removed(text: &str, st: &[usize], b: &Block, n: u32) -> Edit {
 }
 
 /// `SCHEDULED:` (`key`) or `DEADLINE:` of the block at `cursor` set to
-/// `date`, or removed: the line replaced where it is, else written after
-/// the block's first line and properties.
+/// `date`, or removed: the line replaced where it is (its time and its
+/// repeater kept), else written after the block's first line and
+/// properties.
 pub fn set_date(
     text: &str,
     flavor: Flavor,
@@ -710,10 +727,16 @@ pub fn set_date(
                     col + q + 1
                 });
             let edit = match &stamp {
+                // Its time and its repeater kept, as Logseq's date picker
+                // keeps them: only the day changes.
                 Some(s) => Edit {
                     start: col,
                     end,
-                    text: s.clone(),
+                    text: format!(
+                        "{}{}>",
+                        s.trim_end_matches('>'),
+                        stamp_rest(&text[col..end])
+                    ),
                 },
                 None => {
                     // The line goes when it held only this.
@@ -1320,11 +1343,12 @@ mod tests {
             s(t, "SCHEDULED", d),
             "- TODO go\n  id:: 1\n  SCHEDULED: <2026-10-12 Mon>\n- next\n"
         );
-        // Replaced where it is, then removed with its line.
+        // Replaced where it is, its repeater kept, then removed with its
+        // line.
         let t2 = "- TODO go\n  SCHEDULED: <2026-10-01 Thu .+1d>\n- next\n";
         assert_eq!(
             s(t2, "SCHEDULED", d),
-            "- TODO go\n  SCHEDULED: <2026-10-12 Mon>\n- next\n"
+            "- TODO go\n  SCHEDULED: <2026-10-12 Mon .+1d>\n- next\n"
         );
         assert_eq!(s(t2, "SCHEDULED", None), "- TODO go\n- next\n");
         assert_eq!(
@@ -1348,6 +1372,48 @@ mod tests {
             "* TODO Read\nSCHEDULED: <2026-10-12 Mon>\n:PROPERTIES:\n:ID: x\n:END:\n"
         );
         assert!(set_date(t, Flavor::Obsidian, 0, "SCHEDULED", d).is_none());
+    }
+
+    #[test]
+    fn a_date_given_another_day_keeps_its_time_and_its_repeater() {
+        // As Logseq's date picker: only the day and its weekday change.
+        // Before, `<2026-10-01 Thu 10:00 .+1d>` became `<2026-10-12 Mon>`.
+        let d = Date::new(2026, 10, 12);
+        let s = |t: &str, k: &str, f: Flavor| run(t, |c| set_date(t, f, c, k, d), 3);
+        let md = Flavor::LogseqMarkdown;
+        assert_eq!(
+            s(
+                "- TODO go\n  SCHEDULED: <2026-10-01 Thu 10:00 .+1d>\n",
+                "SCHEDULED",
+                md
+            ),
+            "- TODO go\n  SCHEDULED: <2026-10-12 Mon 10:00 .+1d>\n"
+        );
+        assert_eq!(
+            s(
+                "- TODO go\n  DEADLINE: <2026-10-01 Thu 09:30-10:00 ++1w -2d>\n",
+                "DEADLINE",
+                md
+            ),
+            "- TODO go\n  DEADLINE: <2026-10-12 Mon 09:30-10:00 ++1w -2d>\n"
+        );
+        // Without its weekday; on a line with both dates; in Org.
+        assert_eq!(
+            s(
+                "- TODO go\n  SCHEDULED: <2026-10-01 10:00>\n",
+                "SCHEDULED",
+                md
+            ),
+            "- TODO go\n  SCHEDULED: <2026-10-12 Mon 10:00>\n"
+        );
+        assert_eq!(
+            s(
+                "* TODO go\nSCHEDULED: <2026-10-01 Thu .+1d> DEADLINE: <2026-10-20 Tue>\n",
+                "SCHEDULED",
+                Flavor::LogseqOrg
+            ),
+            "* TODO go\nSCHEDULED: <2026-10-12 Mon .+1d> DEADLINE: <2026-10-20 Tue>\n"
+        );
     }
 
     #[test]
