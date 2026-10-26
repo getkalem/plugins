@@ -1153,6 +1153,27 @@ mod tests {
     }
 
     #[test]
+    fn an_org_pages_text_before_its_headlines_refers_alone() {
+        // Logseq's level-1 pre-block, beside the headlines: its link is
+        // not theirs. Before, every headline was under it and found.
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{}"),
+            (
+                "/g/pages/Notes.org",
+                "Intro about [[Project]]\n* A\n** B\n* C [[Project]]\n",
+            ),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        assert_eq!(
+            q(&i, "[[Project]]"),
+            ["C [[Project]]", "Intro about [[Project]]"]
+        );
+    }
+
+    #[test]
     fn sorting_sampling_and_notes() {
         let i = index();
         let a = run(

@@ -1334,7 +1334,10 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
         }
         let stars = line.bytes().take_while(|b| *b == b'*').count();
         if stars > 0 && line[stars..].starts_with(' ') {
-            while stack.last().is_some_and(|(d, _)| *d >= stars) {
+            // The text before the first headline (depth 0) is a block
+            // beside the headlines, as Logseq's level-1 pre-block, not
+            // above them.
+            while stack.last().is_some_and(|(d, _)| *d >= stars || *d == 0) {
                 stack.pop();
             }
             if let Some(c) = current {
@@ -1935,6 +1938,21 @@ mod tests {
         let line = "* TODO [#B] Headline [[Link]] :tag:";
         let r = &s.refs[2];
         assert_eq!(&line[r.start as usize..r.end as usize], "tag");
+    }
+
+    #[test]
+    fn org_text_before_the_first_headline_is_beside_them() {
+        // As Logseq's level-1 pre-block: before, every headline was under
+        // it, and `{{query [[Project]]}}` found them all by its link.
+        let s = scan(
+            "Intro about [[Project]]\nmore\n* A\n** B\n* C\n",
+            Flavor::LogseqOrg,
+            &Options::default(),
+        );
+        assert_eq!(s.blocks[0].text, "Intro about [[Project]]");
+        let tree: Vec<(u16, Option<usize>)> =
+            s.blocks.iter().map(|b| (b.depth, b.parent)).collect();
+        assert_eq!(tree, [(0, None), (0, None), (1, Some(1)), (0, None)]);
     }
 
     #[test]
