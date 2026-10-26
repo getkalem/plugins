@@ -1326,6 +1326,15 @@ user groups; the gaps that code can close, in this order.
   todays_journal_shows_the_graphs_default_queries, config's
   logseq_journals_default_queries, datalog's
   logseqs_own_now_query_as_its_config_writes_it.
+- [x] GR20 Insert Template from the palette (2026-10-26), as Obsidian's
+  core Templates inserts one (its Insert template): a vault's notes of
+  its templates' folder, one picked, `{{title}}`, `{{date}}` and
+  `{{time}}` filled in for the note, written at the cursor; in a Logseq
+  graph its blocks with `template::`, as `/Template` writes them, from
+  the palette too. Seen in a release `kalem tui` of 0.6.49: the
+  palette's Graph: Insert Template, the vault's Meeting picked, its
+  heading written with the note's title and the day. Test: app's
+  a_template_inserted_from_the_palette.
 
 ## What Kalem's core must gain
 

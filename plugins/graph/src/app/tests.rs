@@ -3049,3 +3049,64 @@ fn todays_journal_shows_the_graphs_default_queries() {
     let other = "- NOW write the plugin\n- LATER read\n";
     assert!(rows("/w/g/journals/2026_10_20.md", other).is_empty());
 }
+
+#[test]
+fn a_template_inserted_from_the_palette() {
+    // Obsidian's Insert template: the notes of the templates' folder, one
+    // picked, filled in for the note, typed at the cursor.
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        ("/v/.obsidian/templates.json", r#"{"folder":"Templates"}"#),
+        (
+            "/v/Templates/Meeting.md",
+            "## {{title}}, {{date}}\n- agenda\n",
+        ),
+        ("/v/Templates/Daily.md", "- plan\n"),
+        ("/v/Meeting.md", "A note named as a template, not one\n"),
+        ("/v/Kickoff.md", "\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.set_today(Date::new(2026, 10, 26).unwrap());
+    let note = "/v/Kickoff.md";
+    app.opened(&m, note);
+    let insert = |m: &Memory, app: &mut App, path: &str, text: &str, cursor: usize, label: &str| {
+        let out = app.command(m, "graph.insertTemplate", &ctx(path, text, cursor));
+        let Effect::Pick { token, items, .. } = &out[0] else {
+            panic!("{out:?}")
+        };
+        let i = items.iter().position(|(l, _)| l == label).unwrap();
+        let labels: Vec<&str> = items.iter().map(|(l, _)| l.as_str()).collect();
+        let out = app.answer(m, *token, Answer::Picked(Some(vec![i as u32])));
+        let Effect::Run { id, args } = &out[0] else {
+            panic!("{out:?}")
+        };
+        assert_eq!(id, "graph.insertText");
+        let v: serde_json::Value = serde_json::from_str(args).unwrap();
+        (
+            labels.iter().map(|l| l.to_string()).collect::<Vec<_>>(),
+            v["text"].as_str().unwrap().to_string(),
+        )
+    };
+    let (labels, text) = insert(&m, &mut app, note, "\n", 0, "Meeting");
+    assert_eq!(labels, ["Daily", "Meeting"]);
+    assert_eq!(text, "## Kickoff, 2026-10-26\n- agenda\n");
+    // Logseq's: a block with template::, its children in the block typed
+    // into, under its indentation.
+    let m = logseq();
+    let mut app = App::new(Settings::default());
+    app.set_today(Date::new(2026, 10, 26).unwrap());
+    let other = "/w/notes/pages/Other.md";
+    app.opened(&m, other);
+    let (labels, text) = insert(&m, &mut app, other, "- x\n\t- ", 8, "daily");
+    assert_eq!(labels, ["daily"]);
+    assert!(text.starts_with("TODO plan [[Oct 26th, 2026]]"), "{text:?}");
+    // A vault without templates says so.
+    let m = Memory::new(&[("/v/.obsidian/app.json", "{}"), ("/v/A.md", "a\n")]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/A.md");
+    let out = app.command(&m, "graph.insertTemplate", &ctx("/v/A.md", "a\n", 0));
+    assert!(
+        matches!(&out[..], [Effect::Notify(t, _)] if t.starts_with("No templates")),
+        "{out:?}"
+    );
+}

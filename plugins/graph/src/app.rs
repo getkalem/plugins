@@ -152,6 +152,9 @@ pub const COMMANDS: &[CommandInfo] = &[
     ),
     m!("graph.findPage", "Find Page", &["space n r f"], "f"),
     c("graph.insertLink", "Insert Link", &["space n r i"]),
+    // One of the graph's templates filled in at the cursor: Obsidian's
+    // Insert template, Logseq's `/Template` from the palette.
+    n("graph.insertTemplate", "Insert Template", &[]),
     c(
         "graph.insertBlockRef",
         "Insert Block Reference",
@@ -687,6 +690,13 @@ enum Pending {
         choices: Vec<outline::Choice>,
         from: Option<String>,
     },
+    InsertTemplate {
+        root: String,
+        /// Logseq's templates' names, a vault's paths without `.md`.
+        names: Vec<String>,
+        from: Option<String>,
+        indent: String,
+    },
     Date {
         key: &'static str,
     },
@@ -719,6 +729,7 @@ enum Then {
 /// never written (a Logseq database graph's Markdown Mirror).
 const WRITES: &[&str] = &[
     "graph.insertLink",
+    "graph.insertTemplate",
     "graph.insertBlockRef",
     "graph.cycleTodo",
     "graph.setPriority",
@@ -1921,6 +1932,22 @@ impl App {
                 });
             }
             "graph.insertBlockRef" => out.extend(self.block_ref_pick(&root, rel)),
+            "graph.insertTemplate" => {
+                // The cursor's line's indentation, for a template's lines
+                // after its first.
+                let indent = ctx
+                    .text
+                    .as_deref()
+                    .and_then(|t| t.get(..ctx.cursor))
+                    .map(|before| {
+                        let line = &before[before.rfind('\n').map_or(0, |i| i + 1)..];
+                        line.chars()
+                            .take_while(|c| *c == ' ' || *c == '\t')
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                out.extend(self.template_pick(&root, rel, indent));
+            }
             "graph.cycleTodo"
             | "graph.setPriority"
             | "graph.schedule"
@@ -2407,6 +2434,15 @@ impl App {
                     None => Vec::new(),
                 }
             }
+            Pending::InsertTemplate {
+                root,
+                names,
+                from,
+                indent,
+            } => match picked(&answer).and_then(|i| names.get(i).cloned()) {
+                Some(name) => self.template_insert(files, &root, &name, from.as_deref(), &indent),
+                None => Vec::new(),
+            },
             Pending::InsertBlockRef {
                 root,
                 choices,
@@ -2534,6 +2570,7 @@ mod indexing;
 mod kept;
 mod outline;
 mod queries;
+mod templates;
 
 #[cfg(test)]
 mod tests;
