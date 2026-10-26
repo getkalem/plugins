@@ -28,7 +28,7 @@ crc32fast = "1.5.2"
 ironcalc_base = { git = "https://github.com/getkalem/ironcalc", branch = "kalem", default-features = false }
 miniz_oxide = "0.9.1"
 # Sheet and workbook protection's password hashes, as Excel writes them.
-sha2 = "0.10"
+sha2 = "0.11"
 
 # `.xls`, `.xlsb` and `.ods` (shown only), in the component too: it
 # builds for wasm32-unknown-unknown and imports nothing.
