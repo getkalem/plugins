@@ -1451,7 +1451,9 @@ fn run_block() -> Result<String, String> {
         return Ok("null".into());
     };
     let (program, args) = crate::blocks::command(&b);
-    let input = text[b.body.clone()].as_bytes().to_vec();
+    // Its code as Kalem's Babel gives it: without Org's indentation and
+    // escapes.
+    let input = crate::blocks::code(&text, &b).into_bytes();
     let dir = path
         .as_deref()
         .map(journal::folder)

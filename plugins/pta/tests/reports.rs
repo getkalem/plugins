@@ -889,3 +889,55 @@ fn toggle_status_on_a_bare_header() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Run the Journal Block on a block indented under its heading, a
+/// heading of the journal's escaped with a comma, as Org writes them:
+/// the tool reads its code as Kalem's Babel gives it.
+#[test]
+fn a_journal_block_indented_and_escaped() {
+    use kalem_plugin_pta::blocks;
+    for (lang, journal, said) in [
+        (
+            "hledger",
+            "  ,* January\n  2026-01-01 Shop\n      expenses:food  10.00 EUR\n      assets:cash\n",
+            "10.00 EUR  expenses:food",
+        ),
+        (
+            "ledger",
+            "  ,* January\n  2026/01/01 Shop\n      Expenses:Food  10.00 EUR\n      Assets:Cash\n",
+            "10.00 EUR  Expenses:Food",
+        ),
+    ] {
+        let org = format!("* Money\n  #+begin_src {lang}\n{journal}  #+end_src\n");
+        let b = blocks::block_at(&org, org.find("Shop").unwrap()).expect("a block");
+        let (program, args) = blocks::command(&b);
+        let mut child = match Command::new(program)
+            .args(&args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => panic!("{program}: {e}"),
+        };
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(blocks::code(&org, &b).as_bytes())
+            .unwrap();
+        let o = child.wait_with_output().unwrap();
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            o.status.success(),
+            "{lang}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let squeezed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+        let want = said.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(squeezed.contains(&want), "{lang}: {out}");
+    }
+}
