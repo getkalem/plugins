@@ -211,8 +211,10 @@ pub fn transactions(text: &str, dialect: Dialect) -> Vec<Transaction> {
                 let b = rest[n..].len() - rest[n..].trim_start_matches([' ', '\t']).len();
                 Some(start + after..start + after + n + b)
             }
+            // A mark with a blank after it or not (`*Payee`), as hledger
+            // and Ledger read it.
             _ => match rest.chars().next() {
-                Some('*' | '!') if rest[1..].starts_with([' ', '\t']) || rest.len() == 1 => {
+                Some('*' | '!') => {
                     let b = rest[1..].len() - rest[1..].trim_start_matches([' ', '\t']).len();
                     Some(start + after..start + after + 1 + b)
                 }
@@ -322,6 +324,35 @@ fn transaction_status(text: &str, t: &Transaction) -> Status {
         .map_or(Status::Unmarked, |r| Status::of(&text[r]))
 }
 
+/// The edit that writes `status` as `t`'s: its mark and a blank before
+/// the description (`2026-01-02 ! Payee`); where nothing follows, the
+/// blank before the mark rather than after it (`2026-01-02 !`, since
+/// `2026-01-02! ` reads in neither tool), and no blank left behind when
+/// the mark is taken off.
+fn status_edit(
+    text: &str,
+    t: &Transaction,
+    status: Status,
+    dialect: Dialect,
+) -> (Range<usize>, String) {
+    let r = t.status.clone().unwrap_or(t.status_at..t.status_at);
+    let line_end = text[r.end..]
+        .find(['\n', '\r'])
+        .map_or(text.len(), |i| r.end + i);
+    let mark = status.written(dialect);
+    if !text[r.end..line_end].trim().is_empty() {
+        return (r, mark.to_string());
+    }
+    let date_end = text[..r.start].trim_end_matches([' ', '\t']).len();
+    let mark = mark.trim_end();
+    let written = if mark.is_empty() {
+        String::new()
+    } else {
+        format!(" {mark}")
+    };
+    (date_end..line_end, written)
+}
+
 /// Marks the posting at `at` pending, or unmarks it, as a reconciliation
 /// ticks it off (ledger-mode's reconcile toggle): a posting not marked
 /// in a transaction not marked gets `!`; a pending posting, or a
@@ -340,10 +371,7 @@ pub fn toggle_pending(
     Some(match (posting, whole) {
         (Some(Status::Cleared), _) | (None, Status::Cleared) => Vec::new(),
         (Some(Status::Pending), _) => vec![(mark?, String::new())],
-        (_, Status::Pending) => {
-            let r = t.status.clone()?;
-            vec![(r, Status::Unmarked.written(dialect).to_string())]
-        }
+        (_, Status::Pending) => vec![status_edit(text, t, Status::Unmarked, dialect)],
         _ => vec![(start..start, Status::Pending.written(dialect).to_string())],
     })
 }
@@ -415,10 +443,7 @@ pub fn toggle(
     chosen
         .iter()
         .filter(|t| transaction_status(text, t) != next)
-        .map(|t| {
-            let r = t.status.clone().unwrap_or(t.status_at..t.status_at);
-            (r, next.written(dialect).to_string())
-        })
+        .map(|t| status_edit(text, t, next, dialect))
         .collect()
 }
 
@@ -1119,6 +1144,31 @@ mod tests {
         let s3 = apply(&apply(&s1, &toggle(&s1, Beancount, 3..3, false)), &[]);
         let s3 = apply(&s3, &toggle(&s3, Beancount, 3..3, false));
         assert_eq!(s3, b);
+        // A header without a description: the mark after a blank, and
+        // no blank left once it is taken off.
+        let bare = "2026-01-02\n    a  1\n    b\n";
+        let p = apply(bare, &toggle(bare, Hledger, 3..3, false));
+        assert!(p.starts_with("2026-01-02 !\n"), "{p:?}");
+        let c = apply(&p, &toggle(&p, Hledger, 3..3, false));
+        assert!(c.starts_with("2026-01-02 *\n"), "{c:?}");
+        assert_eq!(apply(&c, &toggle(&c, Hledger, 3..3, false)), bare);
+        let blank = "2026/01/02 \r\n    a  1\r\n    b\r\n";
+        let p = apply(blank, &toggle(blank, Ledger, 3..3, false));
+        assert!(p.starts_with("2026/01/02 !\r\n"), "{p:?}");
+        let at = p.find("    b").unwrap();
+        assert_eq!(
+            apply(&p, &toggle_pending(&p, Ledger, at).unwrap()),
+            "2026/01/02\r\n    a  1\r\n    b\r\n"
+        );
+        // A mark without a blank after it is the transaction's status.
+        let tight = "2026-01-01 *Payee\n    a  1\n    b\n";
+        assert_eq!(
+            &tight[transactions(tight, Hledger)[0].status.clone().unwrap()],
+            "*"
+        );
+        let u = apply(tight, &toggle(tight, Hledger, 3..3, false));
+        assert!(u.starts_with("2026-01-01 Payee\n"), "{u:?}");
+        assert_eq!(payees_in(tight, Hledger), ["Payee"]);
     }
 
     #[test]

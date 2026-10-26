@@ -825,3 +825,67 @@ fn lists_and_drafts_despite_a_failing_assertion() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Toggle Status on a header without a description, and on one whose
+/// mark has no blank after it: what it writes, the tool reads with the
+/// status meant.
+#[test]
+fn toggle_status_on_a_bare_header() {
+    use kalem_plugin_pta::write;
+    let dir = std::env::temp_dir().join(format!("pta-toggle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (tool, file, text, states) in [
+        (
+            Dialect::Hledger,
+            "t.journal",
+            "2026-01-02\n    a  1\n    b\n\n2026-01-03 *Payee\n    a  1\n    b\n",
+            vec!["print", "-O", "csv"],
+        ),
+        (
+            Dialect::Ledger,
+            "t.ledger",
+            "2026/01/02\n    A  1\n    B\n\n2026/01/03 *Payee\n    A  1\n    B\n",
+            vec!["register", "--register-format", "%(state)|%(payee)\n"],
+        ),
+    ] {
+        let main = dir.join(file).to_string_lossy().into_owned();
+        // The first pending, the second unmarked.
+        let second = text.find("*Payee").unwrap();
+        let once = kalem_plugin_pta::align::apply(text, &write::toggle(text, tool, 3..3, false));
+        let at = once.find("*Payee").unwrap_or(second);
+        let both =
+            kalem_plugin_pta::align::apply(&once, &write::toggle(&once, tool, at..at, false));
+        assert!(
+            both.starts_with(&format!("{} !\n", &text[..10])) && both.contains(" Payee\n"),
+            "{tool:?}: {both:?}"
+        );
+        std::fs::write(&main, &both).unwrap();
+        let mut args = vec!["-f".to_string(), main.clone()];
+        args.extend(states.iter().map(|s| s.to_string()));
+        let Some(out) = run(tool.checker(), &args, &dir) else {
+            continue;
+        };
+        match tool {
+            Dialect::Hledger => {
+                // `txnidx,date,date2,status,…`, a line a posting.
+                let status: Vec<&str> = out
+                    .lines()
+                    .skip(1)
+                    .map(|l| l.split(',').nth(3).unwrap_or(""))
+                    .collect();
+                assert_eq!(status, ["\"!\"", "\"!\"", "\"\"", "\"\""], "{out}");
+            }
+            _ => assert_eq!(
+                out.lines().collect::<Vec<_>>(),
+                [
+                    "2|<Unspecified payee>",
+                    "2|<Unspecified payee>",
+                    "0|Payee",
+                    "0|Payee"
+                ],
+                "{out}"
+            ),
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
