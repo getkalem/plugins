@@ -741,6 +741,11 @@ struct RepoState {
     tab: crate::views::status::Tab,
     /// The diffs being read for it.
     loading: BTreeSet<(Section, String)>,
+    /// The diffs the status document's text was made from, when a refresh
+    /// replaced them and the text waits for the new ones to be written
+    /// again: what is under the cursor is acted on as it is shown
+    /// (`document.rs`, `shown_repo`).
+    written: Option<BTreeMap<(Section, String), crate::git::diff::FileDiff>>,
     /// The commits shown as documents, by hash.
     commits: BTreeMap<String, ShownCommit>,
 }
@@ -1361,7 +1366,10 @@ impl App {
         match result {
             Ok(repo) => {
                 if let Some(s) = self.repos.get_mut(root) {
-                    s.repo = Some(repo);
+                    let before = s.repo.replace(repo);
+                    if s.content.is_some() && s.written.is_none() {
+                        s.written = before.map(|r| r.diffs);
+                    }
                     s.loading.clear();
                 }
             }

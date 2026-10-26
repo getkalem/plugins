@@ -213,6 +213,7 @@ impl App {
         let text = content.text.clone();
         let styles = content.styles.clone();
         state.content = Some(content);
+        state.written = None;
         state.shown = true;
         out.push(Effect::Document {
             root: root.to_string(),
@@ -223,6 +224,21 @@ impl App {
             show,
             styles,
         });
+    }
+
+    /// The repository as the status document shows it: its diffs the
+    /// ones its text was made from, until the text is written again after
+    /// a refresh. A key pressed meanwhile took the hunk's number from the
+    /// text and its patch from the diffs read again, and could discard
+    /// another hunk; a patch of what is shown applies where the file still
+    /// holds it, and git refuses it where not.
+    fn shown_repo(&self, root: &str) -> Option<Repo> {
+        let s = self.repos.get(root)?;
+        let mut repo = s.repo.clone()?;
+        if let Some(diffs) = &s.written {
+            repo.diffs = diffs.clone();
+        }
+        Some(repo)
     }
 
     /// Starts reading the diffs the unfolded files need; whether some are
@@ -583,7 +599,7 @@ impl App {
         act: Act,
         whole: bool,
     ) {
-        let Some(repo) = self.repos.get(root).and_then(|s| s.repo.clone()) else {
+        let Some(repo) = self.shown_repo(root) else {
             return;
         };
         let mut targets = if anchor != head {
@@ -640,7 +656,7 @@ impl App {
         anchor: usize,
         head: usize,
     ) {
-        let Some(repo) = self.repos.get(root).and_then(|s| s.repo.clone()) else {
+        let Some(repo) = self.shown_repo(root) else {
             return;
         };
         let targets: Vec<Target> = if anchor != head {
@@ -752,7 +768,7 @@ impl App {
         head: usize,
         doc: &Doc,
     ) {
-        let Some(repo) = self.repos.get(root).and_then(|s| s.repo.clone()) else {
+        let Some(repo) = self.shown_repo(root) else {
             return;
         };
         let pick = |app: &mut App, out: &mut Vec<Effect>, title: &str, ids: Vec<&'static str>| {

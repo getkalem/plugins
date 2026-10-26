@@ -55,6 +55,10 @@ struct Kalem {
     offered: Vec<Option<String>>,
     /// The marks beside the lines, by file.
     gutters: BTreeMap<String, Vec<(u32, Mark)>>,
+    /// A path whose git runs are held back, as a slow answer is.
+    hold: Option<String>,
+    /// The runs held back: their number, folder and command.
+    held: Vec<(u64, Option<String>, GitCommand)>,
 }
 
 impl Drop for Kalem {
@@ -92,6 +96,8 @@ impl Kalem {
             showed: Vec::new(),
             offered: Vec::new(),
             gutters: BTreeMap::new(),
+            hold: None,
+            held: Vec::new(),
         };
         k.git_ok(&["init", "-q", "-b", "main"]);
         k
@@ -133,6 +139,10 @@ impl Kalem {
                         cwd,
                         command,
                     } => {
+                        if self.hold.as_ref().is_some_and(|h| command.args.contains(h)) {
+                            self.held.push((token, cwd, command));
+                            continue;
+                        }
                         self.git.cwd = cwd.map_or_else(|| self.dir.clone(), PathBuf::from);
                         let result = self.git.run(&command);
                         queue.push_back(Input::Done { token, result });
@@ -223,6 +233,15 @@ impl Kalem {
             }
         }
         assert!(self.answers.is_empty(), "answers left: {:?}", self.answers);
+    }
+
+    /// Runs the git runs held back, and hands their ends to the plugin.
+    fn release(&mut self) {
+        for (token, cwd, command) in std::mem::take(&mut self.held) {
+            self.git.cwd = cwd.map_or_else(|| self.dir.clone(), PathBuf::from);
+            let result = self.git.run(&command);
+            self.feed(Input::Done { token, result });
+        }
     }
 
     fn command(&mut self, id: &str, file: Option<&str>) {
@@ -969,6 +988,50 @@ fn staging_a_conflict_with_its_markers_asks_first() {
     );
     assert!(k.index("g.txt").contains("<<<<<<<"));
     assert_eq!(conflicts(&mut k), "");
+}
+
+/// A key pressed after a refresh, before the status is written again,
+/// acts on what the status shows: it took the hunk's number from the text
+/// and its patch from the diffs read again, and `x` on the second hunk
+/// shown discarded a change the user had not seen yet.
+#[test]
+fn a_key_before_the_status_is_written_again_acts_on_what_it_shows() {
+    let mut k = Kalem::new("shown");
+    let long: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+    k.write("a.txt", &long);
+    k.write("b.txt", "bee\n");
+    k.commit_all("First");
+    let shown = long
+        .replace("line 2\n", "line TWO\n")
+        .replace("line 30\n", "line 30!\n");
+    k.write("a.txt", &shown);
+    k.write("b.txt", "BEE\n");
+    k.command("git.status", Some("a.txt"));
+    k.on("git.toggle", " M a.txt");
+    k.on("git.toggle", " M b.txt");
+    assert!(k.doc_text().contains("\n+line 30!\n"), "{}", k.doc_text());
+    // Line 15 changed and saved: the status is read again, and written
+    // once b.txt's diff is, which is slow.
+    let saved = shown.replace("line 15\n", "line 15, not seen\n");
+    k.write("a.txt", &saved);
+    k.hold = Some("b.txt".into());
+    let a = k.path("a.txt");
+    k.feed(Input::Saved(a));
+    assert!(!k.held.is_empty());
+    assert!(!k.doc_text().contains("not seen"), "{}", k.doc_text());
+    // `x` on the hunk of line 30, the second shown.
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.discard", "+line 30!");
+    assert_eq!(k.asked.last().unwrap(), "a.txt: Discard this hunk | Cancel");
+    assert_eq!(k.read("a.txt"), saved.replace("line 30!\n", "line 30\n"));
+    k.hold = None;
+    k.release();
+    assert!(
+        k.doc_text().contains("+line 15, not seen"),
+        "{}",
+        k.doc_text()
+    );
+    assert!(!k.doc_text().contains("+line 30!"), "{}", k.doc_text());
 }
 
 #[test]
