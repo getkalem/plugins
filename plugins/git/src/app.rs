@@ -642,6 +642,9 @@ enum Pending {
     Marks { root: String, path: String },
     /// A commit, for its view.
     Show { root: String, hash: String },
+    /// The files in conflict a plan stages, looked through for conflict
+    /// markers before it runs.
+    Markers { root: String, plan: actions::Plan },
 }
 
 /// A network operation.
@@ -1273,6 +1276,7 @@ impl App {
                 path,
             } => self.diff_done(out, &root, generation, section, &path, result),
             Pending::Show { root, hash } => self.show_done(out, &root, &hash, result),
+            Pending::Markers { root, plan } => self.markers_done(out, &root, plan, result),
             Pending::LastMessage { root, kind } => match result {
                 Ok(o) if o.success() => {
                     let text = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -1677,6 +1681,17 @@ impl App {
     }
 
     fn start_plan(&mut self, out: &mut Vec<Effect>, root: &str, plan: actions::Plan) {
+        // Files in conflict staged: their conflict markers looked for
+        // first (`markers_done`).
+        if !plan.unmerged.is_empty() {
+            let command = cmd::conflict_markers(plan.unmerged.iter().map(String::as_str));
+            let why = Pending::Markers {
+                root: root.to_string(),
+                plan,
+            };
+            self.run(out, Some(root.to_string()), command, why);
+            return;
+        }
         if let Some(message) = plan.confirm {
             let token = self.ask(Question::Plan {
                 root: root.to_string(),
@@ -1687,6 +1702,51 @@ impl App {
             return;
         }
         self.run_plan(out, root, plan.commands, plan.done);
+    }
+
+    /// The files in conflict `plan` stages were looked through for conflict
+    /// markers: the user is asked whether to stage them when some are left
+    /// (or when git could not tell), else the plan goes on as it was.
+    fn markers_done(
+        &mut self,
+        out: &mut Vec<Effect>,
+        root: &str,
+        mut plan: actions::Plan,
+        result: Result<Output, String>,
+    ) {
+        let names = |paths: &[String]| match paths {
+            [one] => (one.clone(), "has", "it"),
+            _ => (format!("{} files", paths.len()), "have", "them"),
+        };
+        let question = match &result {
+            // `git grep -l -z`: the files with a marker.
+            Ok(o) if o.success() => {
+                let found: Vec<String> = o
+                    .stdout
+                    .split(|b| *b == 0)
+                    .filter(|p| !p.is_empty())
+                    .map(|p| String::from_utf8_lossy(p).into_owned())
+                    .collect();
+                let (names, has, it) = names(&found);
+                (!found.is_empty()).then(|| {
+                    format!("{names} still {has} conflict markers (<<<<<<<): stage {it} anyway?")
+                })
+            }
+            // None has.
+            Ok(o) if o.status == Some(1) => None,
+            other => {
+                let (names, _, it) = names(&plan.unmerged);
+                Some(format!(
+                    "The conflict markers of {names} could not be looked for ({}): stage {it} anyway?",
+                    message(other)
+                ))
+            }
+        };
+        if question.is_some() {
+            plan.confirm = question;
+        }
+        plan.unmerged.clear();
+        self.start_plan(out, root, plan);
     }
 
     fn run_plan(
@@ -1977,11 +2037,13 @@ impl App {
                         confirm: None,
                         commands: vec![cmd::stash(cmd::StashOp::Apply, index)],
                         done: format!("Applied {name}"),
+                        ..actions::Plan::default()
                     },
                     Some(1) => actions::Plan {
                         confirm: None,
                         commands: vec![cmd::stash(cmd::StashOp::Pop, index)],
                         done: format!("Applied and dropped {name}"),
+                        ..actions::Plan::default()
                     },
                     Some(2) => actions::Plan {
                         confirm: Some(format!(
@@ -1989,6 +2051,7 @@ impl App {
                         )),
                         commands: vec![cmd::stash(cmd::StashOp::Drop, index)],
                         done: format!("Dropped {name}"),
+                        ..actions::Plan::default()
                     },
                     _ => return,
                 };

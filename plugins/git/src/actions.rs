@@ -64,6 +64,10 @@ pub struct Plan {
     pub commands: Vec<GitCommand>,
     /// What the status bar says when they all succeed.
     pub done: String,
+    /// The paths in conflict it stages: looked through for conflict
+    /// markers first ([`cmd::conflict_markers`]), and the user asked when
+    /// some are left, so that `c c` does not commit them.
+    pub unmerged: Vec<String>,
 }
 
 struct Builder<'a> {
@@ -151,6 +155,14 @@ pub fn plan(act: Act, targets: &[Target], repo: &Repo, settings: Settings) -> Re
     Ok(b.plan)
 }
 
+/// The paths in conflict, which `git add -u` and `git add -A` stage too.
+pub fn unmerged_paths(repo: &Repo) -> Vec<String> {
+    repo.entries(Section::Unmerged)
+        .iter()
+        .map(|e| e.path.clone())
+        .collect()
+}
+
 fn wrong(act: Act, section: Section) -> String {
     let what = match section {
         Section::Staged => "staged",
@@ -186,12 +198,17 @@ fn section(b: &mut Builder<'_>, s: Section) -> Result<(), String> {
                 .commands
                 .push(cmd::add(paths.iter().map(String::as_str)));
         }
-        (Act::Stage, Section::Unstaged) => b.plan.commands.push(cmd::add_tracked()),
+        // `git add -u` stages the paths in conflict too.
+        (Act::Stage, Section::Unstaged) => {
+            b.plan.commands.push(cmd::add_tracked());
+            b.plan.unmerged.extend(unmerged_paths(b.repo));
+        }
         (Act::Stage, Section::Unmerged) => {
             b.ask(true, format!("Mark {files} in conflict resolved?"));
             b.plan
                 .commands
                 .push(cmd::add(paths.iter().map(String::as_str)));
+            b.plan.unmerged.extend(paths.iter().cloned());
         }
         (Act::Unstage, Section::Staged) => b.plan.commands.push(cmd::unstage_all(b.repo.unborn())),
         (Act::Discard, Section::Unstaged) => {
@@ -227,8 +244,12 @@ fn whole_files(b: &mut Builder<'_>, section: Section, paths: &[String]) -> Resul
     };
     let all = || paths.iter().map(String::as_str);
     match (b.act, section) {
-        (Act::Stage, Section::Untracked | Section::Unstaged | Section::Unmerged) => {
+        (Act::Stage, Section::Untracked | Section::Unstaged) => {
             b.plan.commands.push(cmd::add(all()));
+        }
+        (Act::Stage, Section::Unmerged) => {
+            b.plan.commands.push(cmd::add(all()));
+            b.plan.unmerged.extend(paths.iter().cloned());
         }
         (Act::Unstage, Section::Staged) => {
             let mut with_sources: Vec<&str> = Vec::new();
@@ -480,6 +501,7 @@ pub fn commit(
             CommitKind::Reword => "Reworded the last commit".into(),
             CommitKind::Fixup(h) => format!("Made a fixup commit for {}", h.get(..7).unwrap_or(h)),
         },
+        unmerged: Vec::new(),
     })
 }
 
@@ -690,6 +712,30 @@ mod tests {
             Some("Stage every untracked file (1 file)?")
         );
         assert_eq!(p.commands[0].args, ["add", "--", "u"]);
+    }
+
+    #[test]
+    fn staging_a_conflict_names_it_for_its_markers() {
+        let z = |parts: &[&str]| -> Vec<u8> {
+            parts.iter().flat_map(|p| p.bytes().chain([0])).collect()
+        };
+        let r = Repo {
+            status: status::parse(&z(&[
+                "# branch.oid abc",
+                "# branch.head main",
+                "1 .M N... 100644 100644 100644 a a f",
+                "u UU N... 100644 100644 100644 100644 a b c c.txt",
+            ]))
+            .unwrap(),
+            ..Repo::default()
+        };
+        let stage = |t: Target| plan(Act::Stage, &[t], &r, Settings::default()).unwrap();
+        assert_eq!(stage(file(Section::Unmerged, "c.txt")).unmerged, ["c.txt"]);
+        // `git add -u` stages it too.
+        let p = stage(Target::Section(Section::Unstaged));
+        assert_eq!(p.commands[0].args, ["add", "-u"]);
+        assert_eq!(p.unmerged, ["c.txt"]);
+        assert!(stage(file(Section::Unstaged, "f")).unmerged.is_empty());
     }
 
     #[test]

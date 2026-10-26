@@ -366,12 +366,14 @@ impl App {
                         confirm: None,
                         commands: vec![cmd::add_all()],
                         done: "Staged everything".into(),
+                        unmerged: actions::unmerged_paths(&repo),
                     }
                 } else if repo.changed().iter().any(|e| e.staged()) {
                     actions::Plan {
                         confirm: None,
                         commands: vec![cmd::unstage_all(repo.unborn())],
                         done: "Unstaged everything".into(),
+                        unmerged: Vec::new(),
                     }
                 } else {
                     out.push(Effect::Notify("Nothing changed".into(), Level::Info));

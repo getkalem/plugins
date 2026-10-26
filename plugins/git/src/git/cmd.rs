@@ -480,6 +480,23 @@ pub fn rm<'a>(files: impl IntoIterator<Item = &'a str>) -> GitCommand {
     GitCommand::new(args)
 }
 
+/// Which of these files (in conflict) still hold a conflict marker, a
+/// line starting with `<<<<<<<` or `>>>>>>>`: their paths, each ended by
+/// a NUL. Git answers with the exit status 1 when none does.
+pub fn conflict_markers<'a>(files: impl IntoIterator<Item = &'a str>) -> GitCommand {
+    let mut args = vec![
+        "grep".to_string(),
+        "-l".to_string(),
+        "-z".to_string(),
+        "--no-color".to_string(),
+        "-E".to_string(),
+        "-e".to_string(),
+        "^(<<<<<<<|>>>>>>>)( |$)".to_string(),
+    ];
+    paths(&mut args, files);
+    GitCommand::read(args)
+}
+
 /// Where a patch goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyTo {

@@ -907,6 +907,70 @@ fn discard_all_on_a_folded_file() {
     assert_eq!(k.git_ok(&["status", "--porcelain"]), "");
 }
 
+/// A file in conflict staged with its conflict markers left asks first:
+/// `s` (the panel's box, `a`, `S` too) staged the markers without a word,
+/// and `c c` then committed them.
+#[test]
+fn staging_a_conflict_with_its_markers_asks_first() {
+    let mut k = Kalem::new("markers");
+    for f in ["f.txt", "g.txt", "h.txt"] {
+        k.write(f, "base\n");
+    }
+    k.commit_all("Base");
+    k.git_ok(&["switch", "-q", "-c", "other"]);
+    k.write("f.txt", "theirs\n");
+    k.write("g.txt", "theirs\n");
+    k.commit_all("Theirs");
+    k.git_ok(&["switch", "-q", "main"]);
+    k.write("f.txt", "ours\n");
+    k.write("g.txt", "ours\n");
+    k.commit_all("Ours");
+    let out = k
+        .git
+        .run(&GitCommand::new(["merge", "--no-edit", "other"]))
+        .unwrap();
+    assert!(!out.success());
+    k.write("h.txt", "changed\n");
+    let conflicts = |k: &mut Kalem| k.git_ok(&["diff", "--name-only", "--diff-filter=U"]);
+    k.command("git.status", Some("f.txt"));
+    // `s`, `S` and `a` ask; no stages nothing.
+    k.answers.push_back(Answer::Confirmed(false));
+    k.on("git.stage", "UU f.txt");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "f.txt still has conflict markers (<<<<<<<): stage it anyway?"
+    );
+    for id in ["git.stageAll", "git.stageEverything"] {
+        k.answers.push_back(Answer::Confirmed(false));
+        k.on(id, "1 Files");
+        assert_eq!(
+            k.asked.last().unwrap(),
+            "2 files still have conflict markers (<<<<<<<): stage them anyway?",
+            "{id}"
+        );
+    }
+    assert_eq!(conflicts(&mut k), "f.txt\ng.txt\n");
+    assert_eq!(k.index("h.txt"), "base\n");
+    // Resolved, it is staged without a question.
+    k.write("f.txt", "ours and theirs\n");
+    let asked = k.asked.len();
+    k.on("git.stage", "UU f.txt");
+    assert_eq!(k.asked.len(), asked, "{:?}", k.asked);
+    assert_eq!(k.index("f.txt"), "ours and theirs\n");
+    // The panel's box asks too; yes stages the file as it is.
+    k.answers.push_back(Answer::Confirmed(true));
+    k.feed(Input::Panel {
+        key: "stage:unmerged:g.txt".into(),
+        event: PanelEvent::Toggled(true),
+    });
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "g.txt still has conflict markers (<<<<<<<): stage it anyway?"
+    );
+    assert!(k.index("g.txt").contains("<<<<<<<"));
+    assert_eq!(conflicts(&mut k), "");
+}
+
 #[test]
 fn a_new_branch_starts_where_asked() {
     let mut k = Kalem::new("branch-start");

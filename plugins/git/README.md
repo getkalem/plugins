@@ -20,7 +20,7 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 | Right, Left | Unfold (on an unfolded one: into it); fold (on a folded one: to what holds it) |
 | Enter | The obvious thing: open the file (at the diff's line), switch to the branch, show the commit, the stash's Apply, Pop or Drop; on the branch line, Switch Branch, New Branch and Stash Changes; on the upstream line, Push, Pull and Fetch |
 | Alt+Enter, `?` | What can be done here, then every command |
-| `s`, `u` | Stage, unstage the file, the hunk, or the lines selected (a folder: what is in it) |
+| `s`, `u` | Stage, unstage the file, the hunk, or the lines selected (a folder: what is in it); a file in conflict that still has conflict markers asks first (`S`, `a` and the panel's box too) |
 | `a` | Stage everything, untracked files too; everything staged, unstage everything (lazygit's `a`) |
 | `S`, `U` | Stage every change of a tracked file; unstage everything (magit's) |
 | `d`, `x` | Discard, as lazygit asks: the file's name, then Discard all changes (Discard unstaged changes when it has both), Cancel |
