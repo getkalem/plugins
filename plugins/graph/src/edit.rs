@@ -436,8 +436,15 @@ pub fn clock(
                 text: clock,
             });
         }
-        // After the block's properties (Org's drawer) and dates.
+        // After the block's properties (Org's drawer) and dates; after its
+        // own lines, out of them, when its first line opens a code block,
+        // a `#+BEGIN_`, a table or a quote.
         let mut n = b.line + 1;
+        if flavor == Flavor::LogseqMarkdown
+            && matches!(md_properties(text, &st, b).1, Spot::First(_))
+        {
+            n = b.end.max(n);
+        }
         let mut drawer = false;
         while n < b.end {
             let t = line_text(n).trim();
@@ -575,6 +582,102 @@ fn continuation(text: &str, st: &[usize], b: &Block, flavor: Flavor) -> String {
     format!("{ws}  ")
 }
 
+/// Whether line `t` is a `key:: value` property.
+fn is_property(t: &str) -> bool {
+    let t = t.trim();
+    t.find("::").is_some_and(|p| p > 0 && !t[..p].contains(' '))
+}
+
+/// Where a new property of a Logseq block in Markdown is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spot {
+    /// Before this line: the indentation, `key:: value` and a line feed.
+    Line(u32),
+    /// At this byte, where the block's first line's content starts:
+    /// `key:: value`, a line feed and the indentation, the content going
+    /// on under it.
+    First(usize),
+}
+
+/// Block `b`'s property lines in Logseq's Markdown and where a new one
+/// goes: the lines after its first that are properties (its first line
+/// too when it is one, as Logseq writes it before a code block), then the
+/// line after them. When its first line opens a code block, a `#+BEGIN_`,
+/// a table or a quote, which Logseq gives no title, a property goes
+/// before it, as the block's first line, as Logseq writes it there.
+fn md_properties(text: &str, st: &[usize], b: &Block) -> (Vec<u32>, Spot) {
+    let first = line_start(st, text, b.line);
+    let c = content_start(text, st, b, Flavor::LogseqMarkdown);
+    let content = &text[c..line_start(st, text, b.line + 1).min(text.len())];
+    let ws = text[first..].len() - text[first..].trim_start_matches([' ', '\t']).len();
+    let bullet = c > first + ws;
+    if bullet && scan::opens_body(content) {
+        return (Vec::new(), Spot::First(c));
+    }
+    let mut lines = Vec::new();
+    if bullet && is_property(content) {
+        lines.push(b.line);
+    }
+    let mut n = b.line + 1;
+    while n < b.end && is_property(&text[line_start(st, text, n)..line_start(st, text, n + 1)]) {
+        lines.push(n);
+        n += 1;
+    }
+    (lines, Spot::Line(n))
+}
+
+/// The edit writing `line` (`key:: value`) as a new property of block `b`
+/// at `spot`.
+fn property_edit(text: &str, st: &[usize], b: &Block, spot: Spot, line: &str) -> Edit {
+    let indent = continuation(text, st, b, Flavor::LogseqMarkdown);
+    match spot {
+        Spot::First(c) => Edit {
+            start: c,
+            end: c,
+            text: format!("{line}\n{indent}"),
+        },
+        Spot::Line(n) => {
+            let at = line_start(st, text, n);
+            let bare = at == text.len() && !text.is_empty() && !text.ends_with('\n');
+            Edit {
+                start: at,
+                end: at,
+                text: if bare {
+                    format!("\n{indent}{line}")
+                } else {
+                    format!("{indent}{line}\n")
+                },
+            }
+        }
+    }
+}
+
+/// The edit taking property line `n` of block `b` away: the line, or, on
+/// its first line, the property and the next line's indentation, that
+/// line its first then (`- collapsed:: true` before a code block).
+fn property_removed(text: &str, st: &[usize], b: &Block, n: u32) -> Edit {
+    let ls = line_start(st, text, n);
+    let le = line_start(st, text, n + 1);
+    if n != b.line {
+        return Edit {
+            start: ls,
+            end: le,
+            text: String::new(),
+        };
+    }
+    let c = content_start(text, st, b, Flavor::LogseqMarkdown);
+    let end = if n + 1 < b.end {
+        le + text[le..].len() - text[le..].trim_start_matches([' ', '\t']).len()
+    } else {
+        text[c..le].trim_end_matches(['\n', '\r']).len() + c
+    };
+    Edit {
+        start: c,
+        end,
+        text: String::new(),
+    }
+}
+
 /// `SCHEDULED:` (`key`) or `DEADLINE:` of the block at `cursor` set to
 /// `date`, or removed: the line replaced where it is, else written after
 /// the block's first line and properties.
@@ -638,9 +741,16 @@ pub fn set_date(
     }
     let stamp = stamp?;
     // After the first line and the property lines (Logseq), or right
-    // after the headline (Org, whose planning line comes first).
+    // after the headline (Org, whose planning line comes first). A block
+    // whose first line opens a code block, a `#+BEGIN_`, a table or a
+    // quote has it after its own lines, out of them, where Logseq reads
+    // a date line as the block's too.
     let mut n = b.line + 1;
-    if flavor == Flavor::LogseqMarkdown {
+    let body =
+        flavor == Flavor::LogseqMarkdown && matches!(md_properties(text, &st, b).1, Spot::First(_));
+    if body {
+        n = b.end.max(n);
+    } else if flavor == Flavor::LogseqMarkdown {
         while n < b.end {
             let ls = line_start(&st, text, n);
             let le = line_start(&st, text, n + 1);
@@ -825,14 +935,22 @@ pub fn shift_block(text: &str, flavor: Flavor, cursor: usize, deeper: bool) -> O
 }
 
 /// The block at `cursor` folded or unfolded as Logseq does it: its
-/// `collapsed:: true` written after its first line and properties, or
-/// taken away. A block without blocks under it does not fold.
+/// `collapsed:: true` written after its first line and properties (as its
+/// first line before a code block, [`md_properties`]), or taken away. A
+/// block without blocks under it does not fold.
 pub fn toggle_fold(text: &str, cursor: usize) -> Result<Change, &'static str> {
     let (s, st, i) = at(text, Flavor::LogseqMarkdown, cursor).ok_or("no block at the cursor")?;
     let b = &s.blocks[i];
     let has_children = s.blocks.get(i + 1).is_some_and(|c| c.parent == Some(i));
-    for n in b.line + 1..b.end {
-        let ls = line_start(&st, text, n);
+    let c = content_start(text, &st, b, Flavor::LogseqMarkdown);
+    for n in b.line..b.end {
+        // Its first line from its content: `- collapsed:: true` before a
+        // code block.
+        let ls = if n == b.line {
+            c
+        } else {
+            line_start(&st, text, n)
+        };
         let le = line_start(&st, text, n + 1);
         if text[ls..le]
             .trim_start()
@@ -840,11 +958,7 @@ pub fn toggle_fold(text: &str, cursor: usize) -> Result<Change, &'static str> {
             .starts_with("collapsed::")
         {
             return Ok(Change {
-                edits: vec![Edit {
-                    start: ls,
-                    end: le,
-                    text: String::new(),
-                }],
+                edits: vec![property_removed(text, &st, b, n)],
                 line: None,
             });
         }
@@ -852,59 +966,29 @@ pub fn toggle_fold(text: &str, cursor: usize) -> Result<Change, &'static str> {
     if !has_children {
         return Err("the block has no blocks under it");
     }
-    let mut n = b.line + 1;
-    while n < b.end {
-        let ls = line_start(&st, text, n);
-        let le = line_start(&st, text, n + 1);
-        let t = text[ls..le].trim();
-        if !t.find("::").is_some_and(|p| p > 0 && !t[..p].contains(' ')) {
-            break;
-        }
-        n += 1;
-    }
-    let at = line_start(&st, text, n);
+    let (_, spot) = md_properties(text, &st, b);
     Ok(Change {
-        edits: vec![Edit {
-            start: at,
-            end: at,
-            text: format!(
-                "{}collapsed:: true\n",
-                continuation(text, &st, b, Flavor::LogseqMarkdown)
-            ),
-        }],
+        edits: vec![property_edit(text, &st, b, spot, "collapsed:: true")],
         line: None,
     })
 }
 
 /// The line `key:: value` written into the block whose first line is
 /// `line`, after that line and its properties, as Logseq writes a
-/// block's `id::`; `None` when no block starts there.
+/// block's `id::` (as its first line before a code block,
+/// [`md_properties`]); `None` when no block starts there.
 pub fn add_property(text: &str, line: u32, key: &str, value: &str) -> Option<Edit> {
     let s = scan::scan(text, Flavor::LogseqMarkdown, &scan::Options::default());
     let st = starts(text);
     let b = s.blocks.iter().find(|b| b.line == line)?;
-    let mut n = b.line + 1;
-    while n < b.end {
-        let ls = line_start(&st, text, n);
-        let le = line_start(&st, text, n + 1);
-        let t = text[ls..le].trim();
-        if !t.find("::").is_some_and(|p| p > 0 && !t[..p].contains(' ')) {
-            break;
-        }
-        n += 1;
-    }
-    let at = line_start(&st, text, n);
-    let indent = continuation(text, &st, b, Flavor::LogseqMarkdown);
-    let bare = at == text.len() && !text.is_empty() && !text.ends_with('\n');
-    Some(Edit {
-        start: at,
-        end: at,
-        text: if bare {
-            format!("\n{indent}{key}:: {value}")
-        } else {
-            format!("{indent}{key}:: {value}\n")
-        },
-    })
+    let (_, spot) = md_properties(text, &st, b);
+    Some(property_edit(
+        text,
+        &st,
+        b,
+        spot,
+        &format!("{key}:: {value}"),
+    ))
 }
 
 /// A block's id written as its note writes one: `id:: …` after a
@@ -959,8 +1043,9 @@ pub fn add_id(text: &str, flavor: Flavor, line: u32, id: &str) -> Option<Edit> {
 /// Properties `props` of the block at line `line` set as its note writes
 /// them: a property it has written again in place, one it has not added
 /// after its others (Markdown's `key:: value` after the block's first
-/// line, Org's `:key: value` in the headline's drawer, made after its
-/// dates when it has none).
+/// line, or as its first before a code block, [`md_properties`]; Org's
+/// `:key: value` in the headline's drawer, made after its dates when it
+/// has none).
 pub fn set_properties(
     text: &str,
     flavor: Flavor,
@@ -970,21 +1055,30 @@ pub fn set_properties(
     let s = scan::scan(text, flavor, &scan::Options::default());
     let st = starts(text);
     let b = s.blocks.iter().find(|b| b.line == line)?;
+    // A line's text; the block's first from its content, after the
+    // bullet.
+    let content = content_start(text, &st, b, flavor);
+    let from = |n: u32| {
+        if n == b.line && flavor != Flavor::LogseqOrg {
+            content
+        } else {
+            line_start(&st, text, n)
+        }
+    };
     let line_text = |n: u32| {
-        let a = line_start(&st, text, n);
         let e = line_start(&st, text, n + 1);
-        text[a..e].trim_end_matches(['\n', '\r'])
+        text[from(n)..e].trim_end_matches(['\n', '\r'])
     };
     let org = flavor == Flavor::LogseqOrg;
     // The lines its properties are on, and where a new one goes.
-    let (lines, at, made): (Vec<u32>, u32, bool) = if org {
+    let (lines, at, made): (Vec<u32>, Spot, bool) = if org {
         let first =
             (b.line + 1..b.end).find(|n| line_text(*n).trim().eq_ignore_ascii_case(":PROPERTIES:"));
         let end = first.and_then(|f| {
             (f + 1..b.end).find(|n| line_text(*n).trim().eq_ignore_ascii_case(":END:"))
         });
         match (first, end) {
-            (Some(f), Some(e)) => ((f + 1..e).collect(), e, false),
+            (Some(f), Some(e)) => ((f + 1..e).collect(), Spot::Line(e), false),
             _ => {
                 let mut n = b.line + 1;
                 while n < b.end && {
@@ -993,18 +1087,12 @@ pub fn set_properties(
                 } {
                     n += 1;
                 }
-                (Vec::new(), n, true)
+                (Vec::new(), Spot::Line(n), true)
             }
         }
     } else {
-        let mut n = b.line + 1;
-        while n < b.end && {
-            let t = line_text(n).trim();
-            t.find("::").is_some_and(|p| p > 0 && !t[..p].contains(' '))
-        } {
-            n += 1;
-        }
-        ((b.line + 1..n).collect(), n, false)
+        let (lines, spot) = md_properties(text, &st, b);
+        (lines, spot, false)
     };
     let key_of = |n: u32| -> Option<String> {
         let t = line_text(n).trim();
@@ -1022,44 +1110,59 @@ pub fn set_properties(
     };
     let written = |k: &str, v: &str| {
         if org {
-            format!("{indent}:{k}: {v}")
+            format!(":{k}: {v}")
         } else {
-            format!("{indent}{k}:: {v}")
+            format!("{k}:: {v}")
         }
     };
     let mut edits = Vec::new();
-    let mut added = String::new();
+    let mut added = Vec::new();
     for (k, v) in props {
         match lines.iter().find(|n| key_of(**n).as_deref() == Some(*k)) {
             Some(n) => {
-                let a = line_start(&st, text, *n);
+                let a = from(*n);
+                // The block's indentation, but on its first line, after its
+                // bullet.
+                let lead = if *n == b.line && !org {
+                    ""
+                } else {
+                    indent.as_str()
+                };
                 edits.push(Edit {
                     start: a,
                     end: a + line_text(*n).len(),
-                    text: written(k, v),
+                    text: format!("{lead}{}", written(k, v)),
                 });
             }
-            None => {
-                added.push_str(&written(k, v));
-                added.push('\n');
-            }
+            None => added.push(written(k, v)),
         }
     }
-    if made {
-        added = format!(":PROPERTIES:\n{added}:END:\n");
+    if added.is_empty() {
+        return Some(edits);
     }
-    if !added.is_empty() {
-        let a = line_start(&st, text, at);
-        let bare = a == text.len() && !text.is_empty() && !text.ends_with('\n');
-        edits.push(Edit {
-            start: a,
-            end: a,
-            text: if bare {
-                format!("\n{}", added.trim_end_matches('\n'))
-            } else {
-                added
-            },
-        });
+    match at {
+        Spot::First(c) => edits.push(Edit {
+            start: c,
+            end: c,
+            text: added.iter().map(|l| format!("{l}\n{indent}")).collect(),
+        }),
+        Spot::Line(at) => {
+            let mut added: String = added.iter().map(|l| format!("{indent}{l}\n")).collect();
+            if made {
+                added = format!(":PROPERTIES:\n{added}:END:\n");
+            }
+            let a = line_start(&st, text, at);
+            let bare = a == text.len() && !text.is_empty() && !text.ends_with('\n');
+            edits.push(Edit {
+                start: a,
+                end: a,
+                text: if bare {
+                    format!("\n{}", added.trim_end_matches('\n'))
+                } else {
+                    added
+                },
+            });
+        }
     }
     Some(edits)
 }
@@ -1352,6 +1455,80 @@ mod tests {
         let e = add_property(t, 3, "id", "u3").unwrap();
         assert_eq!(apply(t, &[e]), "- a\n  type:: x\n\t- b\n- c\n  id:: u3");
         assert!(add_property(t, 1, "id", "u").is_none());
+    }
+
+    #[test]
+    fn properties_go_first_in_a_block_that_a_code_block_opens() {
+        // As Logseq writes a property into a block whose first line opens
+        // a code block, a `#+BEGIN_`, a table or a quote (it has no
+        // title): as its first line, the line it opened under it. Before,
+        // `id::` went into the code and `collapsed::` into the quote.
+        let md = Flavor::LogseqMarkdown;
+        let read = |t: &str| scan::scan(t, md, &scan::Options::default());
+        let t = "- ```rust\n  let x = 1;\n  ```\n\t- child\n- next\n";
+        let with_id = apply(t, &[add_id(t, md, 0, "u1").unwrap()]);
+        assert_eq!(
+            with_id,
+            "- id:: u1\n  ```rust\n  let x = 1;\n  ```\n\t- child\n- next\n"
+        );
+        let b = &read(&with_id).blocks[0];
+        assert_eq!((b.id.as_deref(), b.text.as_str()), (Some("u1"), "```rust"));
+        // Then after it, folded and unfolded there.
+        assert_eq!(
+            apply(
+                &with_id,
+                &[add_property(&with_id, 0, "type", "code").unwrap()]
+            ),
+            "- id:: u1\n  type:: code\n  ```rust\n  let x = 1;\n  ```\n\t- child\n- next\n"
+        );
+        let folded = apply(&with_id, &toggle_fold(&with_id, 3).unwrap().edits);
+        assert_eq!(
+            folded,
+            "- id:: u1\n  collapsed:: true\n  ```rust\n  let x = 1;\n  ```\n\t- child\n- next\n"
+        );
+        assert_eq!(
+            apply(&folded, &toggle_fold(&folded, 3).unwrap().edits),
+            with_id
+        );
+        // A quote folded, then unfolded: its first line again.
+        let q = "- > quoted\n\t- child\n";
+        let f = apply(q, &toggle_fold(q, 2).unwrap().edits);
+        assert_eq!(f, "- collapsed:: true\n  > quoted\n\t- child\n");
+        assert!(read(&f).blocks[0].collapsed);
+        assert_eq!(apply(&f, &toggle_fold(&f, 2).unwrap().edits), q);
+        // A table: set, then set again in place, its first line too.
+        let tb = "\t- | a | b |\n\t  | 1 | 2 |\n";
+        let set =
+            |t: &str, props: &[(&str, String)]| apply(t, &set_properties(t, md, 0, props).unwrap());
+        let once = set(tb, &[("card-repeats", "1".into()), ("id", "u2".into())]);
+        assert_eq!(
+            once,
+            "\t- card-repeats:: 1\n\t  id:: u2\n\t  | a | b |\n\t  | 1 | 2 |\n"
+        );
+        assert_eq!(
+            set(
+                &once,
+                &[
+                    ("card-repeats", "2".into()),
+                    ("card-last-score", "5".into())
+                ]
+            ),
+            "\t- card-repeats:: 2\n\t  id:: u2\n\t  card-last-score:: 5\n\t  | a | b |\n\t  | 1 | 2 |\n"
+        );
+        // A `#+BEGIN_` block.
+        let n = "- #+BEGIN_NOTE\n  hi\n  #+END_NOTE\n";
+        assert_eq!(
+            apply(n, &[add_id(n, md, 0, "u3").unwrap()]),
+            "- id:: u3\n  #+BEGIN_NOTE\n  hi\n  #+END_NOTE\n"
+        );
+        // A date after the block's own lines, out of its code.
+        let d = Date::new(2026, 10, 12);
+        let dated = run(t, |c| set_date(t, md, c, "SCHEDULED", d), 2);
+        assert_eq!(
+            dated,
+            "- ```rust\n  let x = 1;\n  ```\n  SCHEDULED: <2026-10-12 Mon>\n\t- child\n- next\n"
+        );
+        assert_eq!(read(&dated).blocks[0].scheduled, d);
     }
 
     #[test]

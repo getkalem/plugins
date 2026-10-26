@@ -654,6 +654,79 @@ fn property(line: &str) -> Option<(String, &str)> {
     Some((key.to_lowercase(), value.trim()))
 }
 
+/// Whether a Logseq block's line `text` opens what Logseq gives no title:
+/// a code block, a `#+BEGIN_` block, a table or a quote. When a block's
+/// first line does, Logseq writes its properties before it, the block's
+/// first line then (`- id:: …`, the code block on the line after).
+pub fn opens_body(text: &str) -> bool {
+    let t = text.trim();
+    t.starts_with("```")
+        || t.starts_with("~~~")
+        || t.starts_with('>')
+        || (t.len() > 1 && t.starts_with('|') && t.ends_with('|'))
+        || t.get(..8)
+            .is_some_and(|b| b.eq_ignore_ascii_case("#+BEGIN_"))
+}
+
+/// Whether the first of `lines` that is not a property opens a code
+/// block, a `#+BEGIN_`, a table or a quote ([`opens_body`]): the
+/// properties before it, and the line before them, are its block's, as
+/// Logseq writes them.
+fn body_follows(lines: &[&str]) -> bool {
+    lines
+        .iter()
+        .find(|l| property(l).is_none())
+        .is_some_and(|l| opens_body(l))
+}
+
+/// A property `k:: v` of block `c`, on line `n` (`line`) from byte `at`:
+/// the block's id, fold and heading taken from it, its references placed.
+fn block_property(
+    s: &mut Scanned,
+    c: usize,
+    (k, v): (String, &str),
+    line: &str,
+    n: usize,
+    at: usize,
+    options: &Options,
+) {
+    let b = &mut s.blocks[c];
+    match k.as_str() {
+        "id" => b.id = Some(v.to_lowercase()),
+        "collapsed" => b.collapsed = v == "true",
+        "heading" => {
+            b.heading = v.parse().ok().or(Some(2));
+        }
+        _ => {}
+    }
+    if options.comma_properties.contains(&k) || k == "tags" || k == "alias" {
+        for name in split_values(v) {
+            s.refs.push(Ref {
+                kind: if k == "tags" {
+                    RefKind::Tag
+                } else {
+                    RefKind::Property
+                },
+                target: name,
+                anchor: None,
+                block: Some(c),
+                line: n as u32,
+                start: 0,
+                end: 0,
+            });
+        }
+    } else {
+        place(
+            &mut s.refs,
+            inline(&line[at..], Flavor::LogseqMarkdown),
+            n,
+            at,
+            Some(c),
+        );
+    }
+    s.blocks[c].props.push((k, v.to_string()));
+}
+
 /// A property's value as page names: split at commas outside brackets,
 /// each without `[[`, `]]` and `#`.
 pub fn split_values(value: &str) -> Vec<String> {
@@ -890,6 +963,9 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
     let mut page: Vec<(String, String, usize)> = Vec::new();
     // The first block is the page's properties when it holds only them.
     let mut pre_block = false;
+    // A block whose first line is its properties, until the line after
+    // them that opens its code block, `#+BEGIN_`, table or quote.
+    let mut leading: Option<usize> = None;
     // A property written as a list item (`* key::`, as the Markdown
     // Mirror of Logseq's database graphs writes them) whose values follow
     // as items under it: its columns, its block (none: the page's) and
@@ -1001,7 +1077,11 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             let content_at = bytes + 2.min(rest.len());
             let content = line.get(content_at..).unwrap_or("").trim_end();
             let first_block = s.blocks.is_empty() && stack.is_empty();
-            pre_block = first_block && property(content).is_some();
+            // `- id:: …` before a code block, a `#+BEGIN_`, a table or a
+            // quote: the block's own properties, which Logseq writes first
+            // when one of them opens the block; never the page's.
+            let first_prop = property(content).filter(|_| body_follows(&lines[n + 1..]));
+            pre_block = first_block && first_prop.is_none() && property(content).is_some();
             let mut block = Block {
                 line: n as u32,
                 end: n as u32 + 1,
@@ -1032,6 +1112,8 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
                 );
                 page.push((k, v.to_string(), n));
                 block.text.clear();
+            } else if first_prop.is_some() {
+                block.text.clear();
             } else {
                 place(
                     &mut s.refs,
@@ -1049,6 +1131,11 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
                 }
             }
             s.blocks.push(block);
+            leading = None;
+            if let Some(kv) = first_prop {
+                block_property(&mut s, index, kv, line, n, content_at, options);
+                leading = Some(index);
+            }
             stack.push((cols, index));
             current = Some(index);
             in_props = true;
@@ -1065,6 +1152,17 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             && !trimmed.is_empty()
         {
             s.blocks[c].end = n as u32 + 1;
+        }
+        // A block whose first line is its properties shows the line after
+        // them, which opens its code block, `#+BEGIN_`, table or quote, as
+        // it would were that its first.
+        let titled = leading.is_some()
+            && leading == current
+            && !trimmed.is_empty()
+            && property(rest).is_none();
+        if let Some(c) = current.filter(|_| titled) {
+            s.blocks[c].text = trimmed.trim().to_string();
+            leading = None;
         }
         if trimmed.starts_with("```") {
             fence = true;
@@ -1130,42 +1228,8 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
                 page.push((k, v.to_string(), n));
                 continue;
             }
-            let b = &mut s.blocks[c];
-            match k.as_str() {
-                "id" => b.id = Some(v.to_lowercase()),
-                "collapsed" => b.collapsed = v == "true",
-                "heading" => {
-                    b.heading = v.parse().ok().or(Some(2));
-                }
-                _ => {}
-            }
-            if options.comma_properties.contains(&k) || k == "tags" || k == "alias" {
-                for name in split_values(v) {
-                    s.refs.push(Ref {
-                        kind: if k == "tags" {
-                            RefKind::Tag
-                        } else {
-                            RefKind::Property
-                        },
-                        target: name,
-                        anchor: None,
-                        block: Some(c),
-                        line: n as u32,
-                        start: 0,
-                        end: 0,
-                    });
-                }
-            } else {
-                let at = line.len() - line.trim_start().len();
-                place(
-                    &mut s.refs,
-                    inline(&line[at..], Flavor::LogseqMarkdown),
-                    n,
-                    at,
-                    Some(c),
-                );
-            }
-            s.blocks[c].props.push((k, v.to_string()));
+            let at = line.len() - line.trim_start().len();
+            block_property(&mut s, c, (k, v), line, n, at, options);
             continue;
         }
         if trimmed.starts_with("SCHEDULED:") || trimmed.starts_with("DEADLINE:") {
@@ -1184,7 +1248,7 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
         {
             b.text = format!("{}: {}", kind.trim().to_lowercase(), trimmed.trim());
         }
-        if !trimmed.trim().is_empty() {
+        if !trimmed.trim().is_empty() && !titled {
             more(&mut s.more, c, trimmed.trim());
         }
         place(
@@ -1797,6 +1861,42 @@ mod tests {
         assert_eq!(s.blocks.len(), 1);
         assert_eq!(s.blocks[0].text, "first");
         assert_eq!(s.refs[0].target, "Short");
+    }
+
+    #[test]
+    fn a_blocks_properties_first_before_its_code_block() {
+        // As Logseq writes a property into a block whose first line opens
+        // a code block, a `#+BEGIN_`, a table or a quote: first, the line
+        // after them the block's; the block's own, the page's first too.
+        let s = md(
+            "- id:: 6512abcd-1111-2222-3333-444455556666\n  collapsed:: true\n  ```rust\n  [[not a link]]\n  ```\n\t- child\n- x\n- id:: 6512abcd-1111-2222-3333-444455556667\n  #+BEGIN_NOTE\n  a [[Note]]\n  #+END_NOTE\n- tags:: q\n  > quoted [[Q]]\n",
+        );
+        assert!(s.pre.is_none() && s.props.is_empty());
+        let b = &s.blocks[0];
+        assert_eq!(
+            b.id.as_deref(),
+            Some("6512abcd-1111-2222-3333-444455556666")
+        );
+        assert!(b.collapsed);
+        assert_eq!(b.text, "```rust");
+        assert_eq!((b.line, b.end), (0, 5));
+        assert_eq!(s.blocks[1].parent, Some(0));
+        let note = &s.blocks[3];
+        assert_eq!(
+            note.id.as_deref(),
+            Some("6512abcd-1111-2222-3333-444455556667")
+        );
+        assert_eq!(note.text, "note: a [[Note]]");
+        assert_eq!(s.blocks[4].text, "> quoted [[Q]]");
+        assert_eq!(s.blocks[4].props, [("tags".into(), "q".into())]);
+        assert_eq!(
+            targets(&s),
+            [
+                (RefKind::Page, "Note"),
+                (RefKind::Tag, "q"),
+                (RefKind::Page, "Q")
+            ]
+        );
     }
 
     #[test]
