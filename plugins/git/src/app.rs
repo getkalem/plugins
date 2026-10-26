@@ -424,6 +424,14 @@ pub enum Input {
         /// The document it runs in, when it runs in one.
         doc: Option<Doc>,
     },
+    /// Kalem refused to start git run `token` (`process.run`'s error),
+    /// as it does a plugin's 17th program at a time.
+    Refused {
+        /// The run, as [`Effect::Run`] named it.
+        token: u64,
+        /// Why.
+        error: String,
+    },
     /// Git run `token` ended, or could not start.
     Done {
         /// The run, as [`Effect::Run`] named it.
@@ -449,6 +457,9 @@ pub enum Input {
     Opened(String),
     /// A document saved, by its file.
     Saved(String),
+    /// A document of a file closed, by its file, no other document showing
+    /// it: its changed lines are marked no more.
+    Closed(String),
     /// A file of a project changed on disk.
     Changed(String),
     /// The plugin's settings changed.
@@ -638,8 +649,9 @@ enum Pending {
     },
     /// The last commit's message, to amend or reword it.
     LastMessage { root: String, kind: CommitKind },
-    /// A file's changes, for the marks beside its lines.
-    Marks { root: String, path: String },
+    /// The changes of the files of a repository open, for the marks
+    /// beside their lines.
+    Marks { root: String, paths: Vec<String> },
     /// A commit, for its view.
     Show { root: String, hash: String },
     /// The files in conflict a plan stages, looked through for conflict
@@ -783,7 +795,18 @@ pub struct App {
     /// The files opened, whose changed lines are marked: by repository,
     /// their paths in it.
     marked: BTreeMap<String, BTreeSet<String>>,
+    /// The git runs started and not ended, by number: their folder and
+    /// command, to start one again that Kalem refused.
+    running: BTreeMap<u64, (Option<String>, GitCommand)>,
+    /// The runs waiting for one of those to end ([`MAX_RUNS`]).
+    queued: VecDeque<(u64, Option<String>, GitCommand)>,
 }
+
+/// The git runs started at a time. Kalem refuses a plugin's 17th program
+/// at a time, and a refusal was taken for an empty answer: Shift+Tab over
+/// many files showed most of them without their diffs, the marks of the
+/// files open went, and a refresh refused dropped the repository.
+pub const MAX_RUNS: usize = 12;
 
 fn parent(path: &str) -> (String, String) {
     match path.rfind(['/', '\\']) {
@@ -812,6 +835,8 @@ impl App {
         self.next
     }
 
+    /// Runs `command` for `why`: at once, or once one of the runs started
+    /// ends when [`MAX_RUNS`] are.
     fn run(
         &mut self,
         out: &mut Vec<Effect>,
@@ -821,11 +846,23 @@ impl App {
     ) {
         let token = self.token();
         self.pending.insert(token, why);
-        out.push(Effect::Run {
-            token,
-            cwd,
-            command,
-        });
+        self.queued.push_back((token, cwd, command));
+        self.start_runs(out);
+    }
+
+    /// Starts the runs queued, as many as may run.
+    fn start_runs(&mut self, out: &mut Vec<Effect>) {
+        while self.running.len() < MAX_RUNS {
+            let Some((token, cwd, command)) = self.queued.pop_front() else {
+                break;
+            };
+            self.running.insert(token, (cwd.clone(), command.clone()));
+            out.push(Effect::Run {
+                token,
+                cwd,
+                command,
+            });
+        }
     }
 
     fn ask(&mut self, q: Question) -> u64 {
@@ -866,10 +903,29 @@ impl App {
         match input {
             Input::Command { id, doc } => self.command(&mut out, &id, doc),
             Input::Done { token, result } => {
+                self.running.remove(&token);
+                self.start_runs(&mut out);
                 if let Some(p) = self.pending.remove(&token) {
                     self.done(&mut out, p, result);
                 }
             }
+            Input::Refused { token, error } => match self.running.remove(&token) {
+                // Too many programs at a time: the run waits, first in
+                // line, for one of the others to end, as Kalem would refuse
+                // it again before; with none left (each refused too),
+                // Kalem runs none of the plugin's, and it starts at once.
+                Some((cwd, command)) if error.contains("running already") => {
+                    self.queued.push_front((token, cwd, command));
+                    if self.running.is_empty() {
+                        self.start_runs(&mut out);
+                    }
+                }
+                _ => {
+                    if let Some(p) = self.pending.remove(&token) {
+                        self.done(&mut out, p, Err(error));
+                    }
+                }
+            },
             Input::Answer { token, answer } => {
                 if let Some(q) = self.questions.remove(&token) {
                     self.answer(&mut out, q, answer);
@@ -884,6 +940,17 @@ impl App {
                     After::Nothing
                 };
                 self.locate(&mut out, Some(folder), Some(name), after, true);
+            }
+            Input::Closed(path) => {
+                for (root, paths) in &mut self.marked {
+                    if let Some(rel) = path
+                        .strip_prefix(root.trim_end_matches('/'))
+                        .and_then(|p| p.strip_prefix('/'))
+                    {
+                        paths.remove(rel);
+                    }
+                }
+                self.marked.retain(|_, paths| !paths.is_empty());
             }
             Input::Changed(path) => {
                 if let Some(root) = self.current.clone()
@@ -1305,19 +1372,24 @@ impl App {
                 }
                 other => self.fail(out, message(&other)),
             },
-            Pending::Marks { root, path } => {
-                let marks = match &result {
+            Pending::Marks { root, paths } => {
+                let files = match &result {
                     Ok(o) if o.success() => crate::git::diff::parse(&o.stdout)
-                        .ok()
-                        .and_then(|d| d.files.into_iter().next())
-                        .map(|f| crate::gutter::marks(&f))
+                        .map(|d| d.files)
                         .unwrap_or_default(),
                     _ => Vec::new(),
                 };
-                out.push(Effect::Gutter {
-                    path: format!("{}/{}", root.trim_end_matches('/'), path),
-                    marks,
-                });
+                for path in paths {
+                    let marks = files
+                        .iter()
+                        .find(|f| f.path() == path)
+                        .map(crate::gutter::marks)
+                        .unwrap_or_default();
+                    out.push(Effect::Gutter {
+                        path: format!("{}/{}", root.trim_end_matches('/'), path),
+                        marks,
+                    });
+                }
             }
             Pending::Blame { line } => match result {
                 Ok(o) if o.success() => match blame::parse(&o.stdout) {
@@ -1567,25 +1639,27 @@ impl App {
     }
 
     /// Reads the changes of the files of `root` opened, for the marks
-    /// beside their lines.
+    /// beside their lines: one run for them all.
     fn mark_files(&mut self, out: &mut Vec<Effect>, root: &str) {
         let paths: Vec<String> = self
             .marked
             .get(root)
             .map(|p| p.iter().cloned().collect())
             .unwrap_or_default();
-        for path in paths {
-            let command = crate::gutter::command(&path, self.settings.gutter_head);
-            self.run(
-                out,
-                Some(root.to_string()),
-                command,
-                Pending::Marks {
-                    root: root.to_string(),
-                    path,
-                },
-            );
+        if paths.is_empty() {
+            return;
         }
+        let command =
+            crate::gutter::command(paths.iter().map(String::as_str), self.settings.gutter_head);
+        self.run(
+            out,
+            Some(root.to_string()),
+            command,
+            Pending::Marks {
+                root: root.to_string(),
+                paths,
+            },
+        );
     }
 
     /// A commit of kind `kind`: its message asked for (an amended

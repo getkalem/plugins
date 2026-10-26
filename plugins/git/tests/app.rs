@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use kalem_plugin_git::app::{
-    Answer, App, COMMANDS, COMMIT_KIND, Doc, Effect, Input, Level, PanelEvent, STATUS_KIND,
-    Settings,
+    Answer, App, COMMANDS, COMMIT_KIND, Doc, Effect, Input, Level, MAX_RUNS, PanelEvent,
+    STATUS_KIND, Settings,
 };
 use kalem_plugin_git::git::cmd::GitCommand;
 use kalem_plugin_git::gutter::Mark;
@@ -59,6 +59,11 @@ struct Kalem {
     hold: Option<String>,
     /// The runs held back: their number, folder and command.
     held: Vec<(u64, Option<String>, GitCommand)>,
+    /// The plugin's programs Kalem runs at a time, refusing the next.
+    kalem_runs: usize,
+    /// The runs started and not ended, and the most there were.
+    runs: usize,
+    most_runs: usize,
 }
 
 impl Drop for Kalem {
@@ -98,6 +103,9 @@ impl Kalem {
             gutters: BTreeMap::new(),
             hold: None,
             held: Vec::new(),
+            kalem_runs: 16,
+            runs: 0,
+            most_runs: 0,
         };
         k.git_ok(&["init", "-q", "-b", "main"]);
         k
@@ -132,6 +140,9 @@ impl Kalem {
     fn feed(&mut self, input: Input) {
         let mut queue = VecDeque::from([input]);
         while let Some(i) = queue.pop_front() {
+            if matches!(i, Input::Done { .. }) {
+                self.runs -= 1;
+            }
             for e in self.app.handle(i) {
                 match e {
                     Effect::Run {
@@ -139,6 +150,16 @@ impl Kalem {
                         cwd,
                         command,
                     } => {
+                        if self.runs >= self.kalem_runs {
+                            let error = format!(
+                                "{} programs of the plugin are running already",
+                                self.kalem_runs
+                            );
+                            queue.push_back(Input::Refused { token, error });
+                            continue;
+                        }
+                        self.runs += 1;
+                        self.most_runs = self.most_runs.max(self.runs);
                         if self.hold.as_ref().is_some_and(|h| command.args.contains(h)) {
                             self.held.push((token, cwd, command));
                             continue;
@@ -1032,6 +1053,65 @@ fn a_key_before_the_status_is_written_again_acts_on_what_it_shows() {
         k.doc_text()
     );
     assert!(!k.doc_text().contains("+line 30!"), "{}", k.doc_text());
+}
+
+/// Kalem runs 16 programs of a plugin at a time and refuses the next,
+/// which the plugin took for an empty answer: Shift+Tab over many files
+/// showed most without their diffs, the marks of the files open went, a
+/// refresh refused dropped the repository. It runs 12 at a time, a
+/// refused run waiting for another to end; the marks of the files open
+/// are read in one run, a closed file's no more.
+#[test]
+fn runs_wait_their_turn() {
+    let mut k = Kalem::new("runs");
+    let names: Vec<String> = (0..20).map(|i| format!("f{i:02}.txt")).collect();
+    for n in &names {
+        k.write(n, "one\ntwo\n");
+    }
+    k.commit_all("First");
+    for n in &names {
+        k.write(n, "one\nTWO\n");
+        k.git_ok(&["add", n]);
+        k.write(n, "one\nTWO\nthree\n");
+    }
+    for n in &names {
+        let p = k.path(n);
+        k.feed(Input::Opened(p));
+    }
+    assert_eq!(k.gutters.len(), 20);
+    k.command("git.status", Some("f00.txt"));
+    k.on("git.cycle", "1 Files");
+    let text = k.doc_text();
+    assert_eq!(text.matches("\n+TWO\n").count(), 20, "{text}");
+    assert_eq!(text.matches("\n+three\n").count(), 20, "{text}");
+    assert!(k.most_runs <= MAX_RUNS, "{}", k.most_runs);
+    // Kalem taking fewer: the runs it refuses wait for the others.
+    k.kalem_runs = 3;
+    k.on("git.refresh", "1 Files");
+    let text = k.doc_text();
+    assert_eq!(text.matches("\n+three\n").count(), 20, "{text}");
+    assert_eq!(k.status.as_deref(), Some("⎇ main •20"));
+    assert_eq!(k.gutters.len(), 20);
+    assert!(k.notes.is_empty(), "{:?}", k.notes);
+    // One run marks the files open; a file closed is not among them.
+    let p = k.path("f00.txt");
+    k.feed(Input::Closed(p));
+    let before = k.git.log.runs().map(|r| r.number).max().unwrap_or(0);
+    let p = k.path("f01.txt");
+    k.feed(Input::Saved(p));
+    let marks: Vec<String> = k
+        .git
+        .log
+        .runs()
+        .filter(|r| r.number > before && r.command.contains(" -U0 "))
+        .map(|r| r.command.clone())
+        .collect();
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    assert!(
+        !marks[0].contains("f00.txt") && marks[0].contains(" f01.txt f02.txt "),
+        "{}",
+        marks[0]
+    );
 }
 
 #[test]

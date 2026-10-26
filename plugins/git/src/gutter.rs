@@ -16,9 +16,9 @@ pub enum Mark {
     Removed,
 }
 
-/// The diff of file `path` (in the repository) without context: against
+/// The diff of files `paths` (in the repository) without context: against
 /// the index, or against HEAD (the setting `gutter_base = "head"`).
-pub fn command(path: &str, head: bool) -> GitCommand {
+pub fn command<'a>(paths: impl IntoIterator<Item = &'a str>, head: bool) -> GitCommand {
     let mut args = vec![
         "diff".to_string(),
         "--no-color".to_string(),
@@ -30,7 +30,7 @@ pub fn command(path: &str, head: bool) -> GitCommand {
         args.push("HEAD".into());
     }
     args.push("--".into());
-    args.push(path.to_string());
+    args.extend(paths.into_iter().map(str::to_string));
     GitCommand::read(args)
 }
 

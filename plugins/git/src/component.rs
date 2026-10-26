@@ -82,11 +82,8 @@ fn apply(effect: Effect) {
                     }),
                 })
             });
-            if let Err(e) = started {
-                later(Input::Done {
-                    token,
-                    result: Err(e),
-                });
+            if let Err(error) = started {
+                later(Input::Refused { token, error });
             }
         }
         Effect::Notify(message, level) => ui::notify(
@@ -463,6 +460,30 @@ impl Plugin for Git {
                 FILES.with(|f| f.borrow_mut().insert(d.document, p.clone()));
                 IN.with(|i| i.set(Some(d.document)));
                 feed(Input::Opened(p.clone()));
+            }
+            Reply::Proceed
+        })?;
+        // A file closed in its last document is marked no more; a status
+        // or a commit view closed is forgotten.
+        kalem::on(EventKind::DocumentClose, |e| {
+            if let Event::DocumentClose(n) = e {
+                let n = *n;
+                if let Some(path) = FILES.with(|f| f.borrow_mut().remove(&n))
+                    && !FILES.with(|f| f.borrow().values().any(|p| *p == path))
+                {
+                    feed(Input::Closed(path));
+                }
+                let doc = DOCS.with(|d| {
+                    let mut d = d.borrow_mut();
+                    let key = d.iter().find(|(_, m)| **m == n).map(|(k, _)| k.clone());
+                    if let Some(k) = &key {
+                        d.remove(k);
+                    }
+                    key
+                });
+                if let Some((root, commit)) = doc {
+                    feed(Input::DocumentClosed { root, commit });
+                }
             }
             Reply::Proceed
         })?;

@@ -451,7 +451,7 @@ fn the_users_diff_settings_change_nothing() {
     // The marks beside the lines, and a commit's view.
     let out = t
         .git
-        .run(&kalem_plugin_git::gutter::command("f.txt", true))
+        .run(&kalem_plugin_git::gutter::command(["f.txt"], true))
         .unwrap();
     let d = diff::parse(&out.stdout).unwrap();
     assert_eq!(d.files.len(), 1, "{}", String::from_utf8_lossy(&out.stdout));
