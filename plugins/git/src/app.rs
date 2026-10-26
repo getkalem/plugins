@@ -738,6 +738,12 @@ enum Pending {
     },
     /// The commit of the message written as a document.
     MessageCommit { root: String, done: String },
+    /// The user's commit template (`commit.template`), for a new commit's
+    /// message: its path, then (`read`) its text.
+    Template { root: String, read: bool },
+    /// The message saved, read back to see whether its template was
+    /// edited.
+    MessageRead,
     /// A page of a log, for its document (shown when `show`).
     Log {
         root: String,
@@ -1497,6 +1503,8 @@ impl App {
             Pending::MessageCommit { root, done } => {
                 self.message_commit_done(out, &root, done, result);
             }
+            Pending::Template { root, read } => self.template_done(out, root, read, result),
+            Pending::MessageRead => self.message_read_done(out, result),
             Pending::Log { root, key, show } => self.log_done(out, &root, &key, show, result),
             Pending::LogDetails { root, key, hash } => {
                 self.log_details_done(out, &root, &key, hash, result);
@@ -1907,7 +1915,7 @@ impl App {
                     return;
                 }
                 if self.settings.message_document {
-                    return self.message_open(out, root, kind, String::new());
+                    return self.message_new(out, root);
                 }
                 let token = self.ask(Question::Message {
                     root: root.to_string(),

@@ -349,6 +349,15 @@ pub fn diff_untracked(path: &str, context: u32) -> GitCommand {
     GitCommand::read(args)
 }
 
+/// A file's text read through git, as the user's commit template is (the
+/// plugin reads no file itself): the file as a diff from nothing, its
+/// added lines its text ([`crate::git::diff::added_text`]). Git ends with
+/// the status 1 when the file has text, and when it cannot read the file,
+/// with nothing on its output then.
+pub fn read_file(path: &str) -> GitCommand {
+    diff_untracked(path, 0)
+}
+
 /// A commit: its header, its stat and its diff.
 pub fn show(rev: &str, context: u32) -> GitCommand {
     let mut args = vec![

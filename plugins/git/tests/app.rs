@@ -686,6 +686,79 @@ fn the_message_is_written_as_a_document() {
     assert!(text.starts_with("Second\n\n# Please"), "{text}");
 }
 
+/// The user's commit template (`commit.template`) starts a new commit's
+/// message as git starts it: its text as it is, then the comments. A
+/// relative path is the repository root's, from a file in a folder too; an
+/// absolute one may be outside the repository; a last line without its
+/// line feed is ended; an empty or a missing file starts it empty. Saved
+/// as it is, git refuses it as not edited; Amend starts from the last
+/// message.
+#[test]
+fn a_new_message_starts_with_the_users_template() {
+    let mut k = Kalem::new("template");
+    k.write("sub/a.txt", "one\n");
+    k.write("tmpl.txt", "Subject\n\nWhy:\n# A hint\n");
+    k.git_ok(&["config", "commit.template", "tmpl.txt"]);
+    k.command("git.stageFile", Some("sub/a.txt"));
+    k.command("git.commit", Some("sub/a.txt"));
+    let (path, text) = k.app.message_fill().expect("the message's first text");
+    assert!(
+        text.starts_with(
+            "Subject\n\nWhy:\n# A hint\n\n# Please enter the commit message for your changes."
+        ),
+        "{text}"
+    );
+    assert!(text.contains("#\tnew file:   sub/a.txt\n"), "{text}");
+    std::fs::write(&path, &text).unwrap();
+    k.feed(Input::Saved(path.clone()));
+    assert!(
+        k.last_note().starts_with("Not committed"),
+        "{}",
+        k.last_note()
+    );
+    std::fs::write(&path, text.replace("Why:\n", "Why: it was missing.\n")).unwrap();
+    k.feed(Input::Saved(path.clone()));
+    assert_eq!(k.last_note(), "Committed");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%B"]),
+        "Subject\n\nWhy: it was missing.\n\n"
+    );
+    // Outside the repository, its last line without a line feed.
+    let outside = k.dir.parent().unwrap().join("template.txt");
+    std::fs::write(&outside, "Fix: ").unwrap();
+    k.git_ok(&["config", "commit.template", &outside.display().to_string()]);
+    k.write("sub/a.txt", "two\n");
+    k.command("git.stageFile", Some("sub/a.txt"));
+    k.command("git.commit", Some("sub/a.txt"));
+    let (_, text) = k.app.message_fill().unwrap();
+    assert!(text.starts_with("Fix: \n# Please enter"), "{text}");
+    // Empty, then missing: as without one.
+    k.feed(Input::Closed(path.clone()));
+    std::fs::write(&outside, "").unwrap();
+    k.command("git.commit", Some("sub/a.txt"));
+    let (_, text) = k.app.message_fill().unwrap();
+    assert!(text.starts_with("\n# Please enter"), "{text}");
+    k.feed(Input::Closed(path.clone()));
+    std::fs::remove_file(&outside).unwrap();
+    k.command("git.commit", Some("sub/a.txt"));
+    let (_, text) = k.app.message_fill().unwrap();
+    assert!(text.starts_with("\n# Please enter"), "{text}");
+    assert!(
+        !k.notes.iter().any(|(_, l)| *l == Level::Error),
+        "{:?}",
+        k.notes
+    );
+    // Amend: the last message, not the template.
+    k.feed(Input::Closed(path.clone()));
+    k.git_ok(&["config", "commit.template", "tmpl.txt"]);
+    k.command("git.amend", Some("sub/a.txt"));
+    let (_, text) = k.app.message_fill().unwrap();
+    assert!(
+        text.starts_with("Subject\n\nWhy: it was missing.\n\n# Please"),
+        "{text}"
+    );
+}
+
 /// The log as a document (DESIGN.md, 2.4): SPC g L in a file shows the
 /// file's log, one commit a line; Right shows a commit's message and stat
 /// under its line; Enter shows its view, and SPC g L there the log from

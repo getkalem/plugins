@@ -727,6 +727,32 @@ fn a_commits_commands() {
     assert_eq!(t.read("f"), "base\n");
 }
 
+/// A file read through git, as the user's commit template is: its text
+/// whatever its last line, its `#` lines kept; nothing for an empty file
+/// and for a missing one; a relative path is the folder's git runs in,
+/// an absolute one anywhere.
+#[test]
+fn a_file_read_through_git() {
+    let mut t = T::new("read-file");
+    let read = |t: &mut T, path: &str| {
+        let out = t.git.run(&cmd::read_file(path)).unwrap();
+        diff::added_text(&out.stdout)
+    };
+    t.write("t.txt", "Subject\n\n# A hint\n\n");
+    t.write("nn.txt", "No line feed");
+    t.write("empty.txt", "");
+    assert_eq!(read(&mut t, "t.txt"), "Subject\n\n# A hint\n\n");
+    let absolute = t.dir.join("nn.txt").display().to_string();
+    assert_eq!(read(&mut t, &absolute), "No line feed");
+    assert_eq!(read(&mut t, "empty.txt"), "");
+    assert_eq!(read(&mut t, "missing.txt"), "");
+    // Nothing of the repository is changed by it.
+    assert_eq!(
+        t.ok(&["status", "--porcelain"]),
+        b"?? empty.txt\n?? nn.txt\n?? t.txt\n"
+    );
+}
+
 #[test]
 fn the_process_log_keeps_what_ran() {
     let mut t = T::new("process");
