@@ -1204,7 +1204,9 @@ first.
   0.9.1 prepared 2026-10-26: Format Document linear (a 2 MB journal 1 s
   to 7 ms), within Kalem 0.6.48's draw-path time; `api` `^0.2.18`.
   0.9.2 prepared 2026-10-26: an audit's fixes (reconcile, writing,
-  import, checks); `api` `^0.2.18`.)
+  import, checks); `api` `^0.2.18`.
+  0.9.3 prepared 2026-10-26: no completion offered for a name typed
+  whole; `api` `^0.2.18`.)
 
 ## PT15. Linux and Windows
 
