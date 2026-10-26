@@ -506,6 +506,11 @@ fn inline(line: &str, flavor: Flavor) -> Vec<Raw> {
                 }
                 i += 1;
             }
+            // Org's `=verbatim=` and `~code~` hold none, as Logseq reads
+            // them.
+            b'=' | b'~' if flavor == Flavor::LogseqOrg => {
+                i = org_verbatim(line, i).unwrap_or(i + 1);
+            }
             b'(' if line[i..].starts_with("((") => match line[i + 2..].find("))") {
                 Some(p) => {
                     let id = line[i + 2..i + 2 + p].trim();
@@ -658,6 +663,32 @@ fn property(line: &str) -> Option<(String, &str)> {
         return None;
     }
     Some((key.to_lowercase(), value.trim()))
+}
+
+/// Whether line `text` opens a `#+BEGIN_SRC`, `#+BEGIN_EXAMPLE` or
+/// `#+BEGIN_EXPORT` block, whose lines Logseq reads as text, never as
+/// references, in Markdown as in Org.
+pub fn opens_raw(text: &str) -> bool {
+    let t = text.trim_start();
+    ["#+BEGIN_SRC", "#+BEGIN_EXAMPLE", "#+BEGIN_EXPORT"]
+        .iter()
+        .any(|b| t.get(..b.len()).is_some_and(|p| p.eq_ignore_ascii_case(b)))
+}
+
+/// The end of Org's `=verbatim=` or `~code~` whose mark is at `at`, as
+/// Logseq's parser (mldoc) reads them: the mark at the start or after a
+/// space, the text up to the next same mark, at least a character.
+fn org_verbatim(line: &str, at: usize) -> Option<usize> {
+    let mark = line.as_bytes()[at] as char;
+    if !line[..at]
+        .chars()
+        .next_back()
+        .is_none_or(char::is_whitespace)
+    {
+        return None;
+    }
+    let p = line[at + 1..].find(mark)?;
+    (p > 0).then_some(at + 1 + p + 1)
 }
 
 /// Whether a Logseq block's line `text` opens what Logseq gives no title:
@@ -965,6 +996,8 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
     let mut current: Option<usize> = None;
     let mut in_props = false;
     let mut fence = false;
+    // Inside a `#+BEGIN_SRC`, `EXAMPLE` or `EXPORT` block.
+    let mut raw = false;
     let mut drawer = false;
     let mut page: Vec<(String, String, usize)> = Vec::new();
     // The first block is the page's properties when it holds only them.
@@ -987,6 +1020,25 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             }
             if let Some(c) = current {
                 s.blocks[c].end = n as u32 + 1;
+            }
+            continue;
+        }
+        // A `#+BEGIN_SRC`, `EXAMPLE` or `EXPORT` block's lines: text, no
+        // references, as in Org; its first shown as a block it opens
+        // shows it.
+        if raw {
+            if trimmed.to_ascii_uppercase().starts_with("#+END_") {
+                raw = false;
+            }
+            if let Some(c) = current {
+                let b = &mut s.blocks[c];
+                b.end = n as u32 + 1;
+                if let Some(kind) = b.text.strip_prefix("#+BEGIN_")
+                    && !trimmed.starts_with("#+")
+                    && !trimmed.trim().is_empty()
+                {
+                    b.text = format!("{}: {}", kind.trim().to_lowercase(), trimmed.trim());
+                }
             }
             continue;
         }
@@ -1150,6 +1202,10 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
                 fence = true;
                 in_props = false;
             }
+            if opens_raw(code) {
+                raw = true;
+                in_props = false;
+            }
             continue;
         }
         // A block's lines are its own up to its last line that is not
@@ -1174,6 +1230,15 @@ fn logseq_markdown(lines: &[&str], options: &Options) -> Scanned {
             fence = true;
             in_props = false;
             continue;
+        }
+        if opens_raw(trimmed) {
+            raw = true;
+            in_props = false;
+            // Before the first bullet, the line is a block of its own,
+            // made below.
+            if current.is_some() {
+                continue;
+            }
         }
         if drawer {
             if trimmed == ":END:" {
@@ -1451,10 +1516,7 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
             });
             continue;
         }
-        if upper.starts_with("#+BEGIN_SRC")
-            || upper.starts_with("#+BEGIN_EXAMPLE")
-            || upper.starts_with("#+BEGIN_QUERY")
-        {
+        if opens_raw(&upper) || upper.starts_with("#+BEGIN_QUERY") {
             src = true;
             continue;
         }
@@ -2058,6 +2120,42 @@ mod tests {
         assert_eq!(comment_mark("a ``x`%%`` b"), None);
         // A backtick never closed is text.
         assert_eq!(comment_mark("a ` %% b"), Some(4));
+    }
+
+    #[test]
+    fn code_and_verbatim_hold_no_references() {
+        // As Logseq's parser reads them: a Markdown note's `#+BEGIN_SRC`,
+        // `EXAMPLE` and `EXPORT` blocks (counted before; Org skipped the
+        // first two, now `EXPORT` too) and Org's `=verbatim=` and
+        // `~code~` (counted before), as mldoc marks them: after a space,
+        // to the next mark.
+        let s = md(
+            "- a\n  #+BEGIN_SRC rust\n  [[S]]\n  #+END_SRC\n  #+begin_example\n  [[E]]\n  #+end_example\n  #+BEGIN_EXPORT html\n  [[H]]\n  #+END_EXPORT\n  #+BEGIN_QUOTE\n  [[Q]]\n  #+END_QUOTE\n- #+BEGIN_SRC\n  ((6512abcd-1111-2222-3333-444455556666))\n  #+END_SRC\n- after [[A]]\n",
+        );
+        assert_eq!(targets(&s), [(RefKind::Page, "Q"), (RefKind::Page, "A")]);
+        let texts: Vec<&str> = s.blocks.iter().map(|b| b.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "a",
+                "src: ((6512abcd-1111-2222-3333-444455556666))",
+                "after [[A]]"
+            ]
+        );
+        let o = scan(
+            "* a =[[X]]= and ~[[Y]] #t~ but [[Z]] =x=y #tag b=[[W]]=\n#+BEGIN_EXPORT html\n[[H]]\n#+END_EXPORT\n* x = [[U]] = z ~~[[V]]\n",
+            Flavor::LogseqOrg,
+            &Options::default(),
+        );
+        assert_eq!(
+            targets(&o),
+            [
+                (RefKind::Page, "Z"),
+                (RefKind::Tag, "tag"),
+                (RefKind::Page, "W"),
+                (RefKind::Page, "V")
+            ]
+        );
     }
 
     #[test]
