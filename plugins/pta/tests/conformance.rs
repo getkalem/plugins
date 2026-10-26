@@ -398,6 +398,37 @@ fn the_check_finds_each_error_files_problem() {
     }
 }
 
+/// hledger's column on a line indented with a tab, as the plugin draws
+/// it: the character the tool means, the assertion's `=`, not 7 further
+/// on (hledger counts a tab to the next multiple of 8).
+#[test]
+fn a_problems_column_after_a_tab() {
+    use kalem_plugin_pta::check;
+    let dir = std::env::temp_dir().join(format!("pta-tab-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("tab.journal").to_string_lossy().into_owned();
+    let text = "2026-01-01 * Opening\n\tassets:bank  100.00 EUR = 99.00 EUR\n\tequity:opening\n";
+    std::fs::write(&main, text).unwrap();
+    let args = check::command(Dialect::Hledger, &main, &[]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    if let Some(o) = run("hledger", &args, &dir) {
+        let problems = check::problems(
+            Dialect::Hledger,
+            o.status.code(),
+            &String::from_utf8_lossy(&o.stderr),
+        );
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        let marks = check::marks(&main, &problems, |f| {
+            kalem_plugin_pta::journal::same_file(f, &main).then_some(text)
+        });
+        let drawn = marks.values().next().expect("drawn")[0].clone();
+        let line = text.lines().nth(drawn.line as usize - 1).unwrap();
+        let at: String = line.chars().skip(drawn.column as usize - 1).collect();
+        assert!(at.starts_with("= 99.00 EUR"), "{drawn:?}: {at:?}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The Journal menu and button (PT11a), as the git plugin's: the menu
 /// bar's and the F10 list's "Journal" lists the journal's commands
 /// (`kalem_plugin_pta::MENU`) in its order, its separators kept, then

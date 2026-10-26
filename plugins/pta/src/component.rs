@@ -609,6 +609,11 @@ fn check(path: String, open: bool) {
         return;
     };
     let generation = GENERATION.with(Cell::get);
+    // The current document's file and text, where a command runs: the
+    // problems' columns in it are turned into the editor's.
+    let known = editor::document()
+        .and_then(|d| d.path)
+        .map(|p| (p, editor::text(None)));
     resolve(path, dialect, move |tool, main| {
         let checks = journal_checks();
         let args = check::command(tool, &main.path, &checks);
@@ -635,7 +640,7 @@ fn check(path: String, open: bool) {
                     };
                     let problems =
                         check::problems(tool, exit.status, &String::from_utf8_lossy(out));
-                    publish(&main.path, tool, &problems);
+                    publish(&main.path, tool, &problems, known.as_ref());
                     let report = check::report(&said, &main.path, &problems, glyphs());
                     write_report(&main, &report, open);
                     if GENERATION.with(Cell::get) == generation {
@@ -661,10 +666,16 @@ fn check(path: String, open: bool) {
 
 /// Draws the check's problems in their files as a language server's
 /// diagnostics are (plugin API 0.2.14): each file's in place of the last
-/// check's, and none left in a file that has none now.
-fn publish(main: &str, tool: Dialect, found: &[Problem]) {
+/// check's, and none left in a file that has none now. A column in the
+/// file whose text is `known` counts characters as the editor does
+/// (hledger's counts a tab to the next multiple of 8).
+fn publish(main: &str, tool: Dialect, found: &[Problem], known: Option<&(String, String)>) {
     use kalem_plugin::problems as drawn;
-    let marks = check::marks(main, found);
+    let marks = check::marks(main, found, |file| {
+        known
+            .filter(|(path, _)| journal::same_file(path, file))
+            .map(|(_, text)| text.as_str())
+    });
     let before = CHECKS.with(|c| {
         c.borrow_mut()
             .get_mut(main)
@@ -1796,6 +1807,17 @@ impl Plugin for Pta {
             other::KIND,
         ]);
         command("pta.check", "Check Journal", &types, |_| check_command())?;
+        command(
+            "pta.checkSaved",
+            "Check the Saved Journal",
+            crate::TEXT_TYPES,
+            |args| {
+                if let Some(path) = arg(args, "path") {
+                    check(path, false);
+                }
+                Ok("null".into())
+            },
+        )?;
         kalem::keymap("space m k", "pta.check", Some(&leader))?;
         // And from the Balance, a Register, a Reconcile or a Report: their
         // journal's check.
@@ -2128,8 +2150,13 @@ impl Plugin for Pta {
                     .and_then(|v| serde_json::from_str::<bool>(&v).ok())
                     .unwrap_or(true);
                 if on_save {
-                    // Checking refreshes the item too, with its mark.
-                    check(d.path.clone(), false);
+                    // Checking refreshes the item too, with its mark; as
+                    // the plugin's command, where the saved journal's
+                    // text is read for the problems' columns.
+                    let args = serde_json::json!({ "path": d.path }).to_string();
+                    if kalem::run("pta.checkSaved", &args).is_err() {
+                        check(d.path.clone(), false);
+                    }
                 } else {
                     refresh(Some(d.path.clone()));
                 }
