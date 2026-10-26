@@ -1182,7 +1182,9 @@ first.
   locale cannot decode the journal (PT15, Linux); `api` `^0.2.18`.
   0.9.0 prepared 2026-10-15: K6, journal blocks run through Kalem
   0.6.39's Babel (the `executor` export, API 0.2.21); `api` `^0.2.18`,
-  an earlier Kalem never calling the executor.)
+  an earlier Kalem never calling the executor.
+  0.9.1 prepared 2026-10-26: Format Document linear (a 2 MB journal 1 s
+  to 7 ms), within Kalem 0.6.48's draw-path time; `api` `^0.2.18`.)
 
 ## PT15. Linux and Windows
 
