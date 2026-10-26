@@ -220,6 +220,12 @@ pub fn matches(known: &Known, slot: Slot, typed: &str) -> Vec<String> {
     }
     first.extend(then);
     first.truncate(MAX_ITEMS);
+    // Nothing to offer when what is typed is the one name there is (`7
+    // TRY` written whole): a list of it alone took the Enter that should
+    // end the line.
+    if first.len() == 1 && first[0] == typed {
+        first.clear();
+    }
     first
 }
 
@@ -445,6 +451,13 @@ mod tests {
         assert_eq!(matches(&k, Slot::Payee, "g"), ["Grocery store"]);
         assert_eq!(matches(&k, Slot::Commodity, "e"), ["EUR"]);
         assert_eq!(matches(&k, Slot::Payee, "").len(), 2);
+        // Typed whole: nothing; in another case, the name as it is written.
+        assert!(matches(&k, Slot::Commodity, "EUR").is_empty());
+        assert_eq!(matches(&k, Slot::Commodity, "eur"), ["EUR"]);
+        assert_eq!(
+            matches(&k, Slot::Account, "expenses:food"),
+            ["expenses:food", "expenses:food:groceries"]
+        );
     }
 
     #[test]
