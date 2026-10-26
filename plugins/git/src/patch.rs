@@ -17,7 +17,7 @@
 //!
 //! The file's header is kept as git printed it; each hunk's `@@` line is
 //! counted again. A `\ No newline at end of file` line goes with the line
-//! before it.
+//! before it, as long as that line is still the last of its side.
 
 use crate::git::diff::{FileDiff, Hunk, Line, LineKind};
 
@@ -132,14 +132,18 @@ fn select(h: &Hunk, pick: &Pick, mode: Mode) -> Option<Hunk> {
         Pick::All => true,
         Pick::Lines(v) => v.contains(&i),
     };
-    let mut lines: Vec<Line> = Vec::with_capacity(h.lines.len());
+    // Each line kept, and whether it is marked as ending without a
+    // newline.
+    let mut kept: Vec<(Line, bool)> = Vec::with_capacity(h.lines.len());
+    let mut marker = None;
     let mut kept_previous = false;
     let mut changes = 0;
     for (i, l) in h.lines.iter().enumerate() {
         let kind = match (l.kind, chosen(i), mode) {
             (LineKind::NoNewline, _, _) => {
-                if kept_previous {
-                    lines.push(l.clone());
+                if kept_previous && let Some(last) = kept.last_mut() {
+                    last.1 = true;
+                    marker = Some(l.clone());
                 }
                 continue;
             }
@@ -156,15 +160,20 @@ fn select(h: &Hunk, pick: &Pick, mode: Mode) -> Option<Hunk> {
         };
         kept_previous = kind.is_some();
         if let Some(kind) = kind {
-            lines.push(Line {
+            let line = Line {
                 kind,
                 text: l.text.clone(),
-            });
+            };
+            kept.push((line, false));
         }
     }
     if changes == 0 {
         return None;
     }
+    let lines = match marker {
+        Some(m) => without_newline_last(kept, &m),
+        None => kept.into_iter().map(|(l, _)| l).collect(),
+    };
     let old_count = lines
         .iter()
         .filter(|l| matches!(l.kind, LineKind::Context | LineKind::Removed))
@@ -182,6 +191,57 @@ fn select(h: &Hunk, pick: &Pick, mode: Mode) -> Option<Hunk> {
         printed: Vec::new(),
         lines,
     })
+}
+
+/// The lines kept, each marked one followed by `marker` (`\ No newline at
+/// end of file`) where it is still the last line of its side, as only
+/// the last line of a file can lack its newline. A selection gives a
+/// marked line neighbours: staging `+c` alone after `-b` (b the last
+/// line, without a newline) kept `b` as context with its mark, and git
+/// made `b` and `c` one line `bc`. So a marked line followed on its side
+/// by another keeps its newline there: a context line becomes its
+/// removal, marked, and its addition (`-b`, the mark, `+b`), or the
+/// other way round; a removal or an addition loses its mark.
+fn without_newline_last(kept: Vec<(Line, bool)>, marker: &Line) -> Vec<Line> {
+    let old = |l: &Line| matches!(l.kind, LineKind::Context | LineKind::Removed);
+    let new = |l: &Line| matches!(l.kind, LineKind::Context | LineKind::Added);
+    let last_old = kept.iter().rposition(|(l, _)| old(l));
+    let last_new = kept.iter().rposition(|(l, _)| new(l));
+    let mut lines = Vec::with_capacity(kept.len() + 2);
+    for (i, (l, marked)) in kept.into_iter().enumerate() {
+        let ends_old = marked && last_old == Some(i);
+        let ends_new = marked && last_new == Some(i);
+        match l.kind {
+            LineKind::Context if ends_old != ends_new => {
+                lines.push(Line {
+                    kind: LineKind::Removed,
+                    text: l.text.clone(),
+                });
+                if ends_old {
+                    lines.push(marker.clone());
+                }
+                lines.push(Line {
+                    kind: LineKind::Added,
+                    text: l.text,
+                });
+                if ends_new {
+                    lines.push(marker.clone());
+                }
+            }
+            kind => {
+                let ends = match kind {
+                    LineKind::Context => ends_old && ends_new,
+                    LineKind::Removed => ends_old,
+                    _ => ends_new,
+                };
+                lines.push(l);
+                if ends {
+                    lines.push(marker.clone());
+                }
+            }
+        }
+    }
+    lines
 }
 
 fn header(file: &FileDiff) -> Vec<u8> {
@@ -313,6 +373,31 @@ index 1..2 100644
         let p = build(&f, &[(0, Pick::Lines(vec![3]))], Mode::Reverse).unwrap();
         assert!(
             text(&p).ends_with("@@ -1,1 +1,2 @@\n a\n+c\n\\ No newline at end of file\n"),
+            "{}",
+            text(&p)
+        );
+    }
+
+    #[test]
+    fn a_line_without_its_newline_gets_one_when_another_follows() {
+        // "a\nb" committed, "a\nB\nc" in the working tree, neither with a
+        // final newline.
+        let d = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,2 +1,3 @@\n a\n-b\n\\ No newline at end of file\n+B\n+c\n\\ No newline at end of file\n";
+        let f = diff::parse(d.as_bytes()).unwrap().files.remove(0);
+        // Stage "+c" alone: b stays, and needs its newline before c.
+        let p = build(&f, &[(0, Pick::Lines(vec![4]))], Mode::Forward).unwrap();
+        assert!(
+            text(&p).ends_with(
+                "@@ -1,2 +1,3 @@\n a\n-b\n\\ No newline at end of file\n+b\n+c\n\\ No newline at end of file\n"
+            ),
+            "{}",
+            text(&p)
+        );
+        // Bring "b" back alone (unstage, discard): B stays after it, so
+        // b has its newline and B ends the file.
+        let p = build(&f, &[(0, Pick::Lines(vec![1]))], Mode::Reverse).unwrap();
+        assert!(
+            text(&p).ends_with("@@ -1,4 +1,3 @@\n a\n-b\n B\n c\n\\ No newline at end of file\n"),
             "{}",
             text(&p)
         );

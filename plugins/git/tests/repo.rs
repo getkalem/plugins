@@ -706,10 +706,60 @@ fn chosen(picks: &[(usize, Pick)], hunk: usize, line: usize) -> bool {
     })
 }
 
+/// A file's lines, and whether its last line ends with a newline.
+#[derive(Debug, Clone, PartialEq)]
+struct Text {
+    lines: Vec<String>,
+    newline: bool,
+}
+
+impl Text {
+    fn of(text: &str) -> Text {
+        Text {
+            lines: text.lines().map(str::to_string).collect(),
+            newline: text.is_empty() || text.ends_with('\n'),
+        }
+    }
+
+    fn string(&self) -> String {
+        let mut s = self.lines.join("\n");
+        if self.newline && !self.lines.is_empty() {
+            s.push('\n');
+        }
+        s
+    }
+
+    /// Adds a line; the text ends as it does.
+    fn push(&mut self, line: String, newline: bool) {
+        self.lines.push(line);
+        self.newline = newline;
+    }
+
+    /// Adds lines `range` of `from`, its last line as it ends there.
+    fn copy(&mut self, from: &Text, range: std::ops::Range<usize>) {
+        for i in range {
+            let newline = i + 1 < from.lines.len() || from.newline;
+            self.push(from.lines[i].clone(), newline);
+        }
+    }
+}
+
+/// Line `i` of a hunk: its text, and whether it ends with a newline (no
+/// `\ No newline at end of file` after it).
+fn hunk_line(h: &diff::Hunk, i: usize) -> (String, bool) {
+    let text = String::from_utf8(h.lines[i].text.clone()).unwrap();
+    let marked = h
+        .lines
+        .get(i + 1)
+        .is_some_and(|n| n.kind == LineKind::NoNewline);
+    (text, !marked)
+}
+
 /// What a forward patch of `picks` makes of the diff's old side: removed
-/// lines chosen go, added lines chosen come.
-fn expected_forward(old: &[String], d: &FileDiff, picks: &[(usize, Pick)]) -> Vec<String> {
-    let mut out = Vec::new();
+/// lines chosen go, added lines chosen come; the text ends without a
+/// newline when its last line is one the diff marks so.
+fn expected_forward(old: &Text, d: &FileDiff, picks: &[(usize, Pick)]) -> Text {
+    let mut out = Text::of("");
     let mut at = 0usize; // lines of `old` copied so far
     for (hi, h) in d.hunks.iter().enumerate() {
         // An empty side's start names the line before it.
@@ -718,35 +768,34 @@ fn expected_forward(old: &[String], d: &FileDiff, picks: &[(usize, Pick)]) -> Ve
         } else {
             h.old_start as usize - 1
         };
-        out.extend_from_slice(&old[at..start]);
+        out.copy(old, at..start);
         at = start;
         for (li, l) in h.lines.iter().enumerate() {
-            let text = String::from_utf8(l.text.clone()).unwrap();
+            let (text, newline) = hunk_line(h, li);
             match l.kind {
                 LineKind::Context => {
-                    out.push(text);
+                    out.push(text, newline);
                     at += 1;
                 }
                 LineKind::Removed => {
                     if !chosen(picks, hi, li) {
-                        out.push(text);
+                        out.push(text, newline);
                     }
                     at += 1;
                 }
-                LineKind::Added if chosen(picks, hi, li) => out.push(text),
-                LineKind::Added => {}
+                LineKind::Added if chosen(picks, hi, li) => out.push(text, newline),
                 _ => {}
             }
         }
     }
-    out.extend_from_slice(&old[at..]);
+    out.copy(old, at..old.lines.len());
     out
 }
 
 /// What a reverse patch of `picks` makes of the diff's new side: added
 /// lines chosen go, removed lines chosen come back.
-fn expected_reverse(new: &[String], d: &FileDiff, picks: &[(usize, Pick)]) -> Vec<String> {
-    let mut out = Vec::new();
+fn expected_reverse(new: &Text, d: &FileDiff, picks: &[(usize, Pick)]) -> Text {
+    let mut out = Text::of("");
     let mut at = 0usize;
     for (hi, h) in d.hunks.iter().enumerate() {
         let start = if h.new_count == 0 {
@@ -754,37 +803,28 @@ fn expected_reverse(new: &[String], d: &FileDiff, picks: &[(usize, Pick)]) -> Ve
         } else {
             h.new_start as usize - 1
         };
-        out.extend_from_slice(&new[at..start]);
+        out.copy(new, at..start);
         at = start;
         for (li, l) in h.lines.iter().enumerate() {
-            let text = String::from_utf8(l.text.clone()).unwrap();
+            let (text, newline) = hunk_line(h, li);
             match l.kind {
                 LineKind::Context => {
-                    out.push(text);
+                    out.push(text, newline);
                     at += 1;
                 }
                 LineKind::Added => {
                     if !chosen(picks, hi, li) {
-                        out.push(text);
+                        out.push(text, newline);
                     }
                     at += 1;
                 }
-                LineKind::Removed if chosen(picks, hi, li) => out.push(text),
-                LineKind::Removed => {}
+                LineKind::Removed if chosen(picks, hi, li) => out.push(text, newline),
                 _ => {}
             }
         }
     }
-    out.extend_from_slice(&new[at..]);
+    out.copy(new, at..new.lines.len());
     out
-}
-
-fn split(text: &str) -> Vec<String> {
-    text.lines().map(str::to_string).collect()
-}
-
-fn join(lines: &[String]) -> String {
-    lines.iter().map(|l| format!("{l}\n")).collect()
 }
 
 fn file_diff(t: &mut T, staged: bool, context: u32) -> Option<FileDiff> {
@@ -804,17 +844,39 @@ fn apply(t: &mut T, patch: Vec<u8>, to: cmd::ApplyTo, reverse: bool, context: u3
     );
 }
 
+/// Random selections staged, unstaged and discarded, the index and the
+/// working tree compared byte for byte with what the selection says.
+/// In most rounds with context lines the file committed, the one edited
+/// or both end without a newline: a line selected next to the marked last
+/// line ran two lines together (`b` and `c` staged as `bc`).
 #[test]
 fn random_lines_stage_unstage_and_discard_as_selected() {
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     for round in 0..40 {
         let context = [3, 1, 0][round % 3];
+        // Without context lines git itself takes a last line without its
+        // newline for the same line before it (its own patch, reversed
+        // with --unidiff-zero, removes the wrong one): those rounds keep
+        // the newlines.
+        let (base_newline, work_newline) = match round % 4 {
+            _ if context == 0 => (true, true),
+            1 => (false, true),
+            2 => (true, false),
+            3 => (false, false),
+            _ => (true, true),
+        };
         let mut t = T::new("lines");
-        let base: Vec<String> = (0..40).map(|i| format!("base {i}")).collect();
-        t.write("f", &join(&base));
+        let base = Text {
+            lines: (0..40).map(|i| format!("base {i}")).collect(),
+            newline: base_newline,
+        };
+        t.write("f", &base.string());
         t.commit_all("Base");
-        let work = edit(&mut rng, &base, round);
-        t.write("f", &join(&work));
+        let work = Text {
+            lines: edit(&mut rng, &base.lines, round),
+            newline: work_newline,
+        };
+        t.write("f", &work.string());
         let Some(unstaged) = file_diff(&mut t, false, context) else {
             continue;
         };
@@ -828,10 +890,10 @@ fn random_lines_stage_unstage_and_discard_as_selected() {
             Err(patch::Refusal::NothingSelected) => base.clone(),
             Err(e) => panic!("round {round}: {e}"),
         };
-        assert_eq!(split(&t.index("f")), index, "round {round}: staging");
+        assert_eq!(t.index("f"), index.string(), "round {round}: staging");
         assert_eq!(
-            split(&t.read("f")),
-            work,
+            t.read("f"),
+            work.string(),
             "round {round}: the working tree moved"
         );
         // Unstage a random selection of what is staged.
@@ -845,10 +907,10 @@ fn random_lines_stage_unstage_and_discard_as_selected() {
                 Err(patch::Refusal::NothingSelected) => index.clone(),
                 Err(e) => panic!("round {round}: {e}"),
             };
-            assert_eq!(split(&t.index("f")), after, "round {round}: unstaging");
+            assert_eq!(t.index("f"), after.string(), "round {round}: unstaging");
         }
         // Discard a random selection of what is not staged.
-        let index_now = split(&t.index("f"));
+        let index_now = t.index("f");
         if let Some(unstaged) = file_diff(&mut t, false, context) {
             let picks = select(&mut rng, &unstaged);
             let after = match patch::build(&unstaged, &picks, Mode::Reverse) {
@@ -859,12 +921,8 @@ fn random_lines_stage_unstage_and_discard_as_selected() {
                 Err(patch::Refusal::NothingSelected) => work.clone(),
                 Err(e) => panic!("round {round}: {e}"),
             };
-            assert_eq!(split(&t.read("f")), after, "round {round}: discarding");
-            assert_eq!(
-                split(&t.index("f")),
-                index_now,
-                "round {round}: the index moved"
-            );
+            assert_eq!(t.read("f"), after.string(), "round {round}: discarding");
+            assert_eq!(t.index("f"), index_now, "round {round}: the index moved");
         }
     }
 }
