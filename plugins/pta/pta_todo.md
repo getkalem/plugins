@@ -386,6 +386,15 @@ first.
   Since K11 (2026-10-15) Format Document is the plugin's alignment of
   the whole journal in all three, a Beancount server's formatting
   first.
+  Its time grew with the square of the journal's lines (each line
+  compared with every transaction before it): a year of 20,000
+  transactions took a second natively, and Kalem 0.6.48, which gives
+  a formatter 100 ms, stopped the plugin at Format Document or a save
+  with format on save (seen 2026-10-26 in a release kalem tui of
+  0.6.49 on `tests/large.rs`'s 2026.journal). Now each line is looked
+  at once: that year in 7 ms, the ten years (20 MB) in 83 ms, and the
+  plugin kept running in the same kalem tui, `hledger print` the same
+  before and after.
   Align Amounts (`pta.align`, `SPC m a` in Vim's command mode, the
   palette): `src/align.rs`, the anchor an amount's last digit (the sign
   and a left commodity before it, Beancount's sum `800.00 + 42.35`
