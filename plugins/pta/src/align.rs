@@ -283,14 +283,21 @@ pub fn edits(
     let line_of = |at: usize| lines.iter().rposition(|(s, _)| *s <= at).unwrap_or(0);
     let (first, last) = (line_of(selection.start), line_of(selection.end));
     let mut blocks: Vec<Range<usize>> = Vec::new();
+    // Each block starts at or before the line it was found from, so a line
+    // is in one of them when one ends past it: a whole journal's lines are
+    // looked at once each (Format Document took a second for 20,000
+    // transactions, comparing each line with every block before it).
+    let mut covered = 0;
     for n in first..=last {
+        if n < covered {
+            continue;
+        }
         // A selection's postings outside a transaction's header (a
         // periodic or an automated one has its own header) are aligned
         // by their own block too.
         let block = transaction(&lines, n).unwrap_or(n..n + 1);
-        if blocks.last() != Some(&block) && !blocks.iter().any(|b| b.contains(&n)) {
-            blocks.push(block);
-        }
+        covered = block.end;
+        blocks.push(block);
     }
     let mut out = Vec::new();
     for block in blocks {
@@ -572,6 +579,25 @@ mod tests {
                 on_enter: false
             }
         );
+    }
+
+    #[test]
+    fn a_whole_journal_formatted_as_each_transaction_alone() {
+        // Transactions, a periodic one, postings under a directive, a
+        // comment and blank lines: aligned all at once as each line's own
+        // block aligns them.
+        let one = "2026-01-01 a\n    x  1 TRY\n    yy  -1 TRY\n\n~ monthly\n    budget:food  100 TRY\n    assets\n\napply account z\n    q  3 TRY\n; a comment\n2026-01-02 b\n    xxx  2 TRY\n    y\n";
+        let text = one.repeat(50);
+        let mut each = Vec::new();
+        let mut at = 0;
+        for line in text.split_inclusive('\n') {
+            each.extend(edits(&text, at..at, Hledger, 40));
+            at += line.len();
+        }
+        each.sort_by_key(|(r, _)| r.start);
+        each.dedup();
+        assert!(each.len() > 200, "{}", each.len());
+        assert_eq!(format(&text, Hledger, 40), apply(&text, &each));
     }
 
     #[test]

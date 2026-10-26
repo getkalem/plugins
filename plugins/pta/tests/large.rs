@@ -363,3 +363,30 @@ fn the_outline_of_a_large_journal() {
         assert!(heads.len() > 100, "{tool:?}");
     }
 }
+
+/// Format Document (K11) on the accountant's journal, as Kalem asks it of
+/// the plugin when the journal is saved with `editor.format_on_save`: a
+/// year, then the ten years in one text (`cargo test --release -p
+/// kalem-plugin-pta --test large -- --ignored --nocapture format`).
+#[test]
+#[ignore = "writes and reads 200,000 transactions"]
+fn formatting_a_large_journal() {
+    let dir = folder();
+    if !dir.join("2026.journal").exists() {
+        write_journals(&dir);
+    }
+    let year = std::fs::read_to_string(dir.join("2026.journal")).unwrap_or_default();
+    let all: String = (2017..=2026)
+        .map(|y| std::fs::read_to_string(dir.join(format!("{y}.journal"))).unwrap_or_default())
+        .collect();
+    for (what, text) in [("a year", &year), ("ten years", &all)] {
+        let t = Instant::now();
+        let out = kalem_plugin_pta::align::format(text, Dialect::Hledger, 52);
+        println!(
+            "  Format Document of {what}, {:.1} MB: {:.3} s",
+            text.len() as f64 / 1e6,
+            t.elapsed().as_secs_f64()
+        );
+        assert_eq!(out.lines().count(), text.lines().count());
+    }
+}
