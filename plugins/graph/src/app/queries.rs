@@ -164,8 +164,10 @@ impl App {
             .map(str::len)
             .sum::<usize>();
         let cycle = index.graph.todo_cycle();
-        let now = self.clock_now(&root);
-        let Some(change) = edit::cycle_todo_clocked(&note, flavor, cycle, offset, now.as_ref())
+        let clock = self.clock_now(&root);
+        let now = self.local_now.map(|n| edit::Now::at(n()));
+        let Some(change) =
+            edit::cycle_task(&note, flavor, cycle, offset, clock.as_ref(), now.as_ref())
         else {
             return none();
         };
