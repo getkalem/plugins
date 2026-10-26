@@ -409,14 +409,7 @@ pub fn clock(
     };
     let is = |m: Option<&str>, w: &str| m.is_some_and(|m| m.eq_ignore_ascii_case(w));
     let started = |m: Option<&str>| is(m, "NOW") || is(m, "DOING");
-    // The block's logbook: its first and last lines.
-    let logbook = (b.line + 1..b.end)
-        .find(|n| line_text(*n).trim().eq_ignore_ascii_case(":LOGBOOK:"))
-        .and_then(|first| {
-            (first + 1..b.end)
-                .find(|n| line_text(*n).trim().eq_ignore_ascii_case(":END:"))
-                .map(|last| (first, last))
-        });
+    let logbook = logbook(text, &st, b);
     let same = old.zip(new).is_some_and(|(o, n)| o.eq_ignore_ascii_case(n));
     let clock_in = (old.is_none() && started(new))
         || (is(old, "TODO") && is(new, "DOING"))
@@ -428,50 +421,7 @@ pub fn clock(
     let indent = continuation(text, &st, b, flavor);
     if clock_in {
         let clock = format!("{indent}CLOCK: [{}]\n", now.stamp);
-        if let Some((_, last)) = logbook {
-            let at = line_start(&st, text, last);
-            return Some(Edit {
-                start: at,
-                end: at,
-                text: clock,
-            });
-        }
-        // After the block's properties (Org's drawer) and dates; after its
-        // own lines, out of them, when its first line opens a code block,
-        // a `#+BEGIN_`, a table or a quote.
-        let mut n = b.line + 1;
-        if flavor == Flavor::LogseqMarkdown
-            && matches!(md_properties(text, &st, b).1, Spot::First(_))
-        {
-            n = b.end.max(n);
-        }
-        let mut drawer = false;
-        while n < b.end {
-            let t = line_text(n).trim();
-            if t.eq_ignore_ascii_case(":PROPERTIES:") {
-                drawer = true;
-            } else if drawer {
-                drawer = !t.eq_ignore_ascii_case(":END:");
-            } else {
-                let property = t.find("::").is_some_and(|p| p > 0 && !t[..p].contains(' '));
-                if !(property || t.starts_with("SCHEDULED:") || t.starts_with("DEADLINE:")) {
-                    break;
-                }
-            }
-            n += 1;
-        }
-        let at = line_start(&st, text, n);
-        let made = format!("{indent}:LOGBOOK:\n{clock}{indent}:END:\n");
-        let bare = at == text.len() && !text.is_empty() && !text.ends_with('\n');
-        return Some(Edit {
-            start: at,
-            end: at,
-            text: if bare {
-                format!("\n{}", made.trim_end_matches('\n'))
-            } else {
-                made
-            },
-        });
+        return Some(to_logbook(text, flavor, &st, b, &clock));
     }
     if clock_out {
         let (first, last) = logbook?;
@@ -523,6 +473,265 @@ pub fn cycle_todo_clocked(
         }
     }
     Some(change)
+}
+
+/// The block's `:LOGBOOK:` drawer: its first and last lines.
+fn logbook(text: &str, st: &[usize], b: &Block) -> Option<(u32, u32)> {
+    let line_text = |n: u32| {
+        let a = line_start(st, text, n);
+        let e = line_start(st, text, n + 1);
+        text[a..e].trim()
+    };
+    (b.line + 1..b.end)
+        .find(|n| line_text(*n).eq_ignore_ascii_case(":LOGBOOK:"))
+        .and_then(|first| {
+            (first + 1..b.end)
+                .find(|n| line_text(*n).eq_ignore_ascii_case(":END:"))
+                .map(|last| (first, last))
+        })
+}
+
+/// `entry`, a whole line indented and ended, written at the end of the
+/// block's `:LOGBOOK:`; the drawer made for it when the block has none,
+/// as Logseq makes it: after the block's properties (Org's drawer) and
+/// dates, and after its own lines, out of them, when its first line opens
+/// a code block, a `#+BEGIN_`, a table or a quote.
+fn to_logbook(text: &str, flavor: Flavor, st: &[usize], b: &Block, entry: &str) -> Edit {
+    if let Some((_, last)) = logbook(text, st, b) {
+        let at = line_start(st, text, last);
+        return Edit {
+            start: at,
+            end: at,
+            text: entry.to_string(),
+        };
+    }
+    let line_text = |n: u32| {
+        let a = line_start(st, text, n);
+        let e = line_start(st, text, n + 1);
+        text[a..e].trim_end_matches(['\n', '\r'])
+    };
+    let indent = continuation(text, st, b, flavor);
+    let mut n = b.line + 1;
+    if flavor == Flavor::LogseqMarkdown && matches!(md_properties(text, st, b).1, Spot::First(_)) {
+        n = b.end.max(n);
+    }
+    let mut drawer = false;
+    while n < b.end {
+        let t = line_text(n).trim();
+        if t.eq_ignore_ascii_case(":PROPERTIES:") {
+            drawer = true;
+        } else if drawer {
+            drawer = !t.eq_ignore_ascii_case(":END:");
+        } else {
+            let property = t.find("::").is_some_and(|p| p > 0 && !t[..p].contains(' '));
+            if !(property || t.starts_with("SCHEDULED:") || t.starts_with("DEADLINE:")) {
+                break;
+            }
+        }
+        n += 1;
+    }
+    let at = line_start(st, text, n);
+    let made = format!("{indent}:LOGBOOK:\n{entry}{indent}:END:\n");
+    let bare = at == text.len() && !text.is_empty() && !text.ends_with('\n');
+    Edit {
+        start: at,
+        end: at,
+        text: if bare {
+            format!("\n{}", made.trim_end_matches('\n'))
+        } else {
+            made
+        },
+    }
+}
+
+/// A timestamp's repeater, as Logseq reads it: its kind (`+`, `++`,
+/// `.+`), how many and of what (`h`, `d`, `w`, `m`, `y`).
+fn repeater(word: &str) -> Option<(&'static str, i64, char)> {
+    let (kind, rest) = if let Some(r) = word.strip_prefix(".+") {
+        (".+", r)
+    } else if let Some(r) = word.strip_prefix("++") {
+        ("++", r)
+    } else {
+        ("+", word.strip_prefix('+')?)
+    };
+    let unit = rest.chars().last().filter(|u| "hdwmy".contains(*u))?;
+    let num: i64 = rest[..rest.len() - 1].parse().ok()?;
+    (num > 0).then_some((kind, num, unit))
+}
+
+/// The text of timestamp `inner` (`2026-10-20 Tue 10:00 .+1d`, without its
+/// `<` and `>`) at its next time, its task done at `now`, as Logseq 0.10.9
+/// moves it (`repeated/next-timestamp-text`): `+` a step on; `++` a step
+/// on unless it is still to come; `.+` steps on until it is past now. Its
+/// time and its repeater kept; `None` when it does not repeat.
+fn next_stamp(inner: &str, now: &Now) -> Option<String> {
+    let mut words = inner.split_whitespace();
+    let date = Date::parse_iso(words.next()?)?;
+    let mut time: Option<i64> = None;
+    let mut rep = None;
+    for w in words {
+        if let Some((h, m)) = w.split_once(':')
+            && let (Ok(h), Ok(m)) = (h.parse::<i64>(), m.parse::<i64>())
+        {
+            time = Some(h * 60 + m);
+        } else if let Some(r) = repeater(w) {
+            rep = Some(r);
+        }
+    }
+    let (kind, num, unit) = rep?;
+    // Minutes since 1970, of the local time.
+    let start = date.to_days() * 1440 + time.unwrap_or(0);
+    let fixed = match unit {
+        'h' => Some(num * 60),
+        'd' => Some(num * 1440),
+        'w' => Some(num * 7 * 1440),
+        _ => None,
+    };
+    let step = |t: i64| -> i64 {
+        match fixed {
+            Some(d) => t + d,
+            None => {
+                let months = if unit == 'y' { num * 12 } else { num };
+                let day = Date::from_days(t.div_euclid(1440)).add_months(months);
+                day.to_days() * 1440 + t.rem_euclid(1440)
+            }
+        }
+    };
+    // Past now: its first minute after the one now is in.
+    let past = now.secs.div_euclid(60) + 1;
+    let next = match kind {
+        ".+" => match fixed {
+            Some(d) => {
+                start
+                    + d * ((past - start).div_euclid(d)
+                        + i64::from((past - start).rem_euclid(d) > 0))
+                    .max(1)
+            }
+            None => {
+                let mut t = step(start);
+                while t < past {
+                    t = step(t);
+                }
+                t
+            }
+        },
+        "++" if start >= past => start,
+        _ => step(start),
+    };
+    let day = Date::from_days(next.div_euclid(1440));
+    let mut out = format!("{} {}", day.iso(), weekday(day));
+    if time.is_some() {
+        let m = next.rem_euclid(1440);
+        out.push_str(&format!(" {:02}:{:02}", m / 60, m % 60));
+    }
+    out.push_str(&format!(" {kind}{num}{unit}"));
+    Some(out)
+}
+
+/// A repeating task done, as Logseq 0.10.9's check box does it
+/// (`update-timestamps-content!`): the block at `line`, done at `now`,
+/// when a `SCHEDULED:` or `DEADLINE:` of it repeats. Each such timestamp
+/// moved to its next time ([`next_stamp`]); its keyword back, DOING to
+/// TODO and NOW to LATER, another kept; its open clock closed; and
+/// `State "DONE" from "DOING" [2026-10-26 Mon 10:30]` written into its
+/// `:LOGBOOK:`. `None` when nothing of it repeats.
+pub fn repeat_done(text: &str, flavor: Flavor, line: u32, now: &Now) -> Option<Vec<Edit>> {
+    if flavor == Flavor::Obsidian {
+        return None;
+    }
+    let s = scan::scan(text, flavor, &scan::Options::default());
+    let st = starts(text);
+    let b = s.blocks.iter().find(|b| b.line == line)?;
+    let mut edits = Vec::new();
+    for n in b.line + 1..b.end {
+        let start = line_start(&st, text, n);
+        let own = &text[start..line_start(&st, text, n + 1)];
+        for key in ["SCHEDULED:", "DEADLINE:"] {
+            let Some(p) = own.find(key) else {
+                continue;
+            };
+            let after = &own[p + key.len()..];
+            let Some(open) = after.find('<') else {
+                continue;
+            };
+            let Some(close) = after[open..].find('>') else {
+                continue;
+            };
+            let from = start + p + key.len() + open + 1;
+            let inner = &text[from..from + close - 1];
+            if let Some(next) = next_stamp(inner, now) {
+                edits.push(Edit {
+                    start: from,
+                    end: from + inner.len(),
+                    text: next,
+                });
+            }
+        }
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    let old = b.marker;
+    let back = match old {
+        Some("DOING") => Some("TODO"),
+        Some("NOW") => Some("LATER"),
+        _ => None,
+    };
+    if let (Some(old), Some(back)) = (old, back) {
+        let c = keyword_start(text, &st, b, flavor);
+        edits.push(Edit {
+            start: c,
+            end: c + old.len(),
+            text: back.into(),
+        });
+    }
+    if let Some(e) = clock(text, flavor, line, old, Some("DONE"), now) {
+        edits.push(e);
+    }
+    // Logseq's stamp without its seconds: `2026-10-26 Mon 10:30`.
+    let stamp = now
+        .stamp
+        .rsplit_once(':')
+        .map_or(now.stamp.as_str(), |(t, _)| t);
+    let bullet = if flavor == Flavor::LogseqOrg {
+        "-"
+    } else {
+        "*"
+    };
+    let indent = continuation(text, &st, b, flavor);
+    let entry = format!(
+        "{indent}{bullet} State \"DONE\" from \"{}\" [{stamp}]\n",
+        old.unwrap_or_default()
+    );
+    edits.push(to_logbook(text, flavor, &st, b, &entry));
+    edits.sort_by_key(|e| e.start);
+    Some(edits)
+}
+
+/// Cycle Task as Logseq keeps a graph: [`cycle_todo_clocked`] (`clock_now`
+/// when the graph tracks time), but a task it would make DONE whose
+/// `SCHEDULED:` or `DEADLINE:` repeats is done as Logseq's check box does
+/// it ([`repeat_done`]), the local time `now` known.
+pub fn cycle_task(
+    text: &str,
+    flavor: Flavor,
+    cycle: [&str; 3],
+    cursor: usize,
+    clock_now: Option<&Now>,
+    now: Option<&Now>,
+) -> Option<Change> {
+    if let Some(now) = now
+        && flavor != Flavor::Obsidian
+    {
+        let (s, _, i) = at(text, flavor, cursor)?;
+        let b = &s.blocks[i];
+        if next_marker(b.marker, cycle) == Some("DONE")
+            && let Some(edits) = repeat_done(text, flavor, b.line, now)
+        {
+            return Some(Change { edits, line: None });
+        }
+    }
+    cycle_todo_clocked(text, flavor, cycle, cursor, clock_now)
 }
 
 /// The priority of the block at `cursor` set (`None` removes it): `[#A]`
@@ -1553,6 +1762,111 @@ mod tests {
         let e = add_property(t, 3, "id", "u3").unwrap();
         assert_eq!(apply(t, &[e]), "- a\n  type:: x\n\t- b\n- c\n  id:: u3");
         assert!(add_property(t, 1, "id", "u").is_none());
+    }
+
+    /// 2026-10-26, a Monday, at 10:30:15 local time.
+    fn monday() -> Now {
+        let day = Date::new(2026, 10, 26).unwrap().to_days();
+        Now::at((day * 86_400 + 10 * 3600 + 30 * 60 + 15) * 1000)
+    }
+
+    #[test]
+    fn a_repeaters_next_time_as_logseq_moves_it() {
+        let now = monday();
+        let next = |s: &str| next_stamp(s, &now);
+        // `.+`: steps on until past now; `+`: a step on; `++`: a step on
+        // unless still to come.
+        assert_eq!(
+            next("2026-10-20 Tue .+1d").as_deref(),
+            Some("2026-10-27 Tue .+1d")
+        );
+        assert_eq!(
+            next("2026-10-20 Tue +1d").as_deref(),
+            Some("2026-10-21 Wed +1d")
+        );
+        assert_eq!(
+            next("2026-10-20 Tue ++1d").as_deref(),
+            Some("2026-10-21 Wed ++1d")
+        );
+        assert_eq!(
+            next("2026-10-30 Fri ++1w").as_deref(),
+            Some("2026-10-30 Fri ++1w")
+        );
+        assert_eq!(
+            next("2026-10-30 Fri +1w").as_deref(),
+            Some("2026-11-06 Fri +1w")
+        );
+        // A time kept, and counted: 09:00 is past, 11:00 not yet.
+        assert_eq!(
+            next("2026-10-26 Mon 09:00 .+1d").as_deref(),
+            Some("2026-10-27 Tue 09:00 .+1d")
+        );
+        assert_eq!(
+            next("2026-10-26 Mon 09:00 .+1h").as_deref(),
+            Some("2026-10-26 Mon 11:00 .+1h")
+        );
+        // Months and years keep the day where the month has it.
+        assert_eq!(
+            next("2026-01-31 Sat +1m").as_deref(),
+            Some("2026-02-28 Sat +1m")
+        );
+        assert_eq!(
+            next("2024-02-29 Thu +1y").as_deref(),
+            Some("2025-02-28 Fri +1y")
+        );
+        // A month added to the last step each time, as cljs-time adds it:
+        // 31 August, 30 September, 30 October.
+        assert_eq!(
+            next("2026-08-31 Mon .+1m").as_deref(),
+            Some("2026-10-30 Fri .+1m")
+        );
+        // No repeater: none.
+        assert_eq!(next("2026-10-20 Tue"), None);
+        assert_eq!(next("2026-10-20 Tue 10:00"), None);
+    }
+
+    #[test]
+    fn a_repeating_task_done_as_logseqs_check_box_does_it() {
+        let now = monday();
+        let done = |t: &str, f: Flavor| repeat_done(t, f, 0, &now).map(|e| apply(t, &e));
+        // Its date on, DOING back to TODO, its clock closed, the change in
+        // its logbook.
+        let md = "- DOING Water the plants\n  SCHEDULED: <2026-10-20 Tue .+1d>\n  :LOGBOOK:\n  CLOCK: [2026-10-26 Mon 10:00:00]\n  :END:\n- next\n";
+        assert_eq!(
+            done(md, Flavor::LogseqMarkdown).unwrap(),
+            "- TODO Water the plants\n  SCHEDULED: <2026-10-27 Tue .+1d>\n  :LOGBOOK:\n  CLOCK: [2026-10-26 Mon 10:00:00]--[2026-10-26 Mon 10:30:15] =>  00:30:15\n  * State \"DONE\" from \"DOING\" [2026-10-26 Mon 10:30]\n  :END:\n- next\n"
+        );
+        // NOW back to LATER; a logbook made.
+        let md = "- NOW Read\n  DEADLINE: <2026-10-25 Sun +1w>\n";
+        assert_eq!(
+            done(md, Flavor::LogseqMarkdown).unwrap(),
+            "- LATER Read\n  DEADLINE: <2026-11-01 Sun +1w>\n  :LOGBOOK:\n  * State \"DONE\" from \"NOW\" [2026-10-26 Mon 10:30]\n  :END:\n"
+        );
+        // Org: its planning line, the logbook's line written with `-`.
+        let org = "* DOING Plan\nSCHEDULED: <2026-10-20 Tue ++1w>\n";
+        assert_eq!(
+            done(org, Flavor::LogseqOrg).unwrap(),
+            "* TODO Plan\nSCHEDULED: <2026-10-27 Tue ++1w>\n:LOGBOOK:\n- State \"DONE\" from \"DOING\" [2026-10-26 Mon 10:30]\n:END:\n"
+        );
+        // Nothing repeats: none, Cycle Task makes it DONE.
+        let plain = "- DOING x\n  SCHEDULED: <2026-10-20 Tue>\n";
+        assert_eq!(done(plain, Flavor::LogseqMarkdown), None);
+        let c = cycle_task(plain, Flavor::LogseqMarkdown, TODO, 3, None, Some(&now)).unwrap();
+        assert!(apply(plain, &c.edits).starts_with("- DONE x"));
+        // Cycle Task: TODO to DOING as before, then DONE is the repeat.
+        let todo = "- TODO Water the plants\n  SCHEDULED: <2026-10-20 Tue .+1d>\n";
+        let c = cycle_task(todo, Flavor::LogseqMarkdown, TODO, 3, None, Some(&now)).unwrap();
+        let doing = apply(todo, &c.edits);
+        assert!(doing.starts_with("- DOING Water"), "{doing}");
+        let c = cycle_task(&doing, Flavor::LogseqMarkdown, TODO, 3, None, Some(&now)).unwrap();
+        let again = apply(&doing, &c.edits);
+        assert!(
+            again.starts_with("- TODO Water the plants\n  SCHEDULED: <2026-10-27 Tue .+1d>\n"),
+            "{again}"
+        );
+        // Without the local time (an older Kalem): DONE, as before.
+        let c = cycle_task(&doing, Flavor::LogseqMarkdown, TODO, 3, None, None).unwrap();
+        assert!(apply(&doing, &c.edits).starts_with("- DONE Water"));
     }
 
     #[test]

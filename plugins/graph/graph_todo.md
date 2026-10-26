@@ -1357,6 +1357,25 @@ user groups; the gaps that code can close, in this order.
   open on it followed, Project/Plugins/Graph's `title::` and its five
   links written Work/Plugins/Graph. Test: app's
   a_namespace_renamed_with_its_page.
+- [x] GR23 A repeating task done, as Logseq 0.10.9 does it (the owner's
+  word, 2026-10-26: "like Logseq: its date to the next time, the task
+  back to TODO"). Logseq does it when a task's check box is clicked
+  (`check`, `update-timestamps-content!`); in Kalem, where a note has no
+  check box, when Cycle Task (and the Tasks and Query documents' `t`)
+  would make DONE a task whose `SCHEDULED:` or `DEADLINE:` repeats. Each
+  repeating timestamp moved as Logseq's `next-timestamp-text` moves it:
+  `+` a step on, `++` a step on unless it is still to come, `.+` steps
+  on until past now (a month added to the last step, so 31 August, 30
+  September, 30 October), its time and repeater kept; DOING back to TODO
+  and NOW to LATER; an open clock closed; `* State "DONE" from "DOING"
+  [2026-10-26 Mon 10:30]` (Org's with `-`) written into the
+  `:LOGBOOK:`, made where Logseq makes it. Without the local time (a
+  Kalem before plugin API 0.2.11) the task is made DONE as before. Seen
+  in a release `kalem tui` of 0.6.49 on the demo graph: DOING Water the
+  plants, `.+1d` from 2026-10-20, done at 23:09 on the 26th: TODO, the
+  27th, the logbook's line. Tests: edit's
+  a_repeaters_next_time_as_logseq_moves_it and
+  a_repeating_task_done_as_logseqs_check_box_does_it.
 
 ## What Kalem's core must gain
 

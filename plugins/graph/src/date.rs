@@ -106,6 +106,20 @@ impl Date {
         Date::from_days(self.to_days() + n)
     }
 
+    /// The date `n` months later (earlier when negative), its day kept
+    /// where the month has it, else the month's last: 31 January and a
+    /// month is 28 or 29 February, as Logseq's `cljs-time` counts.
+    pub fn add_months(self, n: i64) -> Date {
+        let months = i64::from(self.year) * 12 + i64::from(self.month) - 1 + n;
+        let year = months.div_euclid(12) as i32;
+        let month = (months.rem_euclid(12) + 1) as u8;
+        Date {
+            year,
+            month,
+            day: self.day.min(month_len(year, month)),
+        }
+    }
+
     /// 0 for Monday to 6 for Sunday.
     pub fn weekday(self) -> u8 {
         // 1970-01-01 was a Thursday.

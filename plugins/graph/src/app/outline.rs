@@ -541,12 +541,13 @@ impl App {
         };
         match id {
             "graph.cycleTodo" => done(
-                edit::cycle_todo_clocked(
+                edit::cycle_task(
                     text,
                     flavor,
                     cycle,
                     cursor,
                     self.clock_now(root).as_ref(),
+                    self.local_now.map(|n| edit::Now::at(n())).as_ref(),
                 ),
                 "Cycle Task",
                 "No block at the cursor",
