@@ -15,6 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+mod commit_menu;
 mod commit_view;
 mod document;
 mod log_view;
@@ -79,6 +80,10 @@ pub struct CommandInfo {
     /// Its keys in the documents it acts in (magit's and lazygit's), or in
     /// the status when it acts everywhere: see [`CommandInfo::bindings`].
     pub doc_keys: &'static [&'static str],
+    /// Of its document keys, those bound in a commit's view and a log too
+    /// when it acts everywhere: Alt+Enter, the item's menu (DESIGN.md,
+    /// 5.1), and not `?`, which is Vim's search there.
+    pub view_keys: &'static [&'static str],
     /// The kinds of document it acts in only, its scope: the palette
     /// offers it there only, and Kalem runs its keys there only. Empty for
     /// every text type.
@@ -92,6 +97,7 @@ impl CommandInfo {
             title,
             keys: &[],
             doc_keys: &[],
+            view_keys: &[],
             kinds: &[],
         }
     }
@@ -103,6 +109,11 @@ impl CommandInfo {
 
     const fn doc(mut self, keys: &'static [&'static str]) -> CommandInfo {
         self.doc_keys = keys;
+        self
+    }
+
+    const fn in_views(mut self, keys: &'static [&'static str]) -> CommandInfo {
+        self.view_keys = keys;
         self
     }
 
@@ -133,13 +144,20 @@ impl CommandInfo {
     /// Kalem ANDs with the scope ([`CommandInfo::scope`]): the leader's in
     /// Vim's command mode; the document keys in the documents it acts in,
     /// or in the status alone when it acts everywhere (magit's letters,
-    /// which a commit view leaves to Vim). Its other keys are its default
-    /// keys.
+    /// which a commit view leaves to Vim), its view keys in a commit view
+    /// too. Its other keys are its default keys.
     pub fn bindings(&self) -> Vec<(&'static str, String)> {
         let (leader, _) = split_leader_keys(self.keys);
         let kinds = self.scope().unwrap_or(&[STATUS_KIND]);
         let leader = leader.into_iter().map(|k| (k, LEADER_WHEN.to_string()));
-        let doc = self.doc_keys.iter().map(|k| (*k, doc_when(kinds, k)));
+        let doc = self.doc_keys.iter().map(|k| {
+            let kinds: &[&str] = if self.view_keys.contains(k) {
+                &[STATUS_KIND, COMMIT_KIND]
+            } else {
+                kinds
+            };
+            (*k, doc_when(kinds, k))
+        });
         leader.chain(doc).collect()
     }
 }
@@ -235,7 +253,15 @@ pub const COMMANDS: &[CommandInfo] = &[
     CommandInfo::new("git.fileMenu", "Git: This File").keys(&["space g ."]),
     CommandInfo::new("git.dispatch", "Git: Commands")
         .keys(&["space g /"])
-        .doc(&["alt+enter", "?"]),
+        .doc(&["alt+enter", "?"])
+        .in_views(&["alt+enter"]),
+    // A commit's, the entries of its menu (Alt+Enter on a commit of the
+    // log or of the status's Commits tab, or in its view).
+    CommandInfo::new("git.checkoutCommit", "Git: Check Out the Commit").in_documents(),
+    CommandInfo::new("git.cherryPick", "Git: Cherry-Pick the Commit").in_documents(),
+    CommandInfo::new("git.revertCommit", "Git: Revert the Commit").in_documents(),
+    CommandInfo::new("git.resetHere", "Git: Reset the Branch to the Commit").in_documents(),
+    CommandInfo::new("git.fixup", "Git: Fix Up the Commit with What Is Staged").in_documents(),
     // The status document's and a commit view's own.
     CommandInfo::new("git.visit", "Git: Open")
         .doc(&["enter"])
@@ -660,6 +686,12 @@ enum After {
     /// Show the log of a file, by its path in the repository, else of the
     /// branch.
     Log(Option<String>),
+    /// An entry of a commit's menu, on the commit of this hash.
+    OnCommit(commit_menu::CommitAct, String),
+    /// A cherry-pick or a revert failed with this message: when it stopped
+    /// with the operation under way (on a conflict), the status is shown
+    /// saying so, else the message is said.
+    Stopped(String),
 }
 
 /// What a run is for.
@@ -726,6 +758,9 @@ enum Pending {
     /// The files in conflict a plan stages, looked through for conflict
     /// markers before it runs.
     Markers { root: String, plan: actions::Plan },
+    /// A cherry-pick or a revert of a commit, which may stop on a
+    /// conflict.
+    Replay { root: String, done: String },
 }
 
 /// A network operation.
@@ -796,6 +831,18 @@ enum Question {
     PushBehind { root: String },
     /// Force with lease, when yes.
     Force { root: String },
+    /// How to reset the branch, `on`, to commit `hash`.
+    Reset {
+        root: String,
+        hash: String,
+        on: String,
+    },
+    /// Run this cherry-pick or revert when yes.
+    Replay {
+        root: String,
+        command: GitCommand,
+        done: String,
+    },
 }
 
 /// A repository and the refresh of its status.
@@ -1455,6 +1502,7 @@ impl App {
                 self.log_details_done(out, &root, &key, hash, result);
             }
             Pending::Markers { root, plan } => self.markers_done(out, &root, plan, result),
+            Pending::Replay { root, done } => self.replay_done(out, &root, done, result),
             Pending::LastMessage { root, kind } => match result {
                 Ok(o) if o.success() && self.settings.message_document => {
                     let text = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -1610,6 +1658,8 @@ impl App {
             After::Marks(_) => {}
             After::Commit(kind) => self.commit(out, root, &repo, kind),
             After::Log(path) => self.log_open(out, root, path, None),
+            After::OnCommit(act, hash) => self.on_commit(out, root, &repo, act, &hash),
+            After::Stopped(why) => self.stopped(out, root, &repo, why),
             After::SwitchBranch => {
                 let mut branches: Vec<(String, bool)> = repo
                     .local_branches()
@@ -2255,6 +2305,19 @@ impl App {
             (Question::Force { root }, Answer::Confirmed(true)) => {
                 self.remote(out, &root, RemoteOp::Push(Push::ForceWithLease));
             }
+            (Question::Reset { root, hash, on }, Answer::Picked(p)) => {
+                if let Some(i) = p.first() {
+                    self.reset(out, &root, &hash, &on, *i);
+                }
+            }
+            (
+                Question::Replay {
+                    root,
+                    command,
+                    done,
+                },
+                Answer::Confirmed(true),
+            ) => self.replay(out, &root, command, done),
             (Question::Branch { root, branches }, Answer::Picked(p)) => {
                 let Some((name, remote)) = p.first().and_then(|i| branches.get(*i as usize)) else {
                     return;

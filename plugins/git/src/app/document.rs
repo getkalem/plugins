@@ -3,8 +3,9 @@
 //! written again whenever the repository changes. Its keys need nothing
 //! learned first, as lazygit's: Tab and the arrows fold and unfold its
 //! sections, files and hunks, Enter opens what is under the cursor,
-//! Alt+Enter (or `?`) lists what can be done with it, Escape (or `q`)
-//! closes it; magit's letters act on it (`s`, `u`, `x`, `c c`, `P p`…).
+//! Alt+Enter (or `?`) lists what can be done with it (a commit's menu is
+//! `commit_menu.rs`), Escape (or `q`) closes it; magit's letters act on it
+//! (`s`, `u`, `x`, `c c`, `P p`…).
 
 use std::collections::HashSet;
 
@@ -346,6 +347,19 @@ impl App {
         };
         let head = doc.head.min(content.text.len());
         let anchor = doc.anchor.min(content.text.len());
+        // An entry of a commit's menu, on the commit under the cursor.
+        if let Some(act) = commit_menu::CommitAct::of(id) {
+            match target::at(&content, head) {
+                Some(Target::Commit(hash)) => {
+                    if let Some(s) = self.repos.get_mut(root) {
+                        s.keep = Some(keep_at(&content, head, false));
+                    }
+                    self.act_on_commit(out, root, act, &hash);
+                }
+                _ => commit_menu::no_commit(out),
+            }
+            return true;
+        }
         match id {
             "git.status" | "git.refresh" => {
                 if let Some(s) = self.repos.get_mut(root) {
@@ -1073,6 +1087,11 @@ impl App {
             }
             Some(Target::Branch(b)) => add("git.visit", format!("Switch to {b}")),
             Some(Target::Stash(n)) => add("git.visit", format!("Apply, pop or drop stash@{{{n}}}")),
+            Some(Target::Commit(hash)) => {
+                for (id, label) in self.commit_entries(root, hash, true) {
+                    add(id, label);
+                }
+            }
             _ => {}
         }
         let general: &[&'static str] = &[

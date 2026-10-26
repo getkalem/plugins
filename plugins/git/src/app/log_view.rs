@@ -3,9 +3,11 @@
 //! from that commit, else the branch's: one commit a line, 200 at a time,
 //! a last line loading 200 more. Enter shows a commit's view; Right
 //! unfolds a commit's message and stat under its line, Left folds it, Tab
-//! does either; Escape and q close it. It is written as a commit's view is
-//! (under the key `log:WHAT` in place of a hash), and takes its keys.
+//! does either; Alt+Enter is the commit's menu (`commit_menu.rs`); Escape
+//! and q close it. It is written as a commit's view is (under the key
+//! `log:WHAT` in place of a hash), and takes its keys.
 
+use super::commit_menu::{self, CommitAct};
 use super::{App, Doc, Effect, Level, Pending};
 use crate::content::Content;
 use crate::git::cmd::{self, LogSpec};
@@ -28,6 +30,13 @@ pub(super) struct ShownLog {
     log: Log,
     folds: Folds,
     content: Content,
+}
+
+impl ShownLog {
+    /// Its commit `hash`, when it is loaded.
+    pub(super) fn commit(&self, hash: &str) -> Option<&log::Commit> {
+        self.log.commits().find(|c| c.hash == hash)
+    }
 }
 
 /// Whether the key of a commit's view is a log's.
@@ -166,6 +175,14 @@ impl App {
             Some(Target::Commit(hash)) => Some(hash),
             _ => None,
         };
+        // An entry of the commit's menu, on the commit under the cursor.
+        if let Some(act) = CommitAct::of(id) {
+            match commit {
+                Some(hash) => self.act_on_commit(out, root, act, &hash),
+                None => commit_menu::no_commit(out),
+            }
+            return true;
+        }
         match id {
             "git.close" => {
                 if let Some(s) = self.repos.get_mut(root) {
@@ -232,8 +249,9 @@ impl App {
                     self.render_log(out, root, key, false, Some(to));
                 }
             }
-            "git.dispatch" | "git.cycle" => out.push(Effect::Notify(
-                "In a log: Enter shows the commit, Right and Left show and hide its message, Alt+Up and Alt+Down step, Escape or q closes; Enter on the last line loads more"
+            "git.dispatch" => self.view_menu(out, root, commit.as_deref(), doc, true),
+            "git.cycle" => out.push(Effect::Notify(
+                "In a log: Enter shows the commit, Right and Left show and hide its message, Alt+Up and Alt+Down step, Alt+Enter lists what can be done with it, Escape or q closes; Enter on the last line loads more"
                     .into(),
                 Level::Info,
             )),

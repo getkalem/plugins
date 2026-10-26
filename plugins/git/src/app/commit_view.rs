@@ -2,9 +2,11 @@
 //! status runs `git show` and writes its header, stat and diff as a
 //! read-only document of the kind `git-commit-view`, highlighted as
 //! `diff`. The arrows and Tab fold its files and hunks, Enter on a diff
-//! line opens the file at that line, Escape and q close it; nothing is
-//! staged from it.
+//! line opens the file at that line, Alt+Enter lists what can be done with
+//! the commit (`commit_menu.rs`), Escape and q close it; nothing is staged
+//! from it.
 
+use super::commit_menu::CommitAct;
 use super::{App, CommandInfo, Doc, Effect, Level, Pending, ShownCommit, command_info, log_view};
 use crate::content::{Content, Region};
 use crate::git::cmd;
@@ -158,6 +160,15 @@ impl App {
         if log_view::is_log(hash) {
             return self.log_command(out, root, hash, id, doc);
         }
+        // The commit's menu and its entries, on the commit shown.
+        if let Some(act) = CommitAct::of(id) {
+            self.act_on_commit(out, root, act, hash);
+            return true;
+        }
+        if id == "git.dispatch" {
+            self.view_menu(out, root, Some(hash), doc, false);
+            return true;
+        }
         let Some(content) = self
             .repos
             .get(root)
@@ -199,8 +210,8 @@ impl App {
                     self.render_commit(out, root, hash, false, Some(to));
                 }
             }
-            "git.dispatch" | "git.cycle" => out.push(Effect::Notify(
-                "In a commit: Enter opens the file at the line, Tab, Right and Left fold, Alt+Up and Alt+Down step, Escape or q closes"
+            "git.cycle" => out.push(Effect::Notify(
+                "In a commit: Enter opens the file at the line, Tab, Right and Left fold, Alt+Up and Alt+Down step, Alt+Enter lists what can be done with it, Escape or q closes"
                     .into(),
                 Level::Info,
             )),

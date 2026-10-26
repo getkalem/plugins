@@ -667,6 +667,66 @@ fn a_merge_in_conflict() {
     assert!(actions::commit("Merge\n", &CommitKind::New, false, &repo).is_err());
 }
 
+/// The commands of a commit's menu (DESIGN.md, 2.4): a check-out detaches
+/// HEAD; a revert and a cherry-pick of a merge go against its first
+/// parent; a reset is soft, mixed or hard; a fixup needs something staged.
+#[test]
+fn a_commits_commands() {
+    let mut t = T::new("commit-menu");
+    let hash = |t: &mut T, rev: &str| {
+        String::from_utf8(t.ok(&["rev-parse", rev]))
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    let run = |t: &mut T, c: &GitCommand| t.git.run(c).unwrap();
+    t.write("f", "base\n");
+    t.commit_all("Base");
+    let base = hash(&mut t, "HEAD");
+    t.ok(&["switch", "-q", "-c", "topic"]);
+    t.write("g", "g\n");
+    t.commit_all("Add g");
+    t.ok(&["switch", "-q", "main"]);
+    t.write("f", "main\n");
+    t.commit_all("Main");
+    t.ok(&["merge", "-q", "--no-ff", "--no-edit", "topic"]);
+    let merge = hash(&mut t, "HEAD");
+    // Checked out: HEAD detached there, the branch where it was.
+    let out = run(&mut t, &cmd::checkout_detached(&base));
+    assert!(out.success(), "{}", out.message());
+    assert!(t.ok(&["branch", "--show-current"]).is_empty());
+    assert_eq!(t.read("f"), "base\n");
+    t.ok(&["switch", "-q", "main"]);
+    // A merge is reverted and picked against its first parent; git
+    // refuses it otherwise.
+    assert!(!run(&mut t, &cmd::revert(&merge, false)).success());
+    let out = run(&mut t, &cmd::revert(&merge, true));
+    assert!(out.success(), "{}", out.message());
+    assert!(!t.dir.join("g").exists());
+    let subject = t.ok(&["log", "-1", "--format=%s"]);
+    assert_eq!(subject, b"Revert \"Merge branch 'topic'\"\n");
+    let out = run(&mut t, &cmd::cherry_pick(&merge, true));
+    assert!(out.success(), "{}", out.message());
+    assert_eq!(t.read("g"), "g\n");
+    // A fixup of nothing staged is refused before git is asked.
+    let repo = t.repo();
+    let fixup = CommitKind::Fixup(base.clone());
+    assert!(actions::commit("", &fixup, false, &repo).is_err());
+    // Soft: what came after is staged; mixed: it is in the files only;
+    // hard: the files as the commit has them.
+    let out = run(&mut t, &cmd::reset(cmd::Reset::Soft, &base));
+    assert!(out.success(), "{}", out.message());
+    assert_eq!(hash(&mut t, "HEAD"), base);
+    assert_eq!(t.ok(&["diff", "--cached", "--name-only"]), b"f\ng\n");
+    let out = run(&mut t, &cmd::reset(cmd::Reset::Mixed, &base));
+    assert!(out.success(), "{}", out.message());
+    assert_eq!(t.ok(&["diff", "--cached", "--name-only"]), b"");
+    assert_eq!(t.read("f"), "main\n");
+    let out = run(&mut t, &cmd::reset(cmd::Reset::Hard, &base));
+    assert!(out.success(), "{}", out.message());
+    assert_eq!(t.read("f"), "base\n");
+}
+
 #[test]
 fn the_process_log_keeps_what_ran() {
     let mut t = T::new("process");

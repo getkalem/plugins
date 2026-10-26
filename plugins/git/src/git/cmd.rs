@@ -750,6 +750,57 @@ pub fn switch_create_from(name: &str, start: &str) -> GitCommand {
     GitCommand::new(["switch", "-c", name, start])
 }
 
+/// Checks out commit `rev`, HEAD detached there and the branch left where
+/// it is; git refuses when a change of the working tree would be lost.
+pub fn checkout_detached(rev: &str) -> GitCommand {
+    GitCommand::new(["switch", "--detach", rev])
+}
+
+/// Makes commit `rev`'s changes a new commit on HEAD; a merge's, its
+/// changes against its first parent (`-m 1`). Git stops on a conflict, the
+/// cherry-pick under way.
+pub fn cherry_pick(rev: &str, merge: bool) -> GitCommand {
+    let mut args = vec!["cherry-pick"];
+    if merge {
+        args.extend(["-m", "1"]);
+    }
+    args.push(rev);
+    GitCommand::new(args)
+}
+
+/// A new commit undoing commit `rev`'s changes, with the message git
+/// makes for it (`--no-edit`); a merge's, its changes against its first
+/// parent. Git stops on a conflict, the revert under way.
+pub fn revert(rev: &str, merge: bool) -> GitCommand {
+    let mut args = vec!["revert", "--no-edit"];
+    if merge {
+        args.extend(["-m", "1"]);
+    }
+    args.push(rev);
+    GitCommand::new(args)
+}
+
+/// What a reset does to the index and the working tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reset {
+    /// Leaves both: what was staged stays staged.
+    Soft,
+    /// Leaves the working tree; the index as the commit has it.
+    Mixed,
+    /// Both as the commit has them: uncommitted changes are lost.
+    Hard,
+}
+
+/// Moves the branch, or the detached HEAD, to commit `rev`.
+pub fn reset(how: Reset, rev: &str) -> GitCommand {
+    let flag = match how {
+        Reset::Soft => "--soft",
+        Reset::Mixed => "--mixed",
+        Reset::Hard => "--hard",
+    };
+    GitCommand::new(["reset", "-q", flag, rev])
+}
+
 /// The URL of a remote.
 pub fn remote_url(remote: &str) -> GitCommand {
     GitCommand::read(["remote", "get-url", remote])

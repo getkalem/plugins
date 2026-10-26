@@ -1768,6 +1768,7 @@ fn every_key_runs_its_command_where_kalem_looks_it_up() {
             found,
             [
                 ("alt+down", "git.next"),
+                ("alt+enter", "git.dispatch"),
                 ("alt+up", "git.previous"),
                 ("enter", "git.visit"),
                 ("escape", "git.close"),
@@ -1848,6 +1849,10 @@ fn the_keys_of_a_commit_view_act_in_it_and_the_repositorys_commands_go_on() {
     ids.dedup();
     for id in ids {
         let notes = k.notes.len();
+        // Alt+Enter's menu, cancelled.
+        if id == "git.dispatch" {
+            k.answers.push_back(Answer::Picked(Vec::new()));
+        }
         k.on_commit(id, "diff --git a/a.txt");
         let refused = k.notes[notes..].iter().any(|(n, _)| {
             n.starts_with("Nothing is staged from a commit") || n.starts_with("This acts in")
@@ -1876,6 +1881,231 @@ fn the_keys_of_a_commit_view_act_in_it_and_the_repositorys_commands_go_on() {
     );
     k.on_commit("git.close", "commit ");
     assert!(k.commit_key().is_none());
+}
+
+/// The full hash of `rev`, and its short one as the plugin writes it.
+fn hashes(k: &mut Kalem, rev: &str) -> (String, String) {
+    let full = k.git_ok(&["rev-parse", rev]).trim().to_string();
+    let short = full[..7].to_string();
+    (full, short)
+}
+
+/// A commit's menu (DESIGN.md, 2.4): Alt+Enter (and `SPC g /`) reaches it
+/// in a log, a commit's view and the status. In the log it lists what can
+/// be done with the commit under the cursor, then the repository's
+/// commands; Cherry-pick makes the commit's changes a commit of the
+/// current branch, and one stopped on a conflict shows the status saying
+/// so, from where it goes on or is aborted.
+#[test]
+fn a_commits_menu_cherry_picks_and_a_conflict_shows_in_the_status() {
+    let vim = &["vimCommand", "vimActive"];
+    for kind in [STATUS_KIND, COMMIT_KIND] {
+        assert_eq!(resolve("alt+enter", kind, vim), ["git.dispatch"], "{kind}");
+        assert_eq!(resolve("alt+enter", kind, &[]), ["git.dispatch"], "{kind}");
+        assert_eq!(resolve("space g /", kind, vim), ["git.dispatch"], "{kind}");
+    }
+    // `?` stays Vim's search in a commit's view and a log.
+    assert!(resolve("?", COMMIT_KIND, vim).is_empty());
+    let mut k = Kalem::new("cherry-pick");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    k.git_ok(&["switch", "-q", "-c", "other"]);
+    k.write("b.txt", "b\n");
+    k.commit_all("Add b");
+    k.write("a.txt", "theirs\n");
+    k.commit_all("Theirs");
+    let (_, add_b) = hashes(&mut k, "HEAD~1");
+    // The branch's log, read on `other`; then main moves on.
+    k.command("git.log", None);
+    let log = format!("{}#log:HEAD", k.root());
+    k.git_ok(&["switch", "-q", "main"]);
+    k.write("a.txt", "ours\n");
+    k.commit_all("Ours");
+    k.command("git.refresh", None);
+    // Alt+Enter on `Add b`: its entries, then the repository's commands.
+    // Cherry-pick.
+    k.answers.push_back(Answer::Picked(vec![2]));
+    k.in_view(&log, "git.dispatch", "Add b");
+    let menu = k.asked.last().unwrap().clone();
+    assert!(
+        menu.starts_with(&format!(
+            "Git: Show {add_b} | Check out {add_b}, HEAD detached there | Cherry-pick {add_b} onto main | Revert {add_b}… | Reset main to {add_b} (soft, mixed, hard)… | Fix up {add_b} with what is staged | Show or hide its message and files | Status | Commit | "
+        )),
+        "{menu}"
+    );
+    assert_eq!(k.last_note(), format!("Cherry-picked {add_b} onto main"));
+    assert_eq!(k.git_ok(&["log", "-1", "--format=%s"]).trim(), "Add b");
+    assert_eq!(k.read("b.txt"), "b\n");
+    // `Theirs` changes the line `Ours` changed: the cherry-pick stops, and
+    // the status, shown, says so.
+    k.answers.push_back(Answer::Picked(vec![2]));
+    k.in_view(&log, "git.dispatch", "Theirs");
+    assert!(
+        k.last_note().starts_with("The cherry-pick stopped: "),
+        "{}",
+        k.last_note()
+    );
+    assert_eq!(k.notes.last().unwrap().1, Level::Warning);
+    assert_eq!(k.showed.last(), Some(&k.root()));
+    assert!(
+        k.doc_text()
+            .contains("\n Cherry-picking (1 unmerged)  (Enter: continue, skip, abort)\n"),
+        "{}",
+        k.doc_text()
+    );
+    // Another meanwhile is refused before git is asked.
+    k.in_view(&log, "git.cherryPick", "Add b");
+    assert!(
+        k.last_note().starts_with("A cherry-pick is under way"),
+        "{}",
+        k.last_note()
+    );
+    // Aborted from the status.
+    k.answers.push_back(Answer::Confirmed(true));
+    k.on("git.abort", " Cherry-picking");
+    assert_eq!(k.last_note(), "Aborted the cherry-pick");
+    assert_eq!(k.read("a.txt"), "ours\n");
+    assert_eq!(k.git_ok(&["log", "-1", "--format=%s"]).trim(), "Add b");
+}
+
+/// The rest of a commit's menu, from the status's Commits tab and from a
+/// commit's view: Revert asks first; Reset offers soft, mixed and hard,
+/// hard asking first and saying what is lost; Fixup needs something
+/// staged; Check out detaches HEAD, git refusing when a change would be
+/// lost.
+#[test]
+fn a_commits_menu_reverts_resets_fixes_up_and_checks_out() {
+    let mut k = Kalem::new("commit-menu");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    k.write("b.txt", "b\n");
+    k.commit_all("Add b");
+    let (first, first_short) = hashes(&mut k, "HEAD~1");
+    let (_, add_b) = hashes(&mut k, "HEAD");
+    k.command("git.status", Some("a.txt"));
+    k.on("git.tabCommits", "repo → main");
+    // Not on a commit: said.
+    k.on("git.revertCommit", "repo → main");
+    assert!(
+        k.last_note().starts_with("No commit here"),
+        "{}",
+        k.last_note()
+    );
+    // The status's menu on a commit lists its entries first. Revert asks,
+    // and no leaves the branch as it is.
+    k.answers.push_back(Answer::Picked(vec![3]));
+    k.answers.push_back(Answer::Confirmed(false));
+    k.on("git.dispatch", &add_b);
+    let menu = &k.asked[k.asked.len() - 2];
+    assert!(
+        menu.starts_with(&format!(
+            "Git: Show {add_b} | Check out {add_b}, HEAD detached there | Cherry-pick {add_b} onto main | Revert {add_b}… | "
+        )),
+        "{menu}"
+    );
+    assert_eq!(
+        k.asked.last().unwrap(),
+        &format!("Revert {add_b} (Add b)? A new commit on main undoes its changes.")
+    );
+    assert_eq!(k.git_ok(&["rev-list", "--count", "HEAD"]).trim(), "2");
+    k.answers.push_back(Answer::Picked(vec![3]));
+    k.answers.push_back(Answer::Confirmed(true));
+    k.on("git.dispatch", &add_b);
+    assert_eq!(k.last_note(), format!("Reverted {add_b} on main"));
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%s"]).trim(),
+        "Revert \"Add b\""
+    );
+    assert!(!k.dir.join("b.txt").exists());
+    // Fix up: with nothing staged, said; staged, a `fixup!` commit.
+    k.on("git.fixup", &first_short);
+    assert_eq!(
+        k.last_note(),
+        format!(
+            "Nothing is staged to fix up {first_short} with: stage changes first (s in the status, SPC g S in a file)"
+        )
+    );
+    k.write("a.txt", "one, fixed\n");
+    k.git_ok(&["add", "a.txt"]);
+    k.on("git.fixup", &first_short);
+    assert_eq!(
+        k.last_note(),
+        format!("Made a fixup commit for {first_short}")
+    );
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%s"]).trim(),
+        "fixup! First"
+    );
+    // Reset soft: the branch at First, what came after it staged.
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.resetHere", &first_short);
+    assert_eq!(
+        k.asked.last().unwrap(),
+        &format!("Reset main to {first_short} (First): Soft | Mixed | Hard…")
+    );
+    assert_eq!(
+        k.last_note(),
+        format!("Reset main to {first_short}, the files and what is staged kept")
+    );
+    assert_eq!(k.git_ok(&["rev-parse", "HEAD"]).trim(), first);
+    assert_eq!(k.git_ok(&["diff", "--cached", "--name-only"]), "a.txt\n");
+    // In First's view, its menu has no Show, and the log from it. Mixed:
+    // nothing staged, the file kept.
+    k.on("git.visit", &first_short);
+    k.answers.push_back(Answer::Picked(vec![3]));
+    k.answers.push_back(Answer::Picked(vec![1]));
+    k.on_commit("git.dispatch", "commit ");
+    let menu = &k.asked[k.asked.len() - 2];
+    assert!(
+        menu.starts_with(&format!(
+            "Git: Check out {first_short}, HEAD detached there | "
+        )),
+        "{menu}"
+    );
+    assert!(
+        menu.contains(&format!(" | The log from {first_short} | Status | ")),
+        "{menu}"
+    );
+    assert_eq!(k.git_ok(&["diff", "--cached", "--name-only"]), "");
+    assert_eq!(k.read("a.txt"), "one, fixed\n");
+    // Hard asks first, saying what is lost; no keeps the change.
+    k.answers.push_back(Answer::Picked(vec![2]));
+    k.answers.push_back(Answer::Confirmed(false));
+    k.on_commit("git.resetHere", "commit ");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        &format!(
+            "Reset main hard to {first_short}? Uncommitted changes are lost: the files become as {first_short} has them."
+        )
+    );
+    assert_eq!(k.read("a.txt"), "one, fixed\n");
+    k.answers.push_back(Answer::Picked(vec![2]));
+    k.answers.push_back(Answer::Confirmed(true));
+    k.on_commit("git.resetHere", "commit ");
+    assert_eq!(k.last_note(), format!("Reset main hard to {first_short}"));
+    assert_eq!(k.read("a.txt"), "one\n");
+    // Check out: a change it would lose, git refuses, and it is said.
+    k.write("a.txt", "two\n");
+    k.commit_all("Second");
+    let (second, _) = hashes(&mut k, "HEAD");
+    k.write("a.txt", "mine\n");
+    k.on_commit("git.checkoutCommit", "commit ");
+    assert_eq!(k.notes.last().unwrap().1, Level::Error, "{:?}", k.notes);
+    assert_eq!(k.git_ok(&["branch", "--show-current"]).trim(), "main");
+    // Without it, HEAD is detached at First, the branch left at Second.
+    k.write("a.txt", "two\n");
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on_commit("git.dispatch", "commit ");
+    assert_eq!(
+        k.last_note(),
+        format!(
+            "Checked out {first_short}: HEAD is detached there (b b switches back to a branch)"
+        )
+    );
+    assert_eq!(k.git_ok(&["rev-parse", "HEAD"]).trim(), first);
+    assert_eq!(k.git_ok(&["branch", "--show-current"]).trim(), "");
+    assert_eq!(k.git_ok(&["rev-parse", "main"]).trim(), second);
+    assert_eq!(k.read("a.txt"), "one\n");
 }
 
 #[test]

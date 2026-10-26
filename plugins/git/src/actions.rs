@@ -472,6 +472,14 @@ pub fn commit(
     if *kind == CommitKind::New && !staged {
         return Err("Nothing is staged: stage changes first (SPC g S)".into());
     }
+    if let CommitKind::Fixup(h) = kind
+        && !staged
+    {
+        return Err(format!(
+            "Nothing is staged to fix up {} with: stage changes first (s in the status, SPC g S in a file)",
+            h.get(..7).unwrap_or(h)
+        ));
+    }
     if matches!(
         kind,
         CommitKind::Amend | CommitKind::Extend | CommitKind::Reword
