@@ -389,6 +389,80 @@ fn paths_are_taken_literally() {
     assert!(t.repo().entries(Section::Staged).is_empty());
 }
 
+/// The user's diff settings change nothing the plugin reads or applies:
+/// with an external diff (difftastic's way) or colors always the diffs
+/// had no hunks, without the a/ b/ prefixes staging failed. The tests
+/// run git without the user's configuration, so these are the
+/// repository's own here.
+#[test]
+fn the_users_diff_settings_change_nothing() {
+    let mut t = T::new("user-config");
+    let base = lines(40);
+    t.write("f.txt", &base);
+    t.write(".gitattributes", "*.txt diff=upper\n");
+    t.commit_all("Base");
+    for (key, value) in [
+        ("diff.external", "echo"),
+        ("color.ui", "always"),
+        ("color.diff", "always"),
+        ("diff.noprefix", "true"),
+        ("diff.mnemonicPrefix", "true"),
+        ("diff.upper.textconv", "tr a-z A-Z"),
+    ] {
+        t.ok(&["config", key, value]);
+    }
+    let changed = base
+        .replace("line 2\n", "line two\n")
+        .replace("line 30\n", "line thirty\n");
+    t.write("f.txt", &changed);
+    t.write("new.txt", "new\n");
+    let (repo, _) = t.repo_with(&[
+        (Section::Unstaged, "f.txt"),
+        (Section::Untracked, "new.txt"),
+    ]);
+    let d = repo.diff(Section::Unstaged, "f.txt").unwrap();
+    assert_eq!(d.path(), "f.txt");
+    assert_eq!(d.hunks.len(), 2, "{d:?}");
+    assert!(d.hunks[0].lines.iter().any(|l| l.text == b"line two"));
+    let new = repo.diff(Section::Untracked, "new.txt").unwrap();
+    assert_eq!(new.hunks.len(), 1, "{new:?}");
+    // A hunk and a line staged, applied as git printed them.
+    let hunk = Target::Hunk {
+        section: Section::Unstaged,
+        path: "f.txt".into(),
+        hunk: 1,
+    };
+    t.act(Act::Stage, &[hunk], &repo).unwrap();
+    assert_eq!(t.index("f.txt"), base.replace("line 30\n", "line thirty\n"));
+    let (repo, _) = t.repo_with(&[(Section::Unstaged, "f.txt")]);
+    let added = repo.diff(Section::Unstaged, "f.txt").unwrap().hunks[0]
+        .lines
+        .iter()
+        .position(|l| l.kind == LineKind::Added)
+        .unwrap();
+    let line = Target::Lines {
+        section: Section::Unstaged,
+        path: "f.txt".into(),
+        hunk: 0,
+        lines: vec![added],
+    };
+    t.act(Act::Stage, &[line], &repo).unwrap();
+    assert!(t.index("f.txt").contains("line 2\nline two\n"));
+    // The marks beside the lines, and a commit's view.
+    let out = t
+        .git
+        .run(&kalem_plugin_git::gutter::command("f.txt", true))
+        .unwrap();
+    let d = diff::parse(&out.stdout).unwrap();
+    assert_eq!(d.files.len(), 1, "{}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(d.files[0].hunks.len(), 2);
+    t.commit_all("Changed");
+    let out = t.git.run(&cmd::show("HEAD", 3)).unwrap();
+    let d = diff::parse(&out.stdout).unwrap();
+    let f = d.files.iter().find(|f| f.path() == "f.txt").unwrap();
+    assert_eq!(f.hunks.len(), 2);
+}
+
 #[test]
 fn reverting_staged_changes_keeps_the_unstaged_ones() {
     let mut t = T::new("revert-staged");

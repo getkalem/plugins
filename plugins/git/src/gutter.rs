@@ -23,6 +23,7 @@ pub fn command(path: &str, head: bool) -> GitCommand {
         "diff".to_string(),
         "--no-color".to_string(),
         "--no-ext-diff".to_string(),
+        "--no-textconv".to_string(),
         "-U0".to_string(),
     ];
     if head {

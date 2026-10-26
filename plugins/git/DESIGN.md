@@ -338,7 +338,7 @@ A git command that fails: a notification with the first line of its standard err
 
 ## 4. Running git: the commands
 
-Appendix B lists every command line with its flags. The rules: `--no-pager` and `-c color.ui=never` always; `GIT_OPTIONAL_LOCKS=0` for the commands that only read, so that a refresh never takes the index's lock from a command the user runs; `-z` and `--porcelain=v2` for status, `-z` for every list of paths; `--format=` with `%x00` separators for `git log`; `--porcelain` for blame; `-c core.quotepath=off`; `--no-edit` for merge, pull, revert and cherry-pick so that git never opens an editor; `GIT_EDITOR=false` as a guard. Paths cross as bytes and are shown lossily when not UTF-8. The plugin never runs a shell and never passes a user's text as an argument that git could read as an option: paths after `--`, refs checked against `git check-ref-format`.
+Appendix B lists every command line with its flags. The rules: `--no-pager`, `--literal-pathspecs` (a path is that file, never a pattern) and `-c color.ui=never` always; the user's diff settings set back where they change what the plugin reads or applies (`-c color.diff=false`, the `a/` and `b/` prefixes, `--no-ext-diff --no-textconv` on each diff); `GIT_OPTIONAL_LOCKS=0` for the commands that only read, so that a refresh never takes the index's lock from a command the user runs; `-z` and `--porcelain=v2` for status, `-z` for every list of paths; `--format=` with `%x00` separators for `git log`; `--porcelain` for blame; `-c core.quotepath=off`; `--no-edit` for merge, pull, revert and cherry-pick so that git never opens an editor; `GIT_EDITOR=false` as a guard. Paths cross as bytes and are shown lossily when not UTF-8. The plugin never runs a shell and never passes a user's text as an argument that git could read as an option: paths after `--`, refs checked against `git check-ref-format`.
 
 ## 5. Keys
 
@@ -803,7 +803,7 @@ The subset, for the planning of that task: `set-gutter(path, marks: list<line-ma
 
 ## Appendix B: the git commands used
 
-Every run has `--no-pager`, `-c color.ui=never`, `-c core.quotepath=off`, `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=false`, and `LC_ALL=C` where the output is parsed.
+Every run has `--no-pager`, `--literal-pathspecs`, `-c color.ui=never`, `-c color.diff=false`, `-c diff.noprefix=false`, `-c diff.mnemonicPrefix=false`, `-c diff.srcPrefix=a/`, `-c diff.dstPrefix=b/`, `-c core.quotepath=off`, `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=false`, and `LC_ALL=C` where the output is parsed.
 
 | Purpose | Command |
 |---|---|
@@ -811,7 +811,7 @@ Every run has `--no-pager`, `-c color.ui=never`, `-c core.quotepath=off`, `GIT_T
 | Version | `git --version` |
 | Status | `git status --porcelain=v2 --branch --show-stash -z --untracked-files=SETTING` |
 | In progress | `git cat-file --batch-check` with `MERGE_HEAD`, `REBASE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` and `refs/bisect/bad` on its standard input says, in one process, which operation is under way (a line `NAME missing` for each absent one). A rebase's step (`3/7`) lives in `rebase-merge/msgnum` and `rebase-merge/end`, plain files of the git dir that only `fs` could read; phase 2 takes the step from `git status`'s long form under `LC_ALL=C` (`rebase in progress; onto HASH`, `Last command done (N commands done)`), or asks `fs:read:workspace` for the two files if the owner prefers the porcelain-only rule kept strictly |
-| Diff of a file | `git diff -U3 -- PATH` · `git diff --cached -U3 -- PATH` · `git diff --no-index -U3 -- /dev/null PATH` (untracked) |
+| Diff of a file | `git diff -U3 -- PATH` · `git diff --cached -U3 -- PATH` · `git diff --no-index -U3 -- /dev/null PATH` (untracked), each with `--no-ext-diff --no-textconv` |
 | Counts | `git diff --numstat -z -M` · `git diff --cached --numstat -z -M` |
 | Stage | `git add -- PATHS` · `git add -u` (the Unstaged heading) · `git add -A` · `git apply --cached -` (a patch on stdin) |
 | Unstage | `git restore --staged -- PATHS` (a rename's both paths) · `git rm --cached -r -q -- PATHS` (no commit yet) · `git reset -q` (everything) · `git apply --cached --reverse -` |
@@ -822,7 +822,7 @@ Every run has `--no-pager`, `-c color.ui=never`, `-c core.quotepath=off`, `GIT_T
 | Log | `git log --format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%D%x00 -n 200 [--skip N] [--graph] [--follow -- PATH] [HASH]` · `git show --format=%B --stat HASH` (a commit unfolded in the log) |
 | Unpushed, unpulled | `git log … @{upstream}..HEAD` · `git log … HEAD..@{upstream}` |
 | Tag | `git describe --tags --long`: `TAG-N-gHASH`, the tag and the commits since it in one process |
-| Commit view | `git show --format=fuller --stat --patch -U3 HASH` |
+| Commit view | `git show --format=fuller --stat --patch -U3 --no-ext-diff --no-textconv HASH` |
 | Blame | `git blame --porcelain [REV] -- PATH` |
 | Revision | `git log --format=%H --follow -- PATH` · `git show REV:PATH` · `git show HEAD:PATH` (a deleted file opened) |
 | Index version | `git show :PATH` |

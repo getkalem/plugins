@@ -12,12 +12,25 @@ use std::fmt;
 
 /// Options before every command: no pager, no colors, paths unquoted,
 /// and paths taken literally, as Magit does (`notes?.md` is that file,
-/// not every file its pattern matches).
+/// not every file its pattern matches). A diff is as the plugin reads it
+/// and `git apply` takes it back whatever the user's settings: without
+/// colors (`color.diff=always` wins over `color.ui`) and with the `a/`
+/// and `b/` prefixes (`diff.noprefix` made a staged hunk fail).
 pub const GLOBAL: &[&str] = &[
     "--no-pager",
     "--literal-pathspecs",
     "-c",
     "color.ui=never",
+    "-c",
+    "color.diff=false",
+    "-c",
+    "diff.noprefix=false",
+    "-c",
+    "diff.mnemonicPrefix=false",
+    "-c",
+    "diff.srcPrefix=a/",
+    "-c",
+    "diff.dstPrefix=b/",
     "-c",
     "core.quotepath=off",
 ];
@@ -284,10 +297,16 @@ pub fn numstat(staged: bool) -> GitCommand {
     GitCommand::read(args)
 }
 
+/// What a diff the plugin reads is made without: the user's external diff
+/// program (difftastic answers with no hunks) and text conversions (the
+/// lines would not be the file's).
+const PLAIN_DIFF: [&str; 2] = ["--no-ext-diff", "--no-textconv"];
+
 /// The diff of one file: the staged changes, or the unstaged ones. A
 /// renamed file names its old path too, so the diff shows the rename.
 pub fn diff(path: &str, from: Option<&str>, staged: bool, context: u32) -> GitCommand {
     let mut args = vec!["diff".to_string(), format!("-U{context}"), "-M".to_string()];
+    args.extend(PLAIN_DIFF.map(String::from));
     if staged {
         args.push("--cached".into());
     }
@@ -305,21 +324,24 @@ pub fn diff_untracked(path: &str, context: u32) -> GitCommand {
         "--no-index".to_string(),
         format!("-U{context}"),
     ];
+    args.extend(PLAIN_DIFF.map(String::from));
     paths(&mut args, ["/dev/null", path]);
     GitCommand::read(args)
 }
 
 /// A commit: its header, its stat and its diff.
 pub fn show(rev: &str, context: u32) -> GitCommand {
-    GitCommand::read([
+    let mut args = vec![
         "show".to_string(),
         "--format=fuller".to_string(),
         "--stat".to_string(),
         "--patch".to_string(),
         format!("-U{context}"),
-        rev.to_string(),
-        "--".to_string(),
-    ])
+    ];
+    args.extend(PLAIN_DIFF.map(String::from));
+    args.push(rev.to_string());
+    args.push("--".to_string());
+    GitCommand::read(args)
 }
 
 /// The blame of a file, as it is or at `rev`.
