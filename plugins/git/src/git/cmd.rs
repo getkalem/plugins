@@ -526,10 +526,12 @@ pub enum CommitKind {
 pub const SCISSORS: &str = " ------------------------ >8 ------------------------";
 
 /// A commit with `message` on the standard input, cut at the scissors line
-/// already ([`cut_at_scissors`]); git strips its comment lines and
-/// trailing blank lines, as it does a message the user edited. (With
-/// `-F`, git takes a message as not edited, so `--cleanup=scissors` would
-/// keep the comment lines.)
+/// already ([`cut_at_scissors`]). The message is asked in a prompt, which
+/// has no comment lines, and an amended commit's body is kept as it was:
+/// a line starting with `#` is the message's own (`#123 Fix the crash`),
+/// so git trims blank lines and trailing spaces only
+/// (`--cleanup=whitespace`); `strip` refused that subject as empty and
+/// dropped such lines of a body.
 pub fn commit(message: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
     let mut args = vec!["commit".to_string()];
     match kind {
@@ -551,7 +553,7 @@ pub fn commit(message: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
     match kind {
         CommitKind::Extend | CommitKind::Fixup(_) => GitCommand::new(args),
         CommitKind::New | CommitKind::Amend | CommitKind::Reword => {
-            args.push("--cleanup=strip".into());
+            args.push("--cleanup=whitespace".into());
             args.push("-F".into());
             args.push("-".into());
             GitCommand::new(args).with_stdin(message.as_bytes().to_vec())
@@ -746,7 +748,7 @@ mod tests {
     fn a_commit_message_goes_on_standard_input() {
         let c = commit("Fix it\n", &CommitKind::New, false);
         assert_eq!(c.stdin.as_deref(), Some(&b"Fix it\n"[..]));
-        assert!(c.args.contains(&"--cleanup=strip".to_string()));
+        assert!(c.args.contains(&"--cleanup=whitespace".to_string()));
         let c = commit("", &CommitKind::Extend, true);
         assert_eq!(c.args, ["commit", "--amend", "--no-edit", "--signoff"]);
         assert_eq!(c.stdin, None);

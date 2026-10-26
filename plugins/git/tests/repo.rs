@@ -512,8 +512,10 @@ fn committing_amending_and_the_log() {
     t.write("a", "a\n");
     t.ok(&["add", "a"]);
     let repo = t.repo();
+    // A line starting with `#` is the message's own; blank lines at the
+    // end and trailing spaces go.
     let plan = actions::commit(
-        "First\n\nBody line.\n# a comment\n",
+        "First\n\nBody line.  \n#42 closes it\n\n\n",
         &CommitKind::New,
         false,
         &repo,
@@ -521,7 +523,7 @@ fn committing_amending_and_the_log() {
     .unwrap();
     native::run_plan(&mut t.git, &plan.commands).unwrap();
     let message = String::from_utf8(t.ok(&["log", "-1", "--format=%B"])).unwrap();
-    assert_eq!(message.trim_end(), "First\n\nBody line.");
+    assert_eq!(message, "First\n\nBody line.\n#42 closes it\n\n");
     // Nothing staged: refused before git is asked.
     let repo = t.repo();
     assert!(actions::commit("Second\n", &CommitKind::New, false, &repo).is_err());

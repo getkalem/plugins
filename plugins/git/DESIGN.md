@@ -817,7 +817,7 @@ Every run has `--no-pager`, `--literal-pathspecs`, `-c color.ui=never`, `-c colo
 | Unstage | `git restore --staged -- PATHS` (a rename's both paths) · `git rm --cached -r -q -- PATHS` (no commit yet) · `git reset -q` (everything) · `git apply --cached --reverse -` |
 | Discard | `git restore -- PATHS` · `git restore --source=HEAD --staged --worktree -- PATHS` (a staged file without unstaged changes) · `git apply --reverse -` (a hunk, lines) · the same then `git apply --cached --reverse -` (a staged hunk, lines, or a staged file with unstaged changes: the working tree first, so that nothing changes when it differs there). Every `apply` adds `--unidiff-zero` when the diffs have no context lines |
 | Delete | `git clean -f -- PATH` (untracked) · `git rm -- PATH` (tracked) |
-| Commit | `git commit --cleanup=strip -F -`, the message cut at the scissors line · `--amend` · `--amend --no-edit` · `--fixup=HASH` · `--signoff` |
+| Commit | `git commit --cleanup=whitespace -F -`, the message cut at the scissors line: asked in a prompt, which has no comment lines, so a line starting with `#` is kept (`#123 Fix the crash`, an amended body's `# Why`); `--cleanup=strip` when the message is the document of 2.4, with its comments · `--amend` · `--amend --no-edit` · `--fixup=HASH` · `--signoff` |
 | Message template | `git config --get commit.template` · `git log -1 --format=%B` (amend, reword) |
 | Log | `git log --format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%D%x00 -n 200 [--skip N] [--graph] [--follow -- PATH] [HASH]` · `git show --format=%B --stat HASH` (a commit unfolded in the log) |
 | Unpushed, unpulled | `git log … @{upstream}..HEAD` · `git log … HEAD..@{upstream}` |

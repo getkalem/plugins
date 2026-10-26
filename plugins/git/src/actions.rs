@@ -429,13 +429,10 @@ pub fn commit(
     })
 }
 
-/// Whether a message is empty once git cleans it: comment lines and what
-/// follows the scissors line left out.
+/// Whether a message is empty once git cleans it: blank up to the
+/// scissors line. A line starting with `#` is text (see [`cmd::commit`]).
 pub fn message_is_empty(message: &str) -> bool {
-    cmd::cut_at_scissors(message, '#')
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .all(|l| l.trim().is_empty())
+    cmd::cut_at_scissors(message, '#').trim().is_empty()
 }
 
 #[cfg(test)]
@@ -620,12 +617,18 @@ mod tests {
     #[test]
     fn commits() {
         let r = repo();
-        assert!(commit("# only a comment\n", &CommitKind::New, false, &r).is_err());
+        assert!(commit(" \n\n", &CommitKind::New, false, &r).is_err());
         let p = commit("Fix\n", &CommitKind::New, false, &r).unwrap();
         assert_eq!(p.done, "Committed");
+        // A line starting with `#` is the message's own.
+        let p = commit("#123 Fix the crash\n", &CommitKind::New, false, &r).unwrap();
+        assert_eq!(
+            p.commands[0].stdin.as_deref(),
+            Some(&b"#123 Fix the crash\n"[..])
+        );
         assert!(message_is_empty(
-            "\n# x\n# ------------------------ >8 ------------------------\ndiff"
+            "\n \n# ------------------------ >8 ------------------------\ndiff"
         ));
-        assert!(!message_is_empty("Subject\n# x"));
+        assert!(!message_is_empty("# Why\n"));
     }
 }

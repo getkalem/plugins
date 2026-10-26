@@ -506,6 +506,41 @@ fn commit_asks_for_its_message() {
     assert_eq!(k.git_ok(&["rev-list", "--count", "HEAD"]).trim(), "1");
 }
 
+/// A line starting with `#` is the message's own: "#123 Fix the crash"
+/// was refused as empty, and rewording dropped the body's "# Why" and
+/// "#42 closes it".
+#[test]
+fn a_message_keeps_its_lines_starting_with_a_hash() {
+    let mut k = Kalem::new("hash");
+    k.write("a.txt", "one\n");
+    k.command("git.stageFile", Some("a.txt"));
+    k.answers
+        .push_back(Answer::Text(Some("#123 Fix the crash".into())));
+    k.command("git.commit", Some("a.txt"));
+    assert_eq!(k.last_note(), "Committed");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%s"]).trim(),
+        "#123 Fix the crash"
+    );
+    k.write("a.txt", "two\n");
+    k.git_ok(&[
+        "commit",
+        "-q",
+        "-a",
+        "-m",
+        "Second\n\n# Why\nBecause.\n\n#42 closes it",
+    ]);
+    k.answers
+        .push_back(Answer::Text(Some("Second, reworded".into())));
+    k.command("git.reword", Some("a.txt"));
+    assert_eq!(k.offered.last().unwrap().as_deref(), Some("Second"));
+    assert_eq!(k.last_note(), "Reworded the last commit");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%B"]),
+        "Second, reworded\n\n# Why\nBecause.\n\n#42 closes it\n\n"
+    );
+}
+
 /// A bare repository beside the test's, its `origin`.
 fn with_origin(k: &mut Kalem) -> String {
     let remote = k
