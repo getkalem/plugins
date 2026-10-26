@@ -16,9 +16,9 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 |---|---|
 | `1` to `4`, `[` and `]`, Enter on a tab's name | The tabs: Files, Local branches, Commits, Stash |
 | Up, Down; Alt+Up, Alt+Down | Move; the previous and next file, hunk or commit |
-| Tab; Shift+Tab | Show or hide a file's diff, fold a folder or a hunk; every diff shown (the first 100 files' when more changed), then everything as it was |
+| Tab; Shift+Tab | Show or hide a file's diff (an untracked folder's files), fold a folder or a hunk; every diff shown (the first 100 files' when more changed), then everything as it was |
 | Right, Left | Unfold (on an unfolded one: into it); fold (on a folded one: to what holds it) |
-| Enter | The obvious thing: open the file (at the diff's line), switch to the branch, show the commit, the stash's Apply, Pop or Drop; on the branch line, Switch Branch, New Branch and Stash Changes; on the upstream line, Push, Pull and Fetch |
+| Enter | The obvious thing: open the file (at the diff's line), switch to the branch, show the commit, the stash's Apply, Pop or Drop; on the branch line, Switch Branch, New Branch and Stash Changes; on the upstream line, Push, Pull and Fetch; on the line of a merge, rebase, cherry-pick or revert under way, Continue, Skip and Abort |
 | Alt+Enter, `?` | What can be done here, then every command |
 | `s`, `u` | Stage, unstage the file, the hunk, or the lines selected (a folder: what is in it); a file in conflict that still has conflict markers asks first (`S`, `a` and the panel's box too) |
 | `a` | Stage everything, untracked files too; everything staged, unstage everything (lazygit's `a`) |
@@ -28,6 +28,7 @@ Nothing has to be known first: the status's first line names the keys, Alt+Enter
 | `P p`, `p` or `F p`, `f p` | Push, pull, fetch (`P u`, `F u`, `f u`, `f a` too) |
 | `b b`, `b c` | Switch branch; a new branch, where it starts asked first (where HEAD is, another branch, a remote's) |
 | `Z z` | Stash the changes |
+| `r r`, `r s`, `r a` (`m m`, `m a`; `A A`, `A s`, `A a`) | Continue the merge, rebase, cherry-pick or revert under way (its conflicts resolved and staged); skip the commit it stopped on; abort it. Skip and abort ask first |
 | Escape, `q` | Close the status |
 
 Enter on a commit shows it as magit does: `git show`'s header (hash, author, committer, dates, the message), the stat, then its diff, highlighted as a diff with its hunks; a file of more than 10,000 changed lines, and every file past the diff's first 10,000 lines, starts folded, saying how big it is. In that view Tab, Right and Left fold the files and hunks, Alt+Up and Alt+Down step between them, Enter on a line of the diff opens the file at that line, Escape or `q` closes it; nothing is staged from it, its other letters are Vim's, and the repository's commands (commit, fetch, branches) act on the commit's repository.
@@ -48,7 +49,7 @@ The letters are magit's (as Doom's evil-collection has them: `x` discards) and a
 
 The marks beside the lines compare with the index (what `s` would stage; the setting `gutter_base = "head"` compares with the last commit) and come again on each save; the setting `gutter = false` takes them away. The log, blame, the time machine and the remote's links come later (DESIGN.md, section 8).
 
-The status is read again when it opens, after each save and when a file of the working tree changes. A change inside `.git` alone (a commit or a checkout made in a terminal) shows after `SPC g g`. A commit's message is one line, asked at the bottom (Enter commits, Escape cancels); amend keeps the old message's body.
+The status is read again when it opens, after each save and when a file of the working tree changes. A change inside `.git` alone (a commit or a checkout made in a terminal) shows when the cursor comes back into the status from another document, and after `SPC g g`. A commit's message is one line, asked at the bottom (Enter commits, Escape cancels); amend keeps the old message's body.
 
 The other settings: `confirm_discard` (Revert asks first; on), `pull` (`config`, `rebase`, `merge` or `ff-only`; with `config`, a pull of branches that have parted asks which, and writes the answer here), `fetch_prune` (on), `untracked` (`normal`, `all` or `no`), `signoff` (off), `glyphs`, `context_lines` (the lines around each change of a diff, in the status and a commit view; 3, and 0 for none), `panel` (the Git side panel; on) and `programs.git`.
 

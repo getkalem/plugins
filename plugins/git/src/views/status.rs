@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use crate::content::{Color, Content, Style};
 use crate::git::diff::{FileDiff, LineKind};
 use crate::git::log::Commit;
-use crate::git::refs::Branch;
+use crate::git::refs::{Branch, Operation};
 use crate::git::status::{Entry, Kind, State};
 use crate::model::{Folds, Repo, Section};
 use crate::refresh::TOO_LARGE;
@@ -116,6 +116,9 @@ pub fn help_line(glyphs: Glyphs, tab: Tab) -> String {
         .collect::<Vec<_>>()
         .join(sep)
 }
+
+/// The files of an untracked folder Tab lists at most.
+pub const LISTED: usize = 100;
 
 /// The local branches listed at most; `b b` offers them all.
 pub const BRANCHES_SHOWN: usize = 50;
@@ -250,9 +253,12 @@ fn status_lines(c: &mut Content, repo: &Repo, opts: &ViewOptions) {
         c.push(" ", Style::Normal);
         c.push(op.word(), RED);
         if unmerged > 0 {
-            c.line(&format!(" ({unmerged} unmerged)"), Style::Muted);
-        } else {
-            c.newline();
+            c.push(&format!(" ({unmerged} unmerged)"), Style::Muted);
+        }
+        match op {
+            Operation::Bisect => c.newline(),
+            Operation::Merge => c.line("  (Enter: continue, abort)", Style::Muted),
+            _ => c.line("  (Enter: continue, skip, abort)", Style::Muted),
         }
         c.close();
     }
@@ -456,6 +462,17 @@ fn diff_lines(
     let lines: usize = d.hunks.iter().map(|h| h.lines.len()).sum();
     if d.binary {
         c.line("  Binary file changed", Style::Muted);
+        return;
+    }
+    // An untracked folder: its files.
+    if !d.listing.is_empty() {
+        for f in d.listing.iter().take(LISTED) {
+            c.line(&format!("  {f}"), RED);
+        }
+        if d.listing.len() > LISTED {
+            let more = group(d.listing.len() - LISTED);
+            c.line(&format!("  … and {more} more files"), Style::Muted);
+        }
         return;
     }
     if d.truncated {

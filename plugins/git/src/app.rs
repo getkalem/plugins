@@ -197,6 +197,23 @@ pub const COMMANDS: &[CommandInfo] = &[
         .keys(&["space g c b"])
         .doc(&["b c"]),
     CommandInfo::new("git.stash", "Git: Stash Changes").doc(&["shift+z z"]),
+    // Magit's keys of its rebase (`r`), merge (`m`) and cherry-pick (`A`)
+    // menus, acting on the operation under way whichever it is.
+    CommandInfo::new(
+        "git.continue",
+        "Git: Continue the Merge, Rebase, Cherry-Pick or Revert",
+    )
+    .doc(&["r r", "m m", "shift+a shift+a"]),
+    CommandInfo::new(
+        "git.skip",
+        "Git: Skip the Commit a Rebase, Cherry-Pick or Revert Stopped On",
+    )
+    .doc(&["r s", "shift+a s"]),
+    CommandInfo::new(
+        "git.abort",
+        "Git: Abort the Merge, Rebase, Cherry-Pick or Revert",
+    )
+    .doc(&["r a", "m a", "shift+a a"]),
     CommandInfo::new("git.blameLine", "Git: Blame This Line").keys(&["space g shift+b"]),
     CommandInfo::new("git.refresh", "Git: Refresh"),
     CommandInfo::new("git.fileMenu", "Git: This File").keys(&["space g ."]),
@@ -464,6 +481,10 @@ pub enum Input {
     Changed(String),
     /// The plugin's settings changed.
     Settings(Settings),
+    /// The cursor came back into the status document of this repository
+    /// from another document: it is read again, so that a commit made in a
+    /// terminal shows.
+    Returned(String),
     /// The user closed the status document of this repository, or the
     /// view of one of its commits (its write was refused).
     DocumentClosed {
@@ -591,6 +612,9 @@ enum After {
     NewBranch,
     /// Stash the changes.
     Stash,
+    /// Continue, skip or abort the merge, rebase, cherry-pick or revert
+    /// under way.
+    Sequence(cmd::Sequence),
     /// Mark the changed lines of a file, by its path in the repository,
     /// from now on.
     Marks(String),
@@ -945,6 +969,12 @@ impl App {
                 };
                 self.locate(&mut out, Some(folder), Some(name), after, true);
             }
+            Input::Returned(root) => {
+                if self.repos.get(&root).is_some_and(|s| s.content.is_some()) {
+                    self.current = Some(root.clone());
+                    self.refresh(&mut out, &root, After::Nothing);
+                }
+            }
             Input::Closed(path) => {
                 for (root, paths) in &mut self.marked {
                     if let Some(rel) = path
@@ -1080,6 +1110,9 @@ impl App {
             "git.switchBranch" => After::SwitchBranch,
             "git.newBranch" => After::NewBranch,
             "git.stash" => After::Stash,
+            "git.continue" => After::Sequence(cmd::Sequence::Continue),
+            "git.skip" => After::Sequence(cmd::Sequence::Skip),
+            "git.abort" => After::Sequence(cmd::Sequence::Abort),
             "git.fetch" => After::Fetch,
             "git.pull" => After::Pull,
             "git.push" => After::Push,
@@ -1603,6 +1636,7 @@ impl App {
                     "Stashed the changes".into(),
                 );
             }
+            After::Sequence(what) => self.sequence(out, root, &repo, what),
             After::Fetch => self.remote(out, root, RemoteOp::Fetch),
             After::Pull => self.remote(out, root, RemoteOp::Pull(self.settings.pull)),
             After::Push => self.push(out, root, &repo),
@@ -1664,6 +1698,74 @@ impl App {
                 paths,
             },
         );
+    }
+
+    /// Continues, skips or aborts the merge, rebase, cherry-pick or revert
+    /// under way, as Magit's `r r`, `r s`, `r a` do: skipping and aborting
+    /// ask first, what was done to resolve it being lost.
+    fn sequence(&mut self, out: &mut Vec<Effect>, root: &str, repo: &Repo, what: cmd::Sequence) {
+        use crate::git::refs::Operation;
+        let say = |out: &mut Vec<Effect>, m: String| out.push(Effect::Notify(m, Level::Info));
+        let op = match repo.operation {
+            None => {
+                return say(
+                    out,
+                    "No merge, rebase, cherry-pick or revert is under way".into(),
+                );
+            }
+            Some(Operation::Bisect) => {
+                return say(
+                    out,
+                    "A bisection is under way: git bisect good, bad, skip or reset goes on with it"
+                        .into(),
+                );
+            }
+            Some(op) => op,
+        };
+        let name = op.name();
+        let Some(command) = cmd::sequence(op, what) else {
+            return say(
+                out,
+                format!("A {name} stops on no commit to skip: continue or abort it"),
+            );
+        };
+        let unmerged = repo.entries(Section::Unmerged).len();
+        let (confirm, done) = match what {
+            cmd::Sequence::Continue if unmerged > 0 => {
+                let (files, them) = if unmerged == 1 {
+                    ("1 file is".to_string(), "it")
+                } else {
+                    (format!("{unmerged} files are"), "them")
+                };
+                out.push(Effect::Notify(
+                    format!(
+                        "{files} still in conflict: resolve and stage {them} (s), then continue"
+                    ),
+                    Level::Warning,
+                ));
+                return;
+            }
+            cmd::Sequence::Continue => (None, format!("Continued the {name}")),
+            cmd::Sequence::Skip => (
+                Some(format!(
+                    "Skip the commit the {name} stopped on? Its changes, and what was done to resolve them, are left out."
+                )),
+                format!("Skipped a commit of the {name}"),
+            ),
+            cmd::Sequence::Abort => (
+                Some(format!(
+                    "Abort the {name}? Everything goes back as it was before it, and what was done to resolve it is lost."
+                )),
+                format!("Aborted the {name}"),
+            ),
+        };
+        let plan = actions::Plan {
+            confirm,
+            commands: vec![command],
+            done,
+            ..actions::Plan::default()
+        };
+        self.start_plan(out, root, plan);
     }
 
     /// A commit of kind `kind`: its message asked for (an amended

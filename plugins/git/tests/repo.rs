@@ -656,7 +656,12 @@ fn a_merge_in_conflict() {
         &ViewOptions::default(),
         Tab::Files,
     );
-    assert!(c.text.contains("\n Merging (1 unmerged)\n"), "{}", c.text);
+    assert!(
+        c.text
+            .contains("\n Merging (1 unmerged)  (Enter: continue, abort)\n"),
+        "{}",
+        c.text
+    );
     assert!(c.text.contains("\n UU f "), "{}", c.text);
     // A commit is refused while files are in conflict.
     assert!(actions::commit("Merge\n", &CommitKind::New, false, &repo).is_err());

@@ -140,6 +140,8 @@ impl Repo {
     pub fn diff_command(&self, section: Section, path: &str, context: u32) -> Option<GitCommand> {
         let e = self.entry(section, path)?;
         Some(match section {
+            // A folder: its files, `git diff --no-index` taking no folder.
+            Section::Untracked if path.ends_with('/') => cmd::untracked_files(path),
             Section::Untracked => cmd::diff_untracked(path, context),
             Section::Staged => cmd::diff(path, e.from.as_deref(), true, context),
             Section::Unstaged | Section::Unmerged => cmd::diff(path, None, false, context),
@@ -149,6 +151,20 @@ impl Repo {
 
     /// Keeps a file's diff, read from git's answer to [`Repo::diff_command`].
     pub fn set_diff(&mut self, section: Section, path: &str, out: &[u8]) -> Result<(), String> {
+        if section == Section::Untracked && path.ends_with('/') {
+            let listing = out
+                .split(|b| *b == 0)
+                .filter(|p| !p.is_empty())
+                .map(|p| String::from_utf8_lossy(p).into_owned())
+                .collect();
+            let file = FileDiff {
+                new_path: Some(path.to_string()),
+                listing,
+                ..FileDiff::default()
+            };
+            self.diffs.insert((section, path.to_string()), file);
+            return Ok(());
+        }
         let d = diff::parse(out)?;
         let file = d.files.into_iter().next().unwrap_or_else(|| FileDiff {
             new_path: Some(path.to_string()),

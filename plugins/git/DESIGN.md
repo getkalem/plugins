@@ -338,7 +338,7 @@ A git command that fails: a notification with the first line of its standard err
 
 ## 4. Running git: the commands
 
-Appendix B lists every command line with its flags. The rules: `--no-pager`, `--literal-pathspecs` (a path is that file, never a pattern) and `-c color.ui=never` always; the user's diff settings set back where they change what the plugin reads or applies (`-c color.diff=false`, the `a/` and `b/` prefixes, `--no-ext-diff --no-textconv` on each diff); `GIT_OPTIONAL_LOCKS=0` for the commands that only read, so that a refresh never takes the index's lock from a command the user runs; `-z` and `--porcelain=v2` for status, `-z` for every list of paths; `--format=` with `%x00` separators for `git log`; `--porcelain` for blame; `-c core.quotepath=off`; `--no-edit` for merge, pull, revert and cherry-pick so that git never opens an editor; `GIT_EDITOR=false` as a guard. Paths cross as bytes and are shown lossily when not UTF-8. The plugin never runs a shell and never passes a user's text as an argument that git could read as an option: paths after `--`, refs checked against `git check-ref-format`.
+Appendix B lists every command line with its flags. The rules: `--no-pager`, `--literal-pathspecs` (a path is that file, never a pattern) and `-c color.ui=never` always; the user's diff settings set back where they change what the plugin reads or applies (`-c color.diff=false`, the `a/` and `b/` prefixes, `--no-ext-diff --no-textconv` on each diff); `GIT_OPTIONAL_LOCKS=0` for the commands that only read, so that a refresh never takes the index's lock from a command the user runs; `-z` and `--porcelain=v2` for status, `-z` for every list of paths; `--format=` with `%x00` separators for `git log`; `--porcelain` for blame; `-c core.quotepath=off`; `--no-edit` for merge, pull, revert and cherry-pick so that git never opens an editor; `GIT_EDITOR=false` as a guard (`true` for `--continue`, which takes the message git made: `-c core.editor=true` loses to `GIT_EDITOR`). Paths cross as bytes and are shown lossily when not UTF-8. The plugin never runs a shell and never passes a user's text as an argument that git could read as an option: paths after `--`, refs checked against `git check-ref-format`.
 
 ## 5. Keys
 
@@ -803,7 +803,7 @@ The subset, for the planning of that task: `set-gutter(path, marks: list<line-ma
 
 ## Appendix B: the git commands used
 
-Every run has `--no-pager`, `--literal-pathspecs`, `-c color.ui=never`, `-c color.diff=false`, `-c diff.noprefix=false`, `-c diff.mnemonicPrefix=false`, `-c diff.srcPrefix=a/`, `-c diff.dstPrefix=b/`, `-c core.quotepath=off`, `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=false`, and `LC_ALL=C` where the output is parsed.
+Every run has `--no-pager`, `--literal-pathspecs`, `-c color.ui=never`, `-c color.diff=false`, `-c diff.noprefix=false`, `-c diff.mnemonicPrefix=false`, `-c diff.srcPrefix=a/`, `-c diff.dstPrefix=b/`, `-c core.quotepath=off`, `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=false` (`true` for a `--continue`), and `LC_ALL=C` where the output is parsed.
 
 | Purpose | Command |
 |---|---|
@@ -811,7 +811,7 @@ Every run has `--no-pager`, `--literal-pathspecs`, `-c color.ui=never`, `-c colo
 | Version | `git --version` |
 | Status | `git status --porcelain=v2 --branch --show-stash -z --untracked-files=SETTING` |
 | In progress | `git cat-file --batch-check` with `MERGE_HEAD`, `REBASE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` and `refs/bisect/bad` on its standard input says, in one process, which operation is under way (a line `NAME missing` for each absent one). A rebase's step (`3/7`) lives in `rebase-merge/msgnum` and `rebase-merge/end`, plain files of the git dir that only `fs` could read; phase 2 takes the step from `git status`'s long form under `LC_ALL=C` (`rebase in progress; onto HASH`, `Last command done (N commands done)`), or asks `fs:read:workspace` for the two files if the owner prefers the porcelain-only rule kept strictly |
-| Diff of a file | `git diff -U3 -- PATH` · `git diff --cached -U3 -- PATH` · `git diff --no-index -U3 -- /dev/null PATH` (untracked), each with `--no-ext-diff --no-textconv` |
+| Diff of a file | `git diff -U3 -- PATH` · `git diff --cached -U3 -- PATH` · `git diff --no-index -U3 -- /dev/null PATH` (untracked), each with `--no-ext-diff --no-textconv` · `git ls-files --others --exclude-standard -z -- FOLDER/` (an untracked folder: its files) |
 | Counts | `git diff --numstat -z -M` · `git diff --cached --numstat -z -M` |
 | Stage | `git add -- PATHS` · `git add -u` (the Unstaged heading) · `git add -A` · `git apply --cached -` (a patch on stdin) · first, for the paths in conflict it stages (`add -u` and `add -A` take them too), `git grep -l -z --no-color -E -e '^(<<<<<<<|>>>>>>>)( |$)' -- PATHS`: markers left, it asks |
 | Unstage | `git restore --staged -- PATHS` (a rename's both paths) · `git rm --cached -r -q -- PATHS` (no commit yet) · `git reset -q` (everything) · `git apply --cached --reverse -` |
@@ -828,7 +828,7 @@ Every run has `--no-pager`, `--literal-pathspecs`, `-c color.ui=never`, `-c colo
 | Index version | `git show :PATH` |
 | Stash | `git stash list --format=%gd%x00%s` · `git stash push [-m MSG] [--staged] [--include-untracked]` · `git stash pop|apply|drop stash@{N}` · `git stash show -p stash@{N}` |
 | Branches | `git for-each-ref --format=%(refname:short)%x00%(upstream:short)%x00%(upstream:track)%x00%(HEAD) refs/heads refs/remotes` · `git switch BRANCH` · `git switch -c NAME [--track REMOTE/NAME]` · `git switch --detach HASH` · `git branch -d|-D NAME` · `git branch -m OLD NEW` · `git branch --set-upstream-to=REMOTE/NAME` |
-| Merge, rebase | `git merge --no-edit BRANCH` · `git rebase BRANCH` · `git merge|rebase|cherry-pick|revert --continue|--skip|--abort` |
+| Merge, rebase | `git merge --no-edit BRANCH` · `git rebase BRANCH` · `git merge|rebase|cherry-pick|revert --continue|--skip|--abort` (`r r`, `r s`, `r a`; with `GIT_EDITOR=true`) |
 | Fetch, pull, push | `git fetch [--prune]` · `git pull [--rebase|--no-rebase|--ff-only] --no-edit` · `git push` · `git push --set-upstream REMOTE BRANCH` · `git push --force-with-lease` |
 | Cherry-pick, revert, reset | `git cherry-pick --no-edit HASH` · `git revert --no-edit HASH` · `git reset --soft|--mixed|--hard HASH` |
 | Remote | `git remote get-url REMOTE` · `git rev-parse --abbrev-ref @{upstream}` |

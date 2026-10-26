@@ -48,6 +48,10 @@ pub struct GitCommand {
     /// It only reads: run with `GIT_OPTIONAL_LOCKS=0`, so that a status
     /// never takes the index's lock from a command the user runs.
     pub reads: bool,
+    /// Git may want its editor on a message it made itself (a merge's, a
+    /// commit picked again, see [`sequence`]): the message is taken as it
+    /// is.
+    pub message_as_is: bool,
 }
 
 impl GitCommand {
@@ -63,6 +67,7 @@ impl GitCommand {
             stdin: None,
             parsed: false,
             reads: false,
+            message_as_is: false,
         }
     }
 
@@ -100,8 +105,14 @@ impl GitCommand {
             // A push needing a password fails at once rather than
             // waiting for a terminal that is not there (3.7).
             ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            // No command may open an editor.
-            ("GIT_EDITOR".to_string(), "false".to_string()),
+            // No command may open an editor; one that wants it on a
+            // message git made takes the message as it is (`true` ends at
+            // once, with success). `-c core.editor=true` would not do:
+            // GIT_EDITOR comes first.
+            (
+                "GIT_EDITOR".to_string(),
+                if self.message_as_is { "true" } else { "false" }.to_string(),
+            ),
         ];
         if self.parsed {
             env.push(("LC_ALL".to_string(), "C".to_string()));
@@ -735,6 +746,56 @@ pub fn cut_at_scissors(message: &str, comment: char) -> &str {
     message
 }
 
+/// What to do with the merge, rebase, cherry-pick or revert under way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sequence {
+    /// Go on, its conflicts resolved and staged.
+    Continue,
+    /// Leave out the commit it stopped on.
+    Skip,
+    /// Give it up: everything as it was before it.
+    Abort,
+}
+
+/// Continues, skips or aborts operation `op`: `git merge --continue`,
+/// `git rebase --skip`… Git may want its editor on the message of the
+/// commit it makes, which is taken as it is (`GIT_EDITOR=false` made
+/// `--continue` fail). None for a bisection, and for a merge's skip.
+pub fn sequence(op: crate::git::refs::Operation, what: Sequence) -> Option<GitCommand> {
+    use crate::git::refs::Operation;
+    let word = match op {
+        Operation::Merge => "merge",
+        Operation::Rebase => "rebase",
+        Operation::CherryPick => "cherry-pick",
+        Operation::Revert => "revert",
+        Operation::Bisect => return None,
+    };
+    let flag = match what {
+        Sequence::Continue => "--continue",
+        Sequence::Skip if op == Operation::Merge => return None,
+        Sequence::Skip => "--skip",
+        Sequence::Abort => "--abort",
+    };
+    Some(GitCommand {
+        message_as_is: true,
+        ..GitCommand::new([word, flag])
+    })
+}
+
+/// The files of an untracked folder (a `??` line ending with `/`), each
+/// ended by a NUL, as Tab lists them: `git diff --no-index` takes no
+/// folder.
+pub fn untracked_files(folder: &str) -> GitCommand {
+    let mut args = vec![
+        "ls-files".to_string(),
+        "--others".to_string(),
+        "--exclude-standard".to_string(),
+        "-z".to_string(),
+    ];
+    paths(&mut args, [folder]);
+    GitCommand::read(args)
+}
+
 /// Whether `name` may be a branch's name.
 pub fn check_branch_name(name: &str) -> GitCommand {
     GitCommand::read(["check-ref-format", "--branch", name])
@@ -783,6 +844,21 @@ mod tests {
             ),
             "A\n"
         );
+    }
+
+    #[test]
+    fn continuing_takes_the_message_git_made() {
+        use crate::git::refs::Operation;
+        let c = sequence(Operation::Rebase, Sequence::Continue).unwrap();
+        assert_eq!(c.args, ["rebase", "--continue"]);
+        assert!(c.env().contains(&("GIT_EDITOR".into(), "true".into())));
+        assert!(
+            add(["x"])
+                .env()
+                .contains(&("GIT_EDITOR".into(), "false".into()))
+        );
+        assert_eq!(sequence(Operation::Merge, Sequence::Skip), None);
+        assert_eq!(sequence(Operation::Bisect, Sequence::Abort), None);
     }
 
     #[test]

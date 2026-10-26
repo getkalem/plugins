@@ -848,11 +848,33 @@ impl App {
                 "The tags come in a later version of the plugin".into(),
                 Level::Info,
             )),
-            Some(Target::Operation) => out.push(Effect::Notify(
-                "Continue, skip or abort it with git for now: the plugin's buttons for it come later"
-                    .into(),
-                Level::Info,
-            )),
+            Some(Target::Operation) => {
+                let Some(op) = repo.operation else {
+                    return;
+                };
+                let entries = operation_entries(op);
+                if entries.is_empty() {
+                    out.push(Effect::Notify(
+                        "A bisection is under way: git bisect good, bad, skip or reset goes on with it"
+                            .into(),
+                        Level::Info,
+                    ));
+                    return;
+                }
+                let items = entries
+                    .iter()
+                    .map(|(id, label)| (label.clone(), menu_key(id)))
+                    .collect();
+                let token = self.ask(Question::Commands {
+                    ids: entries.iter().map(|(id, _)| *id).collect(),
+                    doc: Some(doc.clone()),
+                });
+                out.push(Effect::Pick {
+                    token,
+                    title: op.word().into(),
+                    items,
+                });
+            }
             Some(Target::Section(_)) => self.fold(out, root, content, head, FoldOp::Toggle),
             Some(Target::File { section, path }) => {
                 let gone = repo.entry(section, &path).is_some_and(|e| {
@@ -932,7 +954,10 @@ impl App {
             Some(Target::Branch(name)) => {
                 let current = repo.status.branch.as_deref() == Some(name.as_str());
                 if current {
-                    out.push(Effect::Notify(format!("{name} is the branch you are on"), Level::Info));
+                    out.push(Effect::Notify(
+                        format!("{name} is the branch you are on"),
+                        Level::Info,
+                    ));
                     return;
                 }
                 if let Some(s) = self.repos.get_mut(root) {
@@ -1039,6 +1064,13 @@ impl App {
                 add("git.unstage", format!("Unstage everything in {d}"));
                 add("git.toggle", "Fold or unfold the folder".into());
             }
+            Some(Target::Operation) => {
+                if let Some(op) = repo.as_ref().and_then(|r| r.operation) {
+                    for (id, label) in operation_entries(op) {
+                        add(id, label);
+                    }
+                }
+            }
             Some(Target::Branch(b)) => add("git.visit", format!("Switch to {b}")),
             Some(Target::Stash(n)) => add("git.visit", format!("Apply, pop or drop stash@{{{n}}}")),
             _ => {}
@@ -1091,6 +1123,26 @@ impl App {
             title: "Git".into(),
             items,
         });
+    }
+}
+
+/// What can be done with operation `op` under way: continue it, skip the
+/// commit it stopped on (a merge has none), abort it; nothing for a
+/// bisection, which git's own commands go on with.
+fn operation_entries(op: crate::git::refs::Operation) -> Vec<(&'static str, String)> {
+    use crate::git::refs::Operation;
+    let name = op.name();
+    match op {
+        Operation::Bisect => Vec::new(),
+        Operation::Merge => vec![
+            ("git.continue", format!("Continue the {name}")),
+            ("git.abort", format!("Abort the {name}…")),
+        ],
+        _ => vec![
+            ("git.continue", format!("Continue the {name}")),
+            ("git.skip", "Skip the commit it stopped on…".to_string()),
+            ("git.abort", format!("Abort the {name}…")),
+        ],
     }
 }
 

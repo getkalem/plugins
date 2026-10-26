@@ -115,6 +115,8 @@ pub struct Refresh {
     pending: BTreeSet<Part>,
     status_read: bool,
     error: Option<String>,
+    /// The operations whose reference is there.
+    operations: Vec<refs::Operation>,
 }
 
 impl Refresh {
@@ -144,6 +146,7 @@ impl Refresh {
             pending: commands.iter().map(|(p, _)| *p).collect(),
             status_read: false,
             error: None,
+            operations: Vec::new(),
         };
         (r, commands)
     }
@@ -184,7 +187,7 @@ impl Refresh {
                 self.status_read = true;
                 return self.after_status();
             }
-            Part::Operations if ok => self.repo.operation = refs::parse_operations(&out.stdout),
+            Part::Operations if ok => self.operations = refs::parse_operations(&out.stdout),
             Part::Describe if ok => self.repo.tag = refs::parse_describe(&out.stdout),
             Part::Stashes if ok => self.repo.stashes = refs::parse_stashes(&out.stdout),
             Part::Branches if ok => self.repo.branches = refs::parse_branches(&out.stdout),
@@ -259,13 +262,15 @@ impl Refresh {
     }
 
     /// The repository; an error when its status could not be read.
-    pub fn finish(self) -> Result<Repo, String> {
+    pub fn finish(mut self) -> Result<Repo, String> {
         if let Some(e) = self.error {
             return Err(e);
         }
         if !self.status_read {
             return Err("the status was not read".into());
         }
+        let detached = self.repo.status.branch.is_none();
+        self.repo.operation = refs::under_way(&self.operations, detached);
         Ok(self.repo)
     }
 }

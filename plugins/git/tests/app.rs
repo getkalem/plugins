@@ -1184,6 +1184,132 @@ fn big_diffs_and_answers_cut_short() {
     );
 }
 
+/// A merge, a rebase or a cherry-pick stopped on a conflict goes on from
+/// the status: `r r` (`m m`, `A A`) continues, `r s` skips, `r a` aborts,
+/// and Enter on its line offers them. Enter only said to use git, and
+/// `GIT_EDITOR=false` made a continue fail where git wants its editor on
+/// the message it made.
+#[test]
+fn a_merge_or_a_rebase_goes_on_from_the_status() {
+    let mut k = Kalem::new("sequence");
+    k.write("f.txt", "base\n");
+    k.commit_all("Base");
+    for b in ["a", "b", "c"] {
+        k.git_ok(&["switch", "-q", "-c", b, "main"]);
+        k.write("f.txt", &format!("{b}\n"));
+        k.commit_all(&format!("Branch {b}"));
+    }
+    k.git_ok(&["switch", "-q", "main"]);
+    k.write("f.txt", "ours\n");
+    k.commit_all("Ours");
+    let fails = |k: &mut Kalem, args: &[&str]| {
+        let out = k.git.run(&GitCommand::new(args.iter().copied())).unwrap();
+        assert!(!out.success(), "{args:?}");
+    };
+    fails(&mut k, &["merge", "--no-edit", "a"]);
+    k.command("git.status", Some("f.txt"));
+    assert!(
+        k.doc_text()
+            .contains("\n Merging (1 unmerged)  (Enter: continue, abort)\n"),
+        "{}",
+        k.doc_text()
+    );
+    // In conflict still: continuing says so.
+    k.on("git.continue", " Merging");
+    assert_eq!(
+        k.last_note(),
+        "1 file is still in conflict: resolve and stage it (s), then continue"
+    );
+    // Resolved and staged, Enter on its line: the merge is committed, its
+    // message the one git made.
+    k.write("f.txt", "both\n");
+    k.git_ok(&["add", "f.txt"]);
+    k.on("git.refresh", " Merging");
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.visit", " Merging");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "Merging: Continue the merge | Abort the merge…"
+    );
+    assert_eq!(k.last_note(), "Continued the merge");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%s"]).trim(),
+        "Merge branch 'a'"
+    );
+    assert!(!k.doc_text().contains("Merging"), "{}", k.doc_text());
+    // A rebase stopped on a conflict: aborted after asking.
+    k.git_ok(&["switch", "-q", "b"]);
+    fails(&mut k, &["rebase", "main"]);
+    k.on("git.refresh", "repo → ");
+    k.answers.push_back(Answer::Confirmed(true));
+    k.on("git.abort", " Rebasing");
+    assert!(k.asked.last().unwrap().starts_with("Abort the rebase?"));
+    assert_eq!(k.last_note(), "Aborted the rebase");
+    assert_eq!(k.git_ok(&["branch", "--show-current"]).trim(), "b");
+    assert_eq!(k.read("f.txt"), "b\n");
+    // Again, resolved: continued to its end.
+    fails(&mut k, &["rebase", "main"]);
+    k.write("f.txt", "both and b\n");
+    k.git_ok(&["add", "f.txt"]);
+    k.on("git.refresh", "repo → ");
+    k.on("git.continue", " Rebasing");
+    assert_eq!(k.last_note(), "Continued the rebase");
+    assert_eq!(k.git_ok(&["branch", "--show-current"]).trim(), "b");
+    assert_eq!(
+        k.git_ok(&["log", "-2", "--format=%s"]),
+        "Branch b\nMerge branch 'a'\n"
+    );
+    // A cherry-pick stopped: its commit skipped.
+    k.git_ok(&["switch", "-q", "main"]);
+    fails(&mut k, &["cherry-pick", "c"]);
+    k.on("git.refresh", "repo → ");
+    k.answers.push_back(Answer::Confirmed(true));
+    k.on("git.skip", " Cherry-picking");
+    assert_eq!(k.last_note(), "Skipped a commit of the cherry-pick");
+    assert_eq!(k.read("f.txt"), "both\n");
+    assert!(!k.doc_text().contains("Cherry-picking"), "{}", k.doc_text());
+}
+
+/// Back in the status from another document, it is read again: a commit
+/// made in a terminal showed only after `SPC g g`.
+#[test]
+fn the_status_is_read_again_when_the_cursor_comes_back() {
+    let mut k = Kalem::new("returned");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    k.write("a.txt", "two\n");
+    k.command("git.status", Some("a.txt"));
+    assert!(k.doc_text().contains("\n  M a.txt"), "{}", k.doc_text());
+    k.commit_all("Made in a terminal");
+    let root = k.root();
+    k.feed(Input::Returned(root));
+    let text = k.doc_text();
+    assert!(
+        text.contains(" repo → main  Made in a terminal\n"),
+        "{text}"
+    );
+    assert!(text.contains("Nothing changed"), "{text}");
+}
+
+/// Tab on an untracked folder lists its files: `git diff --no-index`
+/// takes no folder, and the status said "No change to show".
+#[test]
+fn tab_on_an_untracked_folder_lists_its_files() {
+    let mut k = Kalem::new("folder");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    k.write("new/x.txt", "x\n");
+    k.write("new/deep/y.txt", "y\n");
+    k.command("git.status", Some("a.txt"));
+    k.on("git.toggle", "?? new/");
+    let text = k.doc_text();
+    assert!(
+        text.contains(" ?? new/\n  new/deep/y.txt\n  new/x.txt\n"),
+        "{text}"
+    );
+    assert!(!text.contains("No change to show"), "{text}");
+}
+
 #[test]
 fn a_new_branch_starts_where_asked() {
     let mut k = Kalem::new("branch-start");
