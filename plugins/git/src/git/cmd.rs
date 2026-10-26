@@ -5,13 +5,17 @@
 //! tests); nothing here starts a program.
 //!
 //! Every path is given after `--`, so that git never reads a path as an
-//! option, and no command opens an editor or asks on a terminal.
+//! option, and taken as it is written, never as a pattern; no command
+//! opens an editor or asks on a terminal.
 
 use std::fmt;
 
-/// Options before every command: no pager, no colors, paths unquoted.
+/// Options before every command: no pager, no colors, paths unquoted,
+/// and paths taken literally, as Magit does (`notes?.md` is that file,
+/// not every file its pattern matches).
 pub const GLOBAL: &[&str] = &[
     "--no-pager",
+    "--literal-pathspecs",
     "-c",
     "color.ui=never",
     "-c",

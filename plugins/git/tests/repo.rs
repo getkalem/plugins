@@ -334,6 +334,61 @@ fn whole_files_new_deleted_renamed_and_untracked() {
     assert!(!t.dir.join("junk.txt").exists());
 }
 
+/// A path is never a pattern: discarding the untracked `notes?.md` ran
+/// `git clean` on `notes1.md` too, staging `pages/[id].tsx` staged
+/// `pages/i.tsx`, and unstaging `x*.txt` unstaged `x1.txt`.
+#[test]
+fn paths_are_taken_literally() {
+    let mut t = T::new("literal");
+    for p in ["pages/[id].tsx", "pages/i.tsx", "x*.txt", "x1.txt"] {
+        t.write(p, "one\n");
+    }
+    t.commit_all("Base");
+    for p in ["pages/[id].tsx", "pages/i.tsx", "x*.txt", "x1.txt"] {
+        t.write(p, "two\n");
+    }
+    t.write("notes?.md", "n\n");
+    t.write("notes1.md", "n\n");
+    let file = |section, path: &str| Target::File {
+        section,
+        path: path.into(),
+    };
+    let repo = t.repo();
+    t.act(
+        Act::Stage,
+        &[file(Section::Unstaged, "pages/[id].tsx")],
+        &repo,
+    )
+    .unwrap();
+    assert_eq!(t.index("pages/[id].tsx"), "two\n");
+    assert_eq!(t.index("pages/i.tsx"), "one\n");
+    t.act(
+        Act::Discard,
+        &[file(Section::Untracked, "notes?.md")],
+        &repo,
+    )
+    .unwrap();
+    assert!(!t.dir.join("notes?.md").exists());
+    assert!(t.dir.join("notes1.md").exists());
+    t.ok(&["add", "--", "x*.txt", "x1.txt"]);
+    let repo = t.repo();
+    t.act(Act::Unstage, &[file(Section::Staged, "x*.txt")], &repo)
+        .unwrap();
+    let repo = t.repo();
+    assert!(repo.entry(Section::Staged, "x*.txt").is_none());
+    assert!(repo.entry(Section::Staged, "x1.txt").is_some());
+    // Everything unstaged at once in a repository without a commit
+    // (`rm --cached -r -- .`) still takes every path.
+    let mut t = T::new("literal-unborn");
+    t.write("a?.txt", "a\n");
+    t.write("dir/b.txt", "b\n");
+    t.ok(&["add", "-A"]);
+    let repo = t.repo();
+    t.act(Act::Unstage, &[Target::Section(Section::Staged)], &repo)
+        .unwrap();
+    assert!(t.repo().entries(Section::Staged).is_empty());
+}
+
 #[test]
 fn reverting_staged_changes_keeps_the_unstaged_ones() {
     let mut t = T::new("revert-staged");
