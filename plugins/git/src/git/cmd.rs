@@ -5,15 +5,32 @@
 //! tests); nothing here starts a program.
 //!
 //! Every path is given after `--`, so that git never reads a path as an
-//! option, and no command opens an editor or asks on a terminal.
+//! option, and taken as it is written, never as a pattern; no command
+//! opens an editor or asks on a terminal.
 
 use std::fmt;
 
-/// Options before every command: no pager, no colors, paths unquoted.
+/// Options before every command: no pager, no colors, paths unquoted,
+/// and paths taken literally, as Magit does (`notes?.md` is that file,
+/// not every file its pattern matches). A diff is as the plugin reads it
+/// and `git apply` takes it back whatever the user's settings: without
+/// colors (`color.diff=always` wins over `color.ui`) and with the `a/`
+/// and `b/` prefixes (`diff.noprefix` made a staged hunk fail).
 pub const GLOBAL: &[&str] = &[
     "--no-pager",
+    "--literal-pathspecs",
     "-c",
     "color.ui=never",
+    "-c",
+    "color.diff=false",
+    "-c",
+    "diff.noprefix=false",
+    "-c",
+    "diff.mnemonicPrefix=false",
+    "-c",
+    "diff.srcPrefix=a/",
+    "-c",
+    "diff.dstPrefix=b/",
     "-c",
     "core.quotepath=off",
 ];
@@ -31,6 +48,10 @@ pub struct GitCommand {
     /// It only reads: run with `GIT_OPTIONAL_LOCKS=0`, so that a status
     /// never takes the index's lock from a command the user runs.
     pub reads: bool,
+    /// Git may want its editor on a message it made itself (a merge's, a
+    /// commit picked again, see [`sequence`]): the message is taken as it
+    /// is.
+    pub message_as_is: bool,
 }
 
 impl GitCommand {
@@ -46,6 +67,7 @@ impl GitCommand {
             stdin: None,
             parsed: false,
             reads: false,
+            message_as_is: false,
         }
     }
 
@@ -83,8 +105,14 @@ impl GitCommand {
             // A push needing a password fails at once rather than
             // waiting for a terminal that is not there (3.7).
             ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
-            // No command may open an editor.
-            ("GIT_EDITOR".to_string(), "false".to_string()),
+            // No command may open an editor; one that wants it on a
+            // message git made takes the message as it is (`true` ends at
+            // once, with success). `-c core.editor=true` would not do:
+            // GIT_EDITOR comes first.
+            (
+                "GIT_EDITOR".to_string(),
+                if self.message_as_is { "true" } else { "false" }.to_string(),
+            ),
         ];
         if self.parsed {
             env.push(("LC_ALL".to_string(), "C".to_string()));
@@ -280,10 +308,16 @@ pub fn numstat(staged: bool) -> GitCommand {
     GitCommand::read(args)
 }
 
+/// What a diff the plugin reads is made without: the user's external diff
+/// program (difftastic answers with no hunks) and text conversions (the
+/// lines would not be the file's).
+const PLAIN_DIFF: [&str; 2] = ["--no-ext-diff", "--no-textconv"];
+
 /// The diff of one file: the staged changes, or the unstaged ones. A
 /// renamed file names its old path too, so the diff shows the rename.
 pub fn diff(path: &str, from: Option<&str>, staged: bool, context: u32) -> GitCommand {
     let mut args = vec!["diff".to_string(), format!("-U{context}"), "-M".to_string()];
+    args.extend(PLAIN_DIFF.map(String::from));
     if staged {
         args.push("--cached".into());
     }
@@ -301,21 +335,24 @@ pub fn diff_untracked(path: &str, context: u32) -> GitCommand {
         "--no-index".to_string(),
         format!("-U{context}"),
     ];
+    args.extend(PLAIN_DIFF.map(String::from));
     paths(&mut args, ["/dev/null", path]);
     GitCommand::read(args)
 }
 
 /// A commit: its header, its stat and its diff.
 pub fn show(rev: &str, context: u32) -> GitCommand {
-    GitCommand::read([
+    let mut args = vec![
         "show".to_string(),
         "--format=fuller".to_string(),
         "--stat".to_string(),
         "--patch".to_string(),
         format!("-U{context}"),
-        rev.to_string(),
-        "--".to_string(),
-    ])
+    ];
+    args.extend(PLAIN_DIFF.map(String::from));
+    args.push(rev.to_string());
+    args.push("--".to_string());
+    GitCommand::read(args)
 }
 
 /// The blame of a file, as it is or at `rev`.
@@ -454,6 +491,23 @@ pub fn rm<'a>(files: impl IntoIterator<Item = &'a str>) -> GitCommand {
     GitCommand::new(args)
 }
 
+/// Which of these files (in conflict) still hold a conflict marker, a
+/// line starting with `<<<<<<<` or `>>>>>>>`: their paths, each ended by
+/// a NUL. Git answers with the exit status 1 when none does.
+pub fn conflict_markers<'a>(files: impl IntoIterator<Item = &'a str>) -> GitCommand {
+    let mut args = vec![
+        "grep".to_string(),
+        "-l".to_string(),
+        "-z".to_string(),
+        "--no-color".to_string(),
+        "-E".to_string(),
+        "-e".to_string(),
+        "^(<<<<<<<|>>>>>>>)( |$)".to_string(),
+    ];
+    paths(&mut args, files);
+    GitCommand::read(args)
+}
+
 /// Where a patch goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyTo {
@@ -500,10 +554,12 @@ pub enum CommitKind {
 pub const SCISSORS: &str = " ------------------------ >8 ------------------------";
 
 /// A commit with `message` on the standard input, cut at the scissors line
-/// already ([`cut_at_scissors`]); git strips its comment lines and
-/// trailing blank lines, as it does a message the user edited. (With
-/// `-F`, git takes a message as not edited, so `--cleanup=scissors` would
-/// keep the comment lines.)
+/// already ([`cut_at_scissors`]). The message is asked in a prompt, which
+/// has no comment lines, and an amended commit's body is kept as it was:
+/// a line starting with `#` is the message's own (`#123 Fix the crash`),
+/// so git trims blank lines and trailing spaces only
+/// (`--cleanup=whitespace`); `strip` refused that subject as empty and
+/// dropped such lines of a body.
 pub fn commit(message: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
     let mut args = vec!["commit".to_string()];
     match kind {
@@ -525,7 +581,7 @@ pub fn commit(message: &str, kind: &CommitKind, signoff: bool) -> GitCommand {
     match kind {
         CommitKind::Extend | CommitKind::Fixup(_) => GitCommand::new(args),
         CommitKind::New | CommitKind::Amend | CommitKind::Reword => {
-            args.push("--cleanup=strip".into());
+            args.push("--cleanup=whitespace".into());
             args.push("-F".into());
             args.push("-".into());
             GitCommand::new(args).with_stdin(message.as_bytes().to_vec())
@@ -690,6 +746,56 @@ pub fn cut_at_scissors(message: &str, comment: char) -> &str {
     message
 }
 
+/// What to do with the merge, rebase, cherry-pick or revert under way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sequence {
+    /// Go on, its conflicts resolved and staged.
+    Continue,
+    /// Leave out the commit it stopped on.
+    Skip,
+    /// Give it up: everything as it was before it.
+    Abort,
+}
+
+/// Continues, skips or aborts operation `op`: `git merge --continue`,
+/// `git rebase --skip`… Git may want its editor on the message of the
+/// commit it makes, which is taken as it is (`GIT_EDITOR=false` made
+/// `--continue` fail). None for a bisection, and for a merge's skip.
+pub fn sequence(op: crate::git::refs::Operation, what: Sequence) -> Option<GitCommand> {
+    use crate::git::refs::Operation;
+    let word = match op {
+        Operation::Merge => "merge",
+        Operation::Rebase => "rebase",
+        Operation::CherryPick => "cherry-pick",
+        Operation::Revert => "revert",
+        Operation::Bisect => return None,
+    };
+    let flag = match what {
+        Sequence::Continue => "--continue",
+        Sequence::Skip if op == Operation::Merge => return None,
+        Sequence::Skip => "--skip",
+        Sequence::Abort => "--abort",
+    };
+    Some(GitCommand {
+        message_as_is: true,
+        ..GitCommand::new([word, flag])
+    })
+}
+
+/// The files of an untracked folder (a `??` line ending with `/`), each
+/// ended by a NUL, as Tab lists them: `git diff --no-index` takes no
+/// folder.
+pub fn untracked_files(folder: &str) -> GitCommand {
+    let mut args = vec![
+        "ls-files".to_string(),
+        "--others".to_string(),
+        "--exclude-standard".to_string(),
+        "-z".to_string(),
+    ];
+    paths(&mut args, [folder]);
+    GitCommand::read(args)
+}
+
 /// Whether `name` may be a branch's name.
 pub fn check_branch_name(name: &str) -> GitCommand {
     GitCommand::read(["check-ref-format", "--branch", name])
@@ -720,7 +826,7 @@ mod tests {
     fn a_commit_message_goes_on_standard_input() {
         let c = commit("Fix it\n", &CommitKind::New, false);
         assert_eq!(c.stdin.as_deref(), Some(&b"Fix it\n"[..]));
-        assert!(c.args.contains(&"--cleanup=strip".to_string()));
+        assert!(c.args.contains(&"--cleanup=whitespace".to_string()));
         let c = commit("", &CommitKind::Extend, true);
         assert_eq!(c.args, ["commit", "--amend", "--no-edit", "--signoff"]);
         assert_eq!(c.stdin, None);
@@ -738,6 +844,21 @@ mod tests {
             ),
             "A\n"
         );
+    }
+
+    #[test]
+    fn continuing_takes_the_message_git_made() {
+        use crate::git::refs::Operation;
+        let c = sequence(Operation::Rebase, Sequence::Continue).unwrap();
+        assert_eq!(c.args, ["rebase", "--continue"]);
+        assert!(c.env().contains(&("GIT_EDITOR".into(), "true".into())));
+        assert!(
+            add(["x"])
+                .env()
+                .contains(&("GIT_EDITOR".into(), "false".into()))
+        );
+        assert_eq!(sequence(Operation::Merge, Sequence::Skip), None);
+        assert_eq!(sequence(Operation::Bisect, Sequence::Abort), None);
     }
 
     #[test]

@@ -6,6 +6,8 @@
 //! Alt+Enter (or `?`) lists what can be done with it, Escape (or `q`)
 //! closes it; magit's letters act on it (`s`, `u`, `x`, `c c`, `P p`…).
 
+use std::collections::HashSet;
+
 use super::*;
 use crate::content::Region;
 use crate::git::diff::LineKind;
@@ -14,6 +16,13 @@ use crate::refresh::missing_diffs;
 use crate::target::{self, Target};
 use crate::views::status::Tab;
 use crate::views::{self, ViewOptions};
+
+/// The files whose diffs Shift+Tab shows at most: over 20,000 changed
+/// files it asked 20,000 runs of git. It stops too once the files' changed
+/// lines pass a big diff's ([`ViewOptions::big_diff`]): a hundred files
+/// of 10,000 lines each made a status of 56 MB, a quarter of a second to
+/// write as WebAssembly.
+pub const CYCLE_FILES: usize = 100;
 
 /// Where the cursor goes when the status is written again.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,6 +222,7 @@ impl App {
         let text = content.text.clone();
         let styles = content.styles.clone();
         state.content = Some(content);
+        state.written = None;
         state.shown = true;
         out.push(Effect::Document {
             root: root.to_string(),
@@ -223,6 +233,21 @@ impl App {
             show,
             styles,
         });
+    }
+
+    /// The repository as the status document shows it: its diffs the
+    /// ones its text was made from, until the text is written again after
+    /// a refresh. A key pressed meanwhile took the hunk's number from the
+    /// text and its patch from the diffs read again, and could discard
+    /// another hunk; a patch of what is shown applies where the file still
+    /// holds it, and git refuses it where not.
+    fn shown_repo(&self, root: &str) -> Option<Repo> {
+        let s = self.repos.get(root)?;
+        let mut repo = s.repo.clone()?;
+        if let Some(diffs) = &s.written {
+            repo.diffs = diffs.clone();
+        }
+        Some(repo)
     }
 
     /// Starts reading the diffs the unfolded files need; whether some are
@@ -281,13 +306,19 @@ impl App {
         state.loading.remove(&(section, path.to_string()));
         // `diff --no-index` ends with 1 when the files differ.
         let bytes = match &result {
+            Ok(o) if o.truncated => None,
             Ok(o) if o.success() || (section == Section::Untracked && o.status == Some(1)) => {
-                o.stdout.clone()
+                Some(o.stdout.clone())
             }
-            _ => Vec::new(),
+            _ => Some(Vec::new()),
         };
-        if repo.set_diff(section, path, &bytes).is_err() {
-            let _ = repo.set_diff(section, path, b"");
+        match bytes {
+            Some(bytes) => {
+                if repo.set_diff(section, path, &bytes).is_err() {
+                    let _ = repo.set_diff(section, path, b"");
+                }
+            }
+            None => repo.set_truncated(section, path),
         }
         if state.loading.is_empty() && state.shown {
             self.render_status(out, root, false);
@@ -366,12 +397,14 @@ impl App {
                         confirm: None,
                         commands: vec![cmd::add_all()],
                         done: "Staged everything".into(),
+                        unmerged: actions::unmerged_paths(&repo),
                     }
                 } else if repo.changed().iter().any(|e| e.staged()) {
                     actions::Plan {
                         confirm: None,
                         commands: vec![cmd::unstage_all(repo.unborn())],
                         done: "Unstaged everything".into(),
+                        unmerged: Vec::new(),
                     }
                 } else {
                     out.push(Effect::Notify("Nothing changed".into(), Level::Info));
@@ -514,18 +547,40 @@ impl App {
     /// Shift+Tab: every file and hunk unfolded, then every section folded,
     /// then each as it starts.
     fn cycle(&mut self, out: &mut Vec<Effect>, root: &str, content: &Content, head: usize) {
+        let big_diff = self.view_options().big_diff;
         let Some(state) = self.repos.get_mut(root) else {
             return;
         };
         let Some(repo) = state.repo.as_ref() else {
             return;
         };
-        // Every diff shown, then each as it starts.
+        // Every diff shown, then each as it starts; of many, the first
+        // files only, each a git run or two.
         state.cycle = (state.cycle + 1) % 2;
         state.folds.reset();
         if state.cycle == 1 {
-            for e in repo.changed() {
+            let changed = repo.changed();
+            let (mut shown, mut lines) = (0, 0);
+            for e in &changed {
+                if shown == CYCLE_FILES || lines >= big_diff {
+                    break;
+                }
                 state.folds.set(&crate::target::path_key(&e.path), false);
+                shown += 1;
+                for s in [Section::Unstaged, Section::Staged] {
+                    if let Some((a, r)) = repo.counts.get(&(s, e.path.clone())) {
+                        lines += (a + r) as usize;
+                    }
+                }
+            }
+            if shown < changed.len() {
+                out.push(Effect::Notify(
+                    format!(
+                        "Shift+Tab shows the diffs of the first {shown} of {} changed files: Tab shows another's",
+                        views::status::group(changed.len())
+                    ),
+                    Level::Info,
+                ));
             }
         }
         state.keep = Some(keep_at(content, head, false));
@@ -581,7 +636,7 @@ impl App {
         act: Act,
         whole: bool,
     ) {
-        let Some(repo) = self.repos.get(root).and_then(|s| s.repo.clone()) else {
+        let Some(repo) = self.shown_repo(root) else {
             return;
         };
         let mut targets = if anchor != head {
@@ -601,6 +656,7 @@ impl App {
         }
         if whole {
             let mut files: Vec<Target> = Vec::new();
+            let mut seen: HashSet<Target> = HashSet::new();
             for t in &targets {
                 let f = match t.file() {
                     Some((section, path)) => Target::File {
@@ -609,7 +665,7 @@ impl App {
                     },
                     None => t.clone(),
                 };
-                if !files.contains(&f) {
+                if seen.insert(f.clone()) {
                     files.push(f);
                 }
             }
@@ -638,7 +694,7 @@ impl App {
         anchor: usize,
         head: usize,
     ) {
-        let Some(repo) = self.repos.get(root).and_then(|s| s.repo.clone()) else {
+        let Some(repo) = self.shown_repo(root) else {
             return;
         };
         let targets: Vec<Target> = if anchor != head {
@@ -750,7 +806,7 @@ impl App {
         head: usize,
         doc: &Doc,
     ) {
-        let Some(repo) = self.repos.get(root).and_then(|s| s.repo.clone()) else {
+        let Some(repo) = self.shown_repo(root) else {
             return;
         };
         let pick = |app: &mut App, out: &mut Vec<Effect>, title: &str, ids: Vec<&'static str>| {
@@ -792,11 +848,33 @@ impl App {
                 "The tags come in a later version of the plugin".into(),
                 Level::Info,
             )),
-            Some(Target::Operation) => out.push(Effect::Notify(
-                "Continue, skip or abort it with git for now: the plugin's buttons for it come later"
-                    .into(),
-                Level::Info,
-            )),
+            Some(Target::Operation) => {
+                let Some(op) = repo.operation else {
+                    return;
+                };
+                let entries = operation_entries(op);
+                if entries.is_empty() {
+                    out.push(Effect::Notify(
+                        "A bisection is under way: git bisect good, bad, skip or reset goes on with it"
+                            .into(),
+                        Level::Info,
+                    ));
+                    return;
+                }
+                let items = entries
+                    .iter()
+                    .map(|(id, label)| (label.clone(), menu_key(id)))
+                    .collect();
+                let token = self.ask(Question::Commands {
+                    ids: entries.iter().map(|(id, _)| *id).collect(),
+                    doc: Some(doc.clone()),
+                });
+                out.push(Effect::Pick {
+                    token,
+                    title: op.word().into(),
+                    items,
+                });
+            }
             Some(Target::Section(_)) => self.fold(out, root, content, head, FoldOp::Toggle),
             Some(Target::File { section, path }) => {
                 let gone = repo.entry(section, &path).is_some_and(|e| {
@@ -876,7 +954,10 @@ impl App {
             Some(Target::Branch(name)) => {
                 let current = repo.status.branch.as_deref() == Some(name.as_str());
                 if current {
-                    out.push(Effect::Notify(format!("{name} is the branch you are on"), Level::Info));
+                    out.push(Effect::Notify(
+                        format!("{name} is the branch you are on"),
+                        Level::Info,
+                    ));
                     return;
                 }
                 if let Some(s) = self.repos.get_mut(root) {
@@ -983,6 +1064,13 @@ impl App {
                 add("git.unstage", format!("Unstage everything in {d}"));
                 add("git.toggle", "Fold or unfold the folder".into());
             }
+            Some(Target::Operation) => {
+                if let Some(op) = repo.as_ref().and_then(|r| r.operation) {
+                    for (id, label) in operation_entries(op) {
+                        add(id, label);
+                    }
+                }
+            }
             Some(Target::Branch(b)) => add("git.visit", format!("Switch to {b}")),
             Some(Target::Stash(n)) => add("git.visit", format!("Apply, pop or drop stash@{{{n}}}")),
             _ => {}
@@ -1038,6 +1126,26 @@ impl App {
     }
 }
 
+/// What can be done with operation `op` under way: continue it, skip the
+/// commit it stopped on (a merge has none), abort it; nothing for a
+/// bisection, which git's own commands go on with.
+fn operation_entries(op: crate::git::refs::Operation) -> Vec<(&'static str, String)> {
+    use crate::git::refs::Operation;
+    let name = op.name();
+    match op {
+        Operation::Bisect => Vec::new(),
+        Operation::Merge => vec![
+            ("git.continue", format!("Continue the {name}")),
+            ("git.abort", format!("Abort the {name}…")),
+        ],
+        _ => vec![
+            ("git.continue", format!("Continue the {name}")),
+            ("git.skip", "Skip the commit it stopped on…".to_string()),
+            ("git.abort", format!("Abort the {name}…")),
+        ],
+    }
+}
+
 /// What `s`, `u` and the leader's keys act on in files: a changed path
 /// of the Files panel is its untracked file, its conflict or its unstaged
 /// changes to stage, its staged changes to unstage; a folder is its
@@ -1056,6 +1164,8 @@ fn resolve(targets: Vec<Target>, act: Act, repo: &Repo) -> Vec<Target> {
         })
     };
     let mut out: Vec<Target> = Vec::new();
+    // Each once: a list searched for each was quadratic in the files.
+    let mut seen: HashSet<Target> = HashSet::new();
     for t in targets {
         let more: Vec<Target> = match t {
             Target::Path(p) => file(&p).into_iter().collect(),
@@ -1080,7 +1190,7 @@ fn resolve(targets: Vec<Target>, act: Act, repo: &Repo) -> Vec<Target> {
             other => vec![other],
         };
         for m in more {
-            if !out.contains(&m) {
+            if seen.insert(m.clone()) {
                 out.push(m);
             }
         }

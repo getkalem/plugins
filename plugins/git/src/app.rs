@@ -29,7 +29,7 @@ use crate::refresh::{self, Output, Part, Refresh};
 use crate::target::Target;
 use crate::views::Glyphs;
 
-pub use document::Keep;
+pub use document::{CYCLE_FILES, Keep};
 
 /// The panel's ID.
 pub const PANEL: &str = "git.panel";
@@ -197,6 +197,23 @@ pub const COMMANDS: &[CommandInfo] = &[
         .keys(&["space g c b"])
         .doc(&["b c"]),
     CommandInfo::new("git.stash", "Git: Stash Changes").doc(&["shift+z z"]),
+    // Magit's keys of its rebase (`r`), merge (`m`) and cherry-pick (`A`)
+    // menus, acting on the operation under way whichever it is.
+    CommandInfo::new(
+        "git.continue",
+        "Git: Continue the Merge, Rebase, Cherry-Pick or Revert",
+    )
+    .doc(&["r r", "m m", "shift+a shift+a"]),
+    CommandInfo::new(
+        "git.skip",
+        "Git: Skip the Commit a Rebase, Cherry-Pick or Revert Stopped On",
+    )
+    .doc(&["r s", "shift+a s"]),
+    CommandInfo::new(
+        "git.abort",
+        "Git: Abort the Merge, Rebase, Cherry-Pick or Revert",
+    )
+    .doc(&["r a", "m a", "shift+a a"]),
     CommandInfo::new("git.blameLine", "Git: Blame This Line").keys(&["space g shift+b"]),
     CommandInfo::new("git.refresh", "Git: Refresh"),
     CommandInfo::new("git.fileMenu", "Git: This File").keys(&["space g ."]),
@@ -424,6 +441,14 @@ pub enum Input {
         /// The document it runs in, when it runs in one.
         doc: Option<Doc>,
     },
+    /// Kalem refused to start git run `token` (`process.run`'s error),
+    /// as it does a plugin's 17th program at a time.
+    Refused {
+        /// The run, as [`Effect::Run`] named it.
+        token: u64,
+        /// Why.
+        error: String,
+    },
     /// Git run `token` ended, or could not start.
     Done {
         /// The run, as [`Effect::Run`] named it.
@@ -449,10 +474,17 @@ pub enum Input {
     Opened(String),
     /// A document saved, by its file.
     Saved(String),
+    /// A document of a file closed, by its file, no other document showing
+    /// it: its changed lines are marked no more.
+    Closed(String),
     /// A file of a project changed on disk.
     Changed(String),
     /// The plugin's settings changed.
     Settings(Settings),
+    /// The cursor came back into the status document of this repository
+    /// from another document: it is read again, so that a commit made in a
+    /// terminal shows.
+    Returned(String),
     /// The user closed the status document of this repository, or the
     /// view of one of its commits (its write was refused).
     DocumentClosed {
@@ -580,6 +612,9 @@ enum After {
     NewBranch,
     /// Stash the changes.
     Stash,
+    /// Continue, skip or abort the merge, rebase, cherry-pick or revert
+    /// under way.
+    Sequence(cmd::Sequence),
     /// Mark the changed lines of a file, by its path in the repository,
     /// from now on.
     Marks(String),
@@ -638,10 +673,14 @@ enum Pending {
     },
     /// The last commit's message, to amend or reword it.
     LastMessage { root: String, kind: CommitKind },
-    /// A file's changes, for the marks beside its lines.
-    Marks { root: String, path: String },
+    /// The changes of the files of a repository open, for the marks
+    /// beside their lines.
+    Marks { root: String, paths: Vec<String> },
     /// A commit, for its view.
     Show { root: String, hash: String },
+    /// The files in conflict a plan stages, looked through for conflict
+    /// markers before it runs.
+    Markers { root: String, plan: actions::Plan },
 }
 
 /// A network operation.
@@ -738,6 +777,11 @@ struct RepoState {
     tab: crate::views::status::Tab,
     /// The diffs being read for it.
     loading: BTreeSet<(Section, String)>,
+    /// The diffs the status document's text was made from, when a refresh
+    /// replaced them and the text waits for the new ones to be written
+    /// again: what is under the cursor is acted on as it is shown
+    /// (`document.rs`, `shown_repo`).
+    written: Option<BTreeMap<(Section, String), crate::git::diff::FileDiff>>,
     /// The commits shown as documents, by hash.
     commits: BTreeMap<String, ShownCommit>,
 }
@@ -775,7 +819,22 @@ pub struct App {
     /// The files opened, whose changed lines are marked: by repository,
     /// their paths in it.
     marked: BTreeMap<String, BTreeSet<String>>,
+    /// The git runs started and not ended, by number: their folder and
+    /// command, to start one again that Kalem refused.
+    running: BTreeMap<u64, (Option<String>, GitCommand)>,
+    /// The runs waiting for one of those to end ([`MAX_RUNS`]).
+    queued: VecDeque<(u64, Option<String>, GitCommand)>,
 }
+
+/// The files the panel lists in a section at most: 20,000 changed files
+/// made a panel of 40,000 widgets at each refresh.
+pub const PANEL_FILES: usize = 100;
+
+/// The git runs started at a time. Kalem refuses a plugin's 17th program
+/// at a time, and a refusal was taken for an empty answer: Shift+Tab over
+/// many files showed most of them without their diffs, the marks of the
+/// files open went, and a refresh refused dropped the repository.
+pub const MAX_RUNS: usize = 12;
 
 fn parent(path: &str) -> (String, String) {
     match path.rfind(['/', '\\']) {
@@ -804,6 +863,8 @@ impl App {
         self.next
     }
 
+    /// Runs `command` for `why`: at once, or once one of the runs started
+    /// ends when [`MAX_RUNS`] are.
     fn run(
         &mut self,
         out: &mut Vec<Effect>,
@@ -813,11 +874,23 @@ impl App {
     ) {
         let token = self.token();
         self.pending.insert(token, why);
-        out.push(Effect::Run {
-            token,
-            cwd,
-            command,
-        });
+        self.queued.push_back((token, cwd, command));
+        self.start_runs(out);
+    }
+
+    /// Starts the runs queued, as many as may run.
+    fn start_runs(&mut self, out: &mut Vec<Effect>) {
+        while self.running.len() < MAX_RUNS {
+            let Some((token, cwd, command)) = self.queued.pop_front() else {
+                break;
+            };
+            self.running.insert(token, (cwd.clone(), command.clone()));
+            out.push(Effect::Run {
+                token,
+                cwd,
+                command,
+            });
+        }
     }
 
     fn ask(&mut self, q: Question) -> u64 {
@@ -858,10 +931,29 @@ impl App {
         match input {
             Input::Command { id, doc } => self.command(&mut out, &id, doc),
             Input::Done { token, result } => {
+                self.running.remove(&token);
+                self.start_runs(&mut out);
                 if let Some(p) = self.pending.remove(&token) {
                     self.done(&mut out, p, result);
                 }
             }
+            Input::Refused { token, error } => match self.running.remove(&token) {
+                // Too many programs at a time: the run waits, first in
+                // line, for one of the others to end, as Kalem would refuse
+                // it again before; with none left (each refused too),
+                // Kalem runs none of the plugin's, and it starts at once.
+                Some((cwd, command)) if error.contains("running already") => {
+                    self.queued.push_front((token, cwd, command));
+                    if self.running.is_empty() {
+                        self.start_runs(&mut out);
+                    }
+                }
+                _ => {
+                    if let Some(p) = self.pending.remove(&token) {
+                        self.done(&mut out, p, Err(error));
+                    }
+                }
+            },
             Input::Answer { token, answer } => {
                 if let Some(q) = self.questions.remove(&token) {
                     self.answer(&mut out, q, answer);
@@ -876,6 +968,23 @@ impl App {
                     After::Nothing
                 };
                 self.locate(&mut out, Some(folder), Some(name), after, true);
+            }
+            Input::Returned(root) => {
+                if self.repos.get(&root).is_some_and(|s| s.content.is_some()) {
+                    self.current = Some(root.clone());
+                    self.refresh(&mut out, &root, After::Nothing);
+                }
+            }
+            Input::Closed(path) => {
+                for (root, paths) in &mut self.marked {
+                    if let Some(rel) = path
+                        .strip_prefix(root.trim_end_matches('/'))
+                        .and_then(|p| p.strip_prefix('/'))
+                    {
+                        paths.remove(rel);
+                    }
+                }
+                self.marked.retain(|_, paths| !paths.is_empty());
             }
             Input::Changed(path) => {
                 if let Some(root) = self.current.clone()
@@ -1001,6 +1110,9 @@ impl App {
             "git.switchBranch" => After::SwitchBranch,
             "git.newBranch" => After::NewBranch,
             "git.stash" => After::Stash,
+            "git.continue" => After::Sequence(cmd::Sequence::Continue),
+            "git.skip" => After::Sequence(cmd::Sequence::Skip),
+            "git.abort" => After::Sequence(cmd::Sequence::Abort),
             "git.fetch" => After::Fetch,
             "git.pull" => After::Pull,
             "git.push" => After::Push,
@@ -1273,6 +1385,7 @@ impl App {
                 path,
             } => self.diff_done(out, &root, generation, section, &path, result),
             Pending::Show { root, hash } => self.show_done(out, &root, &hash, result),
+            Pending::Markers { root, plan } => self.markers_done(out, &root, plan, result),
             Pending::LastMessage { root, kind } => match result {
                 Ok(o) if o.success() => {
                     let text = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -1296,19 +1409,24 @@ impl App {
                 }
                 other => self.fail(out, message(&other)),
             },
-            Pending::Marks { root, path } => {
-                let marks = match &result {
-                    Ok(o) if o.success() => crate::git::diff::parse(&o.stdout)
-                        .ok()
-                        .and_then(|d| d.files.into_iter().next())
-                        .map(|f| crate::gutter::marks(&f))
+            Pending::Marks { root, paths } => {
+                let files = match &result {
+                    Ok(o) if o.success() && !o.truncated => crate::git::diff::parse(&o.stdout)
+                        .map(|d| d.files)
                         .unwrap_or_default(),
                     _ => Vec::new(),
                 };
-                out.push(Effect::Gutter {
-                    path: format!("{}/{}", root.trim_end_matches('/'), path),
-                    marks,
-                });
+                for path in paths {
+                    let marks = files
+                        .iter()
+                        .find(|f| f.path() == path)
+                        .map(crate::gutter::marks)
+                        .unwrap_or_default();
+                    out.push(Effect::Gutter {
+                        path: format!("{}/{}", root.trim_end_matches('/'), path),
+                        marks,
+                    });
+                }
             }
             Pending::Blame { line } => match result {
                 Ok(o) if o.success() => match blame::parse(&o.stdout) {
@@ -1357,7 +1475,10 @@ impl App {
         match result {
             Ok(repo) => {
                 if let Some(s) = self.repos.get_mut(root) {
-                    s.repo = Some(repo);
+                    let before = s.repo.replace(repo);
+                    if s.content.is_some() && s.written.is_none() {
+                        s.written = before.map(|r| r.diffs);
+                    }
                     s.loading.clear();
                 }
             }
@@ -1515,6 +1636,7 @@ impl App {
                     "Stashed the changes".into(),
                 );
             }
+            After::Sequence(what) => self.sequence(out, root, &repo, what),
             After::Fetch => self.remote(out, root, RemoteOp::Fetch),
             After::Pull => self.remote(out, root, RemoteOp::Pull(self.settings.pull)),
             After::Push => self.push(out, root, &repo),
@@ -1555,25 +1677,95 @@ impl App {
     }
 
     /// Reads the changes of the files of `root` opened, for the marks
-    /// beside their lines.
+    /// beside their lines: one run for them all.
     fn mark_files(&mut self, out: &mut Vec<Effect>, root: &str) {
         let paths: Vec<String> = self
             .marked
             .get(root)
             .map(|p| p.iter().cloned().collect())
             .unwrap_or_default();
-        for path in paths {
-            let command = crate::gutter::command(&path, self.settings.gutter_head);
-            self.run(
-                out,
-                Some(root.to_string()),
-                command,
-                Pending::Marks {
-                    root: root.to_string(),
-                    path,
-                },
-            );
+        if paths.is_empty() {
+            return;
         }
+        let command =
+            crate::gutter::command(paths.iter().map(String::as_str), self.settings.gutter_head);
+        self.run(
+            out,
+            Some(root.to_string()),
+            command,
+            Pending::Marks {
+                root: root.to_string(),
+                paths,
+            },
+        );
+    }
+
+    /// Continues, skips or aborts the merge, rebase, cherry-pick or revert
+    /// under way, as Magit's `r r`, `r s`, `r a` do: skipping and aborting
+    /// ask first, what was done to resolve it being lost.
+    fn sequence(&mut self, out: &mut Vec<Effect>, root: &str, repo: &Repo, what: cmd::Sequence) {
+        use crate::git::refs::Operation;
+        let say = |out: &mut Vec<Effect>, m: String| out.push(Effect::Notify(m, Level::Info));
+        let op = match repo.operation {
+            None => {
+                return say(
+                    out,
+                    "No merge, rebase, cherry-pick or revert is under way".into(),
+                );
+            }
+            Some(Operation::Bisect) => {
+                return say(
+                    out,
+                    "A bisection is under way: git bisect good, bad, skip or reset goes on with it"
+                        .into(),
+                );
+            }
+            Some(op) => op,
+        };
+        let name = op.name();
+        let Some(command) = cmd::sequence(op, what) else {
+            return say(
+                out,
+                format!("A {name} stops on no commit to skip: continue or abort it"),
+            );
+        };
+        let unmerged = repo.entries(Section::Unmerged).len();
+        let (confirm, done) = match what {
+            cmd::Sequence::Continue if unmerged > 0 => {
+                let (files, them) = if unmerged == 1 {
+                    ("1 file is".to_string(), "it")
+                } else {
+                    (format!("{unmerged} files are"), "them")
+                };
+                out.push(Effect::Notify(
+                    format!(
+                        "{files} still in conflict: resolve and stage {them} (s), then continue"
+                    ),
+                    Level::Warning,
+                ));
+                return;
+            }
+            cmd::Sequence::Continue => (None, format!("Continued the {name}")),
+            cmd::Sequence::Skip => (
+                Some(format!(
+                    "Skip the commit the {name} stopped on? Its changes, and what was done to resolve them, are left out."
+                )),
+                format!("Skipped a commit of the {name}"),
+            ),
+            cmd::Sequence::Abort => (
+                Some(format!(
+                    "Abort the {name}? Everything goes back as it was before it, and what was done to resolve it is lost."
+                )),
+                format!("Aborted the {name}"),
+            ),
+        };
+        let plan = actions::Plan {
+            confirm,
+            commands: vec![command],
+            done,
+            ..actions::Plan::default()
+        };
+        self.start_plan(out, root, plan);
     }
 
     /// A commit of kind `kind`: its message asked for (an amended
@@ -1677,6 +1869,17 @@ impl App {
     }
 
     fn start_plan(&mut self, out: &mut Vec<Effect>, root: &str, plan: actions::Plan) {
+        // Files in conflict staged: their conflict markers looked for
+        // first (`markers_done`).
+        if !plan.unmerged.is_empty() {
+            let command = cmd::conflict_markers(plan.unmerged.iter().map(String::as_str));
+            let why = Pending::Markers {
+                root: root.to_string(),
+                plan,
+            };
+            self.run(out, Some(root.to_string()), command, why);
+            return;
+        }
         if let Some(message) = plan.confirm {
             let token = self.ask(Question::Plan {
                 root: root.to_string(),
@@ -1687,6 +1890,51 @@ impl App {
             return;
         }
         self.run_plan(out, root, plan.commands, plan.done);
+    }
+
+    /// The files in conflict `plan` stages were looked through for conflict
+    /// markers: the user is asked whether to stage them when some are left
+    /// (or when git could not tell), else the plan goes on as it was.
+    fn markers_done(
+        &mut self,
+        out: &mut Vec<Effect>,
+        root: &str,
+        mut plan: actions::Plan,
+        result: Result<Output, String>,
+    ) {
+        let names = |paths: &[String]| match paths {
+            [one] => (one.clone(), "has", "it"),
+            _ => (format!("{} files", paths.len()), "have", "them"),
+        };
+        let question = match &result {
+            // `git grep -l -z`: the files with a marker.
+            Ok(o) if o.success() => {
+                let found: Vec<String> = o
+                    .stdout
+                    .split(|b| *b == 0)
+                    .filter(|p| !p.is_empty())
+                    .map(|p| String::from_utf8_lossy(p).into_owned())
+                    .collect();
+                let (names, has, it) = names(&found);
+                (!found.is_empty()).then(|| {
+                    format!("{names} still {has} conflict markers (<<<<<<<): stage {it} anyway?")
+                })
+            }
+            // None has.
+            Ok(o) if o.status == Some(1) => None,
+            other => {
+                let (names, _, it) = names(&plan.unmerged);
+                Some(format!(
+                    "The conflict markers of {names} could not be looked for ({}): stage {it} anyway?",
+                    message(other)
+                ))
+            }
+        };
+        if question.is_some() {
+            plan.confirm = question;
+        }
+        plan.unmerged.clear();
+        self.start_plan(out, root, plan);
     }
 
     fn run_plan(
@@ -1977,11 +2225,13 @@ impl App {
                         confirm: None,
                         commands: vec![cmd::stash(cmd::StashOp::Apply, index)],
                         done: format!("Applied {name}"),
+                        ..actions::Plan::default()
                     },
                     Some(1) => actions::Plan {
                         confirm: None,
                         commands: vec![cmd::stash(cmd::StashOp::Pop, index)],
                         done: format!("Applied and dropped {name}"),
+                        ..actions::Plan::default()
                     },
                     Some(2) => actions::Plan {
                         confirm: Some(format!(
@@ -1989,6 +2239,7 @@ impl App {
                         )),
                         commands: vec![cmd::stash(cmd::StashOp::Drop, index)],
                         done: format!("Dropped {name}"),
+                        ..actions::Plan::default()
                     },
                     _ => return,
                 };
@@ -2171,7 +2422,7 @@ impl App {
             any = true;
             let open = !self.folded.contains(&section);
             let mut children = Vec::new();
-            for e in &entries {
+            for e in entries.iter().take(PANEL_FILES) {
                 let counts = repo
                     .counts
                     .get(&(section, e.path.clone()))
@@ -2201,6 +2452,15 @@ impl App {
                         children: Vec::new(),
                     },
                 ]));
+            }
+            if entries.len() > PANEL_FILES {
+                children.push(Node::label(
+                    format!(
+                        "… and {} more: the status (SPC g g) lists them",
+                        crate::views::status::group(entries.len() - PANEL_FILES)
+                    ),
+                    TextStyle::Muted,
+                ));
             }
             nodes.push(Node::Item {
                 key: format!("section:{}", section.key()),
@@ -2392,6 +2652,92 @@ mod tests {
                 .texts()
                 .contains(&"Clean: nothing to commit".to_string())
         );
+    }
+
+    /// A repository at `/r` with `n` files changed, not staged, and its
+    /// status document written.
+    fn many_files(n: usize) -> App {
+        let mut out = b"# branch.oid abc\0# branch.head main\0".to_vec();
+        for i in 0..n {
+            let line = format!("1 .M N... 100644 100644 100644 a a d{}/f{i}.txt\0", i / 100);
+            out.extend_from_slice(line.as_bytes());
+        }
+        let status = crate::git::status::parse(&out).unwrap();
+        let repo = Repo {
+            root: "/r".into(),
+            status,
+            ..Repo::default()
+        };
+        let mut app = App::new(Settings::default());
+        let opts = app.view_options();
+        let content =
+            crate::views::status::render(&repo, &Folds::default(), &opts, Default::default());
+        app.repos.insert(
+            "/r".into(),
+            RepoState {
+                repo: Some(repo),
+                content: Some(content),
+                shown: true,
+                ..RepoState::default()
+            },
+        );
+        app.current = Some("/r".into());
+        app
+    }
+
+    /// 20,000 changed files: the panel lists the first of each section,
+    /// Shift+Tab reads the diffs of the first, a git run each.
+    #[test]
+    fn many_changed_files() {
+        let mut app = many_files(20_000);
+        let Node::Column(nodes) = app.panel() else {
+            panic!("a column")
+        };
+        let Some(Node::Item {
+            label, children, ..
+        }) = nodes.last()
+        else {
+            panic!("{nodes:?}")
+        };
+        assert_eq!(label, "Unstaged (20000)");
+        assert_eq!(children.len(), PANEL_FILES + 1);
+        assert_eq!(
+            children.last().unwrap().texts(),
+            ["… and 19,900 more: the status (SPC g g) lists them"]
+        );
+        let out = app.handle(Input::Command {
+            id: "git.cycle".into(),
+            doc: Some(Doc {
+                status: Some("/r".into()),
+                ..Doc::default()
+            }),
+        });
+        let runs = out
+            .iter()
+            .filter(|e| matches!(e, Effect::Run { .. }))
+            .count();
+        assert_eq!(runs, MAX_RUNS);
+        assert_eq!(runs + app.queued.len(), CYCLE_FILES);
+        assert!(out.contains(&Effect::Notify(
+            "Shift+Tab shows the diffs of the first 100 of 20,000 changed files: Tab shows another's"
+                .into(),
+            Level::Info
+        )));
+        // Big ones: the first until their changed lines pass a big diff's.
+        let mut app = many_files(20_000);
+        let s = app.repos.get_mut("/r").unwrap();
+        let repo = s.repo.as_mut().unwrap();
+        for e in repo.status.entries.clone() {
+            repo.counts.insert((Section::Unstaged, e.path), (100, 100));
+        }
+        app.handle(Input::Command {
+            id: "git.cycle".into(),
+            doc: Some(Doc {
+                status: Some("/r".into()),
+                ..Doc::default()
+            }),
+        });
+        assert_eq!(app.running.len() + app.queued.len(), 50);
     }
 
     #[test]

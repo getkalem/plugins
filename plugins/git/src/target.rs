@@ -6,7 +6,7 @@ use crate::content::Content;
 use crate::model::Section;
 
 /// The thing a command acts on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Target {
     /// The `Head:` line.
     Head,

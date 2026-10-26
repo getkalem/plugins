@@ -79,14 +79,12 @@ fn apply(effect: Effect) {
                         status: e.status,
                         stdout: e.stdout,
                         stderr: e.stderr,
+                        truncated: e.truncated,
                     }),
                 })
             });
-            if let Err(e) = started {
-                later(Input::Done {
-                    token,
-                    result: Err(e),
-                });
+            if let Err(error) = started {
+                later(Input::Refused { token, error });
             }
         }
         Effect::Notify(message, level) => ui::notify(
@@ -226,9 +224,13 @@ fn apply(effect: Effect) {
                 }
                 .language("diff");
                 match documents::open_styled(&spec, &text, cursor, &styles) {
-                    Ok(n) => DOCS.with(|d| {
-                        d.borrow_mut().insert(key, n);
-                    }),
+                    Ok(n) => {
+                        DOCS.with(|d| {
+                            d.borrow_mut().insert(key, n);
+                        });
+                        // The cursor is in it: no return to read it again.
+                        IN.with(|i| i.set(Some(n)));
+                    }
                     Err(e) => ui::notify(&e, ui::Level::Error),
                 }
             } else if let Some(n) = open
@@ -466,6 +468,30 @@ impl Plugin for Git {
             }
             Reply::Proceed
         })?;
+        // A file closed in its last document is marked no more; a status
+        // or a commit view closed is forgotten.
+        kalem::on(EventKind::DocumentClose, |e| {
+            if let Event::DocumentClose(n) = e {
+                let n = *n;
+                if let Some(path) = FILES.with(|f| f.borrow_mut().remove(&n))
+                    && !FILES.with(|f| f.borrow().values().any(|p| *p == path))
+                {
+                    feed(Input::Closed(path));
+                }
+                let doc = DOCS.with(|d| {
+                    let mut d = d.borrow_mut();
+                    let key = d.iter().find(|(_, m)| **m == n).map(|(k, _)| k.clone());
+                    if let Some(k) = &key {
+                        d.remove(k);
+                    }
+                    key
+                });
+                if let Some((root, commit)) = doc {
+                    feed(Input::DocumentClosed { root, commit });
+                }
+            }
+            Reply::Proceed
+        })?;
         kalem::on(EventKind::DocumentAfterSave, |e| {
             if let Event::DocumentAfterSave(d) = e {
                 FILES.with(|f| f.borrow_mut().insert(d.document, d.path.clone()));
@@ -475,13 +501,23 @@ impl Plugin for Git {
         })?;
         // The cursor in another document of a file: its repository is the
         // current one, as when it was opened (the status bar named the
-        // repository of the document opened last).
+        // repository of the document opened last). Back in a status
+        // document, it is read again: a commit made in a terminal shows.
         kalem::on(EventKind::SelectionChanged, |e| {
             if let Event::SelectionChanged(s) = e
                 && IN.with(|i| i.replace(Some(s.document))) != Some(s.document)
-                && let Some(p) = FILES.with(|f| f.borrow().get(&s.document).cloned())
             {
-                feed(Input::Opened(p));
+                let n = s.document;
+                if let Some(p) = FILES.with(|f| f.borrow().get(&n).cloned()) {
+                    feed(Input::Opened(p));
+                } else if let Some(root) = DOCS.with(|d| {
+                    d.borrow()
+                        .iter()
+                        .find(|((_, commit), m)| commit.is_none() && **m == n)
+                        .map(|((root, _), _)| root.clone())
+                }) {
+                    feed(Input::Returned(root));
+                }
             }
             Reply::Proceed
         })?;

@@ -36,6 +36,12 @@ pub struct FileDiff {
     pub combined: bool,
     /// Its hunks.
     pub hunks: Vec<Hunk>,
+    /// An untracked folder's files (`git ls-files --others`), shown in
+    /// place of a diff.
+    pub listing: Vec<String>,
+    /// Git's answer was cut at the 16 MB Kalem keeps of a program's output
+    /// (`refresh::TOO_LARGE`): none of it is read, shown or applied.
+    pub truncated: bool,
 }
 
 impl FileDiff {

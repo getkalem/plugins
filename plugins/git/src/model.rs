@@ -122,19 +122,13 @@ impl Repo {
         self.status
             .entries
             .iter()
-            .filter(|e| match section {
-                Section::Unmerged => matches!(e.kind, Kind::Unmerged(_)),
-                Section::Untracked => e.kind == Kind::Untracked,
-                Section::Unstaged => e.unstaged(),
-                Section::Staged => e.staged(),
-                _ => false,
-            })
+            .filter(|e| in_section(e, section))
             .collect()
     }
 
     /// The entry of `path` in `section`.
     pub fn entry(&self, section: Section, path: &str) -> Option<&Entry> {
-        self.entries(section).into_iter().find(|e| e.path == path)
+        self.status.entry(path).filter(|e| in_section(e, section))
     }
 
     /// A file's diff, when loaded.
@@ -146,6 +140,8 @@ impl Repo {
     pub fn diff_command(&self, section: Section, path: &str, context: u32) -> Option<GitCommand> {
         let e = self.entry(section, path)?;
         Some(match section {
+            // A folder: its files, `git diff --no-index` taking no folder.
+            Section::Untracked if path.ends_with('/') => cmd::untracked_files(path),
             Section::Untracked => cmd::diff_untracked(path, context),
             Section::Staged => cmd::diff(path, e.from.as_deref(), true, context),
             Section::Unstaged | Section::Unmerged => cmd::diff(path, None, false, context),
@@ -155,6 +151,20 @@ impl Repo {
 
     /// Keeps a file's diff, read from git's answer to [`Repo::diff_command`].
     pub fn set_diff(&mut self, section: Section, path: &str, out: &[u8]) -> Result<(), String> {
+        if section == Section::Untracked && path.ends_with('/') {
+            let listing = out
+                .split(|b| *b == 0)
+                .filter(|p| !p.is_empty())
+                .map(|p| String::from_utf8_lossy(p).into_owned())
+                .collect();
+            let file = FileDiff {
+                new_path: Some(path.to_string()),
+                listing,
+                ..FileDiff::default()
+            };
+            self.diffs.insert((section, path.to_string()), file);
+            return Ok(());
+        }
         let d = diff::parse(out)?;
         let file = d.files.into_iter().next().unwrap_or_else(|| FileDiff {
             new_path: Some(path.to_string()),
@@ -162,6 +172,17 @@ impl Repo {
         });
         self.diffs.insert((section, path.to_string()), file);
         Ok(())
+    }
+
+    /// Keeps a file's diff as too large to read: git's answer to
+    /// [`Repo::diff_command`] was cut at Kalem's limit.
+    pub fn set_truncated(&mut self, section: Section, path: &str) {
+        let file = FileDiff {
+            new_path: Some(path.to_string()),
+            truncated: true,
+            ..FileDiff::default()
+        };
+        self.diffs.insert((section, path.to_string()), file);
     }
 
     /// Every changed path, once, in git's order: what the Files panel
@@ -177,7 +198,7 @@ impl Repo {
     /// The sections a changed path is in: its conflict, or its untracked
     /// file, or its unstaged and staged changes.
     pub fn sections_of(&self, path: &str) -> Vec<Section> {
-        let Some(e) = self.status.entries.iter().find(|e| e.path == path) else {
+        let Some(e) = self.status.entry(path) else {
             return Vec::new();
         };
         match e.kind {
@@ -209,6 +230,17 @@ impl Repo {
     /// unpushed or unpulled.
     pub fn shows_recent(&self) -> bool {
         self.unpushed.is_empty() && self.unpulled.is_empty() && !self.recent.is_empty()
+    }
+}
+
+/// Whether entry `e` is in `section`, a section of files.
+fn in_section(e: &Entry, section: Section) -> bool {
+    match section {
+        Section::Unmerged => matches!(e.kind, Kind::Unmerged(_)),
+        Section::Untracked => e.kind == Kind::Untracked,
+        Section::Unstaged => e.unstaged(),
+        Section::Staged => e.staged(),
+        _ => false,
     }
 }
 
@@ -245,6 +277,19 @@ impl Folds {
         } else {
             self.set.insert(key.to_string(), folded);
         }
+    }
+
+    /// Whether the region `key` is folded, `default` when the user has not
+    /// said: a big file of a commit starts folded, which its key does not
+    /// tell.
+    pub fn folded_or(&self, key: &str, default: bool) -> bool {
+        self.set.get(key).copied().unwrap_or(default)
+    }
+
+    /// Folds or unfolds it, kept whatever its key's default (see
+    /// [`Folds::folded_or`]).
+    pub fn put(&mut self, key: &str, folded: bool) {
+        self.set.insert(key.to_string(), folded);
     }
 
     /// Folds it when unfolded and the other way; its new state.

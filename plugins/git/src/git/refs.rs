@@ -120,6 +120,17 @@ pub enum Operation {
 }
 
 impl Operation {
+    /// Its name in a sentence: "Abort the merge?".
+    pub fn name(self) -> &'static str {
+        match self {
+            Operation::Merge => "merge",
+            Operation::Rebase => "rebase",
+            Operation::CherryPick => "cherry-pick",
+            Operation::Revert => "revert",
+            Operation::Bisect => "bisection",
+        }
+    }
+
     /// The word the status's line starts with.
     pub fn word(self) -> &'static str {
         match self {
@@ -143,13 +154,28 @@ pub const OPERATION_REFS: &[(&str, Operation)] = &[
 ];
 
 /// Reads the answer of [`crate::git::cmd::operations`]: a line per name,
-/// `NAME missing` for the absent ones. The first present one wins.
-pub fn parse_operations(out: &[u8]) -> Option<Operation> {
+/// `NAME missing` for the absent ones. The operations whose reference is
+/// there, in order ([`under_way`] tells which is).
+pub fn parse_operations(out: &[u8]) -> Vec<Operation> {
     let text = String::from_utf8_lossy(out);
     text.lines()
         .zip(OPERATION_REFS)
-        .find(|(line, _)| !line.ends_with(" missing") && !line.trim().is_empty())
+        .filter(|(line, _)| !line.ends_with(" missing") && !line.trim().is_empty())
         .map(|(_, (_, op))| *op)
+        .collect()
+}
+
+/// The operation under way, from those whose reference is there
+/// ([`parse_operations`]) and whether HEAD is detached. Git leaves
+/// `REBASE_HEAD` behind when a rebase that stopped ends, and the status
+/// said "Rebasing" from then on, a cherry-pick's included: a rebase is
+/// under way while HEAD is detached, as it is all through one, and what
+/// it stops on (a merge, a pick) is its own.
+pub fn under_way(present: &[Operation], detached: bool) -> Option<Operation> {
+    if detached && present.contains(&Operation::Rebase) {
+        return Some(Operation::Rebase);
+    }
+    present.iter().copied().find(|op| *op != Operation::Rebase)
 }
 
 #[cfg(test)]
@@ -189,10 +215,16 @@ refs/remotes/origin/main\0origin/main\0\0\0 \n";
     #[test]
     fn operations() {
         let none = b"MERGE_HEAD missing\nREBASE_HEAD missing\nCHERRY_PICK_HEAD missing\nREVERT_HEAD missing\nrefs/bisect/bad missing\n";
-        assert_eq!(parse_operations(none), None);
+        assert_eq!(parse_operations(none), []);
         let merge = b"abc commit 200\nREBASE_HEAD missing\nCHERRY_PICK_HEAD missing\nREVERT_HEAD missing\nrefs/bisect/bad missing\n";
-        assert_eq!(parse_operations(merge), Some(Operation::Merge));
+        assert_eq!(parse_operations(merge), [Operation::Merge]);
         let pick = b"MERGE_HEAD missing\nREBASE_HEAD missing\nabc commit 1\nREVERT_HEAD missing\nrefs/bisect/bad missing\n";
-        assert_eq!(parse_operations(pick), Some(Operation::CherryPick));
+        assert_eq!(parse_operations(pick), [Operation::CherryPick]);
+        // A REBASE_HEAD left behind by a rebase that ended, HEAD on a
+        // branch: no rebase, a cherry-pick if there is one.
+        let left = [Operation::Rebase, Operation::CherryPick];
+        assert_eq!(under_way(&left, false), Some(Operation::CherryPick));
+        assert_eq!(under_way(&left[..1], false), None);
+        assert_eq!(under_way(&left, true), Some(Operation::Rebase));
     }
 }

@@ -334,6 +334,181 @@ fn whole_files_new_deleted_renamed_and_untracked() {
     assert!(!t.dir.join("junk.txt").exists());
 }
 
+/// A path is never a pattern: discarding the untracked `notes?.md` ran
+/// `git clean` on `notes1.md` too, staging `pages/[id].tsx` staged
+/// `pages/i.tsx`, and unstaging `x*.txt` unstaged `x1.txt`.
+#[test]
+fn paths_are_taken_literally() {
+    let mut t = T::new("literal");
+    for p in ["pages/[id].tsx", "pages/i.tsx", "x*.txt", "x1.txt"] {
+        t.write(p, "one\n");
+    }
+    t.commit_all("Base");
+    for p in ["pages/[id].tsx", "pages/i.tsx", "x*.txt", "x1.txt"] {
+        t.write(p, "two\n");
+    }
+    t.write("notes?.md", "n\n");
+    t.write("notes1.md", "n\n");
+    let file = |section, path: &str| Target::File {
+        section,
+        path: path.into(),
+    };
+    let repo = t.repo();
+    t.act(
+        Act::Stage,
+        &[file(Section::Unstaged, "pages/[id].tsx")],
+        &repo,
+    )
+    .unwrap();
+    assert_eq!(t.index("pages/[id].tsx"), "two\n");
+    assert_eq!(t.index("pages/i.tsx"), "one\n");
+    t.act(
+        Act::Discard,
+        &[file(Section::Untracked, "notes?.md")],
+        &repo,
+    )
+    .unwrap();
+    assert!(!t.dir.join("notes?.md").exists());
+    assert!(t.dir.join("notes1.md").exists());
+    t.ok(&["add", "--", "x*.txt", "x1.txt"]);
+    let repo = t.repo();
+    t.act(Act::Unstage, &[file(Section::Staged, "x*.txt")], &repo)
+        .unwrap();
+    let repo = t.repo();
+    assert!(repo.entry(Section::Staged, "x*.txt").is_none());
+    assert!(repo.entry(Section::Staged, "x1.txt").is_some());
+    // Everything unstaged at once in a repository without a commit
+    // (`rm --cached -r -- .`) still takes every path.
+    let mut t = T::new("literal-unborn");
+    t.write("a?.txt", "a\n");
+    t.write("dir/b.txt", "b\n");
+    t.ok(&["add", "-A"]);
+    let repo = t.repo();
+    t.act(Act::Unstage, &[Target::Section(Section::Staged)], &repo)
+        .unwrap();
+    assert!(t.repo().entries(Section::Staged).is_empty());
+}
+
+/// The user's diff settings change nothing the plugin reads or applies:
+/// with an external diff (difftastic's way) or colors always the diffs
+/// had no hunks, without the a/ b/ prefixes staging failed. The tests
+/// run git without the user's configuration, so these are the
+/// repository's own here.
+#[test]
+fn the_users_diff_settings_change_nothing() {
+    let mut t = T::new("user-config");
+    let base = lines(40);
+    t.write("f.txt", &base);
+    t.write(".gitattributes", "*.txt diff=upper\n");
+    t.commit_all("Base");
+    for (key, value) in [
+        ("diff.external", "echo"),
+        ("color.ui", "always"),
+        ("color.diff", "always"),
+        ("diff.noprefix", "true"),
+        ("diff.mnemonicPrefix", "true"),
+        ("diff.upper.textconv", "tr a-z A-Z"),
+    ] {
+        t.ok(&["config", key, value]);
+    }
+    let changed = base
+        .replace("line 2\n", "line two\n")
+        .replace("line 30\n", "line thirty\n");
+    t.write("f.txt", &changed);
+    t.write("new.txt", "new\n");
+    let (repo, _) = t.repo_with(&[
+        (Section::Unstaged, "f.txt"),
+        (Section::Untracked, "new.txt"),
+    ]);
+    let d = repo.diff(Section::Unstaged, "f.txt").unwrap();
+    assert_eq!(d.path(), "f.txt");
+    assert_eq!(d.hunks.len(), 2, "{d:?}");
+    assert!(d.hunks[0].lines.iter().any(|l| l.text == b"line two"));
+    let new = repo.diff(Section::Untracked, "new.txt").unwrap();
+    assert_eq!(new.hunks.len(), 1, "{new:?}");
+    // A hunk and a line staged, applied as git printed them.
+    let hunk = Target::Hunk {
+        section: Section::Unstaged,
+        path: "f.txt".into(),
+        hunk: 1,
+    };
+    t.act(Act::Stage, &[hunk], &repo).unwrap();
+    assert_eq!(t.index("f.txt"), base.replace("line 30\n", "line thirty\n"));
+    let (repo, _) = t.repo_with(&[(Section::Unstaged, "f.txt")]);
+    let added = repo.diff(Section::Unstaged, "f.txt").unwrap().hunks[0]
+        .lines
+        .iter()
+        .position(|l| l.kind == LineKind::Added)
+        .unwrap();
+    let line = Target::Lines {
+        section: Section::Unstaged,
+        path: "f.txt".into(),
+        hunk: 0,
+        lines: vec![added],
+    };
+    t.act(Act::Stage, &[line], &repo).unwrap();
+    assert!(t.index("f.txt").contains("line 2\nline two\n"));
+    // The marks beside the lines, and a commit's view.
+    let out = t
+        .git
+        .run(&kalem_plugin_git::gutter::command(["f.txt"], true))
+        .unwrap();
+    let d = diff::parse(&out.stdout).unwrap();
+    assert_eq!(d.files.len(), 1, "{}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(d.files[0].hunks.len(), 2);
+    t.commit_all("Changed");
+    let out = t.git.run(&cmd::show("HEAD", 3)).unwrap();
+    let d = diff::parse(&out.stdout).unwrap();
+    let f = d.files.iter().find(|f| f.path() == "f.txt").unwrap();
+    assert_eq!(f.hunks.len(), 2);
+}
+
+/// A hunk of a staged rename unstaged or discarded leaves the rename: the
+/// patch carried git's `rename from` and `rename to`, and took the rename
+/// back with the hunk.
+#[test]
+fn a_hunk_of_a_rename_leaves_the_rename() {
+    let mut t = T::new("rename-hunk");
+    let base = lines(40);
+    t.write("old.txt", &base);
+    t.commit_all("Base");
+    t.ok(&["mv", "old.txt", "new.txt"]);
+    let changed = base
+        .replace("line 2\n", "line two\n")
+        .replace("line 30\n", "line thirty\n");
+    t.write("new.txt", &changed);
+    t.ok(&["add", "new.txt"]);
+    let (repo, _) = t.repo_with(&[(Section::Staged, "new.txt")]);
+    let d = repo.diff(Section::Staged, "new.txt").unwrap();
+    assert!(d.renamed && d.hunks.len() == 2, "{d:?}");
+    let first = Target::Hunk {
+        section: Section::Staged,
+        path: "new.txt".into(),
+        hunk: 0,
+    };
+    t.act(Act::Unstage, std::slice::from_ref(&first), &repo)
+        .unwrap();
+    let renamed = |t: &mut T| {
+        let repo = t.repo();
+        let e = repo.entry(Section::Staged, "new.txt").cloned();
+        e.and_then(|e| e.from)
+    };
+    assert_eq!(renamed(&mut t).as_deref(), Some("old.txt"));
+    assert_eq!(
+        t.index("new.txt"),
+        base.replace("line 30\n", "line thirty\n")
+    );
+    assert_eq!(t.read("new.txt"), changed);
+    // The other hunk discarded: out of the index and the working tree,
+    // the rename kept.
+    let (repo, _) = t.repo_with(&[(Section::Staged, "new.txt")]);
+    t.act(Act::Discard, &[first], &repo).unwrap();
+    assert_eq!(renamed(&mut t).as_deref(), Some("old.txt"));
+    assert_eq!(t.index("new.txt"), base);
+    assert_eq!(t.read("new.txt"), base.replace("line 2\n", "line two\n"));
+    assert!(!t.dir.join("old.txt").exists());
+}
+
 #[test]
 fn reverting_staged_changes_keeps_the_unstaged_ones() {
     let mut t = T::new("revert-staged");
@@ -383,8 +558,10 @@ fn committing_amending_and_the_log() {
     t.write("a", "a\n");
     t.ok(&["add", "a"]);
     let repo = t.repo();
+    // A line starting with `#` is the message's own; blank lines at the
+    // end and trailing spaces go.
     let plan = actions::commit(
-        "First\n\nBody line.\n# a comment\n",
+        "First\n\nBody line.  \n#42 closes it\n\n\n",
         &CommitKind::New,
         false,
         &repo,
@@ -392,7 +569,7 @@ fn committing_amending_and_the_log() {
     .unwrap();
     native::run_plan(&mut t.git, &plan.commands).unwrap();
     let message = String::from_utf8(t.ok(&["log", "-1", "--format=%B"])).unwrap();
-    assert_eq!(message.trim_end(), "First\n\nBody line.");
+    assert_eq!(message, "First\n\nBody line.\n#42 closes it\n\n");
     // Nothing staged: refused before git is asked.
     let repo = t.repo();
     assert!(actions::commit("Second\n", &CommitKind::New, false, &repo).is_err());
@@ -479,7 +656,12 @@ fn a_merge_in_conflict() {
         &ViewOptions::default(),
         Tab::Files,
     );
-    assert!(c.text.contains("\n Merging (1 unmerged)\n"), "{}", c.text);
+    assert!(
+        c.text
+            .contains("\n Merging (1 unmerged)  (Enter: continue, abort)\n"),
+        "{}",
+        c.text
+    );
     assert!(c.text.contains("\n UU f "), "{}", c.text);
     // A commit is refused while files are in conflict.
     assert!(actions::commit("Merge\n", &CommitKind::New, false, &repo).is_err());
@@ -575,10 +757,60 @@ fn chosen(picks: &[(usize, Pick)], hunk: usize, line: usize) -> bool {
     })
 }
 
+/// A file's lines, and whether its last line ends with a newline.
+#[derive(Debug, Clone, PartialEq)]
+struct Text {
+    lines: Vec<String>,
+    newline: bool,
+}
+
+impl Text {
+    fn of(text: &str) -> Text {
+        Text {
+            lines: text.lines().map(str::to_string).collect(),
+            newline: text.is_empty() || text.ends_with('\n'),
+        }
+    }
+
+    fn string(&self) -> String {
+        let mut s = self.lines.join("\n");
+        if self.newline && !self.lines.is_empty() {
+            s.push('\n');
+        }
+        s
+    }
+
+    /// Adds a line; the text ends as it does.
+    fn push(&mut self, line: String, newline: bool) {
+        self.lines.push(line);
+        self.newline = newline;
+    }
+
+    /// Adds lines `range` of `from`, its last line as it ends there.
+    fn copy(&mut self, from: &Text, range: std::ops::Range<usize>) {
+        for i in range {
+            let newline = i + 1 < from.lines.len() || from.newline;
+            self.push(from.lines[i].clone(), newline);
+        }
+    }
+}
+
+/// Line `i` of a hunk: its text, and whether it ends with a newline (no
+/// `\ No newline at end of file` after it).
+fn hunk_line(h: &diff::Hunk, i: usize) -> (String, bool) {
+    let text = String::from_utf8(h.lines[i].text.clone()).unwrap();
+    let marked = h
+        .lines
+        .get(i + 1)
+        .is_some_and(|n| n.kind == LineKind::NoNewline);
+    (text, !marked)
+}
+
 /// What a forward patch of `picks` makes of the diff's old side: removed
-/// lines chosen go, added lines chosen come.
-fn expected_forward(old: &[String], d: &FileDiff, picks: &[(usize, Pick)]) -> Vec<String> {
-    let mut out = Vec::new();
+/// lines chosen go, added lines chosen come; the text ends without a
+/// newline when its last line is one the diff marks so.
+fn expected_forward(old: &Text, d: &FileDiff, picks: &[(usize, Pick)]) -> Text {
+    let mut out = Text::of("");
     let mut at = 0usize; // lines of `old` copied so far
     for (hi, h) in d.hunks.iter().enumerate() {
         // An empty side's start names the line before it.
@@ -587,35 +819,34 @@ fn expected_forward(old: &[String], d: &FileDiff, picks: &[(usize, Pick)]) -> Ve
         } else {
             h.old_start as usize - 1
         };
-        out.extend_from_slice(&old[at..start]);
+        out.copy(old, at..start);
         at = start;
         for (li, l) in h.lines.iter().enumerate() {
-            let text = String::from_utf8(l.text.clone()).unwrap();
+            let (text, newline) = hunk_line(h, li);
             match l.kind {
                 LineKind::Context => {
-                    out.push(text);
+                    out.push(text, newline);
                     at += 1;
                 }
                 LineKind::Removed => {
                     if !chosen(picks, hi, li) {
-                        out.push(text);
+                        out.push(text, newline);
                     }
                     at += 1;
                 }
-                LineKind::Added if chosen(picks, hi, li) => out.push(text),
-                LineKind::Added => {}
+                LineKind::Added if chosen(picks, hi, li) => out.push(text, newline),
                 _ => {}
             }
         }
     }
-    out.extend_from_slice(&old[at..]);
+    out.copy(old, at..old.lines.len());
     out
 }
 
 /// What a reverse patch of `picks` makes of the diff's new side: added
 /// lines chosen go, removed lines chosen come back.
-fn expected_reverse(new: &[String], d: &FileDiff, picks: &[(usize, Pick)]) -> Vec<String> {
-    let mut out = Vec::new();
+fn expected_reverse(new: &Text, d: &FileDiff, picks: &[(usize, Pick)]) -> Text {
+    let mut out = Text::of("");
     let mut at = 0usize;
     for (hi, h) in d.hunks.iter().enumerate() {
         let start = if h.new_count == 0 {
@@ -623,37 +854,28 @@ fn expected_reverse(new: &[String], d: &FileDiff, picks: &[(usize, Pick)]) -> Ve
         } else {
             h.new_start as usize - 1
         };
-        out.extend_from_slice(&new[at..start]);
+        out.copy(new, at..start);
         at = start;
         for (li, l) in h.lines.iter().enumerate() {
-            let text = String::from_utf8(l.text.clone()).unwrap();
+            let (text, newline) = hunk_line(h, li);
             match l.kind {
                 LineKind::Context => {
-                    out.push(text);
+                    out.push(text, newline);
                     at += 1;
                 }
                 LineKind::Added => {
                     if !chosen(picks, hi, li) {
-                        out.push(text);
+                        out.push(text, newline);
                     }
                     at += 1;
                 }
-                LineKind::Removed if chosen(picks, hi, li) => out.push(text),
-                LineKind::Removed => {}
+                LineKind::Removed if chosen(picks, hi, li) => out.push(text, newline),
                 _ => {}
             }
         }
     }
-    out.extend_from_slice(&new[at..]);
+    out.copy(new, at..new.lines.len());
     out
-}
-
-fn split(text: &str) -> Vec<String> {
-    text.lines().map(str::to_string).collect()
-}
-
-fn join(lines: &[String]) -> String {
-    lines.iter().map(|l| format!("{l}\n")).collect()
 }
 
 fn file_diff(t: &mut T, staged: bool, context: u32) -> Option<FileDiff> {
@@ -673,17 +895,39 @@ fn apply(t: &mut T, patch: Vec<u8>, to: cmd::ApplyTo, reverse: bool, context: u3
     );
 }
 
+/// Random selections staged, unstaged and discarded, the index and the
+/// working tree compared byte for byte with what the selection says.
+/// In most rounds with context lines the file committed, the one edited
+/// or both end without a newline: a line selected next to the marked last
+/// line ran two lines together (`b` and `c` staged as `bc`).
 #[test]
 fn random_lines_stage_unstage_and_discard_as_selected() {
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     for round in 0..40 {
         let context = [3, 1, 0][round % 3];
+        // Without context lines git itself takes a last line without its
+        // newline for the same line before it (its own patch, reversed
+        // with --unidiff-zero, removes the wrong one): those rounds keep
+        // the newlines.
+        let (base_newline, work_newline) = match round % 4 {
+            _ if context == 0 => (true, true),
+            1 => (false, true),
+            2 => (true, false),
+            3 => (false, false),
+            _ => (true, true),
+        };
         let mut t = T::new("lines");
-        let base: Vec<String> = (0..40).map(|i| format!("base {i}")).collect();
-        t.write("f", &join(&base));
+        let base = Text {
+            lines: (0..40).map(|i| format!("base {i}")).collect(),
+            newline: base_newline,
+        };
+        t.write("f", &base.string());
         t.commit_all("Base");
-        let work = edit(&mut rng, &base, round);
-        t.write("f", &join(&work));
+        let work = Text {
+            lines: edit(&mut rng, &base.lines, round),
+            newline: work_newline,
+        };
+        t.write("f", &work.string());
         let Some(unstaged) = file_diff(&mut t, false, context) else {
             continue;
         };
@@ -697,10 +941,10 @@ fn random_lines_stage_unstage_and_discard_as_selected() {
             Err(patch::Refusal::NothingSelected) => base.clone(),
             Err(e) => panic!("round {round}: {e}"),
         };
-        assert_eq!(split(&t.index("f")), index, "round {round}: staging");
+        assert_eq!(t.index("f"), index.string(), "round {round}: staging");
         assert_eq!(
-            split(&t.read("f")),
-            work,
+            t.read("f"),
+            work.string(),
             "round {round}: the working tree moved"
         );
         // Unstage a random selection of what is staged.
@@ -714,10 +958,10 @@ fn random_lines_stage_unstage_and_discard_as_selected() {
                 Err(patch::Refusal::NothingSelected) => index.clone(),
                 Err(e) => panic!("round {round}: {e}"),
             };
-            assert_eq!(split(&t.index("f")), after, "round {round}: unstaging");
+            assert_eq!(t.index("f"), after.string(), "round {round}: unstaging");
         }
         // Discard a random selection of what is not staged.
-        let index_now = split(&t.index("f"));
+        let index_now = t.index("f");
         if let Some(unstaged) = file_diff(&mut t, false, context) {
             let picks = select(&mut rng, &unstaged);
             let after = match patch::build(&unstaged, &picks, Mode::Reverse) {
@@ -728,12 +972,8 @@ fn random_lines_stage_unstage_and_discard_as_selected() {
                 Err(patch::Refusal::NothingSelected) => work.clone(),
                 Err(e) => panic!("round {round}: {e}"),
             };
-            assert_eq!(split(&t.read("f")), after, "round {round}: discarding");
-            assert_eq!(
-                split(&t.index("f")),
-                index_now,
-                "round {round}: the index moved"
-            );
+            assert_eq!(t.read("f"), after.string(), "round {round}: discarding");
+            assert_eq!(t.index("f"), index_now, "round {round}: the index moved");
         }
     }
 }

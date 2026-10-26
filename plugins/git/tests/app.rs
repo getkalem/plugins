@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use kalem_plugin_git::app::{
-    Answer, App, COMMANDS, COMMIT_KIND, Doc, Effect, Input, Level, PanelEvent, STATUS_KIND,
-    Settings,
+    Answer, App, COMMANDS, COMMIT_KIND, Doc, Effect, Input, Level, MAX_RUNS, PanelEvent,
+    STATUS_KIND, Settings,
 };
 use kalem_plugin_git::git::cmd::GitCommand;
 use kalem_plugin_git::gutter::Mark;
@@ -55,6 +55,18 @@ struct Kalem {
     offered: Vec<Option<String>>,
     /// The marks beside the lines, by file.
     gutters: BTreeMap<String, Vec<(u32, Mark)>>,
+    /// A path whose git runs are held back, as a slow answer is.
+    hold: Option<String>,
+    /// The runs held back: their number, folder and command.
+    held: Vec<(u64, Option<String>, GitCommand)>,
+    /// The plugin's programs Kalem runs at a time, refusing the next.
+    kalem_runs: usize,
+    /// The runs started and not ended, and the most there were.
+    runs: usize,
+    most_runs: usize,
+    /// An argument of the runs whose output is cut short, as Kalem cuts
+    /// a program's past 16 MB.
+    cut: Option<String>,
 }
 
 impl Drop for Kalem {
@@ -92,6 +104,12 @@ impl Kalem {
             showed: Vec::new(),
             offered: Vec::new(),
             gutters: BTreeMap::new(),
+            hold: None,
+            held: Vec::new(),
+            kalem_runs: 16,
+            runs: 0,
+            most_runs: 0,
+            cut: None,
         };
         k.git_ok(&["init", "-q", "-b", "main"]);
         k
@@ -126,6 +144,9 @@ impl Kalem {
     fn feed(&mut self, input: Input) {
         let mut queue = VecDeque::from([input]);
         while let Some(i) = queue.pop_front() {
+            if matches!(i, Input::Done { .. }) {
+                self.runs -= 1;
+            }
             for e in self.app.handle(i) {
                 match e {
                     Effect::Run {
@@ -133,8 +154,28 @@ impl Kalem {
                         cwd,
                         command,
                     } => {
+                        if self.runs >= self.kalem_runs {
+                            let error = format!(
+                                "{} programs of the plugin are running already",
+                                self.kalem_runs
+                            );
+                            queue.push_back(Input::Refused { token, error });
+                            continue;
+                        }
+                        self.runs += 1;
+                        self.most_runs = self.most_runs.max(self.runs);
+                        if self.hold.as_ref().is_some_and(|h| command.args.contains(h)) {
+                            self.held.push((token, cwd, command));
+                            continue;
+                        }
                         self.git.cwd = cwd.map_or_else(|| self.dir.clone(), PathBuf::from);
-                        let result = self.git.run(&command);
+                        let mut result = self.git.run(&command);
+                        if let Ok(o) = &mut result
+                            && self.cut.as_ref().is_some_and(|c| command.args.contains(c))
+                        {
+                            o.stdout.truncate(o.stdout.len() / 2);
+                            o.truncated = true;
+                        }
                         queue.push_back(Input::Done { token, result });
                     }
                     Effect::Confirm { token, message } => {
@@ -223,6 +264,15 @@ impl Kalem {
             }
         }
         assert!(self.answers.is_empty(), "answers left: {:?}", self.answers);
+    }
+
+    /// Runs the git runs held back, and hands their ends to the plugin.
+    fn release(&mut self) {
+        for (token, cwd, command) in std::mem::take(&mut self.held) {
+            self.git.cwd = cwd.map_or_else(|| self.dir.clone(), PathBuf::from);
+            let result = self.git.run(&command);
+            self.feed(Input::Done { token, result });
+        }
     }
 
     fn command(&mut self, id: &str, file: Option<&str>) {
@@ -504,6 +554,41 @@ fn commit_asks_for_its_message() {
     k.answers.push_back(Answer::Text(None));
     k.command("git.commit", Some("a.txt"));
     assert_eq!(k.git_ok(&["rev-list", "--count", "HEAD"]).trim(), "1");
+}
+
+/// A line starting with `#` is the message's own: "#123 Fix the crash"
+/// was refused as empty, and rewording dropped the body's "# Why" and
+/// "#42 closes it".
+#[test]
+fn a_message_keeps_its_lines_starting_with_a_hash() {
+    let mut k = Kalem::new("hash");
+    k.write("a.txt", "one\n");
+    k.command("git.stageFile", Some("a.txt"));
+    k.answers
+        .push_back(Answer::Text(Some("#123 Fix the crash".into())));
+    k.command("git.commit", Some("a.txt"));
+    assert_eq!(k.last_note(), "Committed");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%s"]).trim(),
+        "#123 Fix the crash"
+    );
+    k.write("a.txt", "two\n");
+    k.git_ok(&[
+        "commit",
+        "-q",
+        "-a",
+        "-m",
+        "Second\n\n# Why\nBecause.\n\n#42 closes it",
+    ]);
+    k.answers
+        .push_back(Answer::Text(Some("Second, reworded".into())));
+    k.command("git.reword", Some("a.txt"));
+    assert_eq!(k.offered.last().unwrap().as_deref(), Some("Second"));
+    assert_eq!(k.last_note(), "Reworded the last commit");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%B"]),
+        "Second, reworded\n\n# Why\nBecause.\n\n#42 closes it\n\n"
+    );
 }
 
 /// A bare repository beside the test's, its `origin`.
@@ -831,6 +916,398 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
     // `q` closes it.
     k.on("git.close", "repo → main");
     assert!(k.docs.is_empty());
+}
+
+/// `d` on a folded file staged and not offers to discard all its changes:
+/// the choice was there only once its staged diff was read (Tab), else
+/// only "Discard unstaged changes" was. It goes back to HEAD, a rename to
+/// its old path.
+#[test]
+fn discard_all_on_a_folded_file() {
+    let mut k = Kalem::new("discard-all");
+    let long: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+    k.write("a.txt", "one\n");
+    k.write("old.txt", &long);
+    k.commit_all("First");
+    k.write("a.txt", "two\n");
+    k.git_ok(&["add", "a.txt"]);
+    k.write("a.txt", "three\n");
+    k.command("git.status", Some("a.txt"));
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.discard", "MM a.txt");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "a.txt: Discard all changes | Discard unstaged changes | Cancel"
+    );
+    assert_eq!(k.last_note(), "Reverted a.txt");
+    assert_eq!(k.read("a.txt"), "one\n");
+    assert_eq!(k.index("a.txt"), "one\n");
+    // A rename staged, then edited.
+    k.git_ok(&["mv", "old.txt", "new.txt"]);
+    k.write("new.txt", &long.replace("line 5\n", "line FIVE\n"));
+    k.on("git.refresh", "1 Files");
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.discard", "old.txt → new.txt");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "new.txt: Discard all changes | Discard unstaged changes | Cancel"
+    );
+    assert!(!k.dir.join("new.txt").exists());
+    assert_eq!(k.read("old.txt"), long);
+    assert_eq!(k.git_ok(&["status", "--porcelain"]), "");
+}
+
+/// A file in conflict staged with its conflict markers left asks first:
+/// `s` (the panel's box, `a`, `S` too) staged the markers without a word,
+/// and `c c` then committed them.
+#[test]
+fn staging_a_conflict_with_its_markers_asks_first() {
+    let mut k = Kalem::new("markers");
+    for f in ["f.txt", "g.txt", "h.txt"] {
+        k.write(f, "base\n");
+    }
+    k.commit_all("Base");
+    k.git_ok(&["switch", "-q", "-c", "other"]);
+    k.write("f.txt", "theirs\n");
+    k.write("g.txt", "theirs\n");
+    k.commit_all("Theirs");
+    k.git_ok(&["switch", "-q", "main"]);
+    k.write("f.txt", "ours\n");
+    k.write("g.txt", "ours\n");
+    k.commit_all("Ours");
+    let out = k
+        .git
+        .run(&GitCommand::new(["merge", "--no-edit", "other"]))
+        .unwrap();
+    assert!(!out.success());
+    k.write("h.txt", "changed\n");
+    let conflicts = |k: &mut Kalem| k.git_ok(&["diff", "--name-only", "--diff-filter=U"]);
+    k.command("git.status", Some("f.txt"));
+    // `s`, `S` and `a` ask; no stages nothing.
+    k.answers.push_back(Answer::Confirmed(false));
+    k.on("git.stage", "UU f.txt");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "f.txt still has conflict markers (<<<<<<<): stage it anyway?"
+    );
+    for id in ["git.stageAll", "git.stageEverything"] {
+        k.answers.push_back(Answer::Confirmed(false));
+        k.on(id, "1 Files");
+        assert_eq!(
+            k.asked.last().unwrap(),
+            "2 files still have conflict markers (<<<<<<<): stage them anyway?",
+            "{id}"
+        );
+    }
+    assert_eq!(conflicts(&mut k), "f.txt\ng.txt\n");
+    assert_eq!(k.index("h.txt"), "base\n");
+    // Resolved, it is staged without a question.
+    k.write("f.txt", "ours and theirs\n");
+    let asked = k.asked.len();
+    k.on("git.stage", "UU f.txt");
+    assert_eq!(k.asked.len(), asked, "{:?}", k.asked);
+    assert_eq!(k.index("f.txt"), "ours and theirs\n");
+    // The panel's box asks too; yes stages the file as it is.
+    k.answers.push_back(Answer::Confirmed(true));
+    k.feed(Input::Panel {
+        key: "stage:unmerged:g.txt".into(),
+        event: PanelEvent::Toggled(true),
+    });
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "g.txt still has conflict markers (<<<<<<<): stage it anyway?"
+    );
+    assert!(k.index("g.txt").contains("<<<<<<<"));
+    assert_eq!(conflicts(&mut k), "");
+}
+
+/// A key pressed after a refresh, before the status is written again,
+/// acts on what the status shows: it took the hunk's number from the text
+/// and its patch from the diffs read again, and `x` on the second hunk
+/// shown discarded a change the user had not seen yet.
+#[test]
+fn a_key_before_the_status_is_written_again_acts_on_what_it_shows() {
+    let mut k = Kalem::new("shown");
+    let long: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+    k.write("a.txt", &long);
+    k.write("b.txt", "bee\n");
+    k.commit_all("First");
+    let shown = long
+        .replace("line 2\n", "line TWO\n")
+        .replace("line 30\n", "line 30!\n");
+    k.write("a.txt", &shown);
+    k.write("b.txt", "BEE\n");
+    k.command("git.status", Some("a.txt"));
+    k.on("git.toggle", " M a.txt");
+    k.on("git.toggle", " M b.txt");
+    assert!(k.doc_text().contains("\n+line 30!\n"), "{}", k.doc_text());
+    // Line 15 changed and saved: the status is read again, and written
+    // once b.txt's diff is, which is slow.
+    let saved = shown.replace("line 15\n", "line 15, not seen\n");
+    k.write("a.txt", &saved);
+    k.hold = Some("b.txt".into());
+    let a = k.path("a.txt");
+    k.feed(Input::Saved(a));
+    assert!(!k.held.is_empty());
+    assert!(!k.doc_text().contains("not seen"), "{}", k.doc_text());
+    // `x` on the hunk of line 30, the second shown.
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.discard", "+line 30!");
+    assert_eq!(k.asked.last().unwrap(), "a.txt: Discard this hunk | Cancel");
+    assert_eq!(k.read("a.txt"), saved.replace("line 30!\n", "line 30\n"));
+    k.hold = None;
+    k.release();
+    assert!(
+        k.doc_text().contains("+line 15, not seen"),
+        "{}",
+        k.doc_text()
+    );
+    assert!(!k.doc_text().contains("+line 30!"), "{}", k.doc_text());
+}
+
+/// Kalem runs 16 programs of a plugin at a time and refuses the next,
+/// which the plugin took for an empty answer: Shift+Tab over many files
+/// showed most without their diffs, the marks of the files open went, a
+/// refresh refused dropped the repository. It runs 12 at a time, a
+/// refused run waiting for another to end; the marks of the files open
+/// are read in one run, a closed file's no more.
+#[test]
+fn runs_wait_their_turn() {
+    let mut k = Kalem::new("runs");
+    let names: Vec<String> = (0..20).map(|i| format!("f{i:02}.txt")).collect();
+    for n in &names {
+        k.write(n, "one\ntwo\n");
+    }
+    k.commit_all("First");
+    for n in &names {
+        k.write(n, "one\nTWO\n");
+        k.git_ok(&["add", n]);
+        k.write(n, "one\nTWO\nthree\n");
+    }
+    for n in &names {
+        let p = k.path(n);
+        k.feed(Input::Opened(p));
+    }
+    assert_eq!(k.gutters.len(), 20);
+    k.command("git.status", Some("f00.txt"));
+    k.on("git.cycle", "1 Files");
+    let text = k.doc_text();
+    assert_eq!(text.matches("\n+TWO\n").count(), 20, "{text}");
+    assert_eq!(text.matches("\n+three\n").count(), 20, "{text}");
+    assert!(k.most_runs <= MAX_RUNS, "{}", k.most_runs);
+    // Kalem taking fewer: the runs it refuses wait for the others.
+    k.kalem_runs = 3;
+    k.on("git.refresh", "1 Files");
+    let text = k.doc_text();
+    assert_eq!(text.matches("\n+three\n").count(), 20, "{text}");
+    assert_eq!(k.status.as_deref(), Some("⎇ main •20"));
+    assert_eq!(k.gutters.len(), 20);
+    assert!(k.notes.is_empty(), "{:?}", k.notes);
+    // One run marks the files open; a file closed is not among them.
+    let p = k.path("f00.txt");
+    k.feed(Input::Closed(p));
+    let before = k.git.log.runs().map(|r| r.number).max().unwrap_or(0);
+    let p = k.path("f01.txt");
+    k.feed(Input::Saved(p));
+    let marks: Vec<String> = k
+        .git
+        .log
+        .runs()
+        .filter(|r| r.number > before && r.command.contains(" -U0 "))
+        .map(|r| r.command.clone())
+        .collect();
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    assert!(
+        !marks[0].contains("f00.txt") && marks[0].contains(" f01.txt f02.txt "),
+        "{}",
+        marks[0]
+    );
+}
+
+/// A big file of a commit starts folded, saying how big: a commit of
+/// 500,000 lines took 119 ms to write each time a key moved in its view.
+/// An answer cut at Kalem's 16 MB says so: read, a diff cut short failed
+/// as "a hunk shorter than its header".
+#[test]
+fn big_diffs_and_answers_cut_short() {
+    let mut k = Kalem::new("big");
+    k.write("small.txt", "one\n");
+    k.commit_all("First");
+    let big: String = (1..=10_001).map(|n| format!("line {n}\n")).collect();
+    k.write("big.txt", &big);
+    k.write("small.txt", "two\n");
+    k.commit_all("Big");
+    k.command("git.status", Some("small.txt"));
+    k.on("git.tabCommits", "repo → main");
+    let short = k
+        .git_ok(&["rev-parse", "--short", "HEAD"])
+        .trim()
+        .to_string();
+    k.on("git.visit", &short);
+    let text = k.commit_text();
+    assert!(
+        text.contains("\ndiff --git a/big.txt b/big.txt\n  10,001 changed lines: Tab shows them\n"),
+        "{text}"
+    );
+    assert!(!text.contains("+line 5000\n"), "{text}");
+    assert!(text.ends_with("-one\n+two\n"), "{text}");
+    k.on_commit("git.toggle", "diff --git a/big.txt");
+    assert!(k.commit_text().contains("\n+line 5000\n"));
+    k.on_commit("git.toggle", "diff --git a/big.txt");
+    assert!(!k.commit_text().contains("\n+line 5000\n"));
+    k.on_commit("git.close", "commit ");
+    // A file's diff cut short.
+    k.write("small.txt", "three\n");
+    k.cut = Some("small.txt".into());
+    k.on("git.refresh", "repo → main");
+    k.on("git.tabFiles", "repo → main");
+    k.on("git.toggle", " M small.txt");
+    assert!(
+        k.doc_text().contains(
+            "\n  Too large to show: git's answer passed 16 MB, all Kalem keeps of a program's output\n"
+        ),
+        "{}",
+        k.doc_text()
+    );
+    // A commit's.
+    k.cut = Some("--format=fuller".into());
+    k.on("git.tabCommits", "repo → main");
+    k.on("git.visit", &short);
+    assert!(k.commit_key().is_none());
+    assert_eq!(
+        k.notes.last().unwrap(),
+        &(
+            "The commit is too large to show: git's answer passed 16 MB, all Kalem keeps of a program's output"
+                .to_string(),
+            Level::Error
+        )
+    );
+}
+
+/// A merge, a rebase or a cherry-pick stopped on a conflict goes on from
+/// the status: `r r` (`m m`, `A A`) continues, `r s` skips, `r a` aborts,
+/// and Enter on its line offers them. Enter only said to use git, and
+/// `GIT_EDITOR=false` made a continue fail where git wants its editor on
+/// the message it made.
+#[test]
+fn a_merge_or_a_rebase_goes_on_from_the_status() {
+    let mut k = Kalem::new("sequence");
+    k.write("f.txt", "base\n");
+    k.commit_all("Base");
+    for b in ["a", "b", "c"] {
+        k.git_ok(&["switch", "-q", "-c", b, "main"]);
+        k.write("f.txt", &format!("{b}\n"));
+        k.commit_all(&format!("Branch {b}"));
+    }
+    k.git_ok(&["switch", "-q", "main"]);
+    k.write("f.txt", "ours\n");
+    k.commit_all("Ours");
+    let fails = |k: &mut Kalem, args: &[&str]| {
+        let out = k.git.run(&GitCommand::new(args.iter().copied())).unwrap();
+        assert!(!out.success(), "{args:?}");
+    };
+    fails(&mut k, &["merge", "--no-edit", "a"]);
+    k.command("git.status", Some("f.txt"));
+    assert!(
+        k.doc_text()
+            .contains("\n Merging (1 unmerged)  (Enter: continue, abort)\n"),
+        "{}",
+        k.doc_text()
+    );
+    // In conflict still: continuing says so.
+    k.on("git.continue", " Merging");
+    assert_eq!(
+        k.last_note(),
+        "1 file is still in conflict: resolve and stage it (s), then continue"
+    );
+    // Resolved and staged, Enter on its line: the merge is committed, its
+    // message the one git made.
+    k.write("f.txt", "both\n");
+    k.git_ok(&["add", "f.txt"]);
+    k.on("git.refresh", " Merging");
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.visit", " Merging");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "Merging: Continue the merge | Abort the merge…"
+    );
+    assert_eq!(k.last_note(), "Continued the merge");
+    assert_eq!(
+        k.git_ok(&["log", "-1", "--format=%s"]).trim(),
+        "Merge branch 'a'"
+    );
+    assert!(!k.doc_text().contains("Merging"), "{}", k.doc_text());
+    // A rebase stopped on a conflict: aborted after asking.
+    k.git_ok(&["switch", "-q", "b"]);
+    fails(&mut k, &["rebase", "main"]);
+    k.on("git.refresh", "repo → ");
+    k.answers.push_back(Answer::Confirmed(true));
+    k.on("git.abort", " Rebasing");
+    assert!(k.asked.last().unwrap().starts_with("Abort the rebase?"));
+    assert_eq!(k.last_note(), "Aborted the rebase");
+    assert_eq!(k.git_ok(&["branch", "--show-current"]).trim(), "b");
+    assert_eq!(k.read("f.txt"), "b\n");
+    // Again, resolved: continued to its end.
+    fails(&mut k, &["rebase", "main"]);
+    k.write("f.txt", "both and b\n");
+    k.git_ok(&["add", "f.txt"]);
+    k.on("git.refresh", "repo → ");
+    k.on("git.continue", " Rebasing");
+    assert_eq!(k.last_note(), "Continued the rebase");
+    assert_eq!(k.git_ok(&["branch", "--show-current"]).trim(), "b");
+    assert_eq!(
+        k.git_ok(&["log", "-2", "--format=%s"]),
+        "Branch b\nMerge branch 'a'\n"
+    );
+    // A cherry-pick stopped: its commit skipped.
+    k.git_ok(&["switch", "-q", "main"]);
+    fails(&mut k, &["cherry-pick", "c"]);
+    k.on("git.refresh", "repo → ");
+    k.answers.push_back(Answer::Confirmed(true));
+    k.on("git.skip", " Cherry-picking");
+    assert_eq!(k.last_note(), "Skipped a commit of the cherry-pick");
+    assert_eq!(k.read("f.txt"), "both\n");
+    assert!(!k.doc_text().contains("Cherry-picking"), "{}", k.doc_text());
+}
+
+/// Back in the status from another document, it is read again: a commit
+/// made in a terminal showed only after `SPC g g`.
+#[test]
+fn the_status_is_read_again_when_the_cursor_comes_back() {
+    let mut k = Kalem::new("returned");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    k.write("a.txt", "two\n");
+    k.command("git.status", Some("a.txt"));
+    assert!(k.doc_text().contains("\n  M a.txt"), "{}", k.doc_text());
+    k.commit_all("Made in a terminal");
+    let root = k.root();
+    k.feed(Input::Returned(root));
+    let text = k.doc_text();
+    assert!(
+        text.contains(" repo → main  Made in a terminal\n"),
+        "{text}"
+    );
+    assert!(text.contains("Nothing changed"), "{text}");
+}
+
+/// Tab on an untracked folder lists its files: `git diff --no-index`
+/// takes no folder, and the status said "No change to show".
+#[test]
+fn tab_on_an_untracked_folder_lists_its_files() {
+    let mut k = Kalem::new("folder");
+    k.write("a.txt", "one\n");
+    k.commit_all("First");
+    k.write("new/x.txt", "x\n");
+    k.write("new/deep/y.txt", "y\n");
+    k.command("git.status", Some("a.txt"));
+    k.on("git.toggle", "?? new/");
+    let text = k.doc_text();
+    assert!(
+        text.contains(" ?? new/\n  new/deep/y.txt\n  new/x.txt\n"),
+        "{text}"
+    );
+    assert!(!text.contains("No change to show"), "{text}");
 }
 
 #[test]

@@ -4,7 +4,7 @@
 //! run in order until one fails, and the question to ask first when what
 //! it does cannot be undone.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::git::cmd::{self, ApplyTo, CommitKind, GitCommand};
 use crate::git::status::{Kind, State};
@@ -64,6 +64,10 @@ pub struct Plan {
     pub commands: Vec<GitCommand>,
     /// What the status bar says when they all succeed.
     pub done: String,
+    /// The paths in conflict it stages: looked through for conflict
+    /// markers first ([`cmd::conflict_markers`]), and the user asked when
+    /// some are left, so that `c c` does not commit them.
+    pub unmerged: Vec<String>,
 }
 
 struct Builder<'a> {
@@ -132,6 +136,9 @@ pub fn plan(act: Act, targets: &[Target], repo: &Repo, settings: Settings) -> Re
             _ => {}
         }
     }
+    if act == Act::Discard {
+        all_changes(&mut b, &mut files);
+    }
     for (section, paths) in files {
         whole_files(&mut b, section, &paths)?;
     }
@@ -146,6 +153,14 @@ pub fn plan(act: Act, targets: &[Target], repo: &Repo, settings: Settings) -> Re
     }
     b.plan.done = format!("{} {}", act.past(), b.did.join(", "));
     Ok(b.plan)
+}
+
+/// The paths in conflict, which `git add -u` and `git add -A` stage too.
+pub fn unmerged_paths(repo: &Repo) -> Vec<String> {
+    repo.entries(Section::Unmerged)
+        .iter()
+        .map(|e| e.path.clone())
+        .collect()
 }
 
 fn wrong(act: Act, section: Section) -> String {
@@ -183,12 +198,17 @@ fn section(b: &mut Builder<'_>, s: Section) -> Result<(), String> {
                 .commands
                 .push(cmd::add(paths.iter().map(String::as_str)));
         }
-        (Act::Stage, Section::Unstaged) => b.plan.commands.push(cmd::add_tracked()),
+        // `git add -u` stages the paths in conflict too.
+        (Act::Stage, Section::Unstaged) => {
+            b.plan.commands.push(cmd::add_tracked());
+            b.plan.unmerged.extend(unmerged_paths(b.repo));
+        }
         (Act::Stage, Section::Unmerged) => {
             b.ask(true, format!("Mark {files} in conflict resolved?"));
             b.plan
                 .commands
                 .push(cmd::add(paths.iter().map(String::as_str)));
+            b.plan.unmerged.extend(paths.iter().cloned());
         }
         (Act::Unstage, Section::Staged) => b.plan.commands.push(cmd::unstage_all(b.repo.unborn())),
         (Act::Discard, Section::Unstaged) => {
@@ -224,8 +244,12 @@ fn whole_files(b: &mut Builder<'_>, section: Section, paths: &[String]) -> Resul
     };
     let all = || paths.iter().map(String::as_str);
     match (b.act, section) {
-        (Act::Stage, Section::Untracked | Section::Unstaged | Section::Unmerged) => {
+        (Act::Stage, Section::Untracked | Section::Unstaged) => {
             b.plan.commands.push(cmd::add(all()));
+        }
+        (Act::Stage, Section::Unmerged) => {
+            b.plan.commands.push(cmd::add(all()));
+            b.plan.unmerged.extend(paths.iter().cloned());
         }
         (Act::Unstage, Section::Staged) => {
             let mut with_sources: Vec<&str> = Vec::new();
@@ -283,6 +307,57 @@ fn whole_files(b: &mut Builder<'_>, section: Section, paths: &[String]) -> Resul
     Ok(())
 }
 
+/// The paths discarded both staged and not (`d`'s "Discard all changes")
+/// taken out of `files` and put back as HEAD has them, in the index and
+/// the working tree at once, a rename's old path too: no diff needs to be
+/// read first, as reverting the staged changes alone does, so the choice
+/// is there on a folded file.
+fn all_changes(b: &mut Builder<'_>, files: &mut BTreeMap<Section, Vec<String>>) {
+    let staged: BTreeSet<&String> = files.get(&Section::Staged).into_iter().flatten().collect();
+    let both: Vec<String> = files
+        .get(&Section::Unstaged)
+        .into_iter()
+        .flatten()
+        .filter(|p| staged.contains(p))
+        .cloned()
+        .collect();
+    if both.is_empty() {
+        return;
+    }
+    let names = match both.as_slice() {
+        [one] => one.clone(),
+        _ => format!("{} files", both.len()),
+    };
+    b.ask(
+        false,
+        format!("Revert {names}, staged and not? Its changes are in no commit, and are lost."),
+    );
+    if b.repo.unborn() {
+        b.plan
+            .commands
+            .push(cmd::rm(both.iter().map(String::as_str)));
+    } else {
+        let mut with_sources: Vec<&str> = Vec::new();
+        for p in &both {
+            with_sources.push(p);
+            if let Some(from) = b
+                .repo
+                .entry(Section::Staged, p)
+                .and_then(|e| e.from.as_deref())
+            {
+                with_sources.push(from);
+            }
+        }
+        b.plan.commands.push(cmd::restore_from_head(with_sources));
+    }
+    b.did.push(names);
+    let both: BTreeSet<String> = both.into_iter().collect();
+    for paths in files.values_mut() {
+        paths.retain(|p| !both.contains(p));
+    }
+    files.retain(|_, paths| !paths.is_empty());
+}
+
 /// A staged file's changes taken out of the index and the working tree,
 /// its unstaged changes left alone (2.3).
 fn staged_file_discard(b: &mut Builder<'_>, path: &str) -> Result<(), String> {
@@ -305,6 +380,11 @@ fn staged_file_discard(b: &mut Builder<'_>, path: &str) -> Result<(), String> {
             "{path} has unstaged changes too: unfold its staged diff first, so that only that is reverted"
         ));
     };
+    if d.truncated {
+        return Err(format!(
+            "{path}'s staged diff is too large to take back alone: discard all its changes instead"
+        ));
+    }
     let p = patch::file_patch(d);
     b.apply(p.clone(), ApplyTo::WorkTree, true);
     b.apply(p, ApplyTo::Index, true);
@@ -426,16 +506,14 @@ pub fn commit(
             CommitKind::Reword => "Reworded the last commit".into(),
             CommitKind::Fixup(h) => format!("Made a fixup commit for {}", h.get(..7).unwrap_or(h)),
         },
+        unmerged: Vec::new(),
     })
 }
 
-/// Whether a message is empty once git cleans it: comment lines and what
-/// follows the scissors line left out.
+/// Whether a message is empty once git cleans it: blank up to the
+/// scissors line. A line starting with `#` is text (see [`cmd::commit`]).
 pub fn message_is_empty(message: &str) -> bool {
-    cmd::cut_at_scissors(message, '#')
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .all(|l| l.trim().is_empty())
+    cmd::cut_at_scissors(message, '#').trim().is_empty()
 }
 
 #[cfg(test)]
@@ -593,6 +671,30 @@ mod tests {
     }
 
     #[test]
+    fn discarding_all_of_a_file_staged_and_not_reads_no_diff() {
+        let mut r = repo();
+        r.diffs.clear();
+        let both = [file(Section::Unstaged, "h"), file(Section::Staged, "h")];
+        let p = plan(Act::Discard, &both, &r, Settings::default()).unwrap();
+        assert_eq!(
+            p.commands
+                .iter()
+                .map(|c| c.args.clone())
+                .collect::<Vec<_>>(),
+            [[
+                "restore",
+                "--source=HEAD",
+                "--staged",
+                "--worktree",
+                "--",
+                "h"
+            ]]
+        );
+        assert_eq!(p.done, "Reverted h");
+        assert!(p.confirm.unwrap().starts_with("Revert h, staged and not?"));
+    }
+
+    #[test]
     fn what_asks_first() {
         let r = repo();
         let quiet = Settings {
@@ -618,14 +720,44 @@ mod tests {
     }
 
     #[test]
+    fn staging_a_conflict_names_it_for_its_markers() {
+        let z = |parts: &[&str]| -> Vec<u8> {
+            parts.iter().flat_map(|p| p.bytes().chain([0])).collect()
+        };
+        let r = Repo {
+            status: status::parse(&z(&[
+                "# branch.oid abc",
+                "# branch.head main",
+                "1 .M N... 100644 100644 100644 a a f",
+                "u UU N... 100644 100644 100644 100644 a b c c.txt",
+            ]))
+            .unwrap(),
+            ..Repo::default()
+        };
+        let stage = |t: Target| plan(Act::Stage, &[t], &r, Settings::default()).unwrap();
+        assert_eq!(stage(file(Section::Unmerged, "c.txt")).unmerged, ["c.txt"]);
+        // `git add -u` stages it too.
+        let p = stage(Target::Section(Section::Unstaged));
+        assert_eq!(p.commands[0].args, ["add", "-u"]);
+        assert_eq!(p.unmerged, ["c.txt"]);
+        assert!(stage(file(Section::Unstaged, "f")).unmerged.is_empty());
+    }
+
+    #[test]
     fn commits() {
         let r = repo();
-        assert!(commit("# only a comment\n", &CommitKind::New, false, &r).is_err());
+        assert!(commit(" \n\n", &CommitKind::New, false, &r).is_err());
         let p = commit("Fix\n", &CommitKind::New, false, &r).unwrap();
         assert_eq!(p.done, "Committed");
+        // A line starting with `#` is the message's own.
+        let p = commit("#123 Fix the crash\n", &CommitKind::New, false, &r).unwrap();
+        assert_eq!(
+            p.commands[0].stdin.as_deref(),
+            Some(&b"#123 Fix the crash\n"[..])
+        );
         assert!(message_is_empty(
-            "\n# x\n# ------------------------ >8 ------------------------\ndiff"
+            "\n \n# ------------------------ >8 ------------------------\ndiff"
         ));
-        assert!(!message_is_empty("Subject\n# x"));
+        assert!(!message_is_empty("# Why\n"));
     }
 }
