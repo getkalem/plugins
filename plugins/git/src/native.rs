@@ -96,6 +96,7 @@ fn spawn(
         status: out.status.code(),
         stdout: out.stdout,
         stderr: out.stderr,
+        truncated: false,
     })
 }
 

@@ -2,6 +2,8 @@
 //! documentation, "Porcelain Format Version 2"): the branch, its
 //! upstream, ahead and behind, and one entry per changed path.
 
+use std::collections::BTreeMap;
+
 /// The status of a repository.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Status {
@@ -19,12 +21,27 @@ pub struct Status {
     pub stashes: Option<u32>,
     /// The changed paths, in git's order.
     pub entries: Vec<Entry>,
+    /// The entries by path, an index into `entries`: looking a path up in
+    /// them made Shift+Tab over 20,000 changed files take seconds.
+    by_path: BTreeMap<String, usize>,
 }
 
 impl Status {
     /// No commit yet.
     pub fn unborn(&self) -> bool {
         self.oid.is_none()
+    }
+
+    /// The entry of `path`.
+    pub fn entry(&self, path: &str) -> Option<&Entry> {
+        match self.by_path.get(path) {
+            Some(&i) => self.entries.get(i).filter(|e| e.path == path),
+            // Entries given otherwise than by [`parse`] have no index.
+            None if self.by_path.len() != self.entries.len() => {
+                self.entries.iter().find(|e| e.path == path)
+            }
+            None => None,
+        }
     }
 }
 
@@ -294,6 +311,12 @@ pub fn parse(out: &[u8]) -> Result<Status, String> {
             }
         }
     }
+    status.by_path = status
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.path.clone(), i))
+        .collect();
     Ok(status)
 }
 

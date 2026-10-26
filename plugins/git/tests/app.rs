@@ -64,6 +64,9 @@ struct Kalem {
     /// The runs started and not ended, and the most there were.
     runs: usize,
     most_runs: usize,
+    /// An argument of the runs whose output is cut short, as Kalem cuts
+    /// a program's past 16 MB.
+    cut: Option<String>,
 }
 
 impl Drop for Kalem {
@@ -106,6 +109,7 @@ impl Kalem {
             kalem_runs: 16,
             runs: 0,
             most_runs: 0,
+            cut: None,
         };
         k.git_ok(&["init", "-q", "-b", "main"]);
         k
@@ -165,7 +169,13 @@ impl Kalem {
                             continue;
                         }
                         self.git.cwd = cwd.map_or_else(|| self.dir.clone(), PathBuf::from);
-                        let result = self.git.run(&command);
+                        let mut result = self.git.run(&command);
+                        if let Ok(o) = &mut result
+                            && self.cut.as_ref().is_some_and(|c| command.args.contains(c))
+                        {
+                            o.stdout.truncate(o.stdout.len() / 2);
+                            o.truncated = true;
+                        }
                         queue.push_back(Input::Done { token, result });
                     }
                     Effect::Confirm { token, message } => {
@@ -1111,6 +1121,66 @@ fn runs_wait_their_turn() {
         !marks[0].contains("f00.txt") && marks[0].contains(" f01.txt f02.txt "),
         "{}",
         marks[0]
+    );
+}
+
+/// A big file of a commit starts folded, saying how big: a commit of
+/// 500,000 lines took 119 ms to write each time a key moved in its view.
+/// An answer cut at Kalem's 16 MB says so: read, a diff cut short failed
+/// as "a hunk shorter than its header".
+#[test]
+fn big_diffs_and_answers_cut_short() {
+    let mut k = Kalem::new("big");
+    k.write("small.txt", "one\n");
+    k.commit_all("First");
+    let big: String = (1..=10_001).map(|n| format!("line {n}\n")).collect();
+    k.write("big.txt", &big);
+    k.write("small.txt", "two\n");
+    k.commit_all("Big");
+    k.command("git.status", Some("small.txt"));
+    k.on("git.tabCommits", "repo → main");
+    let short = k
+        .git_ok(&["rev-parse", "--short", "HEAD"])
+        .trim()
+        .to_string();
+    k.on("git.visit", &short);
+    let text = k.commit_text();
+    assert!(
+        text.contains("\ndiff --git a/big.txt b/big.txt\n  10,001 changed lines: Tab shows them\n"),
+        "{text}"
+    );
+    assert!(!text.contains("+line 5000\n"), "{text}");
+    assert!(text.ends_with("-one\n+two\n"), "{text}");
+    k.on_commit("git.toggle", "diff --git a/big.txt");
+    assert!(k.commit_text().contains("\n+line 5000\n"));
+    k.on_commit("git.toggle", "diff --git a/big.txt");
+    assert!(!k.commit_text().contains("\n+line 5000\n"));
+    k.on_commit("git.close", "commit ");
+    // A file's diff cut short.
+    k.write("small.txt", "three\n");
+    k.cut = Some("small.txt".into());
+    k.on("git.refresh", "repo → main");
+    k.on("git.tabFiles", "repo → main");
+    k.on("git.toggle", " M small.txt");
+    assert!(
+        k.doc_text().contains(
+            "\n  Too large to show: git's answer passed 16 MB, all Kalem keeps of a program's output\n"
+        ),
+        "{}",
+        k.doc_text()
+    );
+    // A commit's.
+    k.cut = Some("--format=fuller".into());
+    k.on("git.tabCommits", "repo → main");
+    k.on("git.visit", &short);
+    assert!(k.commit_key().is_none());
+    assert_eq!(
+        k.notes.last().unwrap(),
+        &(
+            "The commit is too large to show: git's answer passed 16 MB, all Kalem keeps of a program's output"
+                .to_string(),
+            Level::Error
+        )
     );
 }
 

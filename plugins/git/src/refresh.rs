@@ -20,7 +20,14 @@ pub struct Output {
     pub stdout: Vec<u8>,
     /// What it printed as errors.
     pub stderr: Vec<u8>,
+    /// One of the two passed 16 MB, all Kalem keeps of a program's
+    /// output, and was cut there ([`TOO_LARGE`]).
+    pub truncated: bool,
 }
+
+/// Why an answer cut at Kalem's limit ([`Output::truncated`]) is not read:
+/// read, its last hunk failed as "a hunk shorter than its header".
+pub const TOO_LARGE: &str = "git's answer passed 16 MB, all Kalem keeps of a program's output";
 
 impl Output {
     /// It ended with the status 0.
@@ -154,10 +161,15 @@ impl Refresh {
             }
         };
         // Answers that fail say there is nothing: no tag, no stash, no
-        // commit yet. Only the status's failure fails the refresh.
-        let ok = out.success();
+        // commit yet. Only the status's failure fails the refresh. An
+        // answer cut short is not read.
+        let ok = out.success() && !out.truncated;
         match part {
             Part::Status => {
+                if out.truncated {
+                    self.error = Some(format!("The status is too large to read: {TOO_LARGE}"));
+                    return Vec::new();
+                }
                 if !ok {
                     self.error = Some(out.message());
                     return Vec::new();
@@ -324,15 +336,15 @@ mod tests {
         Ok(Output {
             status: Some(0),
             stdout: stdout.to_vec(),
-            stderr: Vec::new(),
+            ..Output::default()
         })
     }
 
     fn failed(stderr: &str) -> Result<Output, String> {
         Ok(Output {
             status: Some(128),
-            stdout: Vec::new(),
             stderr: stderr.as_bytes().to_vec(),
+            ..Output::default()
         })
     }
 
@@ -379,11 +391,24 @@ mod tests {
     }
 
     #[test]
+    fn a_status_cut_short_fails_the_refresh() {
+        let (mut r, _) = Refresh::start("/r", 1, Options::default());
+        let cut = Output {
+            status: Some(0),
+            stdout: b"# branch.oid abc\0# branch.head main\0? a\0? b".to_vec(),
+            truncated: true,
+            ..Output::default()
+        };
+        assert!(r.feed(Part::Status, Ok(cut)).is_empty());
+        assert!(r.finish().unwrap_err().contains("16 MB"));
+    }
+
+    #[test]
     fn messages() {
         let o = Output {
             status: Some(1),
-            stdout: Vec::new(),
             stderr: b"hint: try this\nerror: Your local changes would be overwritten\n".to_vec(),
+            ..Output::default()
         };
         assert_eq!(o.message(), "Your local changes would be overwritten");
         assert_eq!(Output::default().message(), "git was stopped");

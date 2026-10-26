@@ -10,7 +10,7 @@ use crate::content::{Content, Region};
 use crate::git::cmd;
 use crate::git::diff::{self, LineKind};
 use crate::model::Folds;
-use crate::refresh::Output;
+use crate::refresh::{Output, TOO_LARGE};
 use crate::target::{self, Target};
 use crate::views;
 
@@ -54,6 +54,10 @@ impl App {
         result: Result<Output, String>,
     ) {
         let diff = match result {
+            Ok(o) if o.truncated => {
+                let why = format!("The commit is too large to show: {TOO_LARGE}");
+                return self.fail(out, why);
+            }
             Ok(o) if o.success() => match diff::parse(&o.stdout) {
                 Ok(d) => d,
                 Err(e) => return self.fail(out, e),
@@ -225,16 +229,14 @@ impl App {
         else {
             return;
         };
+        // Kept whatever the key's default: a big file starts folded.
         let cursor = match op {
             Op::Toggle => {
-                if c.folds.toggle(&r.key) {
-                    r.start
-                } else {
-                    head
-                }
+                c.folds.put(&r.key, !r.folded);
+                if r.folded { head } else { r.start }
             }
             Op::Unfold if r.folded => {
-                c.folds.set(&r.key, false);
+                c.folds.put(&r.key, false);
                 head
             }
             // Unfolded already: into it, as a tree view's Right goes.
@@ -245,7 +247,7 @@ impl App {
                 content.line_start(content.line_of(r.start) + 1).min(r.end)
             }
             Op::Fold if !r.folded => {
-                c.folds.set(&r.key, true);
+                c.folds.put(&r.key, true);
                 r.start
             }
             // Folded already: to what holds it.

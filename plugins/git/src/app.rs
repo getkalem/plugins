@@ -29,7 +29,7 @@ use crate::refresh::{self, Output, Part, Refresh};
 use crate::target::Target;
 use crate::views::Glyphs;
 
-pub use document::Keep;
+pub use document::{CYCLE_FILES, Keep};
 
 /// The panel's ID.
 pub const PANEL: &str = "git.panel";
@@ -802,6 +802,10 @@ pub struct App {
     queued: VecDeque<(u64, Option<String>, GitCommand)>,
 }
 
+/// The files the panel lists in a section at most: 20,000 changed files
+/// made a panel of 40,000 widgets at each refresh.
+pub const PANEL_FILES: usize = 100;
+
 /// The git runs started at a time. Kalem refuses a plugin's 17th program
 /// at a time, and a refusal was taken for an empty answer: Shift+Tab over
 /// many files showed most of them without their diffs, the marks of the
@@ -1374,7 +1378,7 @@ impl App {
             },
             Pending::Marks { root, paths } => {
                 let files = match &result {
-                    Ok(o) if o.success() => crate::git::diff::parse(&o.stdout)
+                    Ok(o) if o.success() && !o.truncated => crate::git::diff::parse(&o.stdout)
                         .map(|d| d.files)
                         .unwrap_or_default(),
                     _ => Vec::new(),
@@ -2316,7 +2320,7 @@ impl App {
             any = true;
             let open = !self.folded.contains(&section);
             let mut children = Vec::new();
-            for e in &entries {
+            for e in entries.iter().take(PANEL_FILES) {
                 let counts = repo
                     .counts
                     .get(&(section, e.path.clone()))
@@ -2346,6 +2350,15 @@ impl App {
                         children: Vec::new(),
                     },
                 ]));
+            }
+            if entries.len() > PANEL_FILES {
+                children.push(Node::label(
+                    format!(
+                        "… and {} more: the status (SPC g g) lists them",
+                        crate::views::status::group(entries.len() - PANEL_FILES)
+                    ),
+                    TextStyle::Muted,
+                ));
             }
             nodes.push(Node::Item {
                 key: format!("section:{}", section.key()),
@@ -2537,6 +2550,92 @@ mod tests {
                 .texts()
                 .contains(&"Clean: nothing to commit".to_string())
         );
+    }
+
+    /// A repository at `/r` with `n` files changed, not staged, and its
+    /// status document written.
+    fn many_files(n: usize) -> App {
+        let mut out = b"# branch.oid abc\0# branch.head main\0".to_vec();
+        for i in 0..n {
+            let line = format!("1 .M N... 100644 100644 100644 a a d{}/f{i}.txt\0", i / 100);
+            out.extend_from_slice(line.as_bytes());
+        }
+        let status = crate::git::status::parse(&out).unwrap();
+        let repo = Repo {
+            root: "/r".into(),
+            status,
+            ..Repo::default()
+        };
+        let mut app = App::new(Settings::default());
+        let opts = app.view_options();
+        let content =
+            crate::views::status::render(&repo, &Folds::default(), &opts, Default::default());
+        app.repos.insert(
+            "/r".into(),
+            RepoState {
+                repo: Some(repo),
+                content: Some(content),
+                shown: true,
+                ..RepoState::default()
+            },
+        );
+        app.current = Some("/r".into());
+        app
+    }
+
+    /// 20,000 changed files: the panel lists the first of each section,
+    /// Shift+Tab reads the diffs of the first, a git run each.
+    #[test]
+    fn many_changed_files() {
+        let mut app = many_files(20_000);
+        let Node::Column(nodes) = app.panel() else {
+            panic!("a column")
+        };
+        let Some(Node::Item {
+            label, children, ..
+        }) = nodes.last()
+        else {
+            panic!("{nodes:?}")
+        };
+        assert_eq!(label, "Unstaged (20000)");
+        assert_eq!(children.len(), PANEL_FILES + 1);
+        assert_eq!(
+            children.last().unwrap().texts(),
+            ["… and 19,900 more: the status (SPC g g) lists them"]
+        );
+        let out = app.handle(Input::Command {
+            id: "git.cycle".into(),
+            doc: Some(Doc {
+                status: Some("/r".into()),
+                ..Doc::default()
+            }),
+        });
+        let runs = out
+            .iter()
+            .filter(|e| matches!(e, Effect::Run { .. }))
+            .count();
+        assert_eq!(runs, MAX_RUNS);
+        assert_eq!(runs + app.queued.len(), CYCLE_FILES);
+        assert!(out.contains(&Effect::Notify(
+            "Shift+Tab shows the diffs of the first 100 of 20,000 changed files: Tab shows another's"
+                .into(),
+            Level::Info
+        )));
+        // Big ones: the first until their changed lines pass a big diff's.
+        let mut app = many_files(20_000);
+        let s = app.repos.get_mut("/r").unwrap();
+        let repo = s.repo.as_mut().unwrap();
+        for e in repo.status.entries.clone() {
+            repo.counts.insert((Section::Unstaged, e.path), (100, 100));
+        }
+        app.handle(Input::Command {
+            id: "git.cycle".into(),
+            doc: Some(Doc {
+                status: Some("/r".into()),
+                ..Doc::default()
+            }),
+        });
+        assert_eq!(app.running.len() + app.queued.len(), 50);
     }
 
     #[test]

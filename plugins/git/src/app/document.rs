@@ -6,6 +6,8 @@
 //! Alt+Enter (or `?`) lists what can be done with it, Escape (or `q`)
 //! closes it; magit's letters act on it (`s`, `u`, `x`, `c c`, `P p`…).
 
+use std::collections::HashSet;
+
 use super::*;
 use crate::content::Region;
 use crate::git::diff::LineKind;
@@ -14,6 +16,13 @@ use crate::refresh::missing_diffs;
 use crate::target::{self, Target};
 use crate::views::status::Tab;
 use crate::views::{self, ViewOptions};
+
+/// The files whose diffs Shift+Tab shows at most: over 20,000 changed
+/// files it asked 20,000 runs of git. It stops too once the files' changed
+/// lines pass a big diff's ([`ViewOptions::big_diff`]): a hundred files
+/// of 10,000 lines each made a status of 56 MB, a quarter of a second to
+/// write as WebAssembly.
+pub const CYCLE_FILES: usize = 100;
 
 /// Where the cursor goes when the status is written again.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -297,13 +306,19 @@ impl App {
         state.loading.remove(&(section, path.to_string()));
         // `diff --no-index` ends with 1 when the files differ.
         let bytes = match &result {
+            Ok(o) if o.truncated => None,
             Ok(o) if o.success() || (section == Section::Untracked && o.status == Some(1)) => {
-                o.stdout.clone()
+                Some(o.stdout.clone())
             }
-            _ => Vec::new(),
+            _ => Some(Vec::new()),
         };
-        if repo.set_diff(section, path, &bytes).is_err() {
-            let _ = repo.set_diff(section, path, b"");
+        match bytes {
+            Some(bytes) => {
+                if repo.set_diff(section, path, &bytes).is_err() {
+                    let _ = repo.set_diff(section, path, b"");
+                }
+            }
+            None => repo.set_truncated(section, path),
         }
         if state.loading.is_empty() && state.shown {
             self.render_status(out, root, false);
@@ -532,18 +547,40 @@ impl App {
     /// Shift+Tab: every file and hunk unfolded, then every section folded,
     /// then each as it starts.
     fn cycle(&mut self, out: &mut Vec<Effect>, root: &str, content: &Content, head: usize) {
+        let big_diff = self.view_options().big_diff;
         let Some(state) = self.repos.get_mut(root) else {
             return;
         };
         let Some(repo) = state.repo.as_ref() else {
             return;
         };
-        // Every diff shown, then each as it starts.
+        // Every diff shown, then each as it starts; of many, the first
+        // files only, each a git run or two.
         state.cycle = (state.cycle + 1) % 2;
         state.folds.reset();
         if state.cycle == 1 {
-            for e in repo.changed() {
+            let changed = repo.changed();
+            let (mut shown, mut lines) = (0, 0);
+            for e in &changed {
+                if shown == CYCLE_FILES || lines >= big_diff {
+                    break;
+                }
                 state.folds.set(&crate::target::path_key(&e.path), false);
+                shown += 1;
+                for s in [Section::Unstaged, Section::Staged] {
+                    if let Some((a, r)) = repo.counts.get(&(s, e.path.clone())) {
+                        lines += (a + r) as usize;
+                    }
+                }
+            }
+            if shown < changed.len() {
+                out.push(Effect::Notify(
+                    format!(
+                        "Shift+Tab shows the diffs of the first {shown} of {} changed files: Tab shows another's",
+                        views::status::group(changed.len())
+                    ),
+                    Level::Info,
+                ));
             }
         }
         state.keep = Some(keep_at(content, head, false));
@@ -619,6 +656,7 @@ impl App {
         }
         if whole {
             let mut files: Vec<Target> = Vec::new();
+            let mut seen: HashSet<Target> = HashSet::new();
             for t in &targets {
                 let f = match t.file() {
                     Some((section, path)) => Target::File {
@@ -627,7 +665,7 @@ impl App {
                     },
                     None => t.clone(),
                 };
-                if !files.contains(&f) {
+                if seen.insert(f.clone()) {
                     files.push(f);
                 }
             }
@@ -1074,6 +1112,8 @@ fn resolve(targets: Vec<Target>, act: Act, repo: &Repo) -> Vec<Target> {
         })
     };
     let mut out: Vec<Target> = Vec::new();
+    // Each once: a list searched for each was quadratic in the files.
+    let mut seen: HashSet<Target> = HashSet::new();
     for t in targets {
         let more: Vec<Target> = match t {
             Target::Path(p) => file(&p).into_iter().collect(),
@@ -1098,7 +1138,7 @@ fn resolve(targets: Vec<Target>, act: Act, repo: &Repo) -> Vec<Target> {
             other => vec![other],
         };
         for m in more {
-            if !out.contains(&m) {
+            if seen.insert(m.clone()) {
                 out.push(m);
             }
         }

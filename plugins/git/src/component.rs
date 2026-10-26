@@ -79,6 +79,7 @@ fn apply(effect: Effect) {
                         status: e.status,
                         stdout: e.stdout,
                         stderr: e.stderr,
+                        truncated: e.truncated,
                     }),
                 })
             });

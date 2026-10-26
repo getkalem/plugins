@@ -15,6 +15,7 @@ use crate::git::log::Commit;
 use crate::git::refs::Branch;
 use crate::git::status::{Entry, Kind, State};
 use crate::model::{Folds, Repo, Section};
+use crate::refresh::TOO_LARGE;
 use crate::target::{hunk_key, path_key};
 use crate::views::{Glyphs, ViewOptions, lossy_line};
 
@@ -455,6 +456,12 @@ fn diff_lines(
     let lines: usize = d.hunks.iter().map(|h| h.lines.len()).sum();
     if d.binary {
         c.line("  Binary file changed", Style::Muted);
+        return;
+    }
+    if d.truncated {
+        c.open(format!("big:{}:{path}", section.key()), false, false);
+        c.line(&format!("  Too large to show: {TOO_LARGE}"), Style::Muted);
+        c.close();
         return;
     }
     if lines > opts.big_diff {

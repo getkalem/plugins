@@ -1,31 +1,45 @@
 //! A commit as a document (DESIGN.md, 2.4): `git show`'s header and stat,
 //! then its diff as git prints it, every file and hunk a region, so that
-//! Enter on a line opens the file there.
+//! Enter on a line opens the file there. A big file starts folded, as do
+//! the files past the first [`ViewOptions::big_diff`] lines of the diff:
+//! a commit of 500,000 lines took 119 ms to write, each time a key moved
+//! in it.
 
 use crate::content::{Color, Content, Style};
 use crate::git::diff::Diff;
 use crate::model::{Folds, Section};
 use crate::target::{file_key, hunk_key};
+use crate::views::status::group;
 use crate::views::{ViewOptions, lossy_line};
 
 /// The document of a commit, from `git show`'s output read by
 /// [`crate::git::diff::parse`].
 pub fn render(diff: &Diff, folds: &Folds, opts: &ViewOptions) -> Content {
-    let _ = opts;
     let mut c = Content::new();
     let mut first_message_line = true;
     for l in &diff.preamble {
         header_line(&mut c, &lossy_line(l), &mut first_message_line);
     }
+    // The diff's lines written so far.
+    let mut shown = 0;
     for f in &diff.files {
         let key = file_key(Section::Shown, f.path());
-        let folded = folds.folded(&key);
+        let lines: usize = f.hunks.iter().map(|h| h.lines.len()).sum();
+        let big = shown + lines > opts.big_diff;
+        let folded = folds.folded_or(&key, big);
         c.open(&key, true, folded);
         let header: &[Vec<u8>] = if folded { &f.header[..1] } else { &f.header };
         for l in header {
             c.line(&lossy_line(l), Style::Normal);
         }
+        if folded && big {
+            c.line(
+                &format!("  {} changed lines: Tab shows them", group(lines)),
+                Style::Muted,
+            );
+        }
         if !folded {
+            shown += lines;
             if f.binary && f.hunks.is_empty() {
                 c.line("Binary file changed", Style::Muted);
             }
@@ -114,5 +128,21 @@ mod tests {
         folds.set(&file_key(Section::Shown, "x"), true);
         let c = render(&d, &folds, &ViewOptions::default());
         assert!(c.text.ends_with("\ndiff --git a/x b/x\n"));
+        // Past the lines a diff shows at once, a file starts folded,
+        // saying how big it is, until it is unfolded.
+        let small = ViewOptions {
+            big_diff: 1,
+            ..ViewOptions::default()
+        };
+        let c = render(&d, &Folds::default(), &small);
+        assert!(
+            c.text
+                .ends_with("\ndiff --git a/x b/x\n  2 changed lines: Tab shows them\n"),
+            "{}",
+            c.text
+        );
+        let mut folds = Folds::default();
+        folds.put(&file_key(Section::Shown, "x"), false);
+        assert!(render(&d, &folds, &small).text.ends_with("+b\n"));
     }
 }

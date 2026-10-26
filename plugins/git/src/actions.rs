@@ -380,6 +380,11 @@ fn staged_file_discard(b: &mut Builder<'_>, path: &str) -> Result<(), String> {
             "{path} has unstaged changes too: unfold its staged diff first, so that only that is reverted"
         ));
     };
+    if d.truncated {
+        return Err(format!(
+            "{path}'s staged diff is too large to take back alone: discard all its changes instead"
+        ));
+    }
     let p = patch::file_patch(d);
     b.apply(p.clone(), ApplyTo::WorkTree, true);
     b.apply(p, ApplyTo::Index, true);
