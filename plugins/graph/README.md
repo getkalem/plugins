@@ -70,7 +70,7 @@ The keys are Doom Emacs's org-roam map, `SPC n r`, in the Vim profile; every com
 | `SPC n r o` | Follow Reference | The `[[page]]`, `#tag`, `((uuid))`, `{{embed}}`, `[[note#Heading]]` or `[[note#^id]]` under the cursor; a page not written yet opens as a new file, written when saved. On a `{{query …}}`'s line, its results (below) |
 | `SPC n r f` | Find Page | Every page by title, aliases in the detail; "Create a page…" first |
 | `SPC n r i` | Insert Link | A link to the chosen page, written as the graph writes links (Logseq's `[[Title]]`; Obsidian's shortest path, or as `.obsidian/app.json` says) |
-| `SPC n r b` | Insert Block Reference | `((uuid))` or `[[note#^id]]` of a block: a Logseq block without an id gets one (below); a vault's block needs its `^id` |
+| `SPC n r b` | Insert Block Reference | `((uuid))` or `[[note#^id]]` of a block: a block without an id gets one, written into its note: Logseq's `id::` (below), Obsidian's ` ^id` at the block's end, six letters and digits as Obsidian makes them; a vault's heading is linked by its text (`[[note#Heading]]`) |
 | `SPC n r d t`, `d y`, `d m` | Today's, Yesterday's, Tomorrow's Journal | Opens the journal; one not written yet is made from the graph's journal template (Logseq's `:default-templates {:journals …}`, Obsidian's daily notes template) |
 | `SPC n r d d` | Journal of a Date | `2026-10-03`, `oct 3`, `yesterday`, `-3`, `monday` |
 | `SPC n r d f`, `d b`; `Alt+]`, `Alt+[` in a note | Next, Previous Journal | The next and previous journal that exists (from a page, counting from today). A terminal without the kitty keyboard protocol cannot send `Alt+[` |
@@ -121,7 +121,7 @@ In a note of a graph (a document the plugin's layer serves, Kalem's when-clause 
 | `Tab` (Vim's normal mode), `SPC m z` | Fold Block | In a Logseq note in Markdown, `collapsed:: true` written or taken away, as Logseq folds (elsewhere, Kalem's own fold); the layer hides the blocks under a folded block until the cursor goes into them |
 | `SPC m s n`, `SPC b -` in Markdown | Zoom into Block | Logseq's zoom into a block: the note narrowed to the block at the cursor and the blocks under it, the rest hidden and out of the cursor's reach (Kalem 0.6.24 and later, its Narrow to Lines; an older Kalem says "Unknown command"), under a line naming the page and the blocks above it, as Logseq's breadcrumb (Kalem 0.6.29 and later); in Org notes Kalem's own `SPC m s n` narrows to the headline |
 | `SPC m s N`, `SPC b -` | Zoom Out | The whole note again (Kalem's Widen) |
-| | Rename Page | Every reference to the page by its name rewritten in every file of the graph (aliases kept), and the page's file renamed as the application renames it: a vault's note always, a Logseq page named by its file (one named by `title::` keeps its file, its `title::` changed), in its folder and with its extension, as Logseq keeps them (a name in another case only renames the same file). Kalem's document of the file follows it; a file Kalem holds with unsaved changes stops it before anything is written |
+| | Rename Page | Every reference to the page by its name rewritten in every file of the graph (aliases kept), and the page's file renamed as the application renames it: a vault's note always, a Logseq page named by its file (one named by `title::` keeps its file, its `title::` changed), in its folder and with its extension, as Logseq keeps them (a name in another case only renames the same file). A Logseq page's namespace is renamed with it, as Logseq renames it: `Project/Plugins` and `Project/Plugins/Graph` with `Project`. Kalem's document of the file follows it; a file Kalem holds with unsaved changes stops it before anything is written |
 
 Insert Block Reference offers every block: one without an id gets its `id::` written where Logseq writes it, in its file, or by the editor when it is in the document being edited; a file Kalem holds with unsaved changes is not written. Each command is one undo step.
 
@@ -152,7 +152,7 @@ As the user types in a note of a graph, Kalem's completion menu offers (plugin A
 | `::` at a block's start | The properties the graph uses, the most used first | `key:: ` |
 | `key::` | The values that property has, one by one for `tags::`, `alias::` and the comma properties | the value |
 | `/` (after a space or at a line's start), in a Logseq note in Markdown | Logseq's commands that write text: TODO, LATER, NOW… and A, B, C and h1 to h6 at a block's start; Page and Block reference and embed, Link, Today, Yesterday, Tomorrow, Current time, Query, Code block…; at a block's start, the graph's templates (`Template: NAME`, Logseq's `/Template`) | what Logseq writes, the cursor where Logseq puts it; a template's blocks in the block's place, under its indent, its variables (`<% today %>`, `<% current page %>`…) filled in |
-| `[[note#`, `[[note#^`, in a vault | The note's headings, its blocks with an id | `[[note#Heading]]`, `[[note#^id]]` |
+| `[[note#`, `[[note#^`, in a vault | The note's headings; its blocks, as Obsidian offers them, one without an id given one, written at its end once the link is saved | `[[note#Heading]]`, `[[note#^id]]` |
 
 Where it offers something, Kalem's own completion of Markdown files after `[[` and of the document's words is left out. The items come from the index: before the graph is indexed, Kalem's own completion answers.
 

@@ -3275,3 +3275,158 @@ fn a_template_inserted_from_the_palette() {
         "{out:?}"
     );
 }
+
+#[test]
+fn a_vaults_block_without_an_id_referred_to() {
+    // As Obsidian's Copy block link: Insert Block Reference on a block
+    // with no ^id writes one at the block's end (six letters and digits,
+    // as Obsidian makes them) and inserts [[Note#^id]]; a heading is
+    // linked by its text. Completion after [[Note#^ offers every block, an
+    // id promised to one without, written into the note once the link is
+    // saved.
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        (
+            "/v/Target.md",
+            "# Plans\n\nA plan of two\nlines\n\n- an item\n",
+        ),
+        ("/v/Notes.md", "x\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Notes.md");
+    let pick = |app: &mut App, label: &str| -> Vec<Effect> {
+        let out = app.command(&m, "graph.insertBlockRef", &ctx("/v/Notes.md", "x\n", 1));
+        let Effect::Pick { token, items, .. } = &out[0] else {
+            panic!("{out:?}")
+        };
+        let i = items
+            .iter()
+            .position(|(l, _)| l == label)
+            .unwrap_or_else(|| panic!("{items:?}"));
+        app.answer(&m, *token, Answer::Picked(Some(vec![i as u32])))
+    };
+    let inserted = |out: &[Effect]| -> String {
+        out.iter()
+            .find_map(|e| match e {
+                Effect::Run { id, args } if id == "graph.insertText" => {
+                    serde_json::from_str::<serde_json::Value>(args).ok()?["text"]
+                        .as_str()
+                        .map(str::to_string)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{out:?}"))
+    };
+    assert_eq!(inserted(&pick(&mut app, "Plans")), "[[Target#Plans]]");
+    let link = inserted(&pick(&mut app, "A plan of two"));
+    let id = link
+        .strip_prefix("[[Target#^")
+        .and_then(|l| l.strip_suffix("]]"))
+        .unwrap_or_else(|| panic!("{link}"));
+    assert_eq!(id.len(), 6, "{id}");
+    assert!(
+        id.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    );
+    assert_eq!(
+        m.read("/v/Target.md").unwrap(),
+        format!("# Plans\n\nA plan of two\nlines ^{id}\n\n- an item\n")
+    );
+    // Completion: the item offered with a promised id, written once the
+    // link is saved.
+    let text = "see [[Target#^an";
+    let found = app.complete(&m, "refs", Some("/v/Notes.md"), text, 0, text.len());
+    let item = found
+        .iter()
+        .find(|s| s.label == "an item")
+        .unwrap_or_else(|| panic!("{found:?}"));
+    let promised = item
+        .insert
+        .trim_start_matches('^')
+        .trim_end_matches("]]")
+        .to_string();
+    m.write("/v/Notes.md", &format!("see [[Target#^{promised}]]\n"))
+        .unwrap();
+    app.saved(&m, "/v/Notes.md");
+    assert_eq!(
+        m.read("/v/Target.md").unwrap(),
+        format!("# Plans\n\nA plan of two\nlines ^{id}\n\n- an item ^{promised}\n")
+    );
+}
+
+#[test]
+fn a_namespace_renamed_with_its_page() {
+    // As Logseq's rename-namespace-pages!: renaming Project renames
+    // Project/Plugins and Project/Plugins/Graph, files and links, each by
+    // a command of its own run after it.
+    let m = Memory::new(&[
+        (
+            "/w/g/logseq/config.edn",
+            "{:file/name-format :triple-lowbar}",
+        ),
+        ("/w/g/pages/Project.md", "- the project\n"),
+        ("/w/g/pages/Project___Plugins.md", "- its plugins\n"),
+        (
+            "/w/g/pages/Project___Plugins___Graph.md",
+            "- the graph plugin\n",
+        ),
+        ("/w/g/pages/Other.md", "- unrelated\n"),
+        (
+            "/w/g/journals/2026_10_26.md",
+            "- see [[Project]], [[Project/Plugins]] and [[Project/Plugins/Graph]]\n",
+        ),
+    ]);
+    let mut app = App::new(Settings::default());
+    let other = "/w/g/pages/Other.md";
+    app.opened(&m, other);
+    let mut queue = std::collections::VecDeque::from([serde_json::json!({
+        "root": "/w/g",
+        "key": "project",
+        "title": "Work",
+    })
+    .to_string()]);
+    let mut runs = 0;
+    while let Some(args) = queue.pop_front() {
+        runs += 1;
+        let mut c = ctx(other, "- unrelated\n", 0);
+        c.args = args;
+        for e in app.command(&m, "graph.renameNow", &c) {
+            if let Effect::Run { id, args } = e
+                && id == "graph.renameNow"
+            {
+                queue.push_back(args);
+            }
+        }
+    }
+    assert_eq!(runs, 3);
+    for (path, text) in [
+        ("/w/g/pages/Work.md", "- the project\n"),
+        ("/w/g/pages/Work___Plugins.md", "- its plugins\n"),
+        (
+            "/w/g/pages/Work___Plugins___Graph.md",
+            "- the graph plugin\n",
+        ),
+    ] {
+        assert_eq!(m.read(path).unwrap(), text, "{path}");
+    }
+    assert!(m.read("/w/g/pages/Project___Plugins.md").is_err());
+    assert_eq!(
+        m.read("/w/g/journals/2026_10_26.md").unwrap(),
+        "- see [[Work]], [[Work/Plugins]] and [[Work/Plugins/Graph]]\n"
+    );
+    // A vault's note has no namespace: nothing more.
+    let v = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        ("/v/A.md", "a\n"),
+        ("/v/B.md", "[[A]]\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&v, "/v/B.md");
+    let mut c = ctx("/v/B.md", "[[A]]\n", 0);
+    c.args = serde_json::json!({ "root": "/v", "key": "a", "title": "C" }).to_string();
+    let out = app.command(&v, "graph.renameNow", &c);
+    assert!(
+        !out.iter().any(|e| matches!(e, Effect::Run { .. })),
+        "{out:?}"
+    );
+}

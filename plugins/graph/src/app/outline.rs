@@ -321,31 +321,58 @@ impl App {
             id: "graph.insertText".into(),
             args: serde_json::json!({ "text": text }).to_string(),
         };
+        // A reference as the graph writes one: Logseq's `((id))`, a
+        // vault's link to the note and the block's `^id`.
+        let name = page
+            .and_then(|(_, p)| p)
+            .map_or(String::new(), |p| files::stem_ext(&p).0.to_string());
+        let link = |id: &str| match kind {
+            Kind::Logseq => format!("(({id}))"),
+            Kind::Obsidian => format!("[[{name}#^{id}]]"),
+        };
         if let Some(id) = &choice.id {
-            return vec![insert(match kind {
-                Kind::Logseq => format!("(({id}))"),
-                Kind::Obsidian => {
-                    let name = page
-                        .and_then(|(_, p)| p)
-                        .map_or(String::new(), |p| files::stem_ext(&p).0.to_string());
-                    format!("[[{name}#^{id}]]")
-                }
-            })];
+            return vec![insert(link(id))];
         }
-        if kind == Kind::Obsidian {
-            return vec![Effect::Notify(
-                "Only blocks with a ^id can be referred to in a vault yet".into(),
-                Level::Info,
-            )];
-        }
-        let id = self.new_id(&format!("{}:{}:{}", choice.rel, choice.line, choice.text));
+        // The block as the index has it: a heading or not, and the id it
+        // gets in a vault.
+        let found = index
+            .file(&choice.rel)
+            .and_then(|d| {
+                d.scanned
+                    .blocks
+                    .iter()
+                    .find(|b| b.line == choice.line && b.text == choice.text)
+            })
+            .map(|b| (b.heading.is_some(), index.block_id_for(&choice.rel, b)));
+        let id = match (kind, found) {
+            // A vault's heading is linked by its text, as Obsidian links
+            // it; another block gets Obsidian's ` ^id`.
+            (Kind::Obsidian, Some((true, _))) => {
+                return vec![insert(format!("[[{name}#{}]]", choice.text.trim()))];
+            }
+            (Kind::Obsidian, Some((false, id))) => id,
+            (Kind::Obsidian, None) => {
+                return vec![Effect::Notify(
+                    "The block is no longer there: index again".into(),
+                    Level::Warning,
+                )];
+            }
+            (Kind::Logseq, _) => {
+                self.new_id(&format!("{}:{}:{}", choice.rel, choice.line, choice.text))
+            }
+        };
         let path = self.indexes[root].graph.path(&choice.rel);
         // In the document the command came from: the editor writes both.
         if from.as_deref() == Some(choice.rel.as_str()) {
             return vec![Effect::Run {
                 id: "graph.refBlockNow".into(),
-                args: serde_json::json!({ "line": choice.line, "text": choice.text, "id": id })
-                    .to_string(),
+                args: serde_json::json!({
+                    "line": choice.line,
+                    "text": choice.text,
+                    "id": id,
+                    "link": link(&id),
+                })
+                .to_string(),
             }];
         }
         if self.dirty.contains(&path) {
@@ -367,13 +394,17 @@ impl App {
         let Some(e) = find_block_in(&text, choice.line, &choice.text, flavor)
             .and_then(|line| edit::add_id(&text, flavor, line, &id))
         else {
-            return vec![Effect::Notify(
-                format!(
+            let why = match kind {
+                Kind::Obsidian => {
+                    "A table's or a code block's id goes on a line of its own: add it in Obsidian"
+                        .to_string()
+                }
+                Kind::Logseq => format!(
                     "The block is no longer in {}: index again",
                     files::file_name(&path)
                 ),
-                Level::Warning,
-            )];
+            };
+            return vec![Effect::Notify(why, Level::Warning)];
         };
         if let Err(e) = files.write(&path, &edit::apply(&text, &[e])) {
             return vec![Effect::Notify(e, Level::Error)];
@@ -383,7 +414,7 @@ impl App {
             i.update(files, &path);
         }
         out.extend(self.refresh(root));
-        out.push(insert(format!("(({id}))")));
+        out.push(insert(link(&id)));
         out
     }
 
@@ -397,10 +428,20 @@ impl App {
         for root in roots {
             let due: Vec<(String, String, u32, String)> = {
                 let index = &self.indexes[&root];
+                // A vault's block references are counted by note and
+                // anchor (`NOTE#^id`).
                 index
                     .promised()
                     .into_iter()
-                    .filter(|(id, ..)| !index.block_backlinks(id).is_empty())
+                    .filter(|(id, rel, ..)| {
+                        let key = match index.graph.kind {
+                            Kind::Logseq => Some(id.clone()),
+                            Kind::Obsidian => {
+                                index.page_of(rel).map(|p| format!("{}#^{id}", p.key))
+                            }
+                        };
+                        key.is_some_and(|k| !index.block_backlinks(&k).is_empty())
+                    })
                     .collect()
             };
             for (id, rel, line, text) in due {
@@ -449,7 +490,34 @@ impl App {
             let root = args["root"].as_str().unwrap_or(root).to_string();
             let key = args["key"].as_str().unwrap_or_default().to_string();
             let title = args["title"].as_str().unwrap_or_default().to_string();
-            return self.rename(files, &root, &key, &title, ctx);
+            // A Logseq page's namespace renamed with it (`a/b` with `a`), as
+            // Logseq's rename-namespace-pages! does: each page under it
+            // renamed by a command of its own once this one is done, which
+            // finds the note typed into as these edits left it.
+            let under = if args["children"].as_bool().unwrap_or(true) {
+                self.namespace_pages(&root, &key, &title)
+            } else {
+                Vec::new()
+            };
+            let mut out = self.rename(files, &root, &key, &title, ctx);
+            let refused = out
+                .iter()
+                .any(|e| matches!(e, Effect::Notify(_, Level::Warning | Level::Error)));
+            if !refused {
+                out.extend(under.into_iter().map(|(key, title)| {
+                    Effect::Run {
+                        id: "graph.renameNow".into(),
+                        args: serde_json::json!({
+                            "root": root,
+                            "key": key,
+                            "title": title,
+                            "children": false,
+                        })
+                        .to_string(),
+                    }
+                }));
+            }
+            return out;
         }
         let (Some(rel), Some(text)) = (rel, ctx.text.as_deref()) else {
             return vec![Effect::Notify(
@@ -658,6 +726,9 @@ impl App {
                 let line = args["line"].as_u64().unwrap_or(0) as u32;
                 let block = args["text"].as_str().unwrap_or_default();
                 let new = args["id"].as_str().unwrap_or_default();
+                let link = args["link"]
+                    .as_str()
+                    .map_or_else(|| format!("(({new}))"), str::to_string);
                 match find_block_in(text, line, block, flavor)
                     .and_then(|l| edit::add_id(text, flavor, l, new))
                 {
@@ -665,7 +736,7 @@ impl App {
                         let at = Edit {
                             start: cursor,
                             end: cursor,
-                            text: format!("(({new}))"),
+                            text: link,
                         };
                         // The id line, then the reference, in the order of
                         // the text.
@@ -709,6 +780,35 @@ impl App {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The pages of Logseq page `key`'s namespace (`a/b` and `a/b/c` under
+    /// `a`), each with its title once `key` is called `title`.
+    fn namespace_pages(&self, root: &str, key: &str, title: &str) -> Vec<(String, String)> {
+        let Some(index) = self.indexes.get(root) else {
+            return Vec::new();
+        };
+        let Some(page) = index.page(key) else {
+            return Vec::new();
+        };
+        if index.graph.kind != Kind::Logseq {
+            return Vec::new();
+        }
+        let depth = page.title.split('/').count();
+        let inside = format!("{key}/");
+        let mut under: Vec<(String, String)> = index
+            .pages()
+            .filter(|p| p.key.starts_with(&inside))
+            .map(|p| {
+                let rest: Vec<&str> = p.title.split('/').skip(depth).collect();
+                (
+                    p.key.clone(),
+                    format!("{}/{}", title.trim(), rest.join("/")),
+                )
+            })
+            .collect();
+        under.sort();
+        under
     }
 
     /// Page `key` of graph `root` renamed `title`: its `title::` set, and

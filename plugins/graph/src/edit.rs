@@ -1014,11 +1014,43 @@ pub fn add_property(text: &str, line: u32, key: &str, value: &str) -> Option<Edi
     ))
 }
 
+/// Obsidian's ` ^id` at the end of the vault's block at `line`: its last
+/// line, a paragraph's or a list item's own, as Obsidian's Copy block link
+/// writes it. `None` for a heading, which a link names by its text, and
+/// for a table or a block ending in a code block, whose id Obsidian wants
+/// on a line of its own.
+pub fn add_block_id(text: &str, line: u32, id: &str) -> Option<Edit> {
+    let s = scan::scan(text, Flavor::Obsidian, &scan::Options::default());
+    let b = s.blocks.iter().find(|b| b.line == line)?;
+    if b.heading.is_some() || b.text.trim_start().starts_with('|') {
+        return None;
+    }
+    let st = starts(text);
+    let last = b.end.max(b.line + 1) - 1;
+    let start = line_start(&st, text, last);
+    let end = line_start(&st, text, last + 1);
+    let own = text[start..end].trim_end();
+    let opens = own.trim_start();
+    if opens.starts_with("```") || opens.starts_with("~~~") {
+        return None;
+    }
+    let at = start + own.len();
+    Some(Edit {
+        start: at,
+        end: at,
+        text: format!(" ^{id}"),
+    })
+}
+
 /// A block's id written as its note writes one: `id:: …` after a
 /// Markdown block's first line and properties, `:ID: …` in an Org
 /// headline's `:PROPERTIES:` drawer (made after its dates when it has
-/// none), as Logseq writes them.
+/// none), as Logseq writes them; ` ^id` at the end of a vault's block, as
+/// Obsidian writes it ([`add_block_id`]).
 pub fn add_id(text: &str, flavor: Flavor, line: u32, id: &str) -> Option<Edit> {
+    if flavor == Flavor::Obsidian {
+        return add_block_id(text, line, id);
+    }
     if flavor != Flavor::LogseqOrg {
         return add_property(text, line, "id", id);
     }
@@ -1521,6 +1553,37 @@ mod tests {
         let e = add_property(t, 3, "id", "u3").unwrap();
         assert_eq!(apply(t, &[e]), "- a\n  type:: x\n\t- b\n- c\n  id:: u3");
         assert!(add_property(t, 1, "id", "u").is_none());
+    }
+
+    #[test]
+    fn a_vaults_block_id_at_the_end_of_its_block() {
+        let note = "A paragraph\nof two lines\n\n> a quote\n\n- an item\n  more of it\n\t- under it\n\n## A heading\n\n| a | b |\n|---|---|\n";
+        let at = |line: u32| add_block_id(note, line, "abc123").map(|e| apply(note, &[e]));
+        assert_eq!(
+            at(0).unwrap(),
+            note.replace("of two lines\n", "of two lines ^abc123\n")
+        );
+        assert_eq!(
+            at(3).unwrap(),
+            note.replace("> a quote\n", "> a quote ^abc123\n")
+        );
+        // A list item's own lines, not the item under it.
+        assert_eq!(
+            at(5).unwrap(),
+            note.replace("  more of it\n", "  more of it ^abc123\n")
+        );
+        // A heading and a table: none.
+        assert_eq!(at(9), None);
+        assert_eq!(at(11), None);
+        // Read back: the block has the id.
+        let written = at(5).unwrap();
+        let s = scan::scan(&written, Flavor::Obsidian, &scan::Options::default());
+        let b = s.blocks.iter().find(|b| b.line == 5).unwrap();
+        assert_eq!(b.id.as_deref(), Some("abc123"));
+        assert_eq!(
+            add_id(note, Flavor::Obsidian, 0, "abc123").map(|e| e.text),
+            Some(" ^abc123".to_string())
+        );
     }
 
     #[test]

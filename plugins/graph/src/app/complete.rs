@@ -566,11 +566,11 @@ fn anchors(
     } else {
         Some(index.resolve(note, rel))
     };
-    let Some(file) = key
+    let Some((target, file)) = key
         .as_deref()
         .and_then(|k| index.page(k))
         .and_then(|p| p.path.as_deref())
-        .and_then(|p| index.file(p))
+        .and_then(|p| Some((p, index.file(p)?)))
     else {
         return Vec::new();
     };
@@ -578,23 +578,35 @@ fn anchors(
     let start = cursor - part.len();
     if let Some(typed) = part.strip_prefix('^') {
         let lower = typed.to_lowercase();
+        // Every block of the note, as Obsidian offers them: one without an
+        // id promised one, written into the note once the link is saved
+        // ([`Index::promise`]); not a heading, which a link names by its
+        // text, nor a table.
         return file
             .scanned
             .blocks
             .iter()
             .filter_map(|b| {
-                let id = b.id.as_deref()?;
                 let first = b.text.lines().next().unwrap_or("").trim();
-                (id.to_lowercase().contains(&lower) || first.to_lowercase().contains(&lower)).then(
-                    || Suggestion {
-                        label: first.chars().take(80).collect(),
-                        insert: format!("^{id}{close}"),
-                        start,
-                        cursor: None,
-                        what: What::Link,
-                        detail: format!("^{id}"),
-                    },
-                )
+                let found =
+                    b.id.as_deref()
+                        .is_some_and(|id| id.to_lowercase().contains(&lower))
+                        || first.to_lowercase().contains(&lower);
+                if !found
+                    || (b.id.is_none()
+                        && (b.heading.is_some() || first.is_empty() || first.starts_with('|')))
+                {
+                    return None;
+                }
+                let id = b.id.clone().unwrap_or_else(|| index.promise(target, b));
+                Some(Suggestion {
+                    label: first.chars().take(80).collect(),
+                    insert: format!("^{id}{close}"),
+                    start,
+                    cursor: None,
+                    what: What::Link,
+                    detail: format!("^{id}"),
+                })
             })
             .take(MOST)
             .collect();
