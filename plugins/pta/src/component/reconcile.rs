@@ -447,24 +447,8 @@ fn gather_from(key: &(String, String), open: bool, input: Option<Rc<Vec<u8>>>) {
             let k3 = k2.clone();
             let i3 = i2.clone();
             total(tool, &k2, Which::Both, i2, move |both| {
-                let (p, mut a) = reconcile::open_command(tool, &k3.0, &k3.1);
-                if i3.is_some() {
-                    a = reconcile::from_input(a, &k3.0);
-                }
-                let dir = journal::folder(&k3.0).to_string();
-                let bytes = i3.as_ref().map(|t| t.to_vec());
-                run_input(p, a, &dir, bytes, move |r| {
-                    let postings = match r {
-                        Ok(e) if e.status == Some(0) => {
-                            let mut list =
-                                reconcile::open_of(tool, &String::from_utf8_lossy(&e.stdout));
-                            if i3.is_some() {
-                                reconcile::placed_in(&mut list, &k3.0);
-                            }
-                            Some(list)
-                        }
-                        _ => None,
-                    };
+                let k4 = k3.clone();
+                open_postings(tool, &k4, i3.clone(), move |postings| {
                     let current =
                         RECONCILES.with(|m| m.borrow().get(&k3).map(|e| e.run)) == Some(run_no);
                     if !current {
@@ -496,6 +480,51 @@ fn gather_from(key: &(String, String), open: bool, input: Option<Rc<Vec<u8>>>) {
                     pair(&k3);
                 });
             });
+        });
+    });
+}
+
+/// The postings of `key`'s account not cleared, read from `input` when
+/// given; none when the tool failed. hledger's take their transactions'
+/// statuses (`reconcile::with_statuses`): its register gives a posting's
+/// own mark only, so a posting under a pending transaction read as
+/// unmarked.
+fn open_postings(
+    tool: Dialect,
+    key: &(String, String),
+    input: Option<Rc<Vec<u8>>>,
+    done: impl FnOnce(Option<Vec<Posting>>) + 'static,
+) {
+    let (p, mut a) = reconcile::open_command(tool, &key.0, &key.1);
+    if input.is_some() {
+        a = reconcile::from_input(a, &key.0);
+    }
+    let statuses = reconcile::statuses_command(&a);
+    let dir = journal::folder(&key.0).to_string();
+    let there = dir.clone();
+    let main = key.0.clone();
+    let bytes = input.as_ref().map(|t| t.to_vec());
+    run_input(p, a, &dir, bytes.clone(), move |r| {
+        let mut list = match r {
+            Ok(e) if e.status == Some(0) => {
+                reconcile::open_of(tool, &String::from_utf8_lossy(&e.stdout))
+            }
+            _ => return done(None),
+        };
+        if bytes.is_some() {
+            reconcile::placed_in(&mut list, &main);
+        }
+        if tool != Dialect::Hledger || list.iter().all(|p| p.status != ' ') {
+            return done(Some(list));
+        }
+        run_input("hledger", statuses, &there, bytes, move |r| {
+            if let Ok(e) = r
+                && e.status == Some(0)
+            {
+                let statuses = reconcile::hledger_statuses(&String::from_utf8_lossy(&e.stdout));
+                reconcile::with_statuses(&mut list, &statuses);
+            }
+            done(Some(list));
         });
     });
 }

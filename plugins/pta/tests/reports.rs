@@ -364,9 +364,20 @@ fn each_tools_reconciliation() {
         let d = reconcile::difference(target, total).expect("the target reads");
         assert_eq!(d.written(), difference, "{tool:?}");
         let (p, a) = reconcile::open_command(tool, &main, account);
-        let postings = reconcile::open_of(tool, &run(p, &a, &dir).expect("ran"));
+        let mut postings = reconcile::open_of(tool, &run(p, &a, &dir).expect("ran"));
         assert_eq!(postings.len(), open, "{tool:?}: {postings:?}");
         assert!(postings.iter().all(|p| p.status != '*'), "{tool:?}");
+        // Each corpus's posting not cleared is under a pending
+        // transaction, unmarked itself: pending, hledger's with its
+        // transaction's status read from `print`.
+        if tool == Dialect::Hledger {
+            let printed = run("hledger", &reconcile::statuses_command(&a), &dir).expect("ran");
+            reconcile::with_statuses(&mut postings, &reconcile::hledger_statuses(&printed));
+        }
+        assert!(
+            postings.iter().all(|p| p.status == '!'),
+            "{tool:?}: {postings:?}"
+        );
     }
 }
 

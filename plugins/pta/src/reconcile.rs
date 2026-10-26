@@ -224,7 +224,10 @@ pub fn hledger_total(json: &str) -> Vec<Amount> {
 }
 
 /// hledger's `register -O json`: rows of a date, a second date, the
-/// description, the posting, the running total.
+/// description, the posting, the running total. A posting's status is
+/// its own mark: one under a `*` or `!` transaction without a mark of its
+/// own has its transaction's status to hledger, which the JSON does not
+/// give ([`with_statuses`] puts it in).
 pub fn hledger_register(json: &str) -> Vec<Posting> {
     let v: Value = serde_json::from_str(json).unwrap_or_default();
     let written = |a: &Value| {
@@ -263,6 +266,70 @@ pub fn hledger_register(json: &str) -> Vec<Posting> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The run that gives the statuses of the transactions of an hledger
+/// register's postings: the register's arguments (`register`, after the
+/// program) as `print -O csv` of the same journal and query, which
+/// writes each transaction's status by its number.
+pub fn statuses_command(register: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(register.len());
+    let mut command = false;
+    let mut args = register.iter().peekable();
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "register" if !command => {
+                command = true;
+                out.push("print".into());
+            }
+            // The register's own: its running total from the start.
+            "-H" => {}
+            "-O" if args.peek().is_some_and(|f| *f == "json") => {
+                args.next();
+                out.extend(["-O".into(), "csv".into()]);
+            }
+            _ => out.push(a.clone()),
+        }
+    }
+    out
+}
+
+/// The transactions' statuses in hledger's `print -O csv`, by their
+/// numbers: `*`, `!` or a blank.
+pub fn hledger_statuses(csv: &str) -> BTreeMap<usize, char> {
+    let mut lines = csv.lines();
+    let header = crate::report::csv_fields(lines.next().unwrap_or(""));
+    let at = |name: &str| header.iter().position(|h| h == name);
+    let mut out = BTreeMap::new();
+    let (Some(n), Some(s)) = (at("txnidx"), at("status")) else {
+        return out;
+    };
+    for l in lines {
+        let f = crate::report::csv_fields(l);
+        if let (Some(Ok(t)), Some(status)) = (f.get(n).map(|t| t.parse()), f.get(s)) {
+            out.insert(
+                t,
+                match status.trim() {
+                    "*" => '*',
+                    "!" => '!',
+                    _ => ' ',
+                },
+            );
+        }
+    }
+    out
+}
+
+/// The postings' statuses as hledger reads them: a posting's own mark,
+/// else its transaction's (`statuses`, [`hledger_statuses`]).
+pub fn with_statuses(postings: &mut [Posting], statuses: &BTreeMap<usize, char>) {
+    for p in postings {
+        if p.status == ' '
+            && let Some(&s) = p.transaction.and_then(|n| statuses.get(&n))
+        {
+            p.status = s;
+        }
+    }
 }
 
 /// The first number of an amount as `s` writes it: a run of digits and
@@ -1195,14 +1262,62 @@ mod tests {
 
     #[test]
     fn hledgers_register() {
-        let json = r#"[["2026-01-03", null, "Market | groceries", {"pstatus": "Pending", "ptransaction_": "4", "pamount": [{"acommodity": "TRY", "aquantity": {"decimalMantissa": -84235, "decimalPlaces": 2}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2}}]}, [{"acommodity": "TRY", "aquantity": {"decimalMantissa": 9290725, "decimalPlaces": 2}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2}}]]]"#;
-        let r = hledger_register(json);
-        assert_eq!(r.len(), 1);
+        // As hledger 1.52 prints them (`register acct:^assets:bank(:|$)
+        // -O json`, then `print` of the same as CSV) for a cleared
+        // transaction and a pending one, neither posting marked itself.
+        let json = r#"[["2026-01-02", null, "Salary", {"paccount": "assets:bank", "pamount": [{"acommodity": "TRY", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 9374960, "decimalPlaces": 2, "floatingPoint": 93749.6}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2, "asrounding": "HardRounding"}}], "pbalanceassertion": null, "pcomment": "", "pdate": null, "pdate2": null, "poriginal": null, "pstatus": "Unmarked", "ptags": [], "ptransaction_": "1", "ptype": "RegularPosting"}, [{"acommodity": "TRY", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 9374960, "decimalPlaces": 2, "floatingPoint": 93749.6}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2, "asrounding": "HardRounding"}}]], ["2026-01-03", null, "Market | groceries", {"paccount": "assets:bank", "pamount": [{"acommodity": "TRY", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": -84235, "decimalPlaces": 2, "floatingPoint": -842.35}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2, "asrounding": "HardRounding"}}], "pbalanceassertion": null, "pcomment": "", "pdate": null, "pdate2": null, "poriginal": null, "pstatus": "Unmarked", "ptags": [], "ptransaction_": "2", "ptype": "RegularPosting"}, [{"acommodity": "TRY", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 9290725, "decimalPlaces": 2, "floatingPoint": 92907.25}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2, "asrounding": "HardRounding"}}]]]"#;
+        let mut r = hledger_register(json);
+        assert_eq!(r.len(), 2);
         assert_eq!(
-            (r[0].status, r[0].amount.as_str(), r[0].total.as_str()),
-            ('!', "-842,35 TRY", "92.907,25 TRY")
+            (r[1].status, r[1].amount.as_str(), r[1].total.as_str()),
+            (' ', "-842,35 TRY", "92.907,25 TRY")
         );
-        assert_eq!(r[0].transaction, Some(4));
+        assert_eq!(r[1].transaction, Some(2));
+        let csv = "\"txnidx\",\"date\",\"date2\",\"status\",\"code\",\"description\",\"comment\",\"account\",\"amount\",\"commodity\",\"credit\",\"debit\",\"posting-status\",\"posting-comment\"\n\"1\",\"2026-01-02\",\"\",\"*\",\"\",\"Salary\",\"\",\"assets:bank\",\"93749,60\",\"TRY\",\"\",\"93749,60\",\"\",\"\"\n\"1\",\"2026-01-02\",\"\",\"*\",\"\",\"Salary\",\"\",\"income:salary\",\"-93749,60\",\"TRY\",\"93749,60\",\"\",\"\",\"\"\n\"2\",\"2026-01-03\",\"\",\"!\",\"\",\"Market | groceries\",\"\",\"expenses:food\",\"842,35\",\"TRY\",\"\",\"842,35\",\"\",\"\"\n\"2\",\"2026-01-03\",\"\",\"!\",\"\",\"Market | groceries\",\"\",\"assets:bank\",\"-842,35\",\"TRY\",\"842,35\",\"\",\"\",\"\"\n";
+        let statuses = hledger_statuses(csv);
+        assert_eq!(statuses, BTreeMap::from([(1, '*'), (2, '!')]));
+        with_statuses(&mut r, &statuses);
+        assert_eq!((r[0].status, r[1].status), ('*', '!'));
+        // A posting's own mark stays.
+        let mut own = [Posting {
+            status: '!',
+            transaction: Some(1),
+            ..r[0].clone()
+        }];
+        with_statuses(&mut own, &statuses);
+        assert_eq!(own[0].status, '!');
+        let (_, args) = crate::report::register_command(
+            Dialect::Hledger,
+            "/j/m.journal",
+            "assets:bank",
+            Some((
+                Date {
+                    y: 2026,
+                    m: 1,
+                    d: 1,
+                },
+                Date {
+                    y: 2026,
+                    m: 2,
+                    d: 1,
+                },
+            )),
+        );
+        assert_eq!(
+            statuses_command(&args),
+            [
+                "-f",
+                "/j/m.journal",
+                "print",
+                "-O",
+                "csv",
+                "-b",
+                "2026-01-01",
+                "-e",
+                "2026-02-01",
+                "acct:^assets:bank(:|$)"
+            ]
+        );
     }
 
     #[test]
