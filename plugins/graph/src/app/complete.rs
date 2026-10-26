@@ -18,6 +18,12 @@ use crate::index::Index;
 /// The most items offered at once.
 const MOST: usize = 50;
 
+/// How long the search of the graph's blocks after `((` goes on, in
+/// milliseconds: Kalem gives a completer's call the drawing's 100 ms and
+/// stops the plugin past them (its 0.6.48), and the first lines of a large
+/// graph's every block take longer than that as WebAssembly.
+const SEARCH_MS: i64 = 40;
+
 /// What an item is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum What {
@@ -209,7 +215,9 @@ impl App {
         {
             let typed = &line[open + 2..];
             if !typed.contains("))") {
-                return blocks(index, typed, cursor, after.starts_with("))"));
+                let start = self.now.map(|now| (now, now()));
+                let over = || start.is_some_and(|(now, at)| now() - at > SEARCH_MS);
+                return blocks(index, &rel, typed, cursor, after.starts_with("))"), &over);
             }
         }
         if !org && let Some(found) = self.properties(index, line, cursor) {
@@ -612,8 +620,17 @@ fn anchors(
 /// `((`: those with an id, and once something is typed, as Logseq
 /// offers them, those of Markdown notes without one, promised an id
 /// that is written into the block's file when the reference is saved
-/// ([`Index::promise`]).
-fn blocks(index: &Index, typed: &str, cursor: usize, closed: bool) -> Vec<Suggestion> {
+/// ([`Index::promise`]). The note `rel` is searched first, then the
+/// journals from the newest, then the other pages, until `over` says the
+/// time is up.
+fn blocks(
+    index: &Index,
+    rel: &str,
+    typed: &str,
+    cursor: usize,
+    closed: bool,
+    over: &dyn Fn() -> bool,
+) -> Vec<Suggestion> {
     let typed_ = typed.trim();
     // Where `typed` is in a line, letters in either case: an ASCII text
     // compared byte by byte, as most are, for the graph's every block.
@@ -629,11 +646,28 @@ fn blocks(index: &Index, typed: &str, cursor: usize, closed: bool) -> Vec<Sugges
             .windows(needle.len())
             .position(|w| w.eq_ignore_ascii_case(needle))
     };
+    let mut files: Vec<_> = index.files().collect();
+    files.sort_by_cached_key(|(r, _)| {
+        let journal = index.page_of(r).and_then(|p| p.journal);
+        (
+            r.as_str() != rel,
+            journal.is_none(),
+            std::cmp::Reverse(journal),
+        )
+    });
+    // Those with an id first, as they were offered before.
+    let rank =
+        |f: &(u8, &str, Option<&str>, &str, &crate::scan::Block)| (f.0, f.2.is_none(), f.1.len());
     let mut found: Vec<(u8, &str, Option<&str>, &str, &crate::scan::Block)> = Vec::new();
-    for (rel, d) in index.files() {
+    let mut seen = 0_usize;
+    'files: for (rel, d) in files {
         // An id written as the note writes one: Markdown's, Org's.
         let writable = rel.ends_with(".md") || rel.ends_with(".org");
         for b in &d.scanned.blocks {
+            seen += 1;
+            if seen.is_multiple_of(512) && over() {
+                break 'files;
+            }
             if b.id.is_none() && (typed_.is_empty() || !writable) {
                 continue;
             }
@@ -647,10 +681,14 @@ fn blocks(index: &Index, typed: &str, cursor: usize, closed: bool) -> Vec<Sugges
                 None => continue,
             };
             found.push((m, first, b.id.as_deref(), rel.as_str(), b));
+            // The best kept, as a short text matches most blocks.
+            if found.len() >= 8 * MOST {
+                found.sort_by_key(rank);
+                found.truncate(MOST);
+            }
         }
     }
-    // Those with an id first, as they were offered before.
-    found.sort_by_key(|f| (f.0, f.2.is_none(), f.1.len()));
+    found.sort_by_key(rank);
     found.truncate(MOST);
     found
         .into_iter()

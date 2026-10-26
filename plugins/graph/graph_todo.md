@@ -1292,6 +1292,25 @@ user groups; the gaps that code can close, in this order.
     it. The README says so. (Done 2026-10-15 in Kalem, K26: with
     `/tmp/…` in `projects.toml`, a line written to a journal from
     outside reached the panel in a few seconds.)
+- [x] GR18 What Kalem asks as it draws within its time (2026-10-26).
+  Kalem 0.6.48 gives a layer's overlays and a completer's items 100 ms
+  whatever the manifest's limits give, and stops the plugin for the
+  session past them. On `tests/large.rs`'s graph, in a release
+  `kalem tui` of 0.6.49, a page with `{{query (task TODO DOING)}}` and
+  an advanced query, and `((` typed in any note, each stopped graph
+  0.19.1: "the plugin ran past its 100 ms". The layer now shows the
+  answer kept for the index's version, else the one kept before (a
+  mark the first time), and `graph.answerQueries`, queued by `later`,
+  works out what was asked and has the layers drawn again; while the
+  graph keeps changing, a query is worked out again only once four
+  times as long as its last answer took has passed (5 s at most). The
+  search after `((` looks at the note typed into first, then the
+  journals from the newest, then the other pages, and stops after
+  40 ms with what it found. Seen in the same `kalem tui`: both queries
+  answered (100,000 and 1,000 blocks), typing under them, `((` and
+  `::` completed, the plugin running. Tests: app's
+  a_notes_queries_are_answered_away_from_the_drawing and
+  completion_of_blocks_stops_when_its_time_is_up.
 
 ## What Kalem's core must gain
 

@@ -2881,3 +2881,114 @@ fn a_graph_indexed_a_slice_at_a_time_where_kalem_runs_commands_later() {
     let kalem = |app: &App| app.index("/w/notes").unwrap().backlinks("kalem").len();
     assert_eq!(kalem(&app), kalem(&whole));
 }
+
+/// A clock whose every reading is 100 ms after the one before.
+fn slow() -> i64 {
+    static NOW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1_790_000_000_000);
+    NOW.fetch_add(100, std::sync::atomic::Ordering::Relaxed)
+}
+
+#[test]
+fn a_notes_queries_are_answered_away_from_the_drawing() {
+    // Kalem 0.6.48 gives a layer's call the drawing's 100 ms and stops
+    // the plugin past them: where Kalem runs the plugin's commands later,
+    // the layer asks for a query's answer, `graph.answerQueries` works it
+    // out, and the layers are drawn again.
+    let m = logseq();
+    let path = "/w/notes/pages/Work.md";
+    let note = "- TODO ship [[Kalem]]\n- Open work\n\t- {{query (task TODO)}}\n";
+    m.write(path, note).unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, path);
+    app.set_today(Date::new(2026, 10, 26).unwrap());
+    app.now = Some(slow);
+    app.slice_ms = Some(30);
+    let shown = |app: &App, text: &str| {
+        let o = app.overlays("logseq", Some(path), text);
+        o.spans
+            .iter()
+            .find_map(|s| match &s.effect {
+                crate::layer::Effect::Replace(t, _) if t.starts_with('⌕') => Some(t.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    // Not worked out while Kalem draws: a mark, the command asked for
+    // once until it runs.
+    assert_eq!(shown(&app, note), "⌕ …");
+    assert_eq!(app.answers_due(), Some(0));
+    assert_eq!(shown(&app, note), "⌕ …");
+    assert_eq!(app.answers_due(), None);
+    let out = app.command(&m, "graph.answerQueries", &ctx(path, note, 0));
+    assert_eq!(out, vec![Effect::RefreshLayers]);
+    // The task and the template's.
+    assert_eq!(shown(&app, note), "⌕ 2 blocks");
+    assert_eq!(app.answers_due(), None);
+    // The graph changed: the answer kept is shown until the new one is
+    // worked out, which waits four times as long as the last one took
+    // (100 ms on this clock), counted from then.
+    let changed = "- TODO ship [[Kalem]]\n- TODO test\n- Open work\n\t- {{query (task TODO)}}\n";
+    m.write(path, changed).unwrap();
+    app.saved(&m, path);
+    assert_eq!(shown(&app, changed), "⌕ 2 blocks");
+    assert!(app.answers_due().is_some_and(|ms| ms > 0));
+    let out = app.command(&m, "graph.answerQueries", &ctx(path, changed, 0));
+    assert!(
+        matches!(&out[..], [Effect::Later { id, after_ms, .. }] if id == "graph.answerQueries" && *after_ms > 0),
+        "{out:?}"
+    );
+    let out = app.command(&m, "graph.answerQueries", &ctx(path, changed, 0));
+    assert_eq!(out, vec![Effect::RefreshLayers]);
+    assert_eq!(shown(&app, changed), "⌕ 3 blocks");
+    // Where Kalem does not run commands later, worked out at once, as
+    // before.
+    let mut whole = App::new(Settings::default());
+    whole.opened(&m, path);
+    assert_eq!(shown(&whole, changed), "⌕ 3 blocks");
+    assert_eq!(whole.answers_due(), None);
+}
+
+/// A clock whose every reading is a second after the one before.
+fn late() -> i64 {
+    static NOW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1_790_000_000_000);
+    NOW.fetch_add(1_000, std::sync::atomic::Ordering::Relaxed)
+}
+
+#[test]
+fn completion_of_blocks_stops_when_its_time_is_up() {
+    // A large graph's every block takes longer to search than Kalem gives
+    // a completer's call (100 ms since its 0.6.48): the search stops in
+    // time, the note typed into searched first.
+    let m = logseq();
+    let mut filler = String::new();
+    for n in 0..3_000 {
+        filler.push_str(&format!("- filler {n}\n"));
+    }
+    m.write("/w/notes/pages/Big.md", &filler).unwrap();
+    m.write(
+        "/w/notes/pages/Zed.md",
+        "- needle at the end\n  id:: 22222222-2222-4222-8222-222222222222\n",
+    )
+    .unwrap();
+    let path = "/w/notes/pages/Note.md";
+    let note = "- needle here\n  id:: 33333333-3333-4333-8333-333333333333\n- see ((needle";
+    m.write(path, note).unwrap();
+    let mut app = App::new(Settings::default());
+    app.opened(&m, path);
+    let labels = |app: &App| -> Vec<String> {
+        app.complete(&m, "refs", Some(path), note, 0, note.len())
+            .into_iter()
+            .map(|s| s.label)
+            .collect()
+    };
+    // Without Kalem's clock, every block (the one typed into too, its id
+    // promised, as before).
+    assert_eq!(
+        labels(&app),
+        ["needle here", "needle at the end", "see ((needle"]
+    );
+    // With a clock whose time is up at the first look: the blocks of the
+    // note, and of those after it as far as the search got.
+    app.now = Some(late);
+    assert_eq!(labels(&app), ["needle here", "see ((needle"]);
+}

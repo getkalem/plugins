@@ -225,6 +225,9 @@ pub const COMMANDS: &[CommandInfo] = &[
     // Run by the plugin a moment after a note one of its commands edited
     // changed again (an Undo, typing): its text taken into the index.
     n("graph.noteEdited", "Take the Edited Note's Text", &[]),
+    // Run by the plugin once a note's layer asked for the answers of its
+    // queries, which are not worked out while Kalem draws.
+    n("graph.answerQueries", "Answer the Notes' Queries", &[]),
     // The graph drawn (Kalem's plugin API 0.2.12): all its pages, or the
     // note's page and the pages two links away.
     m!("graph.graphView", "Graph View", &["space n r v"], "g"),
@@ -827,9 +830,9 @@ pub struct App {
     texts: std::cell::RefCell<BTreeMap<String, (u64, std::rc::Rc<str>)>>,
     /// The pages opened last, newest first, absolute.
     recent: Vec<String>,
-    /// What the `{{query …}}` of the notes show, by graph and query, with
-    /// the index's version they were computed from.
-    queries: std::cell::RefCell<BTreeMap<(String, String), (u64, Shown)>>,
+    /// What the queries of the notes show, by graph and query, with the
+    /// index's version they were worked out from, and those asked for.
+    answers: answers::Answers,
     /// Notes a layer serves whose graph is not indexed, its indexing asked
     /// for (`graph.noteOpened`) and not done yet.
     pub(crate) unindexed: std::cell::RefCell<BTreeSet<String>>,
@@ -885,7 +888,7 @@ impl App {
             read: None,
             texts: std::cell::RefCell::new(BTreeMap::new()),
             recent: Vec::new(),
-            queries: std::cell::RefCell::new(BTreeMap::new()),
+            answers: answers::Answers::default(),
             properties: std::cell::RefCell::new(BTreeMap::new()),
             unindexed: std::cell::RefCell::new(BTreeSet::new()),
             building: BTreeMap::new(),
@@ -1322,8 +1325,17 @@ impl App {
                     crate::layer::queries(
                         o,
                         text,
-                        &|q| (*self.query_summary(index, q)).clone(),
-                        &|q| (*self.advanced_summary(index, q, current.as_deref())).clone(),
+                        &|q| {
+                            (*self.query_answer(index, answers::Asked::Simple(q.to_string())))
+                                .clone()
+                        },
+                        &|q| {
+                            let ask = answers::Asked::Advanced {
+                                query: q.to_string(),
+                                current: current.clone(),
+                            };
+                            (*self.query_answer(index, ask)).clone()
+                        },
                     )
                 };
                 self.sources(index, &mut o);
@@ -1386,29 +1398,6 @@ impl App {
         }
     }
 
-    /// What `{{query q}}` shows in a note of the graph of `index`: kept
-    /// until the index changes.
-    fn query_summary(&self, index: &Index, q: &str) -> Shown {
-        let key = (index.graph.root.clone(), q.to_string());
-        if let Some((v, s)) = self.queries.borrow().get(&key)
-            && *v == index.version()
-        {
-            return s.clone();
-        }
-        let mark = if self.settings.glyphs == "ascii" {
-            "query:"
-        } else {
-            "⌕"
-        };
-        let s = Shown::new(crate::query::shown(index, q, self.day(), mark));
-        let mut cache = self.queries.borrow_mut();
-        if cache.len() > 256 {
-            cache.clear();
-        }
-        cache.insert(key, (index.version(), s.clone()));
-        s
-    }
-
     /// Whether the note at `path`, which a layer serves, has no graph
     /// indexed and its indexing was not asked for yet.
     pub fn index_wanted(&self, path: &str) -> bool {
@@ -1424,32 +1413,6 @@ impl App {
     /// The indexing of the note at `path`'s graph asked for.
     pub fn index_asked(&self, path: &str) {
         self.unindexed.borrow_mut().insert(files::normalize(path));
-    }
-
-    /// What an advanced query shows in its note: kept until the index
-    /// changes, as `query_summary`'s.
-    fn advanced_summary(&self, index: &Index, q: &str, current: Option<&str>) -> Shown {
-        let key = (
-            index.graph.root.clone(),
-            format!("{}\u{1f}{q}", current.unwrap_or("")),
-        );
-        if let Some((v, s)) = self.queries.borrow().get(&key)
-            && *v == index.version()
-        {
-            return s.clone();
-        }
-        let mark = if self.settings.glyphs == "ascii" {
-            "query:"
-        } else {
-            "⌕"
-        };
-        let s = Shown::new(crate::datalog::shown(index, q, self.day(), current, mark));
-        let mut cache = self.queries.borrow_mut();
-        if cache.len() > 256 {
-            cache.clear();
-        }
-        cache.insert(key, (index.version(), s.clone()));
-        s
     }
 
     /// Document `id` of `key` written, as an effect; kept for Enter.
@@ -1660,6 +1623,12 @@ impl App {
         // waits for a graph indexed.
         if id == indexing::INDEXING {
             out.extend(self.index_slice(files, &ctx.args));
+            return out;
+        }
+        // The answers of the notes' queries their layers asked for, worked
+        // out away from the drawing.
+        if id == answers::ANSWER {
+            out.extend(self.answer_queries());
             return out;
         }
         if id == "graph.noteOpened" {
@@ -2555,6 +2524,7 @@ fn relative_path(from: &str, to: &str) -> String {
     }
 }
 
+mod answers;
 mod browse;
 mod cards;
 pub mod complete;

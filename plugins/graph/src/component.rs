@@ -535,14 +535,25 @@ impl Plugin for Graph {
     fn overlays_5(layer: &str, path: Option<&str>, text: &str) -> kalem_plugin::layer::OverlaySet5 {
         use crate::layer::{Effect as E, LineEffect as L};
         use kalem_plugin::layer as api;
-        let (o, wanted) = APP
+        let (o, wanted, answers) = APP
             .with(|a| {
                 a.borrow().as_ref().map(|app| {
                     let wanted = path.is_some_and(|p| app.index_wanted(p));
-                    (app.overlays(layer, path, text), wanted)
+                    let o = app.overlays(layer, path, text);
+                    (o, wanted, app.answers_due())
                 })
             })
             .unwrap_or_default();
+        // The answers of the note's queries, worked out by a command of
+        // the plugin's own at the editor's next tick, or once a slow
+        // query's wait is over: this call has the drawing's time only.
+        if let Some(after_ms) = answers {
+            apply(Effect::Later {
+                id: "graph.answerQueries".into(),
+                args: "{}".into(),
+                after_ms,
+            });
+        }
         // A note of a graph not indexed that can be read now (its folder
         // just added to the projects): indexed, after this call.
         if wanted
