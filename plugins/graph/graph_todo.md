@@ -1346,6 +1346,17 @@ user groups; the gaps that code can close, in this order.
   into the note once the link is saved, as `((` does in a Logseq graph.
   Tests: edit's a_vaults_block_id_at_the_end_of_its_block, app's
   a_vaults_block_without_an_id_referred_to.
+- [x] GR22 A Logseq page's namespace renamed with it (2026-10-26), as
+  Logseq 0.10.9's rename-namespace-pages! does: Rename Page on `Project`
+  renames `Project/Plugins` and `Project/Plugins/Graph` too, files and
+  links, each by a `graph.renameNow` of its own queued once the page's
+  rename is done (so each finds the note typed into as the edits before
+  it left it), none when the page's rename was refused. A vault's note
+  has no namespace. Seen in a release `kalem tui` of 0.6.49 on the demo
+  graph: Project/Plugins renamed Work/Plugins, its file and the document
+  open on it followed, Project/Plugins/Graph's `title::` and its five
+  links written Work/Plugins/Graph. Test: app's
+  a_namespace_renamed_with_its_page.
 
 ## What Kalem's core must gain
 

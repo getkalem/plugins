@@ -490,7 +490,34 @@ impl App {
             let root = args["root"].as_str().unwrap_or(root).to_string();
             let key = args["key"].as_str().unwrap_or_default().to_string();
             let title = args["title"].as_str().unwrap_or_default().to_string();
-            return self.rename(files, &root, &key, &title, ctx);
+            // A Logseq page's namespace renamed with it (`a/b` with `a`), as
+            // Logseq's rename-namespace-pages! does: each page under it
+            // renamed by a command of its own once this one is done, which
+            // finds the note typed into as these edits left it.
+            let under = if args["children"].as_bool().unwrap_or(true) {
+                self.namespace_pages(&root, &key, &title)
+            } else {
+                Vec::new()
+            };
+            let mut out = self.rename(files, &root, &key, &title, ctx);
+            let refused = out
+                .iter()
+                .any(|e| matches!(e, Effect::Notify(_, Level::Warning | Level::Error)));
+            if !refused {
+                out.extend(under.into_iter().map(|(key, title)| {
+                    Effect::Run {
+                        id: "graph.renameNow".into(),
+                        args: serde_json::json!({
+                            "root": root,
+                            "key": key,
+                            "title": title,
+                            "children": false,
+                        })
+                        .to_string(),
+                    }
+                }));
+            }
+            return out;
         }
         let (Some(rel), Some(text)) = (rel, ctx.text.as_deref()) else {
             return vec![Effect::Notify(
@@ -753,6 +780,35 @@ impl App {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The pages of Logseq page `key`'s namespace (`a/b` and `a/b/c` under
+    /// `a`), each with its title once `key` is called `title`.
+    fn namespace_pages(&self, root: &str, key: &str, title: &str) -> Vec<(String, String)> {
+        let Some(index) = self.indexes.get(root) else {
+            return Vec::new();
+        };
+        let Some(page) = index.page(key) else {
+            return Vec::new();
+        };
+        if index.graph.kind != Kind::Logseq {
+            return Vec::new();
+        }
+        let depth = page.title.split('/').count();
+        let inside = format!("{key}/");
+        let mut under: Vec<(String, String)> = index
+            .pages()
+            .filter(|p| p.key.starts_with(&inside))
+            .map(|p| {
+                let rest: Vec<&str> = p.title.split('/').skip(depth).collect();
+                (
+                    p.key.clone(),
+                    format!("{}/{}", title.trim(), rest.join("/")),
+                )
+            })
+            .collect();
+        under.sort();
+        under
     }
 
     /// Page `key` of graph `root` renamed `title`: its `title::` set, and
