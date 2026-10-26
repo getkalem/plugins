@@ -1217,20 +1217,7 @@ fn new_transaction() -> Result<String, String> {
 /// draft for the one chosen.
 fn choose_payee(d: Dialect, path: String, sep: char, date: Date, recent: Vec<String>) {
     resolve(path.clone(), d, move |tool, main| {
-        let args: Vec<String> = match tool {
-            Dialect::Beancount => vec![
-                "-f".into(),
-                "csv".into(),
-                main.path.clone(),
-                "SELECT DISTINCT payee".into(),
-            ],
-            _ => vec!["-f".into(), main.path.clone(), "payees".into()],
-        };
-        let program = if tool == Dialect::Beancount {
-            "bean-query"
-        } else {
-            tool.checker()
-        };
+        let (program, args) = write::payees_command(tool, &main.path);
         let dir = journal::folder(&main.path).to_string();
         run(program, args, &dir, move |r| {
             let mut payees = recent;
@@ -1308,35 +1295,7 @@ fn draft(
     date: Date,
     payee: String,
 ) {
-    let (program, args): (&'static str, Vec<String>) = match tool {
-        Dialect::Hledger => (
-            "hledger",
-            vec![
-                "-f".into(),
-                main.path.clone(),
-                "print".into(),
-                "--match".into(),
-                payee.clone(),
-            ],
-        ),
-        Dialect::Ledger => (
-            "ledger",
-            vec![
-                "-f".into(),
-                main.path.clone(),
-                "xact".into(),
-                date.written('/'),
-                payee.clone(),
-            ],
-        ),
-        Dialect::Beancount => (
-            "bean-query",
-            vec![
-                main.path.clone(),
-                format!("PRINT FROM payee = \"{}\"", payee.replace('"', "\\\"")),
-            ],
-        ),
-    };
+    let (program, args) = write::draft_command(tool, &main.path, &payee, date);
     let dir = journal::folder(&main.path).to_string();
     run(program, args, &dir, move |r| {
         let drafted = r

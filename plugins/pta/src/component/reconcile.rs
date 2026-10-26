@@ -181,37 +181,7 @@ fn account_read(
 
 /// The asset and liability accounts, to pick one.
 fn pick(tool: Dialect, main: Main, journal: String) {
-    let (program, args): (&'static str, Vec<String>) = match tool {
-        Dialect::Hledger => (
-            "hledger",
-            vec![
-                "-f".into(),
-                main.path.clone(),
-                "accounts".into(),
-                "type:AL".into(),
-            ],
-        ),
-        Dialect::Ledger => (
-            "ledger",
-            vec![
-                "-f".into(),
-                main.path.clone(),
-                "accounts".into(),
-                "^Assets".into(),
-                "^Liabilities".into(),
-            ],
-        ),
-        Dialect::Beancount => (
-            "bean-query",
-            vec![
-                "-f".into(),
-                "csv".into(),
-                main.path.clone(),
-                "SELECT DISTINCT account WHERE account ~ '^(Assets|Liabilities):' ORDER BY account"
-                    .into(),
-            ],
-        ),
-    };
+    let (program, args) = reconcile::pick_command(tool, &main.path);
     let dir = journal::folder(&main.path).to_string();
     run(program, args, &dir, move |r| {
         let listed = match r {

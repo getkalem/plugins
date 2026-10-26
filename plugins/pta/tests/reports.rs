@@ -758,3 +758,70 @@ fn a_new_transaction_from_each_tools_draft() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// While a balance assertion fails, as it does mid-edit, the runs that
+/// list the journal's names (completion, New Transaction's payees,
+/// Reconcile's accounts) and draft a transaction still answer, through
+/// hledger's `-I` and Ledger's `--permissive`; the check still fails.
+#[test]
+fn lists_and_drafts_despite_a_failing_assertion() {
+    use kalem_plugin_pta::{check, complete, reconcile, write};
+    let dir = std::env::temp_dir().join(format!("pta-lenient-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let date = Date {
+        y: 2026,
+        m: 2,
+        d: 2,
+    };
+    for (tool, file, text) in [
+        (
+            Dialect::Hledger,
+            "l.journal",
+            "2026-01-02 * Shop\n    expenses:food  10.00 EUR\n    assets:bank  -10.00 EUR = 5.00 EUR\n",
+        ),
+        (
+            Dialect::Ledger,
+            "l.ledger",
+            "2026/01/02 * Shop\n    Expenses:Food  10.00 EUR\n    Assets:Bank  -10.00 EUR = 5.00 EUR\n",
+        ),
+    ] {
+        let main = dir.join(file).to_string_lossy().into_owned();
+        std::fs::write(&main, text).unwrap();
+        let answer = |program: &str, args: &[String]| {
+            Command::new(program)
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .ok()
+        };
+        let Some(checked) = answer(tool.checker(), &check::command(tool, &main, &[])) else {
+            continue;
+        };
+        assert!(!checked.status.success(), "{tool:?}: the check fails");
+        for (slot, program, args) in complete::list_commands(tool, &main) {
+            let out = run(program, &args, &dir).expect("ran");
+            assert!(
+                !complete::list_of(tool, &out).is_empty(),
+                "{tool:?} {slot:?}: {out}"
+            );
+        }
+        let (program, args) = write::payees_command(tool, &main);
+        assert!(run(program, &args, &dir).expect("ran").contains("Shop"));
+        let (program, args) = write::draft_command(tool, &main, "Shop", date);
+        let draft = run(program, &args, &dir).expect("ran");
+        let (t, _) = write::new_transaction(
+            tool,
+            date,
+            write::separator(text, tool),
+            "Shop",
+            Some(&draft),
+        );
+        assert!(t.contains("10.00 EUR") && !t.contains('='), "{tool:?}: {t}");
+        let (program, args) = reconcile::pick_command(tool, &main);
+        assert!(
+            run(program, &args, &dir).expect("ran").contains("ank"),
+            "{tool:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -731,6 +731,71 @@ pub fn smart_date(input: &str, today: Date) -> Option<Date> {
     })
 }
 
+/// The tool's run listing the main journal's payees, for New
+/// Transaction's pick; a balance assertion failing does not stop it
+/// ([`Dialect::lenient`]).
+pub fn payees_command(tool: Dialect, main: &str) -> (&'static str, Vec<String>) {
+    match tool {
+        Dialect::Beancount => (
+            "bean-query",
+            vec![
+                "-f".into(),
+                "csv".into(),
+                main.into(),
+                "SELECT DISTINCT payee".into(),
+            ],
+        ),
+        _ => {
+            let mut a = vec!["-f".into(), main.into(), "payees".into()];
+            a.extend(tool.lenient().map(str::to_string));
+            (tool.checker(), a)
+        }
+    }
+}
+
+/// The tool's run drafting a transaction of `payee` dated `date` from its
+/// last one, which [`new_transaction`] takes: `hledger print --match`,
+/// `ledger xact`, Beancount's `PRINT`; a balance assertion failing does
+/// not stop it ([`Dialect::lenient`]).
+pub fn draft_command(
+    tool: Dialect,
+    main: &str,
+    payee: &str,
+    date: Date,
+) -> (&'static str, Vec<String>) {
+    match tool {
+        Dialect::Hledger => (
+            "hledger",
+            vec![
+                "-f".into(),
+                main.into(),
+                "print".into(),
+                "--match".into(),
+                payee.into(),
+                "-I".into(),
+            ],
+        ),
+        Dialect::Ledger => (
+            "ledger",
+            vec![
+                "-f".into(),
+                main.into(),
+                "--permissive".into(),
+                "xact".into(),
+                date.written('/'),
+                payee.into(),
+            ],
+        ),
+        Dialect::Beancount => (
+            "bean-query",
+            vec![
+                main.into(),
+                format!("PRINT FROM payee = \"{}\"", payee.replace('"', "\\\"")),
+            ],
+        ),
+    }
+}
+
 /// The new transaction from the draft a tool gave for the payee (its
 /// last transaction, as `hledger print --match`, `ledger xact` or
 /// `bean-query`'s `PRINT` write it), dated `date` with `sep`: its first

@@ -236,6 +236,19 @@ impl Dialect {
         }
     }
 
+    /// The flag that keeps a failing balance assertion, common while a
+    /// journal is typed, from stopping the tool (hledger's `-I`, Ledger's
+    /// `--permissive`): for the runs that list the journal's names or
+    /// draft a transaction, whose answer does not hang on the balances;
+    /// never for the check. Beancount's runs have none.
+    pub fn lenient(self) -> Option<&'static str> {
+        match self {
+            Dialect::Hledger => Some("-I"),
+            Dialect::Ledger => Some("--permissive"),
+            Dialect::Beancount => None,
+        }
+    }
+
     /// How the tool is installed, for the notice when it is missing.
     pub fn install(self) -> &'static str {
         match self {

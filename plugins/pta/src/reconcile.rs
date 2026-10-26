@@ -457,6 +457,41 @@ pub enum Which {
     Both,
 }
 
+/// The tool's run listing the asset and liability accounts, to pick the
+/// one to reconcile; a balance assertion failing does not stop it
+/// ([`Dialect::lenient`]).
+pub fn pick_command(tool: Dialect, main: &str) -> (&'static str, Vec<String>) {
+    let mut a: Vec<String> = match tool {
+        Dialect::Hledger => vec![
+            "-f".into(),
+            main.into(),
+            "accounts".into(),
+            "type:AL".into(),
+        ],
+        Dialect::Ledger => vec![
+            "-f".into(),
+            main.into(),
+            "accounts".into(),
+            "^Assets".into(),
+            "^Liabilities".into(),
+        ],
+        Dialect::Beancount => {
+            return (
+                "bean-query",
+                vec![
+                    "-f".into(),
+                    "csv".into(),
+                    main.into(),
+                    "SELECT DISTINCT account WHERE account ~ '^(Assets|Liabilities):' ORDER BY account"
+                        .into(),
+                ],
+            );
+        }
+    };
+    a.extend(tool.lenient().map(str::to_string));
+    (tool.checker(), a)
+}
+
 /// The tool's total of `account` (with its subaccounts) in `main` for
 /// `which` postings.
 pub fn total_command(
