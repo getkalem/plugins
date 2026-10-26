@@ -78,8 +78,8 @@
         "subprocess:git"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/git",
-      "download": null,
-      "sha256": null
+      "download": "https://github.com/getkalem/plugins/releases/download/git-v0.0.14/git.wasm",
+      "sha256": "f19afa2b37139bbb47308c17fa5a38931784ea44fbe0f9a92e16064cf1269e1a"
     },
     {
       "id": "org.kalem.graph",
