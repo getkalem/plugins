@@ -895,10 +895,11 @@ pub fn obsidian(text: &str, index: Option<&Index>, rel: Option<&str>) -> Overlay
             fence = true;
             continue;
         }
-        // `%%` on this line.
+        // `%%` on this line, outside its code spans (`` `%%timeit` ``,
+        // which hid the rest of the note).
         let mut at = 0;
         let mut rest = line;
-        while let Some(p) = rest.find("%%") {
+        while let Some(p) = scan::comment_mark(rest) {
             match rest[p + 2..].find("%%") {
                 Some(q) => {
                     let s = start + at + p;
@@ -1462,6 +1463,18 @@ mod tests {
             end,
             effect: LineEffect::Folded
         }));
+    }
+
+    #[test]
+    fn an_obsidian_comment_opens_in_no_code() {
+        // A code span's `%%` hid the rest of the note; a code block's
+        // stays code.
+        let text = "run `%%timeit` then [[B]] %%hidden%% end\nnext [[C]]\n```\n100%%\n```\nafter\n";
+        let o = obsidian(text, None, None);
+        assert_eq!(
+            shown(text, &o),
+            "run `%%timeit` then [[B]]  end\nnext [[C]]\n```\n100%%\n```\nafter\n"
+        );
     }
 
     #[test]

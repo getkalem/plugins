@@ -1518,6 +1518,29 @@ fn logseq_org(lines: &[&str], options: &Options) -> Scanned {
     s
 }
 
+/// The first `%%` of `line` outside its code spans, where an Obsidian
+/// comment opens: a code span's (`` `%%timeit` ``) is code. A run of
+/// backticks never closed is text, as [`inline`] reads it.
+pub fn comment_mark(line: &str) -> Option<usize> {
+    let b = line.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'`' => {
+                let n = b[i..].iter().take_while(|c| **c == b'`').count();
+                let fence = &line[i..i + n];
+                i = match line[i + n..].find(fence) {
+                    Some(p) => i + n + p + n,
+                    None => i + n,
+                };
+            }
+            b'%' if b.get(i + 1) == Some(&b'%') => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
+}
+
 /// A list item's marker: `-`, `*`, `+`, `1.`, `1)`; its bytes with the
 /// space after it.
 fn list_marker(rest: &str) -> Option<usize> {
@@ -1545,10 +1568,19 @@ fn obsidian(lines: &[&str]) -> Scanned {
     let mut comment = false;
     for (n, raw_line) in lines.iter().enumerate().skip(start) {
         // `%%…%%` comments, which may span lines, read as spaces so that
-        // the columns stay.
+        // the columns stay. A code block's lines and the line opening one
+        // hold none (`printf("100%%")`), and a code span's `%%` opens none
+        // (`` `%%timeit` ``): before, either hid every reference after it.
+        let opens = raw_line.trim_start();
+        let code =
+            !comment && (fence.is_some() || opens.starts_with("```") || opens.starts_with("~~~"));
         let mut line = String::with_capacity(raw_line.len());
         let mut rest = *raw_line;
         loop {
+            if code {
+                line.push_str(rest);
+                break;
+            }
             if comment {
                 match rest.find("%%") {
                     Some(p) => {
@@ -1562,7 +1594,7 @@ fn obsidian(lines: &[&str]) -> Scanned {
                     }
                 }
             } else {
-                match rest.find("%%") {
+                match comment_mark(rest) {
                     Some(p) => {
                         line.push_str(&rest[..p]);
                         line.push_str("  ");
@@ -2003,6 +2035,23 @@ mod tests {
                 .iter()
                 .any(|b| b.props == [("key".to_string(), "value".to_string())])
         );
+    }
+
+    #[test]
+    fn obsidian_comments_open_in_no_code() {
+        // `%%` in a code block or a code span opens no comment: before,
+        // either hid every reference after it.
+        let s = scan(
+            "```c\nprintf(\"100%%\");\n```\nsee [[A]]\nrun `%%timeit` then [[B]] %% hidden [[H]] %% and [[C]]\n%%\n[[D]]\n%%\n[[E]]\n",
+            Flavor::Obsidian,
+            &Options::default(),
+        );
+        let got: Vec<&str> = s.refs.iter().map(|r| r.target.as_str()).collect();
+        assert_eq!(got, ["A", "B", "C", "E"]);
+        assert_eq!(comment_mark("a `%%` b %% c"), Some(9));
+        assert_eq!(comment_mark("a ``x`%%`` b"), None);
+        // A backtick never closed is text.
+        assert_eq!(comment_mark("a ` %% b"), Some(4));
     }
 
     #[test]
