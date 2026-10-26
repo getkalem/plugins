@@ -127,6 +127,23 @@ fn content_start(text: &str, st: &[usize], b: &Block, flavor: Flavor) -> usize {
     start + n
 }
 
+/// Where block `b`'s task keyword is written: after its bullet or stars,
+/// and in Logseq's Markdown after a heading's marks (`- ## LATER Plan`),
+/// where Logseq writes it and the scanner reads it.
+fn keyword_start(text: &str, st: &[usize], b: &Block, flavor: Flavor) -> usize {
+    let c = content_start(text, st, b, flavor);
+    if flavor != Flavor::LogseqMarkdown || b.heading.is_none() {
+        return c;
+    }
+    let rest = &text[c..];
+    let marks = rest.bytes().take_while(|x| *x == b'#').count();
+    if (1..=6).contains(&marks) && rest[marks..].starts_with(' ') {
+        c + marks + 1
+    } else {
+        c
+    }
+}
+
 /// The next keyword of the task cycle: none, the workflow's first, its
 /// second, done, none. Logseq's `:now` workflow is `["LATER", "NOW",
 /// "DONE"]`, `:todo` `["TODO", "DOING", "DONE"]`.
@@ -306,6 +323,8 @@ pub fn cycle_todo(text: &str, flavor: Flavor, cycle: [&str; 3], cursor: usize) -
             line: None,
         });
     }
+    let c = keyword_start(text, &st, b, flavor);
+    let rest = &text[c..];
     let current = b.marker;
     let len = current.map_or(0, |m| {
         let after = &rest[m.len()..];
@@ -512,7 +531,7 @@ pub fn set_priority(
     }
     let (s, st, i) = at(text, flavor, cursor)?;
     let b = &s.blocks[i];
-    let mut c = content_start(text, &st, b, flavor);
+    let mut c = keyword_start(text, &st, b, flavor);
     if let Some(m) = &b.marker {
         c += m.len();
         if text[c..].starts_with(' ') {
@@ -1153,6 +1172,32 @@ mod tests {
         assert_eq!(o("- [ ] item\n"), "- [x] item\n");
         assert_eq!(o("- [x] item\n"), "- item\n");
         assert_eq!(o("A paragraph\n"), "- [ ] A paragraph\n");
+    }
+
+    #[test]
+    fn a_heading_blocks_keyword_and_priority_go_after_its_marks() {
+        // Logseq writes them after `## ` (`- ## Plan` to `- ## LATER
+        // Plan`), where the scanner reads them: before, `- ## TODO Plan`
+        // cycled to `- DOING ODO Plan`.
+        let md = Flavor::LogseqMarkdown;
+        let c = |t: &str| run(t, |c| cycle_todo(t, md, TODO, c), 3);
+        assert_eq!(c("- ## Plan\n"), "- ## TODO Plan\n");
+        assert_eq!(c("- ## TODO Plan\n"), "- ## DOING Plan\n");
+        assert_eq!(c("\t- ### DONE Plan\n"), "\t- ### Plan\n");
+        let cycled = c("- ## TODO Plan\n");
+        let s = scan::scan(&cycled, md, &scan::Options::default());
+        assert_eq!(
+            (s.blocks[0].marker, s.blocks[0].heading),
+            (Some("DOING"), Some(2))
+        );
+        let p = |t: &str, x| run(t, |c| set_priority(t, md, c, x), 3);
+        assert_eq!(p("- ## TODO Plan\n", Some('A')), "- ## TODO [#A] Plan\n");
+        assert_eq!(p("- # Plan\n", Some('B')), "- # [#B] Plan\n");
+        assert_eq!(p("- ## TODO [#A] Plan\n", None), "- ## TODO Plan\n");
+        // A heading by its property has no marks; a `#tag` first is no
+        // heading.
+        assert_eq!(c("- Plan\n  heading:: 2\n"), "- TODO Plan\n  heading:: 2\n");
+        assert_eq!(c("- #tag Plan\n"), "- TODO #tag Plan\n");
     }
 
     #[test]
