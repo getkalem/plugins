@@ -496,3 +496,59 @@ fn a_commodity_with_digits() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// An account whose cleared and pending postings come to zero: Ledger
+/// prints no total, hledger none where nothing is cleared or pending; the
+/// figures take it as zero, so the difference to a target of zero is zero
+/// and Finish has a total to write.
+#[test]
+fn a_total_of_zero() {
+    use kalem_plugin_pta::reconcile::{self, Which};
+    let dir = std::env::temp_dir().join(format!("pta-zero-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (tool, file, text, account, target) in [
+        (
+            Dialect::Ledger,
+            "z.ledger",
+            "2026/01/01 * In\n    Assets:Wallet  $10.00\n    Income:Gift\n\n2026/01/02 ! Out\n    Expenses:Food  $10.00\n    Assets:Wallet\n",
+            "Assets:Wallet",
+            "$0.00",
+        ),
+        (
+            Dialect::Hledger,
+            "z.journal",
+            "2026-01-01 In\n    assets:wallet  10.00 EUR\n    income:gift\n",
+            "assets:wallet",
+            "0.00 EUR",
+        ),
+    ] {
+        let main = dir.join(file).to_string_lossy().into_owned();
+        std::fs::write(&main, text).unwrap();
+        let mut totals = Vec::new();
+        for which in [Which::Cleared, Which::Pending, Which::Both] {
+            let (p, a) = reconcile::total_command(tool, &main, account, which);
+            let Some(out) = run(p, &a, &dir) else {
+                break;
+            };
+            totals.push(reconcile::total_of(tool, &out));
+        }
+        let [cleared, pending, both] = &totals[..] else {
+            continue;
+        };
+        assert!(both.is_empty(), "{tool:?}: {both:?}");
+        let b = reconcile::blocks(&[(String::new(), target.into())], cleared, pending, both);
+        assert_eq!(
+            b[0].total
+                .as_ref()
+                .map(reconcile::Amount::written)
+                .as_deref(),
+            Some(target),
+            "{tool:?}"
+        );
+        assert!(
+            b[0].difference.as_ref().unwrap().quantity.is_zero(),
+            "{tool:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

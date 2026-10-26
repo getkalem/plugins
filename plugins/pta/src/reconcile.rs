@@ -617,8 +617,9 @@ pub struct Figures {
 /// commodity's (its symbol, empty for an account of one commodity, whose
 /// total is then the one the target names, else the first) with the
 /// statement's balance typed; its block the tool's totals of that
-/// commodity and the difference. A commodity with nothing cleared or
-/// pending has a total of zero, in its amounts' style.
+/// commodity and the difference. A total the tool did not print is zero
+/// (Ledger prints none for a total of zero, hledger none where no posting
+/// counts), in its commodity's amounts' style, else the target's.
 pub fn blocks(
     targets: &[(String, String)],
     cleared: &[Amount],
@@ -626,26 +627,32 @@ pub fn blocks(
     both: &[Amount],
 ) -> Vec<Figures> {
     let single = targets.len() == 1 && targets[0].0.is_empty();
+    let zero = |style: AmountStyle| Amount {
+        quantity: Decimal::default(),
+        style,
+    };
+    let either: Vec<Amount> = cleared.iter().chain(pending).cloned().collect();
     targets
         .iter()
         .map(|(commodity, target)| {
             let total = if single {
-                matching(target, both).cloned()
+                matching(target, both).cloned().or_else(|| {
+                    matching(target, &either)
+                        .map(|a| a.style.clone())
+                        .or_else(|| text_amount(target).map(|a| a.style))
+                        .map(zero)
+                })
             } else {
                 both.iter()
                     .find(|a| a.style.symbol == *commodity)
                     .cloned()
                     .or_else(|| {
-                        cleared
+                        either
                             .iter()
-                            .chain(pending)
                             .find(|a| a.style.symbol == *commodity)
                             .map(|a| a.style.clone())
                             .or_else(|| text_amount(target).map(|a| a.style))
-                            .map(|style| Amount {
-                                quantity: Decimal::default(),
-                                style,
-                            })
+                            .map(zero)
                     })
             };
             let of = |list: &[Amount]| -> Vec<String> {
@@ -1316,6 +1323,20 @@ mod tests {
             std::slice::from_ref(&usd),
         );
         assert_eq!(one[0].commodity, "");
+        // No total printed (Ledger's of zero): zero, in the cleared
+        // amounts' style, else the target's.
+        let nothing = blocks(
+            &[(String::new(), "$0".into())],
+            std::slice::from_ref(&usd),
+            &[text_amount("$-100.00").unwrap()],
+            &[],
+        );
+        let zero = nothing[0].total.as_ref().expect("a total");
+        assert_eq!(zero.written(), "$0.00");
+        assert!(nothing[0].difference.as_ref().unwrap().quantity.is_zero());
+        let none = blocks(&[(String::new(), "0,00 TRY".into())], &[], &[], &[]);
+        assert_eq!(none[0].total.as_ref().unwrap().written(), "0,00 TRY");
+        assert!(none[0].difference.as_ref().unwrap().quantity.is_zero());
         let doc = layout("h", "k", None, &b, &[], None);
         assert!(doc.text.contains("\nEUR\nCleared"), "{}", doc.text);
         assert!(doc.text.contains("\n\n$\nCleared"), "{}", doc.text);
