@@ -275,6 +275,15 @@ pub struct LogSpec {
     pub path: Option<String>,
 }
 
+/// A commit's message and the files it changed, with their counts of
+/// lines (`--stat`), for its line of the log unfolded.
+pub fn message_and_stat(hash: &str) -> GitCommand {
+    let mut args = vec!["show", "--format=%B", "--stat"];
+    args.extend(PLAIN_DIFF);
+    args.push(hash);
+    GitCommand::read(args)
+}
+
 /// A log in [`crate::git::log::FORMAT`].
 pub fn log(spec: &LogSpec) -> GitCommand {
     let mut args = vec![

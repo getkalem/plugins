@@ -45,9 +45,10 @@ The letters are magit's (as Doom's evil-collection has them: `x` discards) and a
 | `SPC g b`, `SPC g c b` | Switch to a branch; a new branch |
 | `SPC g ]`, `SPC g [` | The next and previous change of the file (Alt+F5, Shift+Alt+F5) |
 | `SPC g B` | This line's commit |
+| `SPC g L` | The log: of the file, from the commit in a commit's view, else of the branch (below) |
 | `SPC g /`, `SPC g .` | Every git command; this file's |
 
-The marks beside the lines compare with the index (what `s` would stage; the setting `gutter_base = "head"` compares with the last commit) and come again on each save; the setting `gutter = false` takes them away. The log, blame, the time machine and the remote's links come later (DESIGN.md, section 8).
+The marks beside the lines compare with the index (what `s` would stage; the setting `gutter_base = "head"` compares with the last commit) and come again on each save; the setting `gutter = false` takes them away. The log (`SPC g L`) is a document of one commit a line, 200 at a time (Enter on its last line loads 200 more): Enter shows a commit, Right and Left show and hide its message and the files it changed, Escape or q closes it. Blame as a document, the time machine and the remote's links come later (DESIGN.md, section 8).
 
 The status is read again when it opens, after each save and when a file of the working tree changes. A change inside `.git` alone (a commit or a checkout made in a terminal) shows when the cursor comes back into the status from another document, and after `SPC g g`. A commit's message is written as a document, as `git commit` and Magit write it: `c c` opens the repository's `COMMIT_EDITMSG` in the editor, filled as git fills it (the branch and what is staged in `#` lines; for amend and reword, the last message first); saving it commits (Ctrl+S, `:w`, `:wq`), the `#` lines left out, and closes it; closing it without saving cancels. A commit git refuses (an empty message, a hook) leaves it open to fix. With the setting `commit_message = "prompt"` the message is one line, asked at the bottom (Enter commits, Escape cancels; a `#` there is text), amend keeping the old message's body.
 

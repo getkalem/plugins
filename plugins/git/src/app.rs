@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod commit_view;
 mod document;
+mod log_view;
 mod message;
 
 use crate::actions::{self, Act};
@@ -229,6 +230,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     )
     .doc(&["r a", "m a", "shift+a a"]),
     CommandInfo::new("git.blameLine", "Git: Blame This Line").keys(&["space g shift+b"]),
+    CommandInfo::new("git.log", "Git: Log").keys(&["space g shift+l"]),
     CommandInfo::new("git.refresh", "Git: Refresh"),
     CommandInfo::new("git.fileMenu", "Git: This File").keys(&["space g ."]),
     CommandInfo::new("git.dispatch", "Git: Commands")
@@ -655,6 +657,9 @@ enum After {
     },
     /// Offer the file's commands.
     FileMenu(Doc),
+    /// Show the log of a file, by its path in the repository, else of the
+    /// branch.
+    Log(Option<String>),
 }
 
 /// What a run is for.
@@ -701,6 +706,18 @@ enum Pending {
     },
     /// The commit of the message written as a document.
     MessageCommit { root: String, done: String },
+    /// A page of a log, for its document (shown when `show`).
+    Log {
+        root: String,
+        key: String,
+        show: bool,
+    },
+    /// A commit's message and stat, under its line of a log.
+    LogDetails {
+        root: String,
+        key: String,
+        hash: String,
+    },
     /// The changes of the files of a repository open, for the marks
     /// beside their lines.
     Marks { root: String, paths: Vec<String> },
@@ -812,6 +829,8 @@ struct RepoState {
     written: Option<BTreeMap<(Section, String), crate::git::diff::FileDiff>>,
     /// The commits shown as documents, by hash.
     commits: BTreeMap<String, ShownCommit>,
+    /// The logs shown as documents, by their key.
+    logs: BTreeMap<String, log_view::ShownLog>,
 }
 
 /// A commit shown as a document (`commit_view.rs`).
@@ -1075,6 +1094,7 @@ impl App {
                     match commit {
                         Some(hash) => {
                             s.commits.remove(&hash);
+                            s.logs.remove(&hash);
                         }
                         None => {
                             s.shown = false;
@@ -1165,6 +1185,7 @@ impl App {
                     text: d.text,
                 }
             }
+            "git.log" => After::Log(file.as_ref().map(|_| String::new())),
             "git.fileMenu" => {
                 if file.is_none() {
                     return needs_file(out);
@@ -1429,6 +1450,10 @@ impl App {
             Pending::MessageCommit { root, done } => {
                 self.message_commit_done(out, &root, done, result);
             }
+            Pending::Log { root, key, show } => self.log_done(out, &root, &key, show, result),
+            Pending::LogDetails { root, key, hash } => {
+                self.log_details_done(out, &root, &key, hash, result);
+            }
             Pending::Markers { root, plan } => self.markers_done(out, &root, plan, result),
             Pending::LastMessage { root, kind } => match result {
                 Ok(o) if o.success() && self.settings.message_document => {
@@ -1584,6 +1609,7 @@ impl App {
             // Done by `refreshed`.
             After::Marks(_) => {}
             After::Commit(kind) => self.commit(out, root, &repo, kind),
+            After::Log(path) => self.log_open(out, root, path, None),
             After::SwitchBranch => {
                 let mut branches: Vec<(String, bool)> = repo
                     .local_branches()
@@ -2538,6 +2564,7 @@ fn with_path(after: After, prefix: &str, file: Option<&str>) -> After {
         After::Act(act, _) => After::Act(act, path),
         After::Blame { line, text, .. } => After::Blame { path, line, text },
         After::Marks(_) => After::Marks(path),
+        After::Log(Some(_)) => After::Log(Some(path)),
         other => other,
     }
 }

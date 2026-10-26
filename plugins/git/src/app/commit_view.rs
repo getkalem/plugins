@@ -5,7 +5,7 @@
 //! line opens the file at that line, Escape and q close it; nothing is
 //! staged from it.
 
-use super::{App, CommandInfo, Doc, Effect, Level, Pending, ShownCommit, command_info};
+use super::{App, CommandInfo, Doc, Effect, Level, Pending, ShownCommit, command_info, log_view};
 use crate::content::{Content, Region};
 use crate::git::cmd;
 use crate::git::diff::{self, LineKind};
@@ -147,8 +147,16 @@ impl App {
         doc: &Doc,
     ) -> bool {
         self.current = Some(root.to_string());
+        // The log from the commit shown.
+        if id == "git.log" && !log_view::is_log(hash) {
+            self.log_open(out, root, None, Some(hash.to_string()));
+            return true;
+        }
         if id != "git.dispatch" && !command_info(id).is_some_and(CommandInfo::in_documents_only) {
             return false;
+        }
+        if log_view::is_log(hash) {
+            return self.log_command(out, root, hash, id, doc);
         }
         let Some(content) = self
             .repos

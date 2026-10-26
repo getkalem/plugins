@@ -384,6 +384,28 @@ impl Kalem {
         });
     }
 
+    /// Command `id` run in the view written under `key` (a commit's or a
+    /// log's), with the cursor at the start of the first line holding
+    /// `line`.
+    fn in_view(&mut self, key: &str, id: &str, line: &str) {
+        let (root, view) = key.split_once('#').unwrap();
+        let text = self.docs[key].0.clone();
+        let at = text
+            .find(line)
+            .unwrap_or_else(|| panic!("{line:?} is not in\n{text}"));
+        let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+        let doc = Doc {
+            commit: Some((root.to_string(), view.to_string())),
+            anchor: start,
+            head: start,
+            ..Doc::default()
+        };
+        self.feed(Input::Command {
+            id: id.into(),
+            doc: Some(doc),
+        });
+    }
+
     fn texts(&self) -> Vec<String> {
         self.panel.as_ref().map(Node::texts).unwrap_or_default()
     }
@@ -662,6 +684,47 @@ fn the_message_is_written_as_a_document() {
     k.command("git.amend", Some("a.txt"));
     let (_, text) = k.app.message_fill().unwrap();
     assert!(text.starts_with("Second\n\n# Please"), "{text}");
+}
+
+/// The log as a document (DESIGN.md, 2.4): SPC g L in a file shows the
+/// file's log, one commit a line; Right shows a commit's message and stat
+/// under its line; Enter shows its view, and SPC g L there the log from
+/// it; q closes.
+#[test]
+fn the_log_as_a_document() {
+    let mut k = Kalem::new("log");
+    k.write("a.txt", "one\n");
+    k.commit_all("First, of a");
+    k.write("b.txt", "b\n");
+    k.commit_all("Second, of b");
+    k.write("a.txt", "two\n");
+    k.commit_all("Third, of a");
+    k.command("git.log", Some("a.txt"));
+    let key = format!("{}#log:a.txt", k.root());
+    let text = k.docs[&key].0.clone();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].contains("Third, of a"), "{text}");
+    assert!(lines[1].contains("First, of a"), "{text}");
+    // Right: the commit's message and stat under its line.
+    k.in_view(&key, "git.unfold", "Third");
+    let text = k.docs[&key].0.clone();
+    assert!(text.contains("a.txt | 2 +-"), "{text}");
+    // Enter: the commit's view.
+    k.in_view(&key, "git.visit", "First");
+    let first = k
+        .git_ok(&["rev-list", "--max-parents=0", "HEAD"])
+        .trim()
+        .to_string();
+    let view = format!("{}#{first}", k.root());
+    assert!(k.docs.contains_key(&view), "{:?}", k.docs.keys());
+    // SPC g L in it: the log from that commit.
+    k.in_view(&view, "git.log", "First");
+    let from = format!("{}#log:{first}", k.root());
+    assert_eq!(k.docs[&from].0.lines().count(), 1, "{}", k.docs[&from].0);
+    // q closes the log.
+    k.in_view(&key, "git.close", "Third");
+    assert!(!k.docs.contains_key(&key));
 }
 
 /// A bare repository beside the test's, its `origin`.
