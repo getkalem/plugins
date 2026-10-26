@@ -1953,6 +1953,42 @@ fn a_page_with_a_title_keeps_its_file_and_a_vaults_note_is_renamed_with_it() {
 }
 
 #[test]
+fn a_vaults_note_renamed_after_a_dotted_capital_i() {
+    // `İ` is two bytes and its lower case `i̇` three: the name was found
+    // in a copy in lower case, a byte off in the link (`[[İş/ONew]`), or
+    // inside a character (a panic).
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        (
+            "/v/Home.md",
+            "[[İş/Old]] and [[İ/Çay|tea]] ![[İş/Old#Part]]\n",
+        ),
+        ("/v/İş/Old.md", "# Part\n"),
+        ("/v/İ/Çay.md", "x\n"),
+        ("/v/Other.md", "nothing\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Home.md");
+    let mut c = ctx("/v/Other.md", "nothing\n", 0);
+    let rename = |app: &mut App, c: &mut Ctx, key: &str, title: &str| {
+        c.args = format!(r#"{{"root":"/v","key":"{key}","title":"{title}"}}"#);
+        app.command(&m, "graph.renameNow", c)
+    };
+    rename(&mut app, &mut c, &"İş/Old".to_lowercase(), "New");
+    assert_eq!(m.get("/v/İş/New.md").as_deref(), Some("# Part\n"));
+    assert_eq!(
+        m.get("/v/Home.md").unwrap(),
+        "[[İş/New]] and [[İ/Çay|tea]] ![[İş/New#Part]]\n"
+    );
+    rename(&mut app, &mut c, &"İ/Çay".to_lowercase(), "Kahve");
+    assert_eq!(m.get("/v/İ/Kahve.md").as_deref(), Some("x\n"));
+    assert_eq!(
+        m.get("/v/Home.md").unwrap(),
+        "[[İş/New]] and [[İ/Kahve|tea]] ![[İş/New#Part]]\n"
+    );
+}
+
+#[test]
 fn files_changed_on_disk_are_read_together() {
     let m = logseq();
     let mut app = App::new(Settings::default());

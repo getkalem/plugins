@@ -949,8 +949,8 @@ fn vault_rename_edits(
         ] {
             if let Some(p) = name_in(span, &o) {
                 edits.push(Edit {
-                    start: a + p,
-                    end: a + p + o.len(),
+                    start: a + p.start,
+                    end: a + p.end,
                     text: n,
                 });
                 break;
@@ -962,21 +962,24 @@ fn vault_rename_edits(
 
 /// Where a note's name `name` is written in the link `span`: after `[[`,
 /// `(` or a folder's `/`, before `]]`, `|`, `#`, `.md` or `)`, its case
-/// as it is.
-fn name_in(span: &str, name: &str) -> Option<usize> {
-    let lower = span.to_lowercase();
-    let want = name.to_lowercase();
+/// as it is. Its bytes are found in the link itself: those of a copy in
+/// lower case are not the link's where a letter's lower case is of
+/// another length (`İ`, two bytes, is `i̇`, three).
+fn name_in(span: &str, name: &str) -> Option<std::ops::Range<usize>> {
+    if name.is_empty() {
+        return None;
+    }
     let mut from = 0;
-    while let Some(p) = lower[from..].find(&want) {
-        let at = from + p;
-        let before = lower[..at].chars().next_back();
-        let after = lower[at + want.len()..].chars().next();
+    while let Some(p) = scan::find_ci(&span[from..], name) {
+        let (at, end) = (from + p.start, from + p.end);
+        let before = span[..at].chars().next_back();
+        let after = span[end..].chars().next();
         if matches!(before, Some('[' | '(' | '/'))
             && matches!(after, Some(']' | '|' | '#' | '.' | ')'))
         {
-            return Some(at);
+            return Some(at..end);
         }
-        from = at + want.len().max(1);
+        from = at + span[at..].chars().next().map_or(1, char::len_utf8);
     }
     None
 }
