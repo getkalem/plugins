@@ -299,6 +299,17 @@ impl<'a> Db<'a> {
         self.blocks.get(i as usize).copied()
     }
 
+    /// Block `e`'s `:block/content` as near as the index keeps it: its
+    /// keyword and priority, its first line and its lines of text after
+    /// it; a pre-block's, its properties.
+    fn content(&self, e: u32) -> Option<String> {
+        let (rel, i, b, _) = self.block(e)?;
+        Some(match self.index.file(rel) {
+            Some(d) if i != PRE => d.block_content(i),
+            _ => b.text.clone(),
+        })
+    }
+
     fn page_named(&self, name: &str) -> Option<u32> {
         let key = crate::names::key(name.trim().trim_start_matches("[[").trim_end_matches("]]"));
         self.page_id.get(key.as_str()).copied()
@@ -400,10 +411,7 @@ impl<'a> Db<'a> {
             return Vec::new();
         };
         match attr {
-            "block/content" => vec![V::Str(match b.marker {
-                Some(m) => format!("{m} {}", b.text),
-                None => b.text.clone(),
-            })],
+            "block/content" => self.content(e).map(V::Str).into_iter().collect(),
             "block/marker" => b.marker.map(|m| V::Str(m.into())).into_iter().collect(),
             "block/priority" => b
                 .priority
@@ -886,19 +894,13 @@ impl Run<'_, '_> {
                         );
                     };
                     for b in blocks_of(&row, &v0) {
-                        let Some((_, _, blk, p)) = self.db.block(b) else {
+                        let Some((_, _, _, p)) = self.db.block(b) else {
                             continue;
                         };
-                        let days = [
-                            self.db.page(p).and_then(|x| x.journal),
-                            blk.scheduled,
-                            blk.deadline,
-                        ];
-                        if days
-                            .iter()
-                            .flatten()
-                            .any(|d| (s..=e).contains(&day_int(*d)))
-                        {
+                        // A journal's day only, as Logseq's rule: a
+                        // block's `SCHEDULED:` or `DEADLINE:` is not.
+                        let day = self.db.page(p).and_then(|x| x.journal);
+                        if day.is_some_and(|d| (s..=e).contains(&day_int(d))) {
                             keep(b, &mut out);
                         }
                     }
@@ -907,12 +909,15 @@ impl Run<'_, '_> {
                     let Some(ns) = lit(1, &row).map(|v| v.text(self.db).to_lowercase()) else {
                         continue;
                     };
+                    // Its children, not theirs: Logseq's rule asks a page's
+                    // `:block/namespace`.
                     for p in pages_of(&row, &v0) {
-                        if self
-                            .db
-                            .page(p)
-                            .is_some_and(|x| x.key.starts_with(&format!("{ns}/")))
-                        {
+                        let child = self.db.page(p).is_some_and(|x| {
+                            x.key
+                                .strip_prefix(&format!("{ns}/"))
+                                .is_some_and(|rest| !rest.contains('/'))
+                        });
+                        if child {
                             keep(p, &mut out);
                         }
                     }
@@ -927,15 +932,11 @@ impl Run<'_, '_> {
                     }
                 }
                 "block-content" => {
-                    let want = lit(1, &row)
-                        .map(|v| v.text(self.db).to_lowercase())
-                        .unwrap_or_default();
+                    // `clojure.string/includes?` on the block's content,
+                    // its case as written, as Logseq's rule.
+                    let want = lit(1, &row).map(|v| v.text(self.db)).unwrap_or_default();
                     for b in blocks_of(&row, &v0) {
-                        if self
-                            .db
-                            .block(b)
-                            .is_some_and(|x| x.2.text.to_lowercase().contains(&want))
-                        {
+                        if self.db.content(b).is_some_and(|c| c.contains(&want)) {
                             keep(b, &mut out);
                         }
                     }
@@ -1344,18 +1345,62 @@ mod tests {
             ask("{:query [:find (count ?b) :where [?b :block/marker _]]}"),
             ["5"]
         );
-        // Scheduled within days, the current page.
-        assert_eq!(
+        // Days, a journal's as Logseq's rule has them: the block scheduled
+        // within them on a page is not; the current page.
+        assert!(
             ask(
                 "{:query [:find (pull ?b [*]) :in $ ?a ?z :where (between ?b ?a ?z) [?b :block/marker _]] :inputs [:today :+7d]}"
-            ),
-            ["TODO index [[Kalem]]"]
+            )
+            .is_empty()
         );
         assert_eq!(
             ask(
                 "{:query [:find (pull ?b [*]) :in $ ?page :where [?p :block/name ?page] [?b :block/page ?p] [?b :block/content ?c] [(clojure.string/includes? ?c \"draw\")]] :inputs [:current-page]}"
             ),
             ["DONE draw"]
+        );
+    }
+
+    #[test]
+    fn rules_as_logseqs_query_dsl_rules_write_them() {
+        // `namespace`, a page's children, not theirs (it took them all);
+        // `block-content`, `clojure.string/includes?` on the content, its
+        // lines after the first and its case as written (it took the
+        // first line, in either case); `between`, a journal's day, not a
+        // date scheduled (it took those).
+        let m = Memory::new(&[
+            ("/g/logseq/config.edn", "{:file/name-format :triple-lowbar}"),
+            (
+                "/g/pages/a___b.md",
+                "- TODO first\n  The Second line\n  SCHEDULED: <2026-10-12 Mon>\n",
+            ),
+            ("/g/pages/a___b___c.md", "- deeper\n"),
+            ("/g/journals/2026_10_12.md", "- on the day\n"),
+        ]);
+        let i = Index::build(
+            &m,
+            Graph::load(&m, "/g", Kind::Logseq, &Fallbacks::default()),
+        );
+        let ask = |q: &str| {
+            let a = parse(q).unwrap();
+            texts(&i, &run(&a, &i, Date::new(2026, 10, 11), None).unwrap())
+        };
+        assert_eq!(
+            ask("{:query [:find (pull ?p [*]) :where (namespace ?p \"a\")]}"),
+            ["a/b"]
+        );
+        assert_eq!(
+            ask("{:query [:find (pull ?b [*]) :where (block-content ?b \"Second\")]}"),
+            ["TODO first"]
+        );
+        assert!(
+            ask("{:query [:find (pull ?b [*]) :where (block-content ?b \"second\")]}").is_empty()
+        );
+        assert_eq!(
+            ask(
+                "{:query [:find (pull ?b [*]) :in $ ?a ?z :where (between ?b ?a ?z)] :inputs [:today :+7d]}"
+            ),
+            ["on the day"]
         );
     }
 

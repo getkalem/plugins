@@ -64,6 +64,23 @@ impl FileData {
             Err(_) => first.into(),
         }
     }
+
+    /// Block `i`'s content as near as the index keeps Logseq's
+    /// `:block/content`: its keyword and priority, its first line and the
+    /// lines of text after it. Logseq's `"text"` looks in it.
+    pub fn block_content(&self, i: usize) -> String {
+        let b = &self.scanned.blocks[i];
+        let mut out = String::new();
+        if let Some(m) = b.marker {
+            out.push_str(m);
+            out.push(' ');
+        }
+        if let Some(p) = b.priority {
+            out.push_str(&format!("[#{p}] "));
+        }
+        out.push_str(&self.block_text(i));
+        out
+    }
 }
 
 /// A reference to a page or a block, where it is.
