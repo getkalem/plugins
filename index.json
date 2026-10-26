@@ -92,8 +92,8 @@
         "fs:write:workspace"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/graph",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/graph-v0.21.0/graph.wasm",
+      "sha256": "6d72de0fb257b8246363d71688c3055e7b22f8ead0946fee885f4b3502dea4d1",
       "layers": [
         {
           "id": "logseq",
@@ -178,8 +178,8 @@
         "subprocess:python3"
       ],
       "source": "https://github.com/getkalem/plugins/tree/main/plugins/pta",
-      "download": null,
-      "sha256": null,
+      "download": "https://github.com/getkalem/plugins/releases/download/pta-v0.9.3/pta.wasm",
+      "sha256": "9beb02e055aad3a985f7555b8955f2fb93970eaaf5b351a4e130d8e557400d54",
       "languages": [
         {
           "id": "hledger",
