@@ -739,11 +739,12 @@ first.
   zero in its style), and Finish, once every difference is zero,
   writes one assertion each: hledger's and Ledger's transaction a zero
   posting a commodity, Beancount's `balance` directives (all three
-  tools check them so, tried on a two-currency wallet). Finish writes nothing, and says
+  tools check them so, tried on a two-currency wallet). Finish wrote nothing, and said
   why, while a posting of the account marked neither itself nor by its
-  transaction is dated on or before the statement's date
+  transaction was dated on or before the statement's date
   (`reconcile::unmarked_by`, read from the journal's text: hledger's
-  register gives a pending transaction's postings as unmarked).
+  register gives a pending transaction's postings as unmarked); since
+  2026-10-26 it clears the marks and leaves the assertion out (PT8b).
   The refresh before a save came the same day, for hledger and Ledger
   (`reconcile_live`, on): Kalem's `document-changed` (debounced)
   queues `pta.reconcileLive`, which reads the journal's text where it
@@ -807,7 +808,17 @@ first.
   pending transaction loses its mark, a cleared one stays), one undo
   step, saves it (`app.save`), and on the save shows the Reconcile
   document again, written anew, the cursor on its line. The assertion
-  Finish writes is aligned at `amount_column`.)
+  Finish writes is aligned at `amount_column`.
+  Changed 2026-10-26, from an audit: hledger's assertion is `=*`, since
+  its `=` counts the account without the subaccounts the totals count
+  (`hledger check` failed once a subaccount had postings); Ledger, with
+  no such assertion, asserts the account's own balance (`--flat`'s
+  `display_amount`); and a posting not cleared dated on or before the
+  statement's date (an outstanding check) no longer stops Finish: the
+  pending marks are cleared, as ledger-mode's finish clears them, and
+  the assertion is written only where the tool's balance at that date,
+  every posting counted, is the target (`reconcile::asserted_command`,
+  `asserted`), the message saying why otherwise.)
 - [x] PT8c The statement beside: `pta.reconcileWith`, in a CSV
   document (Kalem's grid) or from the reconcile document, pairs the
   statement's rows with the account's postings by date and amount

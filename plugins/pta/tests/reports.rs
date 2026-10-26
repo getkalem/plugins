@@ -563,3 +563,89 @@ fn a_total_of_zero() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Finish as the component runs it, each tool asked, on an account with
+/// a subaccount and an outstanding check (a posting not marked): with
+/// the check dated on or before the statement's date the pending marks
+/// are cleared and no assertion is written; dated after it, the
+/// assertion is written, hledger's with the subaccounts (`=*`), Ledger's
+/// of the account alone; either way the tool reads the journal after.
+#[test]
+fn finish_with_a_subaccount_and_an_outstanding_check() {
+    use kalem_plugin_pta::reconcile::{self, Which};
+    use kalem_plugin_pta::{align, write};
+    let dir = std::env::temp_dir().join(format!("pta-finish-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let date = Date {
+        y: 2026,
+        m: 1,
+        d: 31,
+    };
+    let hledger = "2026-01-01 * Opening\n    assets:bank  100.00 EUR\n    assets:bank:savings  50.00 EUR\n    equity:opening\n\n2026-01-10 ! Market\n    expenses:food  10.00 EUR\n    assets:bank\n\nCHECK Check 1001\n    expenses:rent  5.00 EUR\n    assets:bank\n";
+    let ledger = "2026/01/01 * Opening\n    Assets:Bank  100.00 EUR\n    Assets:Bank:Savings  50.00 EUR\n    Equity:Opening\n\n2026/01/10 ! Market\n    Expenses:Food  10.00 EUR\n    Assets:Bank\n\nCHECK Check 1001\n    Expenses:Rent  5.00 EUR\n    Assets:Bank\n";
+    for (tool, file, text, account, check, check_args) in [
+        (
+            Dialect::Hledger,
+            "f.journal",
+            hledger,
+            "assets:bank",
+            ["2026-01-20", "2026-02-03"],
+            vec!["check"],
+        ),
+        (
+            Dialect::Ledger,
+            "f.ledger",
+            ledger,
+            "Assets:Bank",
+            ["2026/01/20", "2026/02/03"],
+            vec!["balance"],
+        ),
+    ] {
+        for (n, day) in check.iter().enumerate() {
+            let text = text.replace("CHECK", day);
+            let main = dir.join(file).to_string_lossy().into_owned();
+            std::fs::write(&main, &text).unwrap();
+            let (p, a) = reconcile::total_command(tool, &main, account, Which::Both);
+            let Some(out) = run(p, &a, &dir) else {
+                break;
+            };
+            let totals = reconcile::total_of(tool, &out);
+            assert_eq!(totals[0].written(), "140.00 EUR", "{tool:?}");
+            let (p, a) = reconcile::accounts_command(tool, &main).expect("a run");
+            let accounts = reconcile::accounts_in(tool, &run(p, &a, &dir).unwrap(), &main, &text);
+            let (p, a) = reconcile::asserted_command(tool, &main, account, date).expect("a run");
+            let asserted = reconcile::asserted(tool, &run(p, &a, &dir).unwrap(), account, &totals);
+            let amounts = match (n, &asserted) {
+                (0, Err(off)) => {
+                    let (target, balance) = &**off;
+                    assert_eq!(
+                        (target.written(), balance.written()),
+                        ("140.00 EUR".into(), "135.00 EUR".into()),
+                        "{tool:?}"
+                    );
+                    Vec::new()
+                }
+                (1, Ok(amounts)) => amounts.clone(),
+                _ => panic!("{tool:?} {day}: {asserted:?}"),
+            };
+            let edits = reconcile::finish(&text, tool, account, &amounts, date, 52, &accounts);
+            let after = align::apply(&text, &write::edits_ended_as(&text, edits));
+            assert!(
+                after.contains("* Market") && !after.contains("! Market"),
+                "{after}"
+            );
+            match (n, tool) {
+                (0, _) => assert!(!after.contains("Balance assertion"), "{after}"),
+                (_, Dialect::Hledger) => {
+                    assert!(after.contains(" =* 140.00 EUR\n"), "{after}")
+                }
+                _ => assert!(after.contains(" = 90.00 EUR\n"), "{after}"),
+            }
+            std::fs::write(&main, &after).unwrap();
+            let mut args: Vec<String> = vec!["-f".into(), main.clone()];
+            args.extend(check_args.iter().map(|s| s.to_string()));
+            run(tool.checker(), &args, &dir).expect("ran");
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

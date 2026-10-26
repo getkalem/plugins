@@ -4,7 +4,8 @@
 //! Beancount's flags) and lists those not cleared; the plugin takes the
 //! tool's total from the target the user typed, the difference shown,
 //! and, once it is zero, clears the pending postings and writes the
-//! target as a balance assertion, as the dialect writes one.
+//! target as a balance assertion, as the dialect writes one, where it
+//! holds at the statement's date.
 //!
 //! Amounts are exact decimals: hledger's from its JSON (a mantissa, its
 //! places and the commodity's style), Ledger's and Beancount's read from
@@ -1077,15 +1078,134 @@ pub fn account_of(
     Some(accounts.get(&line).cloned().unwrap_or(written))
 }
 
+/// The run that gives what a balance assertion of `account` written at
+/// `date` checks: the account's balance at the day's end, every posting
+/// counted whatever its status (an outstanding check too). hledger's with
+/// the subaccounts, as its `=*` asserts; Ledger's of each account alone
+/// (`--flat`, `display_amount`), its assertion counting the account
+/// alone. Another assertion failing does not stop it (`-I`,
+/// `--permissive`). Beancount: none, its `balance` counting the
+/// subaccounts and every posting, which are all cleared or pending, in
+/// the target already.
+pub fn asserted_command(
+    tool: Dialect,
+    main: &str,
+    account: &str,
+    date: Date,
+) -> Option<(&'static str, Vec<String>)> {
+    let end = date.plus(1);
+    match tool {
+        Dialect::Hledger => Some((
+            "hledger",
+            vec![
+                "-f".into(),
+                main.into(),
+                "balance".into(),
+                format!("acct:{}", crate::report::account_pattern(account)),
+                "-e".into(),
+                end.written('-'),
+                "-I".into(),
+                "-O".into(),
+                "json".into(),
+            ],
+        )),
+        Dialect::Ledger => {
+            let mut a: Vec<String> = vec![
+                "-f".into(),
+                main.into(),
+                "balance".into(),
+                "--flat".into(),
+                "--permissive".into(),
+                "--balance-format".into(),
+                "%(account)|%(scrub(display_amount))\\n".into(),
+                "--end".into(),
+                end.written('/'),
+            ];
+            a.extend(crate::report::ledger_pattern(account));
+            Some(("ledger", a))
+        }
+        Dialect::Beancount => None,
+    }
+}
+
+/// What Finish asserts at its date, from the run of [`asserted_command`]
+/// (`out`): an amount a target, hledger's the target (its `=*` counting
+/// the subaccounts), Ledger's the account's own balance there (its `=`
+/// counting the account alone); or, where the balance there with the
+/// subaccounts is not a target (a posting not cleared, dated on or before
+/// the date, counted in it), that target and the balance.
+pub fn asserted(
+    tool: Dialect,
+    out: &str,
+    account: &str,
+    targets: &[Amount],
+) -> Result<Vec<Amount>, Box<(Amount, Amount)>> {
+    // A target's commodity in `list`, summed; zero where it has none.
+    let of = |list: &[Amount], t: &Amount| Amount {
+        quantity: list
+            .iter()
+            .filter(|a| a.style.symbol == t.style.symbol)
+            .fold(Decimal::default(), |sum, a| {
+                sum.minus(Decimal {
+                    mantissa: -a.quantity.mantissa,
+                    scale: a.quantity.scale,
+                })
+            }),
+        style: t.style.clone(),
+    };
+    let (whole, own): (Vec<Amount>, Vec<Amount>) = match tool {
+        // Each account's own amounts: their sum is the balance with the
+        // subaccounts (Ledger's total row is no total of them), the
+        // account's row its own.
+        Dialect::Ledger => {
+            let rows: Vec<crate::report::Row> = crate::report::ledger_rows(out)
+                .into_iter()
+                .filter(|r| !r.account.is_empty())
+                .collect();
+            let amounts = |r: &crate::report::Row| -> Vec<Amount> {
+                r.amounts.iter().filter_map(|a| text_amount(a)).collect()
+            };
+            (
+                rows.iter().flat_map(amounts).collect(),
+                rows.iter()
+                    .find(|r| r.account == account)
+                    .map(amounts)
+                    .unwrap_or_default(),
+            )
+        }
+        _ => {
+            let whole = total_of(tool, out);
+            (whole.clone(), whole)
+        }
+    };
+    targets
+        .iter()
+        .map(|t| {
+            let balance = of(&whole, t);
+            if !balance.quantity.minus(t.quantity).is_zero() {
+                return Err(Box::new((t.clone(), balance)));
+            }
+            Ok(if tool == Dialect::Ledger {
+                of(&own, t)
+            } else {
+                t.clone()
+            })
+        })
+        .collect()
+}
+
 /// Finish: the edits that clear the pending postings of `account` in
-/// `text` (a pending transaction's mark, or a pending posting's), and
-/// the balance assertion written at `date`'s place: hledger's and
-/// Ledger's a transaction "Balance assertion" with a zero posting
-/// asserting `target`, Beancount's a `balance` directive the day after
-/// (Beancount checks at the day's start). hledger's and Ledger's
-/// assertion is aligned at `column` (`amount_column`; 0 leaves it near
-/// the account), as Align Amounts aligns. A posting's account is the
-/// tool's (`accounts`, [`account_of`]).
+/// `text` (a pending transaction's mark, or a pending posting's), and,
+/// with `targets` (the amounts asserted, [`asserted`]), the balance
+/// assertion written at `date`'s place: hledger's and Ledger's a
+/// transaction "Balance assertion" with a zero posting asserting each,
+/// hledger's with its subaccounts (`=*`), Ledger's the account alone
+/// (`=`, it has no other); Beancount's a `balance` directive the day
+/// after (Beancount checks at the day's start, the subaccounts counted).
+/// hledger's and Ledger's assertion is aligned at `column`
+/// (`amount_column`; 0 leaves it near the account), as Align Amounts
+/// aligns. A posting's account is the tool's (`accounts`,
+/// [`account_of`]).
 pub fn finish(
     text: &str,
     dialect: Dialect,
@@ -1123,6 +1243,9 @@ pub fn finish(
             edits.push((r.start..r.start + 1, "*".to_string()));
         }
     }
+    if targets.is_empty() {
+        return edits;
+    }
     let sep = write::separator(text, dialect);
     let (when, assertion) = match dialect {
         Dialect::Beancount => {
@@ -1137,13 +1260,18 @@ pub fn finish(
         _ => {
             // One transaction, a zero posting asserting each commodity.
             let mut t = format!("{} * Balance assertion\n", date.written(sep));
+            let sign = if dialect == Dialect::Hledger {
+                "=*"
+            } else {
+                "="
+            };
             for target in targets {
                 let zero = Amount {
                     quantity: Decimal::default(),
                     style: target.style.clone(),
                 };
                 t.push_str(&format!(
-                    "    {account}  {} = {}\n",
+                    "    {account}  {} {sign} {}\n",
                     zero.written(),
                     target.written()
                 ));
@@ -1346,7 +1474,7 @@ mod tests {
         );
         assert!(
             out.ends_with(
-                "\n2026-01-31 * Balance assertion\n    assets:bank  0,00 TRY = 44.147,65 TRY\n"
+                "\n2026-01-31 * Balance assertion\n    assets:bank  0,00 TRY =* 44.147,65 TRY\n"
             ),
             "{out}"
         );
@@ -1498,11 +1626,11 @@ mod tests {
         assert_eq!(lines.len(), 2, "{out}");
         assert!(
             lines[0].starts_with("    assets:cash ")
-                && lines[0].ends_with(" 0.00 EUR = 180.00 EUR"),
+                && lines[0].ends_with(" 0.00 EUR =* 180.00 EUR"),
             "{out}"
         );
         assert!(
-            lines[1].starts_with("    assets:cash ") && lines[1].ends_with(" $0.00 = $100.00"),
+            lines[1].starts_with("    assets:cash ") && lines[1].ends_with(" $0.00 =* $100.00"),
             "{out}"
         );
         let bean = "2026-01-01 * \"Opening\"\n  Assets:Cash  200.00 EUR\n  Equity:Opening\n";
@@ -1521,6 +1649,108 @@ mod tests {
         assert!(
             out.ends_with("\n2026-02-01 balance Assets:Cash  180.00 EUR\n2026-02-01 balance Assets:Cash  $100.00\n"),
             "{out}"
+        );
+    }
+
+    #[test]
+    fn asserting_what_holds() {
+        // An account with a subaccount, at the end of January: 100.00 EUR
+        // opening and 50.00 EUR in its savings, cleared; a pending 10.00
+        // EUR and an outstanding check of 5.00 EUR (not marked) in the
+        // month, a cleared 7.00 EUR in February. What hledger 1.52 and
+        // Ledger 3.4 print for `asserted_command`'s runs.
+        let date = Date {
+            y: 2026,
+            m: 1,
+            d: 31,
+        };
+        let (_, args) =
+            asserted_command(Dialect::Hledger, "/j/m.journal", "assets:bank", date).expect("a run");
+        assert_eq!(
+            args,
+            [
+                "-f",
+                "/j/m.journal",
+                "balance",
+                "acct:^assets:bank(:|$)",
+                "-e",
+                "2026-02-01",
+                "-I",
+                "-O",
+                "json"
+            ]
+        );
+        assert!(
+            asserted_command(Dialect::Beancount, "/j/m.beancount", "Assets:Bank", date).is_none()
+        );
+        let hledger = r#"[[["assets:bank", "assets:bank", 0, [{"acommodity": "EUR", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 8500, "decimalPlaces": 2, "floatingPoint": 85}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ".", "asdigitgroups": null, "asprecision": 2, "asrounding": "HardRounding"}}]], ["assets:bank:savings", "assets:bank:savings", 0, [{"acommodity": "EUR", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 5000, "decimalPlaces": 2, "floatingPoint": 50}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ".", "asdigitgroups": null, "asprecision": 2, "asrounding": "HardRounding"}}]]], [{"acommodity": "EUR", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 13500, "decimalPlaces": 2, "floatingPoint": 135}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ".", "asdigitgroups": null, "asprecision": 2, "asrounding": "HardRounding"}}]]"#;
+        let ledger = "Assets:Bank|85.00 EUR\nAssets:Bank:Savings|50.00 EUR\n|0\n";
+        let eur = |s: &str| text_amount(s).unwrap();
+        // The statement's balance counts the outstanding check: 140.00
+        // EUR cleared and pending, 135.00 EUR in the account.
+        assert_eq!(
+            asserted(
+                Dialect::Hledger,
+                hledger,
+                "assets:bank",
+                &[eur("140.00 EUR")]
+            )
+            .map_err(|e| (e.0.written(), e.1.written())),
+            Err(("140.00 EUR".into(), "135.00 EUR".into()))
+        );
+        assert_eq!(
+            asserted(Dialect::Ledger, ledger, "Assets:Bank", &[eur("140.00 EUR")])
+                .map_err(|e| (e.0.written(), e.1.written())),
+            Err(("140.00 EUR".into(), "135.00 EUR".into()))
+        );
+        // A statement that has it: hledger asserts the balance with the
+        // subaccount (`=*`), Ledger the account's own, 85.00 EUR.
+        let written = |r: Result<Vec<Amount>, Box<(Amount, Amount)>>| {
+            r.map(|l| l.iter().map(Amount::written).collect::<Vec<_>>())
+                .map_err(|e| (e.0.written(), e.1.written()))
+        };
+        assert_eq!(
+            written(asserted(
+                Dialect::Hledger,
+                hledger,
+                "assets:bank",
+                &[eur("135.00 EUR")]
+            )),
+            Ok(vec!["135.00 EUR".to_string()])
+        );
+        assert_eq!(
+            written(asserted(
+                Dialect::Ledger,
+                ledger,
+                "Assets:Bank",
+                &[eur("135.00 EUR")]
+            )),
+            Ok(vec!["85.00 EUR".to_string()])
+        );
+        // A commodity the account does not have there: zero.
+        assert_eq!(
+            written(asserted(
+                Dialect::Ledger,
+                ledger,
+                "Assets:Bank",
+                &[eur("$0.00")]
+            )),
+            Ok(vec!["$0.00".to_string()])
+        );
+        // Nothing asserted: the pending marks cleared alone.
+        let text = "2026-01-10 ! Market\n    expenses:food  10.00 EUR\n    assets:bank\n";
+        let edits = finish(
+            text,
+            Dialect::Hledger,
+            "assets:bank",
+            &[],
+            date,
+            0,
+            &Accounts::new(),
+        );
+        assert_eq!(
+            crate::align::apply(text, &edits),
+            text.replace("! Market", "* Market")
         );
     }
 

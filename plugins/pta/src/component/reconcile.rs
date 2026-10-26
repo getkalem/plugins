@@ -3,8 +3,9 @@
 //! postings not cleared (`crate::reconcile`), the difference to the
 //! target the user typed, written again on the journal's save; the
 //! journal stays where postings are marked (`SPC m t`). Finish clears
-//! the pending postings and writes the target as a balance assertion,
-//! in the journal, once the difference is zero.
+//! the pending postings and writes the target as a balance assertion
+//! where it holds at the statement's date, in the journal, once the
+//! difference is zero.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -64,13 +65,19 @@ struct Finish {
     /// The main journal the tool reads, and the tool.
     main: String,
     tool: Dialect,
-    /// The journal's text the tool read and the accounts it read there
-    /// (`reconcile::accounts_in`), once it has answered.
-    read: Option<(String, reconcile::Accounts)>,
+    /// The journal's text the tool read, the accounts it read there
+    /// (`reconcile::accounts_in`) and what a balance assertion at the
+    /// date would assert (`reconcile::asserted`; none where the tool did
+    /// not say), once it has answered.
+    read: Option<(String, reconcile::Accounts, Option<Asserted>)>,
     account: String,
     targets: Vec<reconcile::Amount>,
     date: Date,
 }
+
+/// The amounts a balance assertion asserts, or the target the balance
+/// at the statement's date is not and that balance.
+type Asserted = Result<Vec<reconcile::Amount>, Box<(reconcile::Amount, reconcile::Amount)>>;
 
 /// A posting to mark pending from the Reconcile document, waiting for
 /// its journal to be the current document.
@@ -976,7 +983,8 @@ pub(super) fn retarget() -> Result<String, String> {
 /// Finish (`SPC m C`, `C` in the document): with the difference zero,
 /// the statement's date asked (today offered), then, in the journal,
 /// its pending postings of the account cleared and the target written
-/// as a balance assertion; else the difference said.
+/// as a balance assertion where it holds at that date; else the
+/// difference said.
 pub(super) fn finish() -> Result<String, String> {
     let key = here().or_else(|| {
         let (_, path) = super::dialect_here()?;
@@ -1085,22 +1093,26 @@ pub(super) fn finish_write() -> Result<String, String> {
         return Ok("null".into());
     };
     let text = editor::text(None);
-    // Once the tool has read the accounts: written where it read them.
-    if let Some((read, accounts)) = &f.read {
+    // Once the tool has read the accounts and the balance: written where
+    // it read them.
+    if let Some((read, accounts, asserted)) = &f.read {
         if *read != text {
             ui::notify(
                 "The journal changed while the tool read it: finish again",
                 ui::Level::Warning,
             );
         } else {
-            finish_with(d, &f, &text, accounts);
+            finish_with(d, &f, &text, accounts, asserted.clone());
         }
         return Ok("null".into());
     }
     // The accounts as the tool reads them: a posting written with an
     // alias or under `apply account` is the account's too.
     let Some((program, mut args)) = reconcile::accounts_command(f.tool, &f.main) else {
-        finish_with(d, &f, &text, &reconcile::Accounts::new());
+        // Beancount's: no aliases, and its `balance` counts what the
+        // target counts.
+        let targets = f.targets.clone();
+        finish_with(d, &f, &text, &reconcile::Accounts::new(), Some(Ok(targets)));
         return Ok("null".into());
     };
     let live = journal::same_file(&f.journal, &f.main);
@@ -1114,7 +1126,9 @@ pub(super) fn finish_write() -> Result<String, String> {
     };
     let input = live.then(|| text.clone().into_bytes());
     let dir = journal::folder(&f.main).to_string();
-    run_input(program, args, &dir, input, move |r| {
+    let there = dir.clone();
+    let asked = reconcile::asserted_command(f.tool, &f.main, &f.account, f.date);
+    run_input(program, args, &dir, input.clone(), move |r| {
         let accounts = match r {
             Ok(e) if e.status == Some(0) => {
                 let out = String::from_utf8_lossy(&e.stdout);
@@ -1122,56 +1136,128 @@ pub(super) fn finish_write() -> Result<String, String> {
             }
             _ => reconcile::Accounts::new(),
         };
-        // Written by the command again, where the journal is the
-        // document (a process's answer has none).
-        let mut f = f;
-        f.read = Some((text, accounts));
-        FINISH.with(|x| *x.borrow_mut() = Some(f));
-        if let Err(why) = kalem::run("pta.finishReconcileWrite", "{}") {
-            ui::notify(&why, ui::Level::Warning);
+        // Then the balance the assertion would check at the statement's
+        // date: an outstanding check counts in it, not in the target.
+        let Some((program, mut args)) = asked else {
+            let targets = f.targets.clone();
+            return again(f, text, accounts, Some(Ok(targets)));
+        };
+        if live {
+            args = reconcile::from_input(args, &f.main);
         }
+        run_input(program, args, &there, input, move |r| {
+            let asserted = match r {
+                Ok(e) if e.status == Some(0) => Some(reconcile::asserted(
+                    f.tool,
+                    &String::from_utf8_lossy(&e.stdout),
+                    &f.account,
+                    &f.targets,
+                )),
+                _ => None,
+            };
+            again(f, text, accounts, asserted);
+        });
     });
     Ok("null".into())
 }
 
-/// Finish's check and edits in its journal, `text`, a posting's
-/// account the tool's (`accounts`): one undo step.
-fn finish_with(d: Dialect, f: &Finish, text: &str, accounts: &reconcile::Accounts) {
+/// Keeps what the tool read for `f` and runs Finish's command again,
+/// which writes it where the journal is the document (a process's answer
+/// has none).
+fn again(mut f: Finish, text: String, accounts: reconcile::Accounts, asserted: Option<Asserted>) {
+    f.read = Some((text, accounts, asserted));
+    FINISH.with(|x| *x.borrow_mut() = Some(f));
+    if let Err(why) = kalem::run("pta.finishReconcileWrite", "{}") {
+        ui::notify(&why, ui::Level::Warning);
+    }
+}
+
+/// Finish's edits in its journal, `text`, a posting's account the tool's
+/// (`accounts`): the account's pending marks cleared, and the balance
+/// assertion written where it holds at the statement's date (`asserted`),
+/// one undo step. Where it does not (a posting not cleared, such as an
+/// outstanding check, dated on or before it, counts in the balance
+/// there), the marks are cleared all the same, as ledger-mode's finish
+/// clears them, and the message says why no assertion was written.
+fn finish_with(
+    d: Dialect,
+    f: &Finish,
+    text: &str,
+    accounts: &reconcile::Accounts,
+    asserted: Option<Asserted>,
+) {
     let column = crate::align::Settings::read(kalem_plugin::settings::own).column;
-    // A posting not marked that the assertion would count: it would fail.
-    let early = reconcile::unmarked_by(text, d, &f.account, f.date, accounts);
-    if let Some(first) = early.first() {
-        ui::notify(
-            &format!(
-                "Not finished: {} of {} not marked dated on or before {} (the first on {}), which the balance assertion would count; mark them, or give the statement's own date",
-                if early.len() == 1 {
-                    "a posting".to_string()
-                } else {
-                    format!("{} postings", early.len())
-                },
+    let amounts = match &asserted {
+        Some(Ok(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    let edits = reconcile::finish(text, d, &f.account, &amounts, f.date, column, accounts);
+    let cleared = edits.len() - usize::from(!amounts.is_empty());
+    super::edit(&edits, "Finish Reconciliation");
+    let written = |l: &[reconcile::Amount]| {
+        l.iter()
+            .map(reconcile::Amount::written)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let date = f.date.written('-');
+    let (said, level) = match asserted {
+        Some(Ok(amounts)) => {
+            // Ledger's assertion of the account alone, where its
+            // subaccounts have postings.
+            let alone = if written(&amounts) == written(&f.targets) {
+                String::new()
+            } else {
+                format!(
+                    " ({} alone, as Ledger asserts it: {})",
+                    f.account,
+                    written(&amounts)
+                )
+            };
+            (
+                format!(
+                    "Reconciled {} at {}: {cleared} marks cleared, the balance asserted{alone}; save to check",
+                    f.account,
+                    written(&f.targets)
+                ),
+                ui::Level::Info,
+            )
+        }
+        Some(Err(off)) => {
+            let (target, balance) = *off;
+            let early = reconcile::unmarked_by(text, d, &f.account, f.date, accounts);
+            let why = match early.as_slice() {
+                [] => String::new(),
+                [one] => format!(
+                    ": a posting not marked, dated {}, counts in it",
+                    one.written('-')
+                ),
+                [first, ..] => format!(
+                    ": {} postings not marked dated on or before it count in it, the first on {}",
+                    early.len(),
+                    first.written('-')
+                ),
+            };
+            (
+                format!(
+                    "Reconciled {}: {cleared} marks cleared; no balance assertion written, the balance on {date} being {}, not {}{why}",
+                    f.account,
+                    balance.written(),
+                    target.written()
+                ),
+                ui::Level::Info,
+            )
+        }
+        None => (
+            format!(
+                "Reconciled {}: {cleared} marks cleared; no balance assertion written, {} not giving the balance on {date}",
                 f.account,
-                f.date.written('-'),
-                first.written('-')
+                f.tool.checker()
             ),
             ui::Level::Warning,
-        );
-        return;
-    }
-    let edits = reconcile::finish(text, d, &f.account, &f.targets, f.date, column, accounts);
-    let cleared = edits.len().saturating_sub(1);
-    super::edit(&edits, "Finish Reconciliation");
-    ui::notify(
-        &format!(
-            "Reconciled {} at {}: {cleared} marks cleared, the balance asserted; save to check",
-            f.account,
-            f.targets
-                .iter()
-                .map(reconcile::Amount::written)
-                .collect::<Vec<_>>()
-                .join(", ")
         ),
-        ui::Level::Info,
-    );
+    };
+    ui::notify(&said, level);
 }
 
 /// Closes the document.
