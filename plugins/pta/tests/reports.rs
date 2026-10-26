@@ -699,3 +699,62 @@ fn tab_finds_a_posting_written_with_an_alias() {
         None
     );
 }
+
+/// New Transaction from each tool's draft of the payee's last
+/// transaction (`hledger print --match`, `ledger xact`): without its
+/// postings' marks and balance assertions, a comment's `=` kept whole;
+/// the tool reads the journal with it added.
+#[test]
+fn a_new_transaction_from_each_tools_draft() {
+    use kalem_plugin_pta::write;
+    let dir = std::env::temp_dir().join(format!("pta-draft-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let date = Date {
+        y: 2026,
+        m: 2,
+        d: 2,
+    };
+    for (tool, file, text, drafting, checking) in [
+        (
+            Dialect::Hledger,
+            "d.journal",
+            "2026-01-02 * Shop\n    * assets:bank  -10.00 EUR = -10.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n",
+            vec!["print", "--match", "Shop"],
+            vec!["check"],
+        ),
+        (
+            Dialect::Ledger,
+            "d.ledger",
+            "2026/01/02 * Shop\n    * Assets:Bank  -10.00 EUR = -10.00 EUR  ; x = y\n    Expenses:Food  10.00 EUR  ; ratio = 1/2\n",
+            vec!["xact", "2026/02/02", "Shop"],
+            vec!["balance"],
+        ),
+    ] {
+        let main = dir.join(file).to_string_lossy().into_owned();
+        std::fs::write(&main, text).unwrap();
+        let with = |words: &[&str]| -> Vec<String> {
+            ["-f", main.as_str()]
+                .iter()
+                .chain(words)
+                .map(|s| s.to_string())
+                .collect()
+        };
+        let Some(draft) = run(tool.checker(), &with(&drafting), &dir) else {
+            continue;
+        };
+        let sep = write::separator(text, tool);
+        let (t, _) = write::new_transaction(tool, date, sep, "Shop", Some(&draft));
+        assert!(
+            !t.contains("-10.00 EUR =") && !t.contains("    * ") && !t.contains(" * Shop"),
+            "{tool:?}: {t}"
+        );
+        assert!(
+            t.contains("-10.00 EUR  ; x = y\n") && t.contains("10.00 EUR  ; ratio = 1/2\n"),
+            "{tool:?}: {t}"
+        );
+        let (ins, _) = write::insertion(text, text.len(), &t);
+        std::fs::write(&main, format!("{text}{ins}")).unwrap();
+        run(tool.checker(), &with(&checking), &dir).expect("ran");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

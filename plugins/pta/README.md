@@ -133,9 +133,9 @@ As you type, the plugin completes the account on a posting (and in Beancount's `
 In a journal, under `SPC m` in Vim's command mode and in the palette's Journal group, each one undo step:
 In a journal, under `SPC m` in Vim's command mode and in the palette's Journal group, each one undo step:
 
-- *New Transaction* (`SPC m a`): asks the date (today offered; `yesterday`, `-3`, `5`, `10/5`, `friday`, `last friday` taken) and the payee (the journal's, the last written first, or another), then writes the transaction the tool drafts from that payee's last one (`hledger print --match`, `ledger xact`, Beancount's last entry), dated, without its old balance assertions, at its date's place (or at the end, `insert_at`), the cursor on its first amount.
+- *New Transaction* (`SPC m a`): asks the date (today offered; `yesterday`, `-3`, `5`, `10/5`, `friday`, `last friday` taken) and the payee (the journal's, the last written first, or another), then writes the transaction the tool drafts from that payee's last one (`hledger print --match`, `ledger xact`, Beancount's last entry), dated, not cleared (no status, no posting's mark; Beancount's flag kept) and without its old balance assertions (a comment's `=` kept), at its date's place (or at the end, `insert_at`), the cursor on its first amount.
 - *Toggle Status* (`SPC m t`): unmarked, pending `!`, cleared `*`, unmarked (Beancount's `txn`, `!`, `*`); the transactions selected all to the first one's next; the posting at the cursor with `toggle_postings`.
-- *Copy Transaction* (`SPC m y`): the transaction again, dated today, at its date's place.
+- *Copy Transaction* (`SPC m y`): the transaction again, dated today, at its date's place, not cleared and without its balance assertions, as New Transaction writes a draft.
 - *Delete Transaction* (`SPC m d`): the transaction at the cursor, with its comment lines above it.
 - *Next* and *Previous Transaction* (`]]`, `[[`; Alt+Down, Alt+Up).
 - *Date a Day Later* and *Earlier* (`ctrl+shift+l`, `ctrl+shift+h` in Vim's command mode).

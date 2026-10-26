@@ -512,7 +512,9 @@ first.
   (its last entry), only for a payee of the journal, since hledger and
   Ledger match loosely and draft from another's otherwise; the draft
   dated, without its code, status (Beancount's flag kept), second date
-  and balance assertions; written at the date's place (`insert_at`)
+  and balance assertions, and since 2026-10-26 without its postings'
+  marks either, an `=` in a comment kept (`write::fresh_posting`);
+  written at the date's place (`insert_at`)
   by the plugin's own `pta.insertTransaction`, queued, since a
   question's answer comes when no command runs; the cursor on its
   first amount through `file.open`.)
@@ -525,7 +527,9 @@ first.
   `pta.nextTransaction` and `pta.previousTransaction` (`Alt+Down`,
   `Alt+Up` in a journal, as the git documents move by item),
   `pta.copyTransaction` (`SPC m y`: the transaction at the cursor
-  again at today's date, inserted at its place), `pta.dateUp` and
+  again at today's date, inserted at its place; since 2026-10-26
+  without its status, its postings' marks and their balance
+  assertions, as New Transaction's draft), `pta.dateUp` and
   `pta.dateDown` (`Shift+Up`, `Shift+Down` on a date, as Org's
   timestamps move), `pta.sort` (`SPC m s`; ledger-mode's
   `ledger-sort-buffer`: the transactions of the selection, or of the

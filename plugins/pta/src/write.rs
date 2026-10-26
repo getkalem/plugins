@@ -516,8 +516,11 @@ pub fn insertion(text: &str, at: usize, transaction: &str) -> (String, usize) {
 }
 
 /// Copy Transaction: the transaction holding `at` again, dated `today`
-/// (as it writes its dates), placed by its date (or at the end); the
-/// insertion's place and text, and the copy's start in the text.
+/// (as it writes its dates), without its status, its postings' marks and
+/// their balance assertions (a new transaction is not cleared, and the
+/// old balances are not the new; Beancount's flag kept), placed by its
+/// date (or at the end); the insertion's place and text, and the copy's
+/// start in the text.
 pub fn copy(
     text: &str,
     dialect: Dialect,
@@ -527,14 +530,29 @@ pub fn copy(
 ) -> Option<(usize, String, usize)> {
     let txs = transactions(text, dialect);
     let t = self::at(&txs, at)?;
+    let rel = |r: &Range<usize>| r.start - t.range.start..r.end - t.range.start;
     let body = &text[t.range.clone()];
-    let rel = t.date_range.start - t.range.start..t.date_range.end - t.range.start;
-    let copied = format!(
+    let date = rel(&t.date_range);
+    let status = match &t.status {
+        Some(s) if dialect != Dialect::Beancount => rel(s),
+        _ => date.end..date.end,
+    };
+    let mut copied = format!(
         "{}{}{}",
-        &body[..rel.start],
+        &body[..date.start],
         today.written(t.sep),
-        &body[rel.end..]
+        &body[date.end..status.start]
     );
+    for (n, line) in body[status.end..].split_inclusive('\n').enumerate() {
+        let own = line.trim_end_matches('\n').trim_end_matches('\r');
+        match fresh_posting(own, dialect) {
+            Some(fresh) if n > 0 => {
+                copied.push_str(&fresh);
+                copied.push_str(&line[own.len()..]);
+            }
+            _ => copied.push_str(line),
+        }
+    }
     let place = place(text, dialect, today, at_end);
     let (ins, start) = insertion(text, place, &copied);
     Some((place, ins, start))
@@ -716,10 +734,10 @@ pub fn smart_date(input: &str, today: Date) -> Option<Date> {
 /// The new transaction from the draft a tool gave for the payee (its
 /// last transaction, as `hledger print --match`, `ledger xact` or
 /// `bean-query`'s `PRINT` write it), dated `date` with `sep`: its first
-/// transaction, without a code, a status (Beancount's flag kept), a
-/// second date, or balance assertions; or, with no draft, the payee and
-/// one posting line to fill. The text, and where its first amount (or
-/// the posting's account) is in it.
+/// transaction, without a code, a status, its postings' marks
+/// (Beancount's flags kept), a second date, or balance assertions; or,
+/// with no draft, the payee and one posting line to fill. The text, and
+/// where its first amount (or the posting's account) is in it.
 pub fn new_transaction(
     dialect: Dialect,
     date: Date,
@@ -774,28 +792,7 @@ pub fn new_transaction(
             out.push('\n');
             continue;
         }
-        // A posting's balance assertion: the old balance, not the new.
-        let mut line = line.trim_end().to_string();
-        if dialect != Dialect::Beancount
-            && let Some(p) = crate::align::posting(&line, dialect)
-        {
-            let amount_at = p.gap.end;
-            let tail = &line[amount_at..];
-            if let Some(eq) = tail
-                .find(" =")
-                .or_else(|| tail.starts_with('=').then_some(0))
-            {
-                let cut = amount_at + eq;
-                let comment = line[cut..].find(';').map(|c| line[cut + c..].to_string());
-                line.truncate(cut);
-                let trimmed = line.trim_end().len();
-                line.truncate(trimmed);
-                if let Some(c) = comment {
-                    line.push_str("  ");
-                    line.push_str(&c);
-                }
-            }
-        }
+        let line = fresh_posting(line, dialect).unwrap_or_else(|| line.trim_end().to_string());
         if first_amount.is_none()
             && let Some(p) = crate::align::posting(&line, dialect)
         {
@@ -806,6 +803,74 @@ pub fn new_transaction(
     }
     let at = first_amount.unwrap_or(out.find('\n').map_or(out.len(), |i| i + 1));
     (out, at)
+}
+
+/// Where `s` has `c` outside a quoted commodity (`"A;B"`), from byte
+/// `from`.
+fn unquoted(s: &str, from: usize, c: char) -> Option<usize> {
+    let mut quoted = false;
+    s[from..]
+        .char_indices()
+        .find(|&(_, ch)| {
+            if ch == '"' {
+                quoted = !quoted;
+            }
+            !quoted && ch == c
+        })
+        .map(|(i, _)| from + i)
+}
+
+/// A posting line (without its line feed) of a transaction written anew,
+/// a tool's draft or a copy: without its status mark (a new posting is
+/// not cleared) and its balance assertion (the old balance, not the
+/// new), its amount kept where it was and its comment kept whole; none
+/// when it has neither, or is Beancount's (its flags kept, no assertion
+/// on a posting).
+fn fresh_posting(line: &str, dialect: Dialect) -> Option<String> {
+    if dialect == Dialect::Beancount || !indented(line) || comment_line(line, dialect) {
+        return None;
+    }
+    let mut out = line.trim_end().to_string();
+    let mut changed = false;
+    let indent = out.len() - out.trim_start_matches([' ', '\t']).len();
+    let rest = &out[indent..];
+    if rest.starts_with(['*', '!']) && rest[1..].starts_with([' ', '\t']) {
+        let mark = 1 + rest[1..].len() - rest[1..].trim_start_matches([' ', '\t']).len();
+        out.replace_range(indent..indent + mark, "");
+        // The blanks before the amount make up for it.
+        if let Some(p) = crate::align::posting(&out, dialect) {
+            out.insert_str(p.gap.start, &" ".repeat(mark));
+        }
+        changed = true;
+    }
+    if let Some(p) = crate::align::posting(&out, dialect) {
+        // An `=` after the amount (or in its place), before the comment:
+        // `= 93.749,60 TRY`, `==`, `=*`; one in the comment stays.
+        let amount = p.gap.end;
+        let comment = unquoted(&out, amount, ';');
+        let end = comment.unwrap_or(out.len());
+        let mut from = amount;
+        let mut eq = None;
+        while let Some(e) = unquoted(&out[..end], from, '=') {
+            // Not a lot's fixed price (`{=$50}`).
+            if e == amount || out[..e].ends_with([' ', '\t']) {
+                eq = Some(e);
+                break;
+            }
+            from = e + 1;
+        }
+        if let Some(cut) = eq {
+            let comment = comment.map(|c| out[c..].to_string());
+            out.truncate(cut);
+            out.truncate(out.trim_end().len());
+            if let Some(c) = comment {
+                out.push_str("  ");
+                out.push_str(&c);
+            }
+            changed = true;
+        }
+    }
+    changed.then_some(out)
 }
 
 /// The account of the posting on the line holding `at`: after its
@@ -1009,10 +1074,30 @@ mod tests {
         let (place, ins, start) = copy(t, Hledger, at, D(2026, 1, 10), false).unwrap();
         assert_eq!(&ins[start..start + 10], "2026-01-10");
         let out = format!("{}{}{}", &t[..place], ins, &t[place..]);
-        assert!(out.contains("income:salary\n\n2026-01-10 * (1001) Ziraat | salary\n    assets:bank  45.000,00 TRY\n    income:salary\n\n2026-01-20 Rent"), "{out}");
+        assert!(out.contains("income:salary\n\n2026-01-10 (1001) Ziraat | salary\n    assets:bank  45.000,00 TRY\n    income:salary\n\n2026-01-20 Rent"), "{out}");
         // At the end, with `insert_at` end.
         let (place, _, _) = copy(t, Hledger, at, D(2026, 1, 10), true).unwrap();
         assert_eq!(place, t.len());
+        // Not cleared, its postings' marks and assertions left out, the
+        // comments whole; Beancount's flag kept.
+        let c = "2026-01-02 ! Shop  ; a = b\n    * assets:bank    -10.00 EUR = 90.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n    ; note = here\n";
+        let (_, ins, start) = copy(c, Hledger, 3, D(2026, 1, 10), true).unwrap();
+        assert_eq!(
+            &ins[start..],
+            "2026-01-10 Shop  ; a = b\n    assets:bank      -10.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n    ; note = here\n"
+        );
+        let b = "2026-01-02 ! \"Shop\" \"\"\n  Assets:Bank  -10.00 EUR\n  Expenses:Food\n";
+        let (_, ins, start) = copy(b, Beancount, 3, D(2026, 1, 10), true).unwrap();
+        assert_eq!(&ins[start..], b.replace("2026-01-02", "2026-01-10"));
+        // A CRLF journal's copy keeps its line endings.
+        let crlf = c.replace('\n', "\r\n");
+        let (_, ins, start) = copy(&crlf, Hledger, 3, D(2026, 1, 10), true).unwrap();
+        assert!(
+            ins[start..].starts_with(
+                "2026-01-10 Shop  ; a = b\r\n    assets:bank      -10.00 EUR  ; x = y\r\n"
+            ),
+            "{ins:?}"
+        );
         let e = shift_date(t, Hledger, at, 30).unwrap();
         assert_eq!(e.1, "2026-02-01");
         assert_eq!(&t[e.0], "2026-01-02");
@@ -1078,6 +1163,14 @@ mod tests {
             "2026-02-02 Ziraat | salary  ; payroll:january\n    assets:bank:ziraat    45.000,00 TRY\n    income:salary\n"
         );
         assert_eq!(&t[at..at + 9], "45.000,00");
+        // As `hledger print --match` writes a posting's mark: taken out,
+        // the amount where it was; an `=` in a comment is the comment's.
+        let draft = "2026-01-02 * Shop\n    * assets:bank  -10.00 EUR = 90.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n    expenses:fees  1 \"A=B\" @ $1 == 3 \"A=B\"\n    assets:broker  1 AAPL {=$50}\n";
+        let (t, _) = new_transaction(Hledger, D(2026, 2, 2), '-', "Shop", Some(draft));
+        assert_eq!(
+            t,
+            "2026-02-02 Shop\n    assets:bank    -10.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n    expenses:fees  1 \"A=B\" @ $1\n    assets:broker  1 AAPL {=$50}\n"
+        );
         // No draft: the payee and a posting to fill.
         let (t, at) = new_transaction(Ledger, D(2026, 2, 2), '/', "Client B", None);
         assert_eq!(t, "2026/02/02 Client B\n    \n");
