@@ -164,6 +164,10 @@ pub struct Graph {
     pub property_pages: bool,
     /// The properties without one (`:property-pages/excludelist`).
     pub property_excludes: Vec<String>,
+    /// The queries Logseq shows under today's journal (`:default-queries
+    /// {:journals [...]}`), each its map: `:title`, `:query` (a simple
+    /// query's text or an advanced query's), `:inputs`, `:collapsed?`.
+    pub default_queries: Vec<crate::edn::Value>,
     /// What could not be read, for one notice.
     pub problems: Vec<String>,
 }
@@ -569,6 +573,11 @@ impl Graph {
                 .get("property-pages/excludelist")
                 .map(Value::strings)
                 .unwrap_or_default(),
+            default_queries: c
+                .get("default-queries")
+                .and_then(|d| d.get("journals"))
+                .map(|j| j.items().to_vec())
+                .unwrap_or_default(),
             problems,
         }
     }
@@ -657,6 +666,7 @@ impl Graph {
             graph_view: GraphView::obsidian(None),
             property_pages: false,
             property_excludes: Vec::new(),
+            default_queries: Vec::new(),
             problems,
         }
     }
@@ -749,6 +759,25 @@ mod tests {
         let bad = Graph::logseq("/g", "{:a");
         assert_eq!(bad.problems.len(), 1);
         assert_eq!(bad.pages_dir, "pages");
+    }
+
+    #[test]
+    fn logseq_journals_default_queries() {
+        // Logseq's own config.edn has two, NOW and NEXT; none without the key.
+        let g = Graph::logseq(
+            "/g",
+            r#"{:default-queries
+                {:journals
+                 [{:title "🔨 NOW" :query [:find (pull ?h [*]) :where [?h :block/marker "NOW"]]
+                   :collapsed? false}
+                  {:title "Later" :query "(task LATER)" :collapsed? true}]}}"#,
+        );
+        assert_eq!(g.default_queries.len(), 2);
+        assert_eq!(
+            g.default_queries[1].get("query").and_then(Value::as_str),
+            Some("(task LATER)")
+        );
+        assert!(Graph::logseq("/g", "{}").default_queries.is_empty());
     }
 
     #[test]
