@@ -83,12 +83,16 @@ type Asserted = Result<Vec<reconcile::Amount>, Box<(reconcile::Amount, reconcile
 /// its journal to be the current document.
 #[derive(Debug)]
 struct Mark {
+    tool: Dialect,
     file: String,
     line: u32,
     amount: String,
     key: (String, String),
     /// The Reconcile document's line it was on, for the cursor after.
     at_line: usize,
+    /// The journal's text the tool read and the accounts it read there
+    /// (`reconcile::accounts_in`), once it has answered.
+    read: Option<(String, reconcile::Accounts)>,
 }
 
 thread_local! {
@@ -843,11 +847,13 @@ pub(super) fn mark() -> Result<String, String> {
         };
         MARK.with(|m| {
             *m.borrow_mut() = Some(Mark {
+                tool,
                 file: file.clone(),
                 line,
                 amount,
                 key: k,
                 at_line,
+                read: None,
             })
         });
         super::open_then(&file, "pta.reconcileMarkWrite");
@@ -857,8 +863,9 @@ pub(super) fn mark() -> Result<String, String> {
 
 /// Marks the posting [`mark`] keeps, in its journal once that is the
 /// current document: the account's posting of the transaction at its
-/// line (the one with its amount where there are several), one undo
-/// step; then the journal saved.
+/// line (the one with its amount where there are several), the account
+/// as the tool reads it (an alias, `apply account`), one undo step; then
+/// the journal saved.
 pub(super) fn mark_write() -> Result<String, String> {
     let Some(file) = MARK.with(|m| m.borrow().as_ref().map(|m| m.file.clone())) else {
         return Ok("null".into());
@@ -878,60 +885,74 @@ pub(super) fn mark_write() -> Result<String, String> {
         return Ok("null".into());
     };
     let text = editor::text(None);
-    let Some(at) = posting_line(&text, d, m.line, &m.key.1, &m.amount) else {
-        ui::notify(
+    // Once the tool has read the accounts: marked where it read them.
+    if let Some((read, accounts)) = &m.read {
+        if *read != text {
+            ui::notify(
+                "The journal changed while the tool read it: mark the posting again",
+                ui::Level::Warning,
+            );
+        } else {
+            mark_with(d, &m, &text, accounts);
+        }
+        return Ok("null".into());
+    }
+    // The accounts as the tool reads them: a posting written with an
+    // alias or under `apply account` is the account's too.
+    let Some((program, mut args)) = reconcile::accounts_command(m.tool, &m.key.0) else {
+        mark_with(d, &m, &text, &reconcile::Accounts::new());
+        return Ok("null".into());
+    };
+    let live = journal::same_file(&m.file, &m.key.0);
+    if live {
+        args = reconcile::from_input(args, &m.key.0);
+    }
+    let read_as = if live {
+        "-".to_string()
+    } else {
+        m.file.clone()
+    };
+    let input = live.then(|| text.clone().into_bytes());
+    let dir = journal::folder(&m.key.0).to_string();
+    run_input(program, args, &dir, input, move |r| {
+        let accounts = match r {
+            Ok(e) if e.status == Some(0) => {
+                let out = String::from_utf8_lossy(&e.stdout);
+                reconcile::accounts_in(m.tool, &out, &read_as, &text)
+            }
+            _ => reconcile::Accounts::new(),
+        };
+        // Marked by the command again, where the journal is the document
+        // (a process's answer has none).
+        let mut m = m;
+        m.read = Some((text, accounts));
+        MARK.with(|x| *x.borrow_mut() = Some(m));
+        if let Err(why) = kalem::run("pta.reconcileMarkWrite", "{}") {
+            ui::notify(&why, ui::Level::Warning);
+        }
+    });
+    Ok("null".into())
+}
+
+/// [`mark_write`]'s edit in the journal, `text`, a posting's account the
+/// tool's (`accounts`).
+fn mark_with(d: Dialect, m: &Mark, text: &str, accounts: &reconcile::Accounts) {
+    let Some(at) = reconcile::posting_at(text, d, m.line, &m.key.1, &m.amount, accounts) else {
+        return ui::notify(
             &format!("No posting of {} found there", m.key.1),
             ui::Level::Warning,
         );
-        return Ok("null".into());
     };
-    match crate::write::toggle_pending(&text, d, at) {
+    match crate::write::toggle_pending(text, d, at) {
         Some(edits) if !edits.is_empty() => {
             super::edit(&edits, "Mark Pending");
-            RETURN.with(|r| *r.borrow_mut() = Some((m.key, m.at_line)));
+            RETURN.with(|r| *r.borrow_mut() = Some((m.key.clone(), m.at_line)));
             if let Err(why) = kalem::run("app.save", "{}") {
                 ui::notify(&why, ui::Level::Warning);
             }
         }
         _ => ui::notify("The posting is cleared already", ui::Level::Info),
     }
-    Ok("null".into())
-}
-
-/// The start of the posting of `account` (or under it) in the
-/// transaction holding line `line` (from 1) of `text`: the one on that
-/// line, else the one written with `amount`, else the first.
-fn posting_line(text: &str, d: Dialect, line: u32, account: &str, amount: &str) -> Option<usize> {
-    let start: usize = text
-        .split_inclusive('\n')
-        .take(line.saturating_sub(1) as usize)
-        .map(str::len)
-        .sum();
-    let txs = crate::write::transactions(text, d);
-    let t =
-        crate::write::at(&txs, start).or_else(|| txs.iter().find(|t| t.range.start >= start))?;
-    let squeeze = |s: &str| s.split_whitespace().collect::<String>();
-    let mut candidates = Vec::new();
-    let mut offset = t.range.start;
-    for l in text[t.range.clone()].split_inclusive('\n') {
-        if offset > t.range.start
-            && crate::write::account_at(text, offset, d)
-                .is_some_and(|a| a == account || a.starts_with(&format!("{account}:")))
-        {
-            candidates.push((offset, l));
-        }
-        offset += l.len();
-    }
-    candidates
-        .iter()
-        .find(|(o, _)| *o == start)
-        .or_else(|| {
-            candidates
-                .iter()
-                .find(|(_, l)| !amount.is_empty() && squeeze(l).contains(&squeeze(amount)))
-        })
-        .or(candidates.first())
-        .map(|(o, _)| *o)
 }
 
 /// Enter in the document: the journal at the posting.

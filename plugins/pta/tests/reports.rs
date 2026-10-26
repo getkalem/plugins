@@ -649,3 +649,53 @@ fn finish_with_a_subaccount_and_an_outstanding_check() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Tab in the Reconcile document finds the posting the tool lists, as
+/// the tool reads its account: Ledger's corpus writes the pending
+/// software subscription's `Assets:Checking` as `chk`.
+#[test]
+fn tab_finds_a_posting_written_with_an_alias() {
+    use kalem_plugin_pta::reconcile;
+    let dir = corpus("ledger");
+    let main = dir.join("business.ledger").to_string_lossy().into_owned();
+    let text = std::fs::read_to_string(&main).expect("corpus");
+    let account = "Assets:Checking";
+    let (p, a) = reconcile::open_command(Dialect::Ledger, &main, account);
+    let Some(out) = run(p, &a, &dir) else {
+        return;
+    };
+    let open = reconcile::open_of(Dialect::Ledger, &out);
+    let posting = open
+        .iter()
+        .find(|p| p.description == "Software subscription")
+        .unwrap_or_else(|| panic!("{open:?}"));
+    let (_, line) = posting.place.clone().expect("its place");
+    let (p, a) = reconcile::accounts_command(Dialect::Ledger, &main).expect("a run");
+    let accounts =
+        reconcile::accounts_in(Dialect::Ledger, &run(p, &a, &dir).unwrap(), &main, &text);
+    let at = reconcile::posting_at(
+        &text,
+        Dialect::Ledger,
+        line,
+        account,
+        &posting.amount,
+        &accounts,
+    )
+    .expect("the posting");
+    assert!(
+        text[at..].starts_with("    chk\n"),
+        "{:?}",
+        &text[at..at + 20]
+    );
+    assert_eq!(
+        reconcile::posting_at(
+            &text,
+            Dialect::Ledger,
+            line,
+            account,
+            &posting.amount,
+            &reconcile::Accounts::new()
+        ),
+        None
+    );
+}

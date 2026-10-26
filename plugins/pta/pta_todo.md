@@ -818,7 +818,10 @@ first.
   pending marks are cleared, as ledger-mode's finish clears them, and
   the assertion is written only where the tool's balance at that date,
   every posting counted, is the target (`reconcile::asserted_command`,
-  `asserted`), the message saying why otherwise.)
+  `asserted`), the message saying why otherwise. Tab in the Reconcile
+  document finds its posting by the account the tool reads too, an
+  alias (Ledger's `chk`) or `apply account` resolved
+  (`reconcile::posting_at`), as Finish does.)
 - [x] PT8c The statement beside: `pta.reconcileWith`, in a CSV
   document (Kalem's grid) or from the reconcile document, pairs the
   statement's rows with the account's postings by date and amount

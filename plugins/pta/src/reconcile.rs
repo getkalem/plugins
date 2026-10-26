@@ -1078,6 +1078,50 @@ pub fn account_of(
     Some(accounts.get(&line).cloned().unwrap_or(written))
 }
 
+/// The start of the posting of `account` (or under it) in the
+/// transaction holding line `line` (from 1) of `text`, as Tab in the
+/// Reconcile document marks it: the one on that line, else the one
+/// written with `amount`, else the first. A posting's account is the
+/// tool's (`accounts`, [`account_of`]): one written with an alias or
+/// under `apply account` is found too.
+pub fn posting_at(
+    text: &str,
+    dialect: Dialect,
+    line: u32,
+    account: &str,
+    amount: &str,
+    accounts: &Accounts,
+) -> Option<usize> {
+    let start: usize = text
+        .split_inclusive('\n')
+        .take(line.saturating_sub(1) as usize)
+        .map(str::len)
+        .sum();
+    let txs = write::transactions(text, dialect);
+    let t = write::at(&txs, start).or_else(|| txs.iter().find(|t| t.range.start >= start))?;
+    let squeeze = |s: &str| s.split_whitespace().collect::<String>();
+    let mut candidates = Vec::new();
+    let mut offset = t.range.start;
+    for l in text[t.range.clone()].split_inclusive('\n') {
+        if offset > t.range.start
+            && account_of(text, offset, dialect, accounts).is_some_and(|a| under(&a, account))
+        {
+            candidates.push((offset, l));
+        }
+        offset += l.len();
+    }
+    candidates
+        .iter()
+        .find(|(o, _)| *o == start)
+        .or_else(|| {
+            candidates
+                .iter()
+                .find(|(_, l)| !amount.is_empty() && squeeze(l).contains(&squeeze(amount)))
+        })
+        .or(candidates.first())
+        .map(|(o, _)| *o)
+}
+
 /// The run that gives what a balance assertion of `account` written at
 /// `date` checks: the account's balance at the day's end, every posting
 /// counted whatever its status (an outstanding check too). hledger's with
@@ -1905,5 +1949,26 @@ mod tests {
         };
         assert!(cleared(&accounts).contains("2026-01-05 * Grocer"));
         assert!(cleared(&none).contains("2026-01-05 ! Grocer"));
+        // Tab's posting, from the transaction's line: `chk`, as the tool
+        // reads it; as written, none of the account's.
+        let chk = text.find("    chk\n").unwrap();
+        let tab = |accounts: &Accounts| {
+            posting_at(
+                text,
+                Dialect::Hledger,
+                3,
+                "assets:checking",
+                "$-42.35",
+                accounts,
+            )
+        };
+        assert_eq!(tab(&accounts), Some(chk));
+        assert_eq!(tab(&none), None);
+        // On a posting's own line, that one.
+        let food = text.find("    expenses:food  $42.35").unwrap();
+        assert_eq!(
+            posting_at(text, Dialect::Hledger, 4, "expenses", "", &accounts),
+            Some(food)
+        );
     }
 }
