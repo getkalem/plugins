@@ -4,7 +4,7 @@
 //! run in order until one fails, and the question to ask first when what
 //! it does cannot be undone.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::git::cmd::{self, ApplyTo, CommitKind, GitCommand};
 use crate::git::status::{Kind, State};
@@ -131,6 +131,9 @@ pub fn plan(act: Act, targets: &[Target], repo: &Repo, settings: Settings) -> Re
             }
             _ => {}
         }
+    }
+    if act == Act::Discard {
+        all_changes(&mut b, &mut files);
     }
     for (section, paths) in files {
         whole_files(&mut b, section, &paths)?;
@@ -281,6 +284,57 @@ fn whole_files(b: &mut Builder<'_>, section: Section, paths: &[String]) -> Resul
     }
     b.did.push(names());
     Ok(())
+}
+
+/// The paths discarded both staged and not (`d`'s "Discard all changes")
+/// taken out of `files` and put back as HEAD has them, in the index and
+/// the working tree at once, a rename's old path too: no diff needs to be
+/// read first, as reverting the staged changes alone does, so the choice
+/// is there on a folded file.
+fn all_changes(b: &mut Builder<'_>, files: &mut BTreeMap<Section, Vec<String>>) {
+    let staged: BTreeSet<&String> = files.get(&Section::Staged).into_iter().flatten().collect();
+    let both: Vec<String> = files
+        .get(&Section::Unstaged)
+        .into_iter()
+        .flatten()
+        .filter(|p| staged.contains(p))
+        .cloned()
+        .collect();
+    if both.is_empty() {
+        return;
+    }
+    let names = match both.as_slice() {
+        [one] => one.clone(),
+        _ => format!("{} files", both.len()),
+    };
+    b.ask(
+        false,
+        format!("Revert {names}, staged and not? Its changes are in no commit, and are lost."),
+    );
+    if b.repo.unborn() {
+        b.plan
+            .commands
+            .push(cmd::rm(both.iter().map(String::as_str)));
+    } else {
+        let mut with_sources: Vec<&str> = Vec::new();
+        for p in &both {
+            with_sources.push(p);
+            if let Some(from) = b
+                .repo
+                .entry(Section::Staged, p)
+                .and_then(|e| e.from.as_deref())
+            {
+                with_sources.push(from);
+            }
+        }
+        b.plan.commands.push(cmd::restore_from_head(with_sources));
+    }
+    b.did.push(names);
+    let both: BTreeSet<String> = both.into_iter().collect();
+    for paths in files.values_mut() {
+        paths.retain(|p| !both.contains(p));
+    }
+    files.retain(|_, paths| !paths.is_empty());
 }
 
 /// A staged file's changes taken out of the index and the working tree,
@@ -587,6 +641,30 @@ mod tests {
         assert_eq!(p.commands.len(), 2);
         assert_eq!(p.commands[0].args, ["apply", "--reverse", "-"]);
         assert_eq!(p.commands[1].args, ["apply", "--cached", "--reverse", "-"]);
+    }
+
+    #[test]
+    fn discarding_all_of_a_file_staged_and_not_reads_no_diff() {
+        let mut r = repo();
+        r.diffs.clear();
+        let both = [file(Section::Unstaged, "h"), file(Section::Staged, "h")];
+        let p = plan(Act::Discard, &both, &r, Settings::default()).unwrap();
+        assert_eq!(
+            p.commands
+                .iter()
+                .map(|c| c.args.clone())
+                .collect::<Vec<_>>(),
+            [[
+                "restore",
+                "--source=HEAD",
+                "--staged",
+                "--worktree",
+                "--",
+                "h"
+            ]]
+        );
+        assert_eq!(p.done, "Reverted h");
+        assert!(p.confirm.unwrap().starts_with("Revert h, staged and not?"));
     }
 
     #[test]

@@ -463,6 +463,52 @@ fn the_users_diff_settings_change_nothing() {
     assert_eq!(f.hunks.len(), 2);
 }
 
+/// A hunk of a staged rename unstaged or discarded leaves the rename: the
+/// patch carried git's `rename from` and `rename to`, and took the rename
+/// back with the hunk.
+#[test]
+fn a_hunk_of_a_rename_leaves_the_rename() {
+    let mut t = T::new("rename-hunk");
+    let base = lines(40);
+    t.write("old.txt", &base);
+    t.commit_all("Base");
+    t.ok(&["mv", "old.txt", "new.txt"]);
+    let changed = base
+        .replace("line 2\n", "line two\n")
+        .replace("line 30\n", "line thirty\n");
+    t.write("new.txt", &changed);
+    t.ok(&["add", "new.txt"]);
+    let (repo, _) = t.repo_with(&[(Section::Staged, "new.txt")]);
+    let d = repo.diff(Section::Staged, "new.txt").unwrap();
+    assert!(d.renamed && d.hunks.len() == 2, "{d:?}");
+    let first = Target::Hunk {
+        section: Section::Staged,
+        path: "new.txt".into(),
+        hunk: 0,
+    };
+    t.act(Act::Unstage, std::slice::from_ref(&first), &repo)
+        .unwrap();
+    let renamed = |t: &mut T| {
+        let repo = t.repo();
+        let e = repo.entry(Section::Staged, "new.txt").cloned();
+        e.and_then(|e| e.from)
+    };
+    assert_eq!(renamed(&mut t).as_deref(), Some("old.txt"));
+    assert_eq!(
+        t.index("new.txt"),
+        base.replace("line 30\n", "line thirty\n")
+    );
+    assert_eq!(t.read("new.txt"), changed);
+    // The other hunk discarded: out of the index and the working tree,
+    // the rename kept.
+    let (repo, _) = t.repo_with(&[(Section::Staged, "new.txt")]);
+    t.act(Act::Discard, &[first], &repo).unwrap();
+    assert_eq!(renamed(&mut t).as_deref(), Some("old.txt"));
+    assert_eq!(t.index("new.txt"), base);
+    assert_eq!(t.read("new.txt"), base.replace("line 2\n", "line two\n"));
+    assert!(!t.dir.join("old.txt").exists());
+}
+
 #[test]
 fn reverting_staged_changes_keeps_the_unstaged_ones() {
     let mut t = T::new("revert-staged");

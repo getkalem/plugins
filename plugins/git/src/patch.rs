@@ -15,9 +15,10 @@
 //!   becomes context; an unselected removed line is not brought back, so
 //!   it is dropped.
 //!
-//! The file's header is kept as git printed it; each hunk's `@@` line is
-//! counted again. A `\ No newline at end of file` line goes with the line
-//! before it, as long as that line is still the last of its side.
+//! The file's header is kept as git printed it (a renamed file's is its
+//! new path's alone); each hunk's `@@` line is counted again. A `\ No
+//! newline at end of file` line goes with the line before it, as long as
+//! that line is still the last of its side.
 
 use crate::git::diff::{FileDiff, Hunk, Line, LineKind};
 
@@ -108,7 +109,7 @@ pub fn build(file: &FileDiff, picks: &[(usize, Pick)], mode: Mode) -> Result<Vec
         }
         delta += i64::from(h.new_count) - i64::from(h.old_count);
     }
-    let mut out = header(file);
+    let mut out = part_header(file);
     for h in &hunks {
         push_line(&mut out, &h.header_line());
         for l in &h.lines {
@@ -252,6 +253,38 @@ fn header(file: &FileDiff) -> Vec<u8> {
     out
 }
 
+/// The header of a patch of some hunks or lines. A renamed file's is a
+/// change of its new path: with git's `rename from` and `rename to`,
+/// unstaging or discarding one hunk of a staged rename took the rename
+/// back too.
+fn part_header(file: &FileDiff) -> Vec<u8> {
+    let new = file.header.iter().find_map(|l| l.strip_prefix(b"+++ "));
+    let Some(new) = new.filter(|_| file.renamed) else {
+        return header(file);
+    };
+    // `b/PATH`, or `"b/PATH"` quoted: the same with `a/`.
+    let mut old = new.to_vec();
+    let at = usize::from(old.first() == Some(&b'"'));
+    if old.get(at..at + 2) == Some(b"b/") {
+        old[at] = b'a';
+    }
+    // The tab git adds after a path with a space is not the first line's.
+    let first = |p: &[u8]| -> Vec<u8> {
+        match p.iter().position(|&b| b == b'\t') {
+            Some(t) if p.first() != Some(&b'"') => p[..t].to_vec(),
+            _ => p.to_vec(),
+        }
+    };
+    let mut out = Vec::new();
+    push_line(
+        &mut out,
+        &[&b"diff --git "[..], &first(&old), b" ", &first(new)].concat(),
+    );
+    push_line(&mut out, &[&b"--- "[..], &old].concat());
+    push_line(&mut out, &[&b"+++ "[..], new].concat());
+    out
+}
+
 fn push_line(out: &mut Vec<u8>, line: &[u8]) {
     out.extend_from_slice(line);
     out.push(b'\n');
@@ -376,6 +409,19 @@ index 1..2 100644
             "{}",
             text(&p)
         );
+    }
+
+    #[test]
+    fn a_part_of_a_rename_changes_its_new_path() {
+        let d = "diff --git a/old.rs b/new.rs\nsimilarity index 90%\nrename from old.rs\nrename to new.rs\nindex 1..2 100644\n--- a/old.rs\n+++ b/new.rs\n@@ -1 +1 @@\n-a\n+b\n";
+        let f = diff::parse(d.as_bytes()).unwrap().files.remove(0);
+        let p = build(&f, &[(0, Pick::All)], Mode::Reverse).unwrap();
+        assert_eq!(
+            text(&p),
+            "diff --git a/new.rs b/new.rs\n--- a/new.rs\n+++ b/new.rs\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+        );
+        // The whole file's patch is the rename.
+        assert!(text(&file_patch(&f)).contains("\nrename to new.rs\n"));
     }
 
     #[test]

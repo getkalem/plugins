@@ -868,6 +868,45 @@ fn the_status_document_folds_opens_and_acts_with_its_keys() {
     assert!(k.docs.is_empty());
 }
 
+/// `d` on a folded file staged and not offers to discard all its changes:
+/// the choice was there only once its staged diff was read (Tab), else
+/// only "Discard unstaged changes" was. It goes back to HEAD, a rename to
+/// its old path.
+#[test]
+fn discard_all_on_a_folded_file() {
+    let mut k = Kalem::new("discard-all");
+    let long: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+    k.write("a.txt", "one\n");
+    k.write("old.txt", &long);
+    k.commit_all("First");
+    k.write("a.txt", "two\n");
+    k.git_ok(&["add", "a.txt"]);
+    k.write("a.txt", "three\n");
+    k.command("git.status", Some("a.txt"));
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.discard", "MM a.txt");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "a.txt: Discard all changes | Discard unstaged changes | Cancel"
+    );
+    assert_eq!(k.last_note(), "Reverted a.txt");
+    assert_eq!(k.read("a.txt"), "one\n");
+    assert_eq!(k.index("a.txt"), "one\n");
+    // A rename staged, then edited.
+    k.git_ok(&["mv", "old.txt", "new.txt"]);
+    k.write("new.txt", &long.replace("line 5\n", "line FIVE\n"));
+    k.on("git.refresh", "1 Files");
+    k.answers.push_back(Answer::Picked(vec![0]));
+    k.on("git.discard", "old.txt → new.txt");
+    assert_eq!(
+        k.asked.last().unwrap(),
+        "new.txt: Discard all changes | Discard unstaged changes | Cancel"
+    );
+    assert!(!k.dir.join("new.txt").exists());
+    assert_eq!(k.read("old.txt"), long);
+    assert_eq!(k.git_ok(&["status", "--porcelain"]), "");
+}
+
 #[test]
 fn a_new_branch_starts_where_asked() {
     let mut k = Kalem::new("branch-start");
