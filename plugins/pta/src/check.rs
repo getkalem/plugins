@@ -372,29 +372,61 @@ pub struct Drawn {
 /// The `problems` that have a place, by file (a relative one beside
 /// `main`), as the editor draws them; the others are only in the check
 /// document. hledger's carets under the line it quotes give the width.
-pub fn marks(main: &str, problems: &[Problem]) -> BTreeMap<String, Vec<Drawn>> {
+/// A column is turned into the editor's, in characters, against its
+/// line in the file's text where `text_of` has it ([`char_column`]).
+pub fn marks<'a>(
+    main: &str,
+    problems: &[Problem],
+    text_of: impl Fn(&str) -> Option<&'a str>,
+) -> BTreeMap<String, Vec<Drawn>> {
     let mut out: BTreeMap<String, Vec<Drawn>> = BTreeMap::new();
     for p in problems {
         let (Some(file), Some(line)) = (&p.file, p.line) else {
             continue;
         };
-        let column = p.column.unwrap_or(0);
+        let path = crate::journal::beside(main, file);
+        let column = match (p.column, text_of(&path)) {
+            (Some(c), Some(text)) => {
+                char_column(text.lines().nth(line as usize - 1).unwrap_or(""), c)
+            }
+            (c, _) => c.unwrap_or(0),
+        };
         let length = if column == 0 { 0 } else { carets(&p.excerpt) };
         let message = if p.message.trim().is_empty() {
             "The check failed here".to_string()
         } else {
             p.message.clone()
         };
-        out.entry(crate::journal::beside(main, file))
-            .or_default()
-            .push(Drawn {
-                line,
-                column,
-                length,
-                message,
-            });
+        out.entry(path).or_default().push(Drawn {
+            line,
+            column,
+            length,
+            message,
+        });
     }
     out
+}
+
+/// The character (from 1) of `line` at hledger's `column`: hledger
+/// counts a tab to the next multiple of 8 (its columns 1, 9, 17…), the
+/// editor each character as one; past the line's end, as far past it.
+pub fn char_column(line: &str, column: u32) -> u32 {
+    let mut at = 1;
+    let mut n = 0;
+    for c in line.chars() {
+        let next = if c == '\t' {
+            (at - 1) / 8 * 8 + 9
+        } else {
+            at + 1
+        };
+        // The column in this character's span: a tab's from its start.
+        if column < next {
+            return n + 1;
+        }
+        at = next;
+        n += 1;
+    }
+    n + 1 + column.saturating_sub(at)
 }
 
 /// How many carets hledger put under the quoted line (`   |   ^^^^`); 0
@@ -549,7 +581,7 @@ mod tests {
             message: "no place".into(),
             ..Problem::default()
         });
-        let m = marks(main, &p);
+        let m = marks(main, &p, |_| None);
         assert_eq!(
             m.keys().collect::<Vec<_>>(),
             [
@@ -576,9 +608,40 @@ mod tests {
             m["/tmp/m/sub/feb.journal"][0].message,
             "The check failed here"
         );
-        let ordered = marks(main, &problems(Dialect::Hledger, Some(1), HLEDGER_ORDER));
+        let ordered = marks(
+            main,
+            &problems(Dialect::Hledger, Some(1), HLEDGER_ORDER),
+            |_| None,
+        );
         let o = &ordered["/tmp/m/two.journal"][0];
         assert_eq!((o.line, o.column, o.length), (8, 0, 0));
-        assert!(marks(main, &[]).is_empty());
+        assert!(marks(main, &[], |_| None).is_empty());
+    }
+
+    #[test]
+    fn a_column_after_a_tab() {
+        // hledger's column counts a tab to the next multiple of 8.
+        assert_eq!(char_column("\tassets:bank  1 EUR = 2 EUR", 33), 26);
+        assert_eq!(char_column("    assets:bank  1 EUR = 2 EUR", 29), 29);
+        assert_eq!(char_column("  \t\tx", 17), 5);
+        assert_eq!(char_column("ab\tc", 5), 3);
+        assert_eq!(char_column("", 3), 3);
+        // As hledger 1.52 says it of a line indented with a tab.
+        let said = "hledger: Error: /j/tab.journal:2:33:\n  | 2026-01-01 * Opening\n2 |     assets:bank         100.00 EUR = 99.00 EUR\n  |                                    ^^^^^^^^^^^\n  |     equity:opening     -100.00 EUR\n\nBalance assertion failed in assets:bank\n";
+        let text =
+            "2026-01-01 * Opening\n\tassets:bank  100.00 EUR = 99.00 EUR\n\tequity:opening\n";
+        let p = problems(Dialect::Hledger, Some(1), said);
+        let drawn = |text_of: &dyn Fn(&str) -> Option<&'static str>| {
+            let m = marks("/j/tab.journal", &p, text_of);
+            let d = &m["/j/tab.journal"][0];
+            (d.line, d.column, d.length)
+        };
+        assert_eq!(
+            drawn(&|f| (f == "/j/tab.journal").then_some(text)),
+            (2, 26, 11)
+        );
+        assert_eq!(&text.lines().nth(1).unwrap()[25..26], "=");
+        // The file's text not known: the tool's column.
+        assert_eq!(drawn(&|_| None), (2, 33, 11));
     }
 }

@@ -430,9 +430,22 @@ fn align(line: bool) {
     }
 }
 
-/// Enter in a journal: the posting aligned first when `align_on_enter`
-/// is on, then Kalem's own new line, which runs once this returns.
+/// Enter in a journal: at the end of a transaction's header, a new line
+/// with the posting indent (`write::header_newline`), which Kalem's own
+/// new line would not give the first posting; else the posting aligned
+/// first when `align_on_enter` is on, then Kalem's own new line, which
+/// runs once this returns.
 fn newline() -> Result<String, String> {
+    let sel = editor::selected();
+    if sel.anchor == sel.head
+        && let Some((d, _)) = dialect_here()
+        && let Some(line) = write::header_newline(&editor::text(None), d, sel.head as usize)
+    {
+        // Inserted at the cursor, which goes after it.
+        editor::insert(None, &line);
+        editor::transact("New Line");
+        return Ok("null".into());
+    }
     if align::Settings::read(settings::own).on_enter {
         align(true);
     }
@@ -596,6 +609,11 @@ fn check(path: String, open: bool) {
         return;
     };
     let generation = GENERATION.with(Cell::get);
+    // The current document's file and text, where a command runs: the
+    // problems' columns in it are turned into the editor's.
+    let known = editor::document()
+        .and_then(|d| d.path)
+        .map(|p| (p, editor::text(None)));
     resolve(path, dialect, move |tool, main| {
         let checks = journal_checks();
         let args = check::command(tool, &main.path, &checks);
@@ -622,7 +640,7 @@ fn check(path: String, open: bool) {
                     };
                     let problems =
                         check::problems(tool, exit.status, &String::from_utf8_lossy(out));
-                    publish(&main.path, tool, &problems);
+                    publish(&main.path, tool, &problems, known.as_ref());
                     let report = check::report(&said, &main.path, &problems, glyphs());
                     write_report(&main, &report, open);
                     if GENERATION.with(Cell::get) == generation {
@@ -648,10 +666,16 @@ fn check(path: String, open: bool) {
 
 /// Draws the check's problems in their files as a language server's
 /// diagnostics are (plugin API 0.2.14): each file's in place of the last
-/// check's, and none left in a file that has none now.
-fn publish(main: &str, tool: Dialect, found: &[Problem]) {
+/// check's, and none left in a file that has none now. A column in the
+/// file whose text is `known` counts characters as the editor does
+/// (hledger's counts a tab to the next multiple of 8).
+fn publish(main: &str, tool: Dialect, found: &[Problem], known: Option<&(String, String)>) {
     use kalem_plugin::problems as drawn;
-    let marks = check::marks(main, found);
+    let marks = check::marks(main, found, |file| {
+        known
+            .filter(|(path, _)| journal::same_file(path, file))
+            .map(|(_, text)| text.as_str())
+    });
     let before = CHECKS.with(|c| {
         c.borrow_mut()
             .get_mut(main)
@@ -1217,20 +1241,7 @@ fn new_transaction() -> Result<String, String> {
 /// draft for the one chosen.
 fn choose_payee(d: Dialect, path: String, sep: char, date: Date, recent: Vec<String>) {
     resolve(path.clone(), d, move |tool, main| {
-        let args: Vec<String> = match tool {
-            Dialect::Beancount => vec![
-                "-f".into(),
-                "csv".into(),
-                main.path.clone(),
-                "SELECT DISTINCT payee".into(),
-            ],
-            _ => vec!["-f".into(), main.path.clone(), "payees".into()],
-        };
-        let program = if tool == Dialect::Beancount {
-            "bean-query"
-        } else {
-            tool.checker()
-        };
+        let (program, args) = write::payees_command(tool, &main.path);
         let dir = journal::folder(&main.path).to_string();
         run(program, args, &dir, move |r| {
             let mut payees = recent;
@@ -1308,35 +1319,7 @@ fn draft(
     date: Date,
     payee: String,
 ) {
-    let (program, args): (&'static str, Vec<String>) = match tool {
-        Dialect::Hledger => (
-            "hledger",
-            vec![
-                "-f".into(),
-                main.path.clone(),
-                "print".into(),
-                "--match".into(),
-                payee.clone(),
-            ],
-        ),
-        Dialect::Ledger => (
-            "ledger",
-            vec![
-                "-f".into(),
-                main.path.clone(),
-                "xact".into(),
-                date.written('/'),
-                payee.clone(),
-            ],
-        ),
-        Dialect::Beancount => (
-            "bean-query",
-            vec![
-                main.path.clone(),
-                format!("PRINT FROM payee = \"{}\"", payee.replace('"', "\\\"")),
-            ],
-        ),
-    };
+    let (program, args) = write::draft_command(tool, &main.path, &payee, date);
     let dir = journal::folder(&main.path).to_string();
     run(program, args, &dir, move |r| {
         let drafted = r
@@ -1468,7 +1451,9 @@ fn run_block() -> Result<String, String> {
         return Ok("null".into());
     };
     let (program, args) = crate::blocks::command(&b);
-    let input = text[b.body.clone()].as_bytes().to_vec();
+    // Its code as Kalem's Babel gives it: without Org's indentation and
+    // escapes.
+    let input = crate::blocks::code(&text, &b).into_bytes();
     let dir = path
         .as_deref()
         .map(journal::folder)
@@ -1824,6 +1809,17 @@ impl Plugin for Pta {
             other::KIND,
         ]);
         command("pta.check", "Check Journal", &types, |_| check_command())?;
+        command(
+            "pta.checkSaved",
+            "Check the Saved Journal",
+            crate::TEXT_TYPES,
+            |args| {
+                if let Some(path) = arg(args, "path") {
+                    check(path, false);
+                }
+                Ok("null".into())
+            },
+        )?;
         kalem::keymap("space m k", "pta.check", Some(&leader))?;
         // And from the Balance, a Register, a Reconcile or a Report: their
         // journal's check.
@@ -2156,8 +2152,13 @@ impl Plugin for Pta {
                     .and_then(|v| serde_json::from_str::<bool>(&v).ok())
                     .unwrap_or(true);
                 if on_save {
-                    // Checking refreshes the item too, with its mark.
-                    check(d.path.clone(), false);
+                    // Checking refreshes the item too, with its mark; as
+                    // the plugin's command, where the saved journal's
+                    // text is read for the problems' columns.
+                    let args = serde_json::json!({ "path": d.path }).to_string();
+                    if kalem::run("pta.checkSaved", &args).is_err() {
+                        check(d.path.clone(), false);
+                    }
                 } else {
                     refresh(Some(d.path.clone()));
                 }

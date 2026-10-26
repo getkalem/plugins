@@ -53,7 +53,7 @@ fn mark_of(samples: &[&str]) -> char {
     if comma * 2 > samples.len() { ',' } else { '.' }
 }
 
-/// A date written as `format` (`%d.%m.%Y`, `%Y-%m-%d`, `%m/%d/%Y`).
+/// A date written as `format` (`%-d.%-m.%Y`, `%Y-%m-%d`, `%-m/%-d/%Y`).
 fn date_in(s: &str, format: &str) -> Option<Date> {
     let parts: Vec<u32> = s
         .trim()
@@ -61,7 +61,10 @@ fn date_in(s: &str, format: &str) -> Option<Date> {
         .filter(|p| !p.is_empty())
         .map(|p| p.parse().ok())
         .collect::<Option<_>>()?;
-    let order: Vec<char> = format.split('%').filter_map(|p| p.chars().next()).collect();
+    let order: Vec<char> = format
+        .split('%')
+        .filter_map(|p| p.trim_start_matches('-').chars().next())
+        .collect();
     if parts.len() != 3 || order.len() != 3 {
         return None;
     }

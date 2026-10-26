@@ -364,9 +364,20 @@ fn each_tools_reconciliation() {
         let d = reconcile::difference(target, total).expect("the target reads");
         assert_eq!(d.written(), difference, "{tool:?}");
         let (p, a) = reconcile::open_command(tool, &main, account);
-        let postings = reconcile::open_of(tool, &run(p, &a, &dir).expect("ran"));
+        let mut postings = reconcile::open_of(tool, &run(p, &a, &dir).expect("ran"));
         assert_eq!(postings.len(), open, "{tool:?}: {postings:?}");
         assert!(postings.iter().all(|p| p.status != '*'), "{tool:?}");
+        // Each corpus's posting not cleared is under a pending
+        // transaction, unmarked itself: pending, hledger's with its
+        // transaction's status read from `print`.
+        if tool == Dialect::Hledger {
+            let printed = run("hledger", &reconcile::statuses_command(&a), &dir).expect("ran");
+            reconcile::with_statuses(&mut postings, &reconcile::hledger_statuses(&printed));
+        }
+        assert!(
+            postings.iter().all(|p| p.status == '!'),
+            "{tool:?}: {postings:?}"
+        );
     }
 }
 
@@ -474,4 +485,459 @@ fn accounts_the_tools_read() {
         assert_eq!(accounts.len(), 4, "{accounts:?}");
     }
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Ledger's total of a commodity with digits in its name (`"VWRL2"`,
+/// quoted as Ledger writes it) reads, and so does its difference.
+#[test]
+fn a_commodity_with_digits() {
+    use kalem_plugin_pta::reconcile::{self, Which};
+    let dir = std::env::temp_dir().join(format!("pta-digits-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("a.ledger").to_string_lossy().into_owned();
+    let text = "2026/01/01 * Buy\n    Assets:Broker  10 \"VWRL2\" @ $100.00\n    Assets:Cash\n\n2026/01/02 ! Buy\n    Assets:Broker  5 \"VWRL2\" @ $100.00\n    Assets:Cash\n";
+    std::fs::write(&main, text).unwrap();
+    let (p, a) = reconcile::total_command(Dialect::Ledger, &main, "Assets:Broker", Which::Both);
+    if let Some(out) = run(p, &a, &dir) {
+        let totals = reconcile::total_of(Dialect::Ledger, &out);
+        assert_eq!(totals.len(), 1, "{out}");
+        assert_eq!(totals[0].written(), "15 \"VWRL2\"");
+        let d = reconcile::difference("15 \"VWRL2\"", &totals[0]).expect("the target reads");
+        assert!(d.quantity.is_zero(), "{}", d.written());
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An account whose cleared and pending postings come to zero: Ledger
+/// prints no total, hledger none where nothing is cleared or pending; the
+/// figures take it as zero, so the difference to a target of zero is zero
+/// and Finish has a total to write.
+#[test]
+fn a_total_of_zero() {
+    use kalem_plugin_pta::reconcile::{self, Which};
+    let dir = std::env::temp_dir().join(format!("pta-zero-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (tool, file, text, account, target) in [
+        (
+            Dialect::Ledger,
+            "z.ledger",
+            "2026/01/01 * In\n    Assets:Wallet  $10.00\n    Income:Gift\n\n2026/01/02 ! Out\n    Expenses:Food  $10.00\n    Assets:Wallet\n",
+            "Assets:Wallet",
+            "$0.00",
+        ),
+        (
+            Dialect::Hledger,
+            "z.journal",
+            "2026-01-01 In\n    assets:wallet  10.00 EUR\n    income:gift\n",
+            "assets:wallet",
+            "0.00 EUR",
+        ),
+    ] {
+        let main = dir.join(file).to_string_lossy().into_owned();
+        std::fs::write(&main, text).unwrap();
+        let mut totals = Vec::new();
+        for which in [Which::Cleared, Which::Pending, Which::Both] {
+            let (p, a) = reconcile::total_command(tool, &main, account, which);
+            let Some(out) = run(p, &a, &dir) else {
+                break;
+            };
+            totals.push(reconcile::total_of(tool, &out));
+        }
+        let [cleared, pending, both] = &totals[..] else {
+            continue;
+        };
+        assert!(both.is_empty(), "{tool:?}: {both:?}");
+        let b = reconcile::blocks(&[(String::new(), target.into())], cleared, pending, both);
+        assert_eq!(
+            b[0].total
+                .as_ref()
+                .map(reconcile::Amount::written)
+                .as_deref(),
+            Some(target),
+            "{tool:?}"
+        );
+        assert!(
+            b[0].difference.as_ref().unwrap().quantity.is_zero(),
+            "{tool:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Finish as the component runs it, each tool asked, on an account with
+/// a subaccount and an outstanding check (a posting not marked): with
+/// the check dated on or before the statement's date the pending marks
+/// are cleared and no assertion is written; dated after it, the
+/// assertion is written, hledger's with the subaccounts (`=*`), Ledger's
+/// of the account alone; either way the tool reads the journal after.
+#[test]
+fn finish_with_a_subaccount_and_an_outstanding_check() {
+    use kalem_plugin_pta::reconcile::{self, Which};
+    use kalem_plugin_pta::{align, write};
+    let dir = std::env::temp_dir().join(format!("pta-finish-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let date = Date {
+        y: 2026,
+        m: 1,
+        d: 31,
+    };
+    let hledger = "2026-01-01 * Opening\n    assets:bank  100.00 EUR\n    assets:bank:savings  50.00 EUR\n    equity:opening\n\n2026-01-10 ! Market\n    expenses:food  10.00 EUR\n    assets:bank\n\nCHECK Check 1001\n    expenses:rent  5.00 EUR\n    assets:bank\n";
+    let ledger = "2026/01/01 * Opening\n    Assets:Bank  100.00 EUR\n    Assets:Bank:Savings  50.00 EUR\n    Equity:Opening\n\n2026/01/10 ! Market\n    Expenses:Food  10.00 EUR\n    Assets:Bank\n\nCHECK Check 1001\n    Expenses:Rent  5.00 EUR\n    Assets:Bank\n";
+    for (tool, file, text, account, check, check_args) in [
+        (
+            Dialect::Hledger,
+            "f.journal",
+            hledger,
+            "assets:bank",
+            ["2026-01-20", "2026-02-03"],
+            vec!["check"],
+        ),
+        (
+            Dialect::Ledger,
+            "f.ledger",
+            ledger,
+            "Assets:Bank",
+            ["2026/01/20", "2026/02/03"],
+            vec!["balance"],
+        ),
+    ] {
+        for (n, day) in check.iter().enumerate() {
+            let text = text.replace("CHECK", day);
+            let main = dir.join(file).to_string_lossy().into_owned();
+            std::fs::write(&main, &text).unwrap();
+            let (p, a) = reconcile::total_command(tool, &main, account, Which::Both);
+            let Some(out) = run(p, &a, &dir) else {
+                break;
+            };
+            let totals = reconcile::total_of(tool, &out);
+            assert_eq!(totals[0].written(), "140.00 EUR", "{tool:?}");
+            let (p, a) = reconcile::accounts_command(tool, &main).expect("a run");
+            let accounts = reconcile::accounts_in(tool, &run(p, &a, &dir).unwrap(), &main, &text);
+            let (p, a) = reconcile::asserted_command(tool, &main, account, date).expect("a run");
+            let asserted = reconcile::asserted(tool, &run(p, &a, &dir).unwrap(), account, &totals);
+            let amounts = match (n, &asserted) {
+                (0, Err(off)) => {
+                    let (target, balance) = &**off;
+                    assert_eq!(
+                        (target.written(), balance.written()),
+                        ("140.00 EUR".into(), "135.00 EUR".into()),
+                        "{tool:?}"
+                    );
+                    Vec::new()
+                }
+                (1, Ok(amounts)) => amounts.clone(),
+                _ => panic!("{tool:?} {day}: {asserted:?}"),
+            };
+            let edits = reconcile::finish(&text, tool, account, &amounts, date, 52, &accounts);
+            let after = align::apply(&text, &write::edits_ended_as(&text, edits));
+            assert!(
+                after.contains("* Market") && !after.contains("! Market"),
+                "{after}"
+            );
+            match (n, tool) {
+                (0, _) => assert!(!after.contains("Balance assertion"), "{after}"),
+                (_, Dialect::Hledger) => {
+                    assert!(after.contains(" =* 140.00 EUR\n"), "{after}")
+                }
+                _ => assert!(after.contains(" = 90.00 EUR\n"), "{after}"),
+            }
+            std::fs::write(&main, &after).unwrap();
+            let mut args: Vec<String> = vec!["-f".into(), main.clone()];
+            args.extend(check_args.iter().map(|s| s.to_string()));
+            run(tool.checker(), &args, &dir).expect("ran");
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Tab in the Reconcile document finds the posting the tool lists, as
+/// the tool reads its account: Ledger's corpus writes the pending
+/// software subscription's `Assets:Checking` as `chk`.
+#[test]
+fn tab_finds_a_posting_written_with_an_alias() {
+    use kalem_plugin_pta::reconcile;
+    let dir = corpus("ledger");
+    let main = dir.join("business.ledger").to_string_lossy().into_owned();
+    let text = std::fs::read_to_string(&main).expect("corpus");
+    let account = "Assets:Checking";
+    let (p, a) = reconcile::open_command(Dialect::Ledger, &main, account);
+    let Some(out) = run(p, &a, &dir) else {
+        return;
+    };
+    let open = reconcile::open_of(Dialect::Ledger, &out);
+    let posting = open
+        .iter()
+        .find(|p| p.description == "Software subscription")
+        .unwrap_or_else(|| panic!("{open:?}"));
+    let (_, line) = posting.place.clone().expect("its place");
+    let (p, a) = reconcile::accounts_command(Dialect::Ledger, &main).expect("a run");
+    let accounts =
+        reconcile::accounts_in(Dialect::Ledger, &run(p, &a, &dir).unwrap(), &main, &text);
+    let at = reconcile::posting_at(
+        &text,
+        Dialect::Ledger,
+        line,
+        account,
+        &posting.amount,
+        &accounts,
+    )
+    .expect("the posting");
+    assert!(
+        text[at..].starts_with("    chk\n"),
+        "{:?}",
+        &text[at..at + 20]
+    );
+    assert_eq!(
+        reconcile::posting_at(
+            &text,
+            Dialect::Ledger,
+            line,
+            account,
+            &posting.amount,
+            &reconcile::Accounts::new()
+        ),
+        None
+    );
+}
+
+/// New Transaction from each tool's draft of the payee's last
+/// transaction (`hledger print --match`, `ledger xact`): without its
+/// postings' marks and balance assertions, a comment's `=` kept whole;
+/// the tool reads the journal with it added.
+#[test]
+fn a_new_transaction_from_each_tools_draft() {
+    use kalem_plugin_pta::write;
+    let dir = std::env::temp_dir().join(format!("pta-draft-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let date = Date {
+        y: 2026,
+        m: 2,
+        d: 2,
+    };
+    for (tool, file, text, drafting, checking) in [
+        (
+            Dialect::Hledger,
+            "d.journal",
+            "2026-01-02 * Shop\n    * assets:bank  -10.00 EUR = -10.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n",
+            vec!["print", "--match", "Shop"],
+            vec!["check"],
+        ),
+        (
+            Dialect::Ledger,
+            "d.ledger",
+            "2026/01/02 * Shop\n    * Assets:Bank  -10.00 EUR = -10.00 EUR  ; x = y\n    Expenses:Food  10.00 EUR  ; ratio = 1/2\n",
+            vec!["xact", "2026/02/02", "Shop"],
+            vec!["balance"],
+        ),
+    ] {
+        let main = dir.join(file).to_string_lossy().into_owned();
+        std::fs::write(&main, text).unwrap();
+        let with = |words: &[&str]| -> Vec<String> {
+            ["-f", main.as_str()]
+                .iter()
+                .chain(words)
+                .map(|s| s.to_string())
+                .collect()
+        };
+        let Some(draft) = run(tool.checker(), &with(&drafting), &dir) else {
+            continue;
+        };
+        let sep = write::separator(text, tool);
+        let (t, _) = write::new_transaction(tool, date, sep, "Shop", Some(&draft));
+        assert!(
+            !t.contains("-10.00 EUR =") && !t.contains("    * ") && !t.contains(" * Shop"),
+            "{tool:?}: {t}"
+        );
+        assert!(
+            t.contains("-10.00 EUR  ; x = y\n") && t.contains("10.00 EUR  ; ratio = 1/2\n"),
+            "{tool:?}: {t}"
+        );
+        let (ins, _) = write::insertion(text, text.len(), &t);
+        std::fs::write(&main, format!("{text}{ins}")).unwrap();
+        run(tool.checker(), &with(&checking), &dir).expect("ran");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// While a balance assertion fails, as it does mid-edit, the runs that
+/// list the journal's names (completion, New Transaction's payees,
+/// Reconcile's accounts) and draft a transaction still answer, through
+/// hledger's `-I` and Ledger's `--permissive`; the check still fails.
+#[test]
+fn lists_and_drafts_despite_a_failing_assertion() {
+    use kalem_plugin_pta::{check, complete, reconcile, write};
+    let dir = std::env::temp_dir().join(format!("pta-lenient-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let date = Date {
+        y: 2026,
+        m: 2,
+        d: 2,
+    };
+    for (tool, file, text) in [
+        (
+            Dialect::Hledger,
+            "l.journal",
+            "2026-01-02 * Shop\n    expenses:food  10.00 EUR\n    assets:bank  -10.00 EUR = 5.00 EUR\n",
+        ),
+        (
+            Dialect::Ledger,
+            "l.ledger",
+            "2026/01/02 * Shop\n    Expenses:Food  10.00 EUR\n    Assets:Bank  -10.00 EUR = 5.00 EUR\n",
+        ),
+    ] {
+        let main = dir.join(file).to_string_lossy().into_owned();
+        std::fs::write(&main, text).unwrap();
+        let answer = |program: &str, args: &[String]| {
+            Command::new(program)
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .ok()
+        };
+        let Some(checked) = answer(tool.checker(), &check::command(tool, &main, &[])) else {
+            continue;
+        };
+        assert!(!checked.status.success(), "{tool:?}: the check fails");
+        for (slot, program, args) in complete::list_commands(tool, &main) {
+            let out = run(program, &args, &dir).expect("ran");
+            assert!(
+                !complete::list_of(tool, &out).is_empty(),
+                "{tool:?} {slot:?}: {out}"
+            );
+        }
+        let (program, args) = write::payees_command(tool, &main);
+        assert!(run(program, &args, &dir).expect("ran").contains("Shop"));
+        let (program, args) = write::draft_command(tool, &main, "Shop", date);
+        let draft = run(program, &args, &dir).expect("ran");
+        let (t, _) = write::new_transaction(
+            tool,
+            date,
+            write::separator(text, tool),
+            "Shop",
+            Some(&draft),
+        );
+        assert!(t.contains("10.00 EUR") && !t.contains('='), "{tool:?}: {t}");
+        let (program, args) = reconcile::pick_command(tool, &main);
+        assert!(
+            run(program, &args, &dir).expect("ran").contains("ank"),
+            "{tool:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Toggle Status on a header without a description, and on one whose
+/// mark has no blank after it: what it writes, the tool reads with the
+/// status meant.
+#[test]
+fn toggle_status_on_a_bare_header() {
+    use kalem_plugin_pta::write;
+    let dir = std::env::temp_dir().join(format!("pta-toggle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (tool, file, text, states) in [
+        (
+            Dialect::Hledger,
+            "t.journal",
+            "2026-01-02\n    a  1\n    b\n\n2026-01-03 *Payee\n    a  1\n    b\n",
+            vec!["print", "-O", "csv"],
+        ),
+        (
+            Dialect::Ledger,
+            "t.ledger",
+            "2026/01/02\n    A  1\n    B\n\n2026/01/03 *Payee\n    A  1\n    B\n",
+            vec!["register", "--register-format", "%(state)|%(payee)\n"],
+        ),
+    ] {
+        let main = dir.join(file).to_string_lossy().into_owned();
+        // The first pending, the second unmarked.
+        let second = text.find("*Payee").unwrap();
+        let once = kalem_plugin_pta::align::apply(text, &write::toggle(text, tool, 3..3, false));
+        let at = once.find("*Payee").unwrap_or(second);
+        let both =
+            kalem_plugin_pta::align::apply(&once, &write::toggle(&once, tool, at..at, false));
+        assert!(
+            both.starts_with(&format!("{} !\n", &text[..10])) && both.contains(" Payee\n"),
+            "{tool:?}: {both:?}"
+        );
+        std::fs::write(&main, &both).unwrap();
+        let mut args = vec!["-f".to_string(), main.clone()];
+        args.extend(states.iter().map(|s| s.to_string()));
+        let Some(out) = run(tool.checker(), &args, &dir) else {
+            continue;
+        };
+        match tool {
+            Dialect::Hledger => {
+                // `txnidx,date,date2,status,…`, a line a posting.
+                let status: Vec<&str> = out
+                    .lines()
+                    .skip(1)
+                    .map(|l| l.split(',').nth(3).unwrap_or(""))
+                    .collect();
+                assert_eq!(status, ["\"!\"", "\"!\"", "\"\"", "\"\""], "{out}");
+            }
+            _ => assert_eq!(
+                out.lines().collect::<Vec<_>>(),
+                [
+                    "2|<Unspecified payee>",
+                    "2|<Unspecified payee>",
+                    "0|Payee",
+                    "0|Payee"
+                ],
+                "{out}"
+            ),
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Run the Journal Block on a block indented under its heading, a
+/// heading of the journal's escaped with a comma, as Org writes them:
+/// the tool reads its code as Kalem's Babel gives it.
+#[test]
+fn a_journal_block_indented_and_escaped() {
+    use kalem_plugin_pta::blocks;
+    for (lang, journal, said) in [
+        (
+            "hledger",
+            "  ,* January\n  2026-01-01 Shop\n      expenses:food  10.00 EUR\n      assets:cash\n",
+            "10.00 EUR  expenses:food",
+        ),
+        (
+            "ledger",
+            "  ,* January\n  2026/01/01 Shop\n      Expenses:Food  10.00 EUR\n      Assets:Cash\n",
+            "10.00 EUR  Expenses:Food",
+        ),
+    ] {
+        let org = format!("* Money\n  #+begin_src {lang}\n{journal}  #+end_src\n");
+        let b = blocks::block_at(&org, org.find("Shop").unwrap()).expect("a block");
+        let (program, args) = blocks::command(&b);
+        let mut child = match Command::new(program)
+            .args(&args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => panic!("{program}: {e}"),
+        };
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(blocks::code(&org, &b).as_bytes())
+            .unwrap();
+        let o = child.wait_with_output().unwrap();
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            o.status.success(),
+            "{lang}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let squeezed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+        let want = said.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(squeezed.contains(&want), "{lang}: {out}");
+    }
 }

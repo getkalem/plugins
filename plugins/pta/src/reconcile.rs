@@ -4,7 +4,8 @@
 //! Beancount's flags) and lists those not cleared; the plugin takes the
 //! tool's total from the target the user typed, the difference shown,
 //! and, once it is zero, clears the pending postings and writes the
-//! target as a balance assertion, as the dialect writes one.
+//! target as a balance assertion, as the dialect writes one, where it
+//! holds at the statement's date.
 //!
 //! Amounts are exact decimals: hledger's from its JSON (a mantissa, its
 //! places and the commodity's style), Ledger's and Beancount's read from
@@ -224,7 +225,10 @@ pub fn hledger_total(json: &str) -> Vec<Amount> {
 }
 
 /// hledger's `register -O json`: rows of a date, a second date, the
-/// description, the posting, the running total.
+/// description, the posting, the running total. A posting's status is
+/// its own mark: one under a `*` or `!` transaction without a mark of its
+/// own has its transaction's status to hledger, which the JSON does not
+/// give ([`with_statuses`] puts it in).
 pub fn hledger_register(json: &str) -> Vec<Posting> {
     let v: Value = serde_json::from_str(json).unwrap_or_default();
     let written = |a: &Value| {
@@ -265,15 +269,134 @@ pub fn hledger_register(json: &str) -> Vec<Posting> {
         .unwrap_or_default()
 }
 
+/// The run that gives the statuses of the transactions of an hledger
+/// register's postings: the register's arguments (`register`, after the
+/// program) as `print -O csv` of the same journal and query, which
+/// writes each transaction's status by its number.
+pub fn statuses_command(register: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(register.len());
+    let mut command = false;
+    let mut args = register.iter().peekable();
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "register" if !command => {
+                command = true;
+                out.push("print".into());
+            }
+            // The register's own: its running total from the start.
+            "-H" => {}
+            "-O" if args.peek().is_some_and(|f| *f == "json") => {
+                args.next();
+                out.extend(["-O".into(), "csv".into()]);
+            }
+            _ => out.push(a.clone()),
+        }
+    }
+    out
+}
+
+/// The transactions' statuses in hledger's `print -O csv`, by their
+/// numbers: `*`, `!` or a blank.
+pub fn hledger_statuses(csv: &str) -> BTreeMap<usize, char> {
+    let mut lines = csv.lines();
+    let header = crate::report::csv_fields(lines.next().unwrap_or(""));
+    let at = |name: &str| header.iter().position(|h| h == name);
+    let mut out = BTreeMap::new();
+    let (Some(n), Some(s)) = (at("txnidx"), at("status")) else {
+        return out;
+    };
+    for l in lines {
+        let f = crate::report::csv_fields(l);
+        if let (Some(Ok(t)), Some(status)) = (f.get(n).map(|t| t.parse()), f.get(s)) {
+            out.insert(
+                t,
+                match status.trim() {
+                    "*" => '*',
+                    "!" => '!',
+                    _ => ' ',
+                },
+            );
+        }
+    }
+    out
+}
+
+/// The postings' statuses as hledger reads them: a posting's own mark,
+/// else its transaction's (`statuses`, [`hledger_statuses`]).
+pub fn with_statuses(postings: &mut [Posting], statuses: &BTreeMap<usize, char>) {
+    for p in postings {
+        if p.status == ' '
+            && let Some(&s) = p.transaction.and_then(|n| statuses.get(&n))
+        {
+            p.status = s;
+        }
+    }
+}
+
+/// The first number of an amount as `s` writes it: a run of digits and
+/// their marks outside a quoted commodity (`"VWRL2"`) and a commodity's
+/// name (`VWRL2`), ending with a digit; a blank in it only before a group
+/// of three digits (`1 000,00`). Its start and end.
+fn number_run(s: &str) -> Option<(usize, usize)> {
+    let chars: Vec<(usize, char)> = s.char_indices().collect();
+    let mut k = 0;
+    while k < chars.len() {
+        let c = chars[k].1;
+        if c == '"' {
+            // A quoted commodity, to its closing quote.
+            k += 1;
+            while k < chars.len() && chars[k].1 != '"' {
+                k += 1;
+            }
+            k += 1;
+        } else if c.is_alphabetic() {
+            // A commodity's name, its digits too.
+            while k < chars.len() && (chars[k].1.is_alphanumeric() || chars[k].1 == '_') {
+                k += 1;
+            }
+        } else if c.is_ascii_digit() {
+            let start = chars[k].0;
+            let mut end = start;
+            while let Some(&(i, c)) = chars.get(k) {
+                let group = |rest: &[u8]| {
+                    rest.len() >= 3
+                        && rest[..3].iter().all(u8::is_ascii_digit)
+                        && !rest.get(3).is_some_and(u8::is_ascii_digit)
+                };
+                if c.is_ascii_digit() {
+                    end = i + 1;
+                } else if !(matches!(
+                    c,
+                    '.' | ',' | '\'' | '_' | '\u{a0}' | '\u{2009}' | '\u{202f}'
+                ) || (c == ' ' && group(&s.as_bytes()[i + 1..])))
+                {
+                    break;
+                }
+                k += 1;
+            }
+            return Some((start, end));
+        } else {
+            k += 1;
+        }
+    }
+    None
+}
+
 /// An amount Ledger or Beancount wrote (`$11,619.00`, `EUR 120.00`,
-/// `-45000.00 TRY`): its number and style, the decimal mark the last of
-/// `.` and `,` not followed by exactly three digits and another group.
+/// `-45000.00 TRY`, `10 "VWRL2"`): its number the first one written, its
+/// commodity what is before or after it (quoted, or a name with digits,
+/// as written), and the style; the decimal mark the last of `.` and `,`
+/// not followed by exactly three digits and another group.
 pub fn text_amount(s: &str) -> Option<Amount> {
     let s = s.trim();
-    let start = s.find(|c: char| c.is_ascii_digit() || c == '-')?;
-    let end = s.rfind(|c: char| c.is_ascii_digit())? + 1;
+    let (mut start, end) = number_run(s)?;
+    // The sign before the number (`-45000.00 TRY`, `$-19.00`), or before
+    // the symbol (`-$19.00`).
+    if s[..start].ends_with('-') {
+        start -= 1;
+    }
     let (before, number, after) = (&s[..start], &s[start..end], &s[end..]);
-    let (sign_before, before) = match before.trim_end().strip_suffix('-') {
+    let (sign_before, before) = match before.strip_prefix('-') {
         Some(b) => (true, b),
         None => (false, before),
     };
@@ -332,6 +455,41 @@ pub enum Which {
     /// Cleared and pending: what the statement's balance is matched
     /// with.
     Both,
+}
+
+/// The tool's run listing the asset and liability accounts, to pick the
+/// one to reconcile; a balance assertion failing does not stop it
+/// ([`Dialect::lenient`]).
+pub fn pick_command(tool: Dialect, main: &str) -> (&'static str, Vec<String>) {
+    let mut a: Vec<String> = match tool {
+        Dialect::Hledger => vec![
+            "-f".into(),
+            main.into(),
+            "accounts".into(),
+            "type:AL".into(),
+        ],
+        Dialect::Ledger => vec![
+            "-f".into(),
+            main.into(),
+            "accounts".into(),
+            "^Assets".into(),
+            "^Liabilities".into(),
+        ],
+        Dialect::Beancount => {
+            return (
+                "bean-query",
+                vec![
+                    "-f".into(),
+                    "csv".into(),
+                    main.into(),
+                    "SELECT DISTINCT account WHERE account ~ '^(Assets|Liabilities):' ORDER BY account"
+                        .into(),
+                ],
+            );
+        }
+    };
+    a.extend(tool.lenient().map(str::to_string));
+    (tool.checker(), a)
 }
 
 /// The tool's total of `account` (with its subaccounts) in `main` for
@@ -562,8 +720,9 @@ pub struct Figures {
 /// commodity's (its symbol, empty for an account of one commodity, whose
 /// total is then the one the target names, else the first) with the
 /// statement's balance typed; its block the tool's totals of that
-/// commodity and the difference. A commodity with nothing cleared or
-/// pending has a total of zero, in its amounts' style.
+/// commodity and the difference. A total the tool did not print is zero
+/// (Ledger prints none for a total of zero, hledger none where no posting
+/// counts), in its commodity's amounts' style, else the target's.
 pub fn blocks(
     targets: &[(String, String)],
     cleared: &[Amount],
@@ -571,26 +730,32 @@ pub fn blocks(
     both: &[Amount],
 ) -> Vec<Figures> {
     let single = targets.len() == 1 && targets[0].0.is_empty();
+    let zero = |style: AmountStyle| Amount {
+        quantity: Decimal::default(),
+        style,
+    };
+    let either: Vec<Amount> = cleared.iter().chain(pending).cloned().collect();
     targets
         .iter()
         .map(|(commodity, target)| {
             let total = if single {
-                matching(target, both).cloned()
+                matching(target, both).cloned().or_else(|| {
+                    matching(target, &either)
+                        .map(|a| a.style.clone())
+                        .or_else(|| text_amount(target).map(|a| a.style))
+                        .map(zero)
+                })
             } else {
                 both.iter()
                     .find(|a| a.style.symbol == *commodity)
                     .cloned()
                     .or_else(|| {
-                        cleared
+                        either
                             .iter()
-                            .chain(pending)
                             .find(|a| a.style.symbol == *commodity)
                             .map(|a| a.style.clone())
                             .or_else(|| text_amount(target).map(|a| a.style))
-                            .map(|style| Amount {
-                                quantity: Decimal::default(),
-                                style,
-                            })
+                            .map(zero)
                     })
             };
             let of = |list: &[Amount]| -> Vec<String> {
@@ -948,15 +1113,178 @@ pub fn account_of(
     Some(accounts.get(&line).cloned().unwrap_or(written))
 }
 
+/// The start of the posting of `account` (or under it) in the
+/// transaction holding line `line` (from 1) of `text`, as Tab in the
+/// Reconcile document marks it: the one on that line, else the one
+/// written with `amount`, else the first. A posting's account is the
+/// tool's (`accounts`, [`account_of`]): one written with an alias or
+/// under `apply account` is found too.
+pub fn posting_at(
+    text: &str,
+    dialect: Dialect,
+    line: u32,
+    account: &str,
+    amount: &str,
+    accounts: &Accounts,
+) -> Option<usize> {
+    let start: usize = text
+        .split_inclusive('\n')
+        .take(line.saturating_sub(1) as usize)
+        .map(str::len)
+        .sum();
+    let txs = write::transactions(text, dialect);
+    let t = write::at(&txs, start).or_else(|| txs.iter().find(|t| t.range.start >= start))?;
+    let squeeze = |s: &str| s.split_whitespace().collect::<String>();
+    let mut candidates = Vec::new();
+    let mut offset = t.range.start;
+    for l in text[t.range.clone()].split_inclusive('\n') {
+        if offset > t.range.start
+            && account_of(text, offset, dialect, accounts).is_some_and(|a| under(&a, account))
+        {
+            candidates.push((offset, l));
+        }
+        offset += l.len();
+    }
+    candidates
+        .iter()
+        .find(|(o, _)| *o == start)
+        .or_else(|| {
+            candidates
+                .iter()
+                .find(|(_, l)| !amount.is_empty() && squeeze(l).contains(&squeeze(amount)))
+        })
+        .or(candidates.first())
+        .map(|(o, _)| *o)
+}
+
+/// The run that gives what a balance assertion of `account` written at
+/// `date` checks: the account's balance at the day's end, every posting
+/// counted whatever its status (an outstanding check too). hledger's with
+/// the subaccounts, as its `=*` asserts; Ledger's of each account alone
+/// (`--flat`, `display_amount`), its assertion counting the account
+/// alone. Another assertion failing does not stop it (`-I`,
+/// `--permissive`). Beancount: none, its `balance` counting the
+/// subaccounts and every posting, which are all cleared or pending, in
+/// the target already.
+pub fn asserted_command(
+    tool: Dialect,
+    main: &str,
+    account: &str,
+    date: Date,
+) -> Option<(&'static str, Vec<String>)> {
+    let end = date.plus(1);
+    match tool {
+        Dialect::Hledger => Some((
+            "hledger",
+            vec![
+                "-f".into(),
+                main.into(),
+                "balance".into(),
+                format!("acct:{}", crate::report::account_pattern(account)),
+                "-e".into(),
+                end.written('-'),
+                "-I".into(),
+                "-O".into(),
+                "json".into(),
+            ],
+        )),
+        Dialect::Ledger => {
+            let mut a: Vec<String> = vec![
+                "-f".into(),
+                main.into(),
+                "balance".into(),
+                "--flat".into(),
+                "--permissive".into(),
+                "--balance-format".into(),
+                "%(account)|%(scrub(display_amount))\\n".into(),
+                "--end".into(),
+                end.written('/'),
+            ];
+            a.extend(crate::report::ledger_pattern(account));
+            Some(("ledger", a))
+        }
+        Dialect::Beancount => None,
+    }
+}
+
+/// What Finish asserts at its date, from the run of [`asserted_command`]
+/// (`out`): an amount a target, hledger's the target (its `=*` counting
+/// the subaccounts), Ledger's the account's own balance there (its `=`
+/// counting the account alone); or, where the balance there with the
+/// subaccounts is not a target (a posting not cleared, dated on or before
+/// the date, counted in it), that target and the balance.
+pub fn asserted(
+    tool: Dialect,
+    out: &str,
+    account: &str,
+    targets: &[Amount],
+) -> Result<Vec<Amount>, Box<(Amount, Amount)>> {
+    // A target's commodity in `list`, summed; zero where it has none.
+    let of = |list: &[Amount], t: &Amount| Amount {
+        quantity: list
+            .iter()
+            .filter(|a| a.style.symbol == t.style.symbol)
+            .fold(Decimal::default(), |sum, a| {
+                sum.minus(Decimal {
+                    mantissa: -a.quantity.mantissa,
+                    scale: a.quantity.scale,
+                })
+            }),
+        style: t.style.clone(),
+    };
+    let (whole, own): (Vec<Amount>, Vec<Amount>) = match tool {
+        // Each account's own amounts: their sum is the balance with the
+        // subaccounts (Ledger's total row is no total of them), the
+        // account's row its own.
+        Dialect::Ledger => {
+            let rows: Vec<crate::report::Row> = crate::report::ledger_rows(out)
+                .into_iter()
+                .filter(|r| !r.account.is_empty())
+                .collect();
+            let amounts = |r: &crate::report::Row| -> Vec<Amount> {
+                r.amounts.iter().filter_map(|a| text_amount(a)).collect()
+            };
+            (
+                rows.iter().flat_map(amounts).collect(),
+                rows.iter()
+                    .find(|r| r.account == account)
+                    .map(amounts)
+                    .unwrap_or_default(),
+            )
+        }
+        _ => {
+            let whole = total_of(tool, out);
+            (whole.clone(), whole)
+        }
+    };
+    targets
+        .iter()
+        .map(|t| {
+            let balance = of(&whole, t);
+            if !balance.quantity.minus(t.quantity).is_zero() {
+                return Err(Box::new((t.clone(), balance)));
+            }
+            Ok(if tool == Dialect::Ledger {
+                of(&own, t)
+            } else {
+                t.clone()
+            })
+        })
+        .collect()
+}
+
 /// Finish: the edits that clear the pending postings of `account` in
-/// `text` (a pending transaction's mark, or a pending posting's), and
-/// the balance assertion written at `date`'s place: hledger's and
-/// Ledger's a transaction "Balance assertion" with a zero posting
-/// asserting `target`, Beancount's a `balance` directive the day after
-/// (Beancount checks at the day's start). hledger's and Ledger's
-/// assertion is aligned at `column` (`amount_column`; 0 leaves it near
-/// the account), as Align Amounts aligns. A posting's account is the
-/// tool's (`accounts`, [`account_of`]).
+/// `text` (a pending transaction's mark, or a pending posting's), and,
+/// with `targets` (the amounts asserted, [`asserted`]), the balance
+/// assertion written at `date`'s place: hledger's and Ledger's a
+/// transaction "Balance assertion" with a zero posting asserting each,
+/// hledger's with its subaccounts (`=*`), Ledger's the account alone
+/// (`=`, it has no other); Beancount's a `balance` directive the day
+/// after (Beancount checks at the day's start, the subaccounts counted).
+/// hledger's and Ledger's assertion is aligned at `column`
+/// (`amount_column`; 0 leaves it near the account), as Align Amounts
+/// aligns. A posting's account is the tool's (`accounts`,
+/// [`account_of`]).
 pub fn finish(
     text: &str,
     dialect: Dialect,
@@ -994,6 +1322,9 @@ pub fn finish(
             edits.push((r.start..r.start + 1, "*".to_string()));
         }
     }
+    if targets.is_empty() {
+        return edits;
+    }
     let sep = write::separator(text, dialect);
     let (when, assertion) = match dialect {
         Dialect::Beancount => {
@@ -1008,13 +1339,18 @@ pub fn finish(
         _ => {
             // One transaction, a zero posting asserting each commodity.
             let mut t = format!("{} * Balance assertion\n", date.written(sep));
+            let sign = if dialect == Dialect::Hledger {
+                "=*"
+            } else {
+                "="
+            };
             for target in targets {
                 let zero = Amount {
                     quantity: Decimal::default(),
                     style: target.style.clone(),
                 };
                 t.push_str(&format!(
-                    "    {account}  {} = {}\n",
+                    "    {account}  {} {sign} {}\n",
                     zero.written(),
                     target.written()
                 ));
@@ -1097,18 +1433,98 @@ mod tests {
                 scale: 1
             }
         );
+        // A commodity with digits, quoted (Ledger) or not (Beancount).
+        let fund = text_amount("10 \"VWRL2\"").unwrap();
+        assert_eq!(
+            (fund.quantity, fund.style.symbol.as_str(), fund.style.left),
+            (
+                Decimal {
+                    mantissa: 10,
+                    scale: 0
+                },
+                "\"VWRL2\"",
+                false
+            )
+        );
+        assert_eq!(fund.written(), "10 \"VWRL2\"");
+        assert_eq!(text_amount("-2.5 VWRL2").unwrap().written(), "-2.5 VWRL2");
+        assert_eq!(
+            text_amount("\"FUND 1\" 3.25").unwrap().written(),
+            "\"FUND 1\" 3.25"
+        );
+        let minus = text_amount("-$19.00").unwrap();
+        assert_eq!(
+            (minus.written(), minus.style.symbol.as_str()),
+            ("$-19.00".into(), "$")
+        );
+        assert_eq!(
+            text_amount("1 000,50 EUR").unwrap().quantity,
+            Decimal {
+                mantissa: 100050,
+                scale: 2
+            }
+        );
+        assert!(text_amount("\"V2\"").is_none());
     }
 
     #[test]
     fn hledgers_register() {
-        let json = r#"[["2026-01-03", null, "Market | groceries", {"pstatus": "Pending", "ptransaction_": "4", "pamount": [{"acommodity": "TRY", "aquantity": {"decimalMantissa": -84235, "decimalPlaces": 2}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2}}]}, [{"acommodity": "TRY", "aquantity": {"decimalMantissa": 9290725, "decimalPlaces": 2}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2}}]]]"#;
-        let r = hledger_register(json);
-        assert_eq!(r.len(), 1);
+        // As hledger 1.52 prints them (`register acct:^assets:bank(:|$)
+        // -O json`, then `print` of the same as CSV) for a cleared
+        // transaction and a pending one, neither posting marked itself.
+        let json = r#"[["2026-01-02", null, "Salary", {"paccount": "assets:bank", "pamount": [{"acommodity": "TRY", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 9374960, "decimalPlaces": 2, "floatingPoint": 93749.6}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2, "asrounding": "HardRounding"}}], "pbalanceassertion": null, "pcomment": "", "pdate": null, "pdate2": null, "poriginal": null, "pstatus": "Unmarked", "ptags": [], "ptransaction_": "1", "ptype": "RegularPosting"}, [{"acommodity": "TRY", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 9374960, "decimalPlaces": 2, "floatingPoint": 93749.6}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2, "asrounding": "HardRounding"}}]], ["2026-01-03", null, "Market | groceries", {"paccount": "assets:bank", "pamount": [{"acommodity": "TRY", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": -84235, "decimalPlaces": 2, "floatingPoint": -842.35}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2, "asrounding": "HardRounding"}}], "pbalanceassertion": null, "pcomment": "", "pdate": null, "pdate2": null, "poriginal": null, "pstatus": "Unmarked", "ptags": [], "ptransaction_": "2", "ptype": "RegularPosting"}, [{"acommodity": "TRY", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 9290725, "decimalPlaces": 2, "floatingPoint": 92907.25}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ",", "asdigitgroups": [".", [3]], "asprecision": 2, "asrounding": "HardRounding"}}]]]"#;
+        let mut r = hledger_register(json);
+        assert_eq!(r.len(), 2);
         assert_eq!(
-            (r[0].status, r[0].amount.as_str(), r[0].total.as_str()),
-            ('!', "-842,35 TRY", "92.907,25 TRY")
+            (r[1].status, r[1].amount.as_str(), r[1].total.as_str()),
+            (' ', "-842,35 TRY", "92.907,25 TRY")
         );
-        assert_eq!(r[0].transaction, Some(4));
+        assert_eq!(r[1].transaction, Some(2));
+        let csv = "\"txnidx\",\"date\",\"date2\",\"status\",\"code\",\"description\",\"comment\",\"account\",\"amount\",\"commodity\",\"credit\",\"debit\",\"posting-status\",\"posting-comment\"\n\"1\",\"2026-01-02\",\"\",\"*\",\"\",\"Salary\",\"\",\"assets:bank\",\"93749,60\",\"TRY\",\"\",\"93749,60\",\"\",\"\"\n\"1\",\"2026-01-02\",\"\",\"*\",\"\",\"Salary\",\"\",\"income:salary\",\"-93749,60\",\"TRY\",\"93749,60\",\"\",\"\",\"\"\n\"2\",\"2026-01-03\",\"\",\"!\",\"\",\"Market | groceries\",\"\",\"expenses:food\",\"842,35\",\"TRY\",\"\",\"842,35\",\"\",\"\"\n\"2\",\"2026-01-03\",\"\",\"!\",\"\",\"Market | groceries\",\"\",\"assets:bank\",\"-842,35\",\"TRY\",\"842,35\",\"\",\"\",\"\"\n";
+        let statuses = hledger_statuses(csv);
+        assert_eq!(statuses, BTreeMap::from([(1, '*'), (2, '!')]));
+        with_statuses(&mut r, &statuses);
+        assert_eq!((r[0].status, r[1].status), ('*', '!'));
+        // A posting's own mark stays.
+        let mut own = [Posting {
+            status: '!',
+            transaction: Some(1),
+            ..r[0].clone()
+        }];
+        with_statuses(&mut own, &statuses);
+        assert_eq!(own[0].status, '!');
+        let (_, args) = crate::report::register_command(
+            Dialect::Hledger,
+            "/j/m.journal",
+            "assets:bank",
+            Some((
+                Date {
+                    y: 2026,
+                    m: 1,
+                    d: 1,
+                },
+                Date {
+                    y: 2026,
+                    m: 2,
+                    d: 1,
+                },
+            )),
+        );
+        assert_eq!(
+            statuses_command(&args),
+            [
+                "-f",
+                "/j/m.journal",
+                "print",
+                "-O",
+                "csv",
+                "-b",
+                "2026-01-01",
+                "-e",
+                "2026-02-01",
+                "acct:^assets:bank(:|$)"
+            ]
+        );
     }
 
     #[test]
@@ -1137,7 +1553,7 @@ mod tests {
         );
         assert!(
             out.ends_with(
-                "\n2026-01-31 * Balance assertion\n    assets:bank  0,00 TRY = 44.147,65 TRY\n"
+                "\n2026-01-31 * Balance assertion\n    assets:bank  0,00 TRY =* 44.147,65 TRY\n"
             ),
             "{out}"
         );
@@ -1229,6 +1645,20 @@ mod tests {
             std::slice::from_ref(&usd),
         );
         assert_eq!(one[0].commodity, "");
+        // No total printed (Ledger's of zero): zero, in the cleared
+        // amounts' style, else the target's.
+        let nothing = blocks(
+            &[(String::new(), "$0".into())],
+            std::slice::from_ref(&usd),
+            &[text_amount("$-100.00").unwrap()],
+            &[],
+        );
+        let zero = nothing[0].total.as_ref().expect("a total");
+        assert_eq!(zero.written(), "$0.00");
+        assert!(nothing[0].difference.as_ref().unwrap().quantity.is_zero());
+        let none = blocks(&[(String::new(), "0,00 TRY".into())], &[], &[], &[]);
+        assert_eq!(none[0].total.as_ref().unwrap().written(), "0,00 TRY");
+        assert!(none[0].difference.as_ref().unwrap().quantity.is_zero());
         let doc = layout("h", "k", None, &b, &[], None);
         assert!(doc.text.contains("\nEUR\nCleared"), "{}", doc.text);
         assert!(doc.text.contains("\n\n$\nCleared"), "{}", doc.text);
@@ -1275,11 +1705,11 @@ mod tests {
         assert_eq!(lines.len(), 2, "{out}");
         assert!(
             lines[0].starts_with("    assets:cash ")
-                && lines[0].ends_with(" 0.00 EUR = 180.00 EUR"),
+                && lines[0].ends_with(" 0.00 EUR =* 180.00 EUR"),
             "{out}"
         );
         assert!(
-            lines[1].starts_with("    assets:cash ") && lines[1].ends_with(" $0.00 = $100.00"),
+            lines[1].starts_with("    assets:cash ") && lines[1].ends_with(" $0.00 =* $100.00"),
             "{out}"
         );
         let bean = "2026-01-01 * \"Opening\"\n  Assets:Cash  200.00 EUR\n  Equity:Opening\n";
@@ -1298,6 +1728,108 @@ mod tests {
         assert!(
             out.ends_with("\n2026-02-01 balance Assets:Cash  180.00 EUR\n2026-02-01 balance Assets:Cash  $100.00\n"),
             "{out}"
+        );
+    }
+
+    #[test]
+    fn asserting_what_holds() {
+        // An account with a subaccount, at the end of January: 100.00 EUR
+        // opening and 50.00 EUR in its savings, cleared; a pending 10.00
+        // EUR and an outstanding check of 5.00 EUR (not marked) in the
+        // month, a cleared 7.00 EUR in February. What hledger 1.52 and
+        // Ledger 3.4 print for `asserted_command`'s runs.
+        let date = Date {
+            y: 2026,
+            m: 1,
+            d: 31,
+        };
+        let (_, args) =
+            asserted_command(Dialect::Hledger, "/j/m.journal", "assets:bank", date).expect("a run");
+        assert_eq!(
+            args,
+            [
+                "-f",
+                "/j/m.journal",
+                "balance",
+                "acct:^assets:bank(:|$)",
+                "-e",
+                "2026-02-01",
+                "-I",
+                "-O",
+                "json"
+            ]
+        );
+        assert!(
+            asserted_command(Dialect::Beancount, "/j/m.beancount", "Assets:Bank", date).is_none()
+        );
+        let hledger = r#"[[["assets:bank", "assets:bank", 0, [{"acommodity": "EUR", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 8500, "decimalPlaces": 2, "floatingPoint": 85}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ".", "asdigitgroups": null, "asprecision": 2, "asrounding": "HardRounding"}}]], ["assets:bank:savings", "assets:bank:savings", 0, [{"acommodity": "EUR", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 5000, "decimalPlaces": 2, "floatingPoint": 50}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ".", "asdigitgroups": null, "asprecision": 2, "asrounding": "HardRounding"}}]]], [{"acommodity": "EUR", "acost": null, "acostbasis": null, "aquantity": {"decimalMantissa": 13500, "decimalPlaces": 2, "floatingPoint": 135}, "astyle": {"ascommodityside": "R", "ascommodityspaced": true, "asdecimalmark": ".", "asdigitgroups": null, "asprecision": 2, "asrounding": "HardRounding"}}]]"#;
+        let ledger = "Assets:Bank|85.00 EUR\nAssets:Bank:Savings|50.00 EUR\n|0\n";
+        let eur = |s: &str| text_amount(s).unwrap();
+        // The statement's balance counts the outstanding check: 140.00
+        // EUR cleared and pending, 135.00 EUR in the account.
+        assert_eq!(
+            asserted(
+                Dialect::Hledger,
+                hledger,
+                "assets:bank",
+                &[eur("140.00 EUR")]
+            )
+            .map_err(|e| (e.0.written(), e.1.written())),
+            Err(("140.00 EUR".into(), "135.00 EUR".into()))
+        );
+        assert_eq!(
+            asserted(Dialect::Ledger, ledger, "Assets:Bank", &[eur("140.00 EUR")])
+                .map_err(|e| (e.0.written(), e.1.written())),
+            Err(("140.00 EUR".into(), "135.00 EUR".into()))
+        );
+        // A statement that has it: hledger asserts the balance with the
+        // subaccount (`=*`), Ledger the account's own, 85.00 EUR.
+        let written = |r: Result<Vec<Amount>, Box<(Amount, Amount)>>| {
+            r.map(|l| l.iter().map(Amount::written).collect::<Vec<_>>())
+                .map_err(|e| (e.0.written(), e.1.written()))
+        };
+        assert_eq!(
+            written(asserted(
+                Dialect::Hledger,
+                hledger,
+                "assets:bank",
+                &[eur("135.00 EUR")]
+            )),
+            Ok(vec!["135.00 EUR".to_string()])
+        );
+        assert_eq!(
+            written(asserted(
+                Dialect::Ledger,
+                ledger,
+                "Assets:Bank",
+                &[eur("135.00 EUR")]
+            )),
+            Ok(vec!["85.00 EUR".to_string()])
+        );
+        // A commodity the account does not have there: zero.
+        assert_eq!(
+            written(asserted(
+                Dialect::Ledger,
+                ledger,
+                "Assets:Bank",
+                &[eur("$0.00")]
+            )),
+            Ok(vec!["$0.00".to_string()])
+        );
+        // Nothing asserted: the pending marks cleared alone.
+        let text = "2026-01-10 ! Market\n    expenses:food  10.00 EUR\n    assets:bank\n";
+        let edits = finish(
+            text,
+            Dialect::Hledger,
+            "assets:bank",
+            &[],
+            date,
+            0,
+            &Accounts::new(),
+        );
+        assert_eq!(
+            crate::align::apply(text, &edits),
+            text.replace("! Market", "* Market")
         );
     }
 
@@ -1452,5 +1984,26 @@ mod tests {
         };
         assert!(cleared(&accounts).contains("2026-01-05 * Grocer"));
         assert!(cleared(&none).contains("2026-01-05 ! Grocer"));
+        // Tab's posting, from the transaction's line: `chk`, as the tool
+        // reads it; as written, none of the account's.
+        let chk = text.find("    chk\n").unwrap();
+        let tab = |accounts: &Accounts| {
+            posting_at(
+                text,
+                Dialect::Hledger,
+                3,
+                "assets:checking",
+                "$-42.35",
+                accounts,
+            )
+        };
+        assert_eq!(tab(&accounts), Some(chk));
+        assert_eq!(tab(&none), None);
+        // On a posting's own line, that one.
+        let food = text.find("    expenses:food  $42.35").unwrap();
+        assert_eq!(
+            posting_at(text, Dialect::Hledger, 4, "expenses", "", &accounts),
+            Some(food)
+        );
     }
 }

@@ -236,14 +236,13 @@ fn parts_match(account: &str, typed: &str) -> bool {
 }
 
 /// The tool's runs listing the main journal's accounts, payees and
-/// commodities.
+/// commodities, a balance assertion failing not stopping them
+/// ([`Dialect::lenient`]).
 pub fn list_commands(tool: Dialect, main: &str) -> Vec<(Slot, &'static str, Vec<String>)> {
     let run = |slot: Slot, program: &'static str, what: &str| {
-        (
-            slot,
-            program,
-            vec!["-f".to_string(), main.to_string(), what.to_string()],
-        )
+        let mut args = vec!["-f".to_string(), main.to_string(), what.to_string()];
+        args.extend(tool.lenient().map(str::to_string));
+        (slot, program, args)
     };
     match tool {
         Dialect::Hledger => vec![
@@ -451,7 +450,9 @@ mod tests {
     #[test]
     fn lists() {
         let c = list_commands(Dialect::Ledger, "/j/b.ledger");
-        assert_eq!(c[1].2, ["-f", "/j/b.ledger", "payees"]);
+        assert_eq!(c[1].2, ["-f", "/j/b.ledger", "payees", "--permissive"]);
+        let c = list_commands(Dialect::Hledger, "/j/a.journal");
+        assert_eq!(c[0].2, ["-f", "/j/a.journal", "accounts", "-I"]);
         assert_eq!(
             list_of(Dialect::Hledger, "assets\nassets:bank\n\n"),
             ["assets", "assets:bank"]

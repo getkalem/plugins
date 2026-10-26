@@ -858,7 +858,7 @@ pub fn narrowed_register(
 }
 
 /// The fields of a CSV line: quoted ones with `""` for a quote.
-fn csv_fields(line: &str) -> Vec<String> {
+pub(crate) fn csv_fields(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut field = String::new();
     let mut quoted = false;

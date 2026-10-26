@@ -211,8 +211,10 @@ pub fn transactions(text: &str, dialect: Dialect) -> Vec<Transaction> {
                 let b = rest[n..].len() - rest[n..].trim_start_matches([' ', '\t']).len();
                 Some(start + after..start + after + n + b)
             }
+            // A mark with a blank after it or not (`*Payee`), as hledger
+            // and Ledger read it.
             _ => match rest.chars().next() {
-                Some('*' | '!') if rest[1..].starts_with([' ', '\t']) || rest.len() == 1 => {
+                Some('*' | '!') => {
                     let b = rest[1..].len() - rest[1..].trim_start_matches([' ', '\t']).len();
                     Some(start + after..start + after + 1 + b)
                 }
@@ -322,6 +324,35 @@ fn transaction_status(text: &str, t: &Transaction) -> Status {
         .map_or(Status::Unmarked, |r| Status::of(&text[r]))
 }
 
+/// The edit that writes `status` as `t`'s: its mark and a blank before
+/// the description (`2026-01-02 ! Payee`); where nothing follows, the
+/// blank before the mark rather than after it (`2026-01-02 !`, since
+/// `2026-01-02! ` reads in neither tool), and no blank left behind when
+/// the mark is taken off.
+fn status_edit(
+    text: &str,
+    t: &Transaction,
+    status: Status,
+    dialect: Dialect,
+) -> (Range<usize>, String) {
+    let r = t.status.clone().unwrap_or(t.status_at..t.status_at);
+    let line_end = text[r.end..]
+        .find(['\n', '\r'])
+        .map_or(text.len(), |i| r.end + i);
+    let mark = status.written(dialect);
+    if !text[r.end..line_end].trim().is_empty() {
+        return (r, mark.to_string());
+    }
+    let date_end = text[..r.start].trim_end_matches([' ', '\t']).len();
+    let mark = mark.trim_end();
+    let written = if mark.is_empty() {
+        String::new()
+    } else {
+        format!(" {mark}")
+    };
+    (date_end..line_end, written)
+}
+
 /// Marks the posting at `at` pending, or unmarks it, as a reconciliation
 /// ticks it off (ledger-mode's reconcile toggle): a posting not marked
 /// in a transaction not marked gets `!`; a pending posting, or a
@@ -340,10 +371,7 @@ pub fn toggle_pending(
     Some(match (posting, whole) {
         (Some(Status::Cleared), _) | (None, Status::Cleared) => Vec::new(),
         (Some(Status::Pending), _) => vec![(mark?, String::new())],
-        (_, Status::Pending) => {
-            let r = t.status.clone()?;
-            vec![(r, Status::Unmarked.written(dialect).to_string())]
-        }
+        (_, Status::Pending) => vec![status_edit(text, t, Status::Unmarked, dialect)],
         _ => vec![(start..start, Status::Pending.written(dialect).to_string())],
     })
 }
@@ -415,10 +443,7 @@ pub fn toggle(
     chosen
         .iter()
         .filter(|t| transaction_status(text, t) != next)
-        .map(|t| {
-            let r = t.status.clone().unwrap_or(t.status_at..t.status_at);
-            (r, next.written(dialect).to_string())
-        })
+        .map(|t| status_edit(text, t, next, dialect))
         .collect()
 }
 
@@ -516,8 +541,11 @@ pub fn insertion(text: &str, at: usize, transaction: &str) -> (String, usize) {
 }
 
 /// Copy Transaction: the transaction holding `at` again, dated `today`
-/// (as it writes its dates), placed by its date (or at the end); the
-/// insertion's place and text, and the copy's start in the text.
+/// (as it writes its dates), without its status, its postings' marks and
+/// their balance assertions (a new transaction is not cleared, and the
+/// old balances are not the new; Beancount's flag kept), placed by its
+/// date (or at the end); the insertion's place and text, and the copy's
+/// start in the text.
 pub fn copy(
     text: &str,
     dialect: Dialect,
@@ -527,14 +555,29 @@ pub fn copy(
 ) -> Option<(usize, String, usize)> {
     let txs = transactions(text, dialect);
     let t = self::at(&txs, at)?;
+    let rel = |r: &Range<usize>| r.start - t.range.start..r.end - t.range.start;
     let body = &text[t.range.clone()];
-    let rel = t.date_range.start - t.range.start..t.date_range.end - t.range.start;
-    let copied = format!(
+    let date = rel(&t.date_range);
+    let status = match &t.status {
+        Some(s) if dialect != Dialect::Beancount => rel(s),
+        _ => date.end..date.end,
+    };
+    let mut copied = format!(
         "{}{}{}",
-        &body[..rel.start],
+        &body[..date.start],
         today.written(t.sep),
-        &body[rel.end..]
+        &body[date.end..status.start]
     );
+    for (n, line) in body[status.end..].split_inclusive('\n').enumerate() {
+        let own = line.trim_end_matches('\n').trim_end_matches('\r');
+        match fresh_posting(own, dialect) {
+            Some(fresh) if n > 0 => {
+                copied.push_str(&fresh);
+                copied.push_str(&line[own.len()..]);
+            }
+            _ => copied.push_str(line),
+        }
+    }
     let place = place(text, dialect, today, at_end);
     let (ins, start) = insertion(text, place, &copied);
     Some((place, ins, start))
@@ -713,13 +756,78 @@ pub fn smart_date(input: &str, today: Date) -> Option<Date> {
     })
 }
 
+/// The tool's run listing the main journal's payees, for New
+/// Transaction's pick; a balance assertion failing does not stop it
+/// ([`Dialect::lenient`]).
+pub fn payees_command(tool: Dialect, main: &str) -> (&'static str, Vec<String>) {
+    match tool {
+        Dialect::Beancount => (
+            "bean-query",
+            vec![
+                "-f".into(),
+                "csv".into(),
+                main.into(),
+                "SELECT DISTINCT payee".into(),
+            ],
+        ),
+        _ => {
+            let mut a = vec!["-f".into(), main.into(), "payees".into()];
+            a.extend(tool.lenient().map(str::to_string));
+            (tool.checker(), a)
+        }
+    }
+}
+
+/// The tool's run drafting a transaction of `payee` dated `date` from its
+/// last one, which [`new_transaction`] takes: `hledger print --match`,
+/// `ledger xact`, Beancount's `PRINT`; a balance assertion failing does
+/// not stop it ([`Dialect::lenient`]).
+pub fn draft_command(
+    tool: Dialect,
+    main: &str,
+    payee: &str,
+    date: Date,
+) -> (&'static str, Vec<String>) {
+    match tool {
+        Dialect::Hledger => (
+            "hledger",
+            vec![
+                "-f".into(),
+                main.into(),
+                "print".into(),
+                "--match".into(),
+                payee.into(),
+                "-I".into(),
+            ],
+        ),
+        Dialect::Ledger => (
+            "ledger",
+            vec![
+                "-f".into(),
+                main.into(),
+                "--permissive".into(),
+                "xact".into(),
+                date.written('/'),
+                payee.into(),
+            ],
+        ),
+        Dialect::Beancount => (
+            "bean-query",
+            vec![
+                main.into(),
+                format!("PRINT FROM payee = \"{}\"", payee.replace('"', "\\\"")),
+            ],
+        ),
+    }
+}
+
 /// The new transaction from the draft a tool gave for the payee (its
 /// last transaction, as `hledger print --match`, `ledger xact` or
 /// `bean-query`'s `PRINT` write it), dated `date` with `sep`: its first
-/// transaction, without a code, a status (Beancount's flag kept), a
-/// second date, or balance assertions; or, with no draft, the payee and
-/// one posting line to fill. The text, and where its first amount (or
-/// the posting's account) is in it.
+/// transaction, without a code, a status, its postings' marks
+/// (Beancount's flags kept), a second date, or balance assertions; or,
+/// with no draft, the payee and one posting line to fill. The text, and
+/// where its first amount (or the posting's account) is in it.
 pub fn new_transaction(
     dialect: Dialect,
     date: Date,
@@ -737,11 +845,7 @@ pub fn new_transaction(
             Dialect::Beancount => format!("{dated} * \"{}\" \"\"\n", payee.replace('"', "'")),
             _ => format!("{dated} {payee}\n"),
         };
-        let indent = if dialect == Dialect::Beancount {
-            "  "
-        } else {
-            "    "
-        };
+        let indent = posting_indent(dialect);
         let text = format!("{head}{indent}\n");
         let at = head.len() + indent.len();
         return (text, at);
@@ -774,28 +878,7 @@ pub fn new_transaction(
             out.push('\n');
             continue;
         }
-        // A posting's balance assertion: the old balance, not the new.
-        let mut line = line.trim_end().to_string();
-        if dialect != Dialect::Beancount
-            && let Some(p) = crate::align::posting(&line, dialect)
-        {
-            let amount_at = p.gap.end;
-            let tail = &line[amount_at..];
-            if let Some(eq) = tail
-                .find(" =")
-                .or_else(|| tail.starts_with('=').then_some(0))
-            {
-                let cut = amount_at + eq;
-                let comment = line[cut..].find(';').map(|c| line[cut + c..].to_string());
-                line.truncate(cut);
-                let trimmed = line.trim_end().len();
-                line.truncate(trimmed);
-                if let Some(c) = comment {
-                    line.push_str("  ");
-                    line.push_str(&c);
-                }
-            }
-        }
+        let line = fresh_posting(line, dialect).unwrap_or_else(|| line.trim_end().to_string());
         if first_amount.is_none()
             && let Some(p) = crate::align::posting(&line, dialect)
         {
@@ -806,6 +889,100 @@ pub fn new_transaction(
     }
     let at = first_amount.unwrap_or(out.find('\n').map_or(out.len(), |i| i + 1));
     (out, at)
+}
+
+/// Where `s` has `c` outside a quoted commodity (`"A;B"`), from byte
+/// `from`.
+fn unquoted(s: &str, from: usize, c: char) -> Option<usize> {
+    let mut quoted = false;
+    s[from..]
+        .char_indices()
+        .find(|&(_, ch)| {
+            if ch == '"' {
+                quoted = !quoted;
+            }
+            !quoted && ch == c
+        })
+        .map(|(i, _)| from + i)
+}
+
+/// A posting line (without its line feed) of a transaction written anew,
+/// a tool's draft or a copy: without its status mark (a new posting is
+/// not cleared) and its balance assertion (the old balance, not the
+/// new), its amount kept where it was and its comment kept whole; none
+/// when it has neither, or is Beancount's (its flags kept, no assertion
+/// on a posting).
+fn fresh_posting(line: &str, dialect: Dialect) -> Option<String> {
+    if dialect == Dialect::Beancount || !indented(line) || comment_line(line, dialect) {
+        return None;
+    }
+    let mut out = line.trim_end().to_string();
+    let mut changed = false;
+    let indent = out.len() - out.trim_start_matches([' ', '\t']).len();
+    let rest = &out[indent..];
+    if rest.starts_with(['*', '!']) && rest[1..].starts_with([' ', '\t']) {
+        let mark = 1 + rest[1..].len() - rest[1..].trim_start_matches([' ', '\t']).len();
+        out.replace_range(indent..indent + mark, "");
+        // The blanks before the amount make up for it.
+        if let Some(p) = crate::align::posting(&out, dialect) {
+            out.insert_str(p.gap.start, &" ".repeat(mark));
+        }
+        changed = true;
+    }
+    if let Some(p) = crate::align::posting(&out, dialect) {
+        // An `=` after the amount (or in its place), before the comment:
+        // `= 93.749,60 TRY`, `==`, `=*`; one in the comment stays.
+        let amount = p.gap.end;
+        let comment = unquoted(&out, amount, ';');
+        let end = comment.unwrap_or(out.len());
+        let mut from = amount;
+        let mut eq = None;
+        while let Some(e) = unquoted(&out[..end], from, '=') {
+            // Not a lot's fixed price (`{=$50}`).
+            if e == amount || out[..e].ends_with([' ', '\t']) {
+                eq = Some(e);
+                break;
+            }
+            from = e + 1;
+        }
+        if let Some(cut) = eq {
+            let comment = comment.map(|c| out[c..].to_string());
+            out.truncate(cut);
+            out.truncate(out.trim_end().len());
+            if let Some(c) = comment {
+                out.push_str("  ");
+                out.push_str(&c);
+            }
+            changed = true;
+        }
+    }
+    changed.then_some(out)
+}
+
+/// The indent of the postings the plugin writes: four blanks, as hledger
+/// and Ledger print them, Beancount's two, as `bean-format` writes them.
+pub fn posting_indent(dialect: Dialect) -> &'static str {
+    if dialect == Dialect::Beancount {
+        "  "
+    } else {
+        "    "
+    }
+}
+
+/// Enter at `at`, the end of a transaction's header line (only blanks
+/// after it on the line): a new line, ended as the text ends its lines,
+/// and the posting indent ([`posting_indent`]), where Kalem's own new
+/// line copies the header's indent, none; none on another line, or with
+/// the description after the cursor.
+pub fn header_newline(text: &str, dialect: Dialect, at: usize) -> Option<String> {
+    let at = at.min(text.len());
+    let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[at..].find('\n').map_or(text.len(), |i| at + i);
+    // The line alone: a transaction's header is one there too.
+    if !text[at..end].trim().is_empty() || transactions(&text[start..end], dialect).is_empty() {
+        return None;
+    }
+    Some(format!("{}{}", line_ending(text), posting_indent(dialect)))
 }
 
 /// The account of the posting on the line holding `at`: after its
@@ -989,6 +1166,31 @@ mod tests {
         let s3 = apply(&apply(&s1, &toggle(&s1, Beancount, 3..3, false)), &[]);
         let s3 = apply(&s3, &toggle(&s3, Beancount, 3..3, false));
         assert_eq!(s3, b);
+        // A header without a description: the mark after a blank, and
+        // no blank left once it is taken off.
+        let bare = "2026-01-02\n    a  1\n    b\n";
+        let p = apply(bare, &toggle(bare, Hledger, 3..3, false));
+        assert!(p.starts_with("2026-01-02 !\n"), "{p:?}");
+        let c = apply(&p, &toggle(&p, Hledger, 3..3, false));
+        assert!(c.starts_with("2026-01-02 *\n"), "{c:?}");
+        assert_eq!(apply(&c, &toggle(&c, Hledger, 3..3, false)), bare);
+        let blank = "2026/01/02 \r\n    a  1\r\n    b\r\n";
+        let p = apply(blank, &toggle(blank, Ledger, 3..3, false));
+        assert!(p.starts_with("2026/01/02 !\r\n"), "{p:?}");
+        let at = p.find("    b").unwrap();
+        assert_eq!(
+            apply(&p, &toggle_pending(&p, Ledger, at).unwrap()),
+            "2026/01/02\r\n    a  1\r\n    b\r\n"
+        );
+        // A mark without a blank after it is the transaction's status.
+        let tight = "2026-01-01 *Payee\n    a  1\n    b\n";
+        assert_eq!(
+            &tight[transactions(tight, Hledger)[0].status.clone().unwrap()],
+            "*"
+        );
+        let u = apply(tight, &toggle(tight, Hledger, 3..3, false));
+        assert!(u.starts_with("2026-01-01 Payee\n"), "{u:?}");
+        assert_eq!(payees_in(tight, Hledger), ["Payee"]);
     }
 
     #[test]
@@ -1009,10 +1211,30 @@ mod tests {
         let (place, ins, start) = copy(t, Hledger, at, D(2026, 1, 10), false).unwrap();
         assert_eq!(&ins[start..start + 10], "2026-01-10");
         let out = format!("{}{}{}", &t[..place], ins, &t[place..]);
-        assert!(out.contains("income:salary\n\n2026-01-10 * (1001) Ziraat | salary\n    assets:bank  45.000,00 TRY\n    income:salary\n\n2026-01-20 Rent"), "{out}");
+        assert!(out.contains("income:salary\n\n2026-01-10 (1001) Ziraat | salary\n    assets:bank  45.000,00 TRY\n    income:salary\n\n2026-01-20 Rent"), "{out}");
         // At the end, with `insert_at` end.
         let (place, _, _) = copy(t, Hledger, at, D(2026, 1, 10), true).unwrap();
         assert_eq!(place, t.len());
+        // Not cleared, its postings' marks and assertions left out, the
+        // comments whole; Beancount's flag kept.
+        let c = "2026-01-02 ! Shop  ; a = b\n    * assets:bank    -10.00 EUR = 90.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n    ; note = here\n";
+        let (_, ins, start) = copy(c, Hledger, 3, D(2026, 1, 10), true).unwrap();
+        assert_eq!(
+            &ins[start..],
+            "2026-01-10 Shop  ; a = b\n    assets:bank      -10.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n    ; note = here\n"
+        );
+        let b = "2026-01-02 ! \"Shop\" \"\"\n  Assets:Bank  -10.00 EUR\n  Expenses:Food\n";
+        let (_, ins, start) = copy(b, Beancount, 3, D(2026, 1, 10), true).unwrap();
+        assert_eq!(&ins[start..], b.replace("2026-01-02", "2026-01-10"));
+        // A CRLF journal's copy keeps its line endings.
+        let crlf = c.replace('\n', "\r\n");
+        let (_, ins, start) = copy(&crlf, Hledger, 3, D(2026, 1, 10), true).unwrap();
+        assert!(
+            ins[start..].starts_with(
+                "2026-01-10 Shop  ; a = b\r\n    assets:bank      -10.00 EUR  ; x = y\r\n"
+            ),
+            "{ins:?}"
+        );
         let e = shift_date(t, Hledger, at, 30).unwrap();
         assert_eq!(e.1, "2026-02-01");
         assert_eq!(&t[e.0], "2026-01-02");
@@ -1078,6 +1300,14 @@ mod tests {
             "2026-02-02 Ziraat | salary  ; payroll:january\n    assets:bank:ziraat    45.000,00 TRY\n    income:salary\n"
         );
         assert_eq!(&t[at..at + 9], "45.000,00");
+        // As `hledger print --match` writes a posting's mark: taken out,
+        // the amount where it was; an `=` in a comment is the comment's.
+        let draft = "2026-01-02 * Shop\n    * assets:bank  -10.00 EUR = 90.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n    expenses:fees  1 \"A=B\" @ $1 == 3 \"A=B\"\n    assets:broker  1 AAPL {=$50}\n";
+        let (t, _) = new_transaction(Hledger, D(2026, 2, 2), '-', "Shop", Some(draft));
+        assert_eq!(
+            t,
+            "2026-02-02 Shop\n    assets:bank    -10.00 EUR  ; x = y\n    expenses:food  10.00 EUR  ; ratio = 1/2\n    expenses:fees  1 \"A=B\" @ $1\n    assets:broker  1 AAPL {=$50}\n"
+        );
         // No draft: the payee and a posting to fill.
         let (t, at) = new_transaction(Ledger, D(2026, 2, 2), '/', "Client B", None);
         assert_eq!(t, "2026/02/02 Client B\n    \n");
@@ -1171,6 +1401,42 @@ mod tests {
             Some("Assets:Bank")
         );
         assert_eq!(account_at(b, b.find("receipt").unwrap(), Beancount), None);
+    }
+
+    #[test]
+    fn enter_on_a_header() {
+        let t = "2026-01-02 * Shop\n    expenses:food  10 EUR\n    assets:bank\n";
+        let end = t.find('\n').unwrap();
+        assert_eq!(header_newline(t, Hledger, end).as_deref(), Some("\n    "));
+        // Blanks after the cursor: still at its end.
+        let blanks = "2026-01-02 Shop  \n";
+        assert_eq!(
+            header_newline(blanks, Ledger, 15).as_deref(),
+            Some("\n    ")
+        );
+        // A date alone, at the text's end; CRLF.
+        assert_eq!(
+            header_newline("2026-01-02", Hledger, 10).as_deref(),
+            Some("\n    ")
+        );
+        let crlf = "2026/01/02 Shop\r\n    a  1\r\n";
+        assert_eq!(
+            header_newline(crlf, Ledger, 15).as_deref(),
+            Some("\r\n    ")
+        );
+        // In the description, on a posting, on a directive: Kalem's own.
+        assert_eq!(header_newline(t, Hledger, end - 2), None);
+        let posting = t.find("expenses").unwrap() + 20;
+        assert_eq!(header_newline(t, Hledger, posting), None);
+        assert_eq!(header_newline("account assets:bank\n", Hledger, 19), None);
+        // Beancount: a transaction's header, two blanks; a dated
+        // directive, none.
+        let b = "2026-01-01 open Assets:Cash\n2026-01-02 * \"Shop\" \"\"\n";
+        assert_eq!(header_newline(b, Beancount, 27), None);
+        assert_eq!(
+            header_newline(b, Beancount, b.len() - 1).as_deref(),
+            Some("\n  ")
+        );
     }
 
     #[test]

@@ -190,10 +190,12 @@ fn gather(key: &(String, String), open: bool) {
     };
     let (program, mut args) =
         report::narrowed_register(tool, &key.0, &key.1, period.bounds(today()), &query);
+    let statuses = crate::reconcile::statuses_command(&args);
     if valued {
         args = report::value_args(tool, &mut args);
     }
     let dir = journal::folder(&key.0).to_string();
+    let there = dir.clone();
     let key = key.clone();
     run(program, args, &dir, move |r| {
         let current = REGISTERS.with(|m| m.borrow().get(&key).map(|e| e.run)) == Some(run_no);
@@ -221,12 +223,34 @@ fn gather(key: &(String, String), open: bool) {
             Dialect::Ledger => report::ledger_register(&out),
             Dialect::Beancount => report::beancount_register(&out),
         };
-        REGISTERS.with(|m| {
-            if let Some(e) = m.borrow_mut().get_mut(&key) {
-                e.rows = rows;
+        let shown = move |rows: Vec<Posting>| {
+            let current = REGISTERS.with(|m| m.borrow().get(&key).map(|e| e.run)) == Some(run_no);
+            if !current {
+                return;
             }
+            REGISTERS.with(|m| {
+                if let Some(e) = m.borrow_mut().get_mut(&key) {
+                    e.rows = rows;
+                }
+            });
+            write(&key, open);
+        };
+        if tool != Dialect::Hledger || rows.iter().all(|p| p.status != ' ') {
+            return shown(rows);
+        }
+        // A posting's status as hledger reads it: its transaction's where
+        // it has no mark of its own, which the register's JSON leaves out.
+        run("hledger", statuses, &there, move |r| {
+            let mut rows = rows;
+            if let Ok(e) = r
+                && e.status == Some(0)
+            {
+                let statuses =
+                    crate::reconcile::hledger_statuses(&String::from_utf8_lossy(&e.stdout));
+                crate::reconcile::with_statuses(&mut rows, &statuses);
+            }
+            shown(rows);
         });
-        write(&key, open);
     });
 }
 

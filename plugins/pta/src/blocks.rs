@@ -24,6 +24,8 @@ pub struct Block {
     pub results: Range<usize>,
     /// Its `:cmdline` (or `:cmd`), empty without.
     pub cmdline: String,
+    /// Its indentation kept (the `-i` switch).
+    pub preserve: bool,
 }
 
 /// The lines of `text`: each one's start and end (its line feed left
@@ -77,6 +79,11 @@ pub fn block_at(text: &str, at: usize) -> Option<Block> {
     let cmdline = header_arg(args, "cmdline")
         .or_else(|| header_arg(args, "cmd"))
         .unwrap_or_default();
+    // The switches come before the header arguments.
+    let preserve = args
+        .split_whitespace()
+        .take_while(|w| !w.starts_with(':'))
+        .any(|w| w == "-i");
     let body = if begin + 1 < end {
         ls[begin + 1].start..ls[end - 1].end
     } else {
@@ -130,7 +137,94 @@ pub fn block_at(text: &str, at: usize) -> Option<Block> {
         body,
         results,
         cmdline,
+        preserve,
     })
+}
+
+/// The block's code as Kalem's Babel gives it to an executor, and so to
+/// the tool: Org's escapes taken off (`,*` and `,#+` at a line's start,
+/// after its indentation: `org-unescape-code-in-string`), then, unless
+/// the block keeps its indentation (`-i`), the common indentation of its
+/// lines (Org's content indent of two blanks), as
+/// `org-remove-indentation` does; ending with a line feed.
+pub fn code(text: &str, b: &Block) -> String {
+    let body = text[b.body.clone()].replace("\r\n", "\n");
+    let mut out = String::with_capacity(body.len() + 1);
+    for line in body.split_inclusive('\n') {
+        let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        let rest = &line[indent..];
+        let commas = rest.len() - rest.trim_start_matches(',').len();
+        let after = &rest[commas..];
+        if commas > 0 && (after.starts_with('*') || after.starts_with("#+")) {
+            out.push_str(&line[..indent + commas - 1]);
+            out.push_str(after);
+        } else {
+            out.push_str(line);
+        }
+    }
+    let mut out = if b.preserve {
+        out
+    } else {
+        remove_indentation(&out)
+    };
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// `org-remove-indentation`: the smallest indentation of the lines not
+/// blank taken off each, a tab counting to the next multiple of 8 (one
+/// across the cut stays); blank lines lose their blanks; nothing where a
+/// line has none.
+fn remove_indentation(s: &str) -> String {
+    let column_of = |l: &str| {
+        let mut w = 0;
+        for c in l.chars() {
+            match c {
+                ' ' => w += 1,
+                '\t' => w = (w / 8 + 1) * 8,
+                _ => break,
+            }
+        }
+        w
+    };
+    let Some(n) = s
+        .split('\n')
+        .filter(|l| !l.trim().is_empty())
+        .map(column_of)
+        .min()
+    else {
+        return s.to_string();
+    };
+    if n == 0 {
+        return s.to_string();
+    }
+    let lines: Vec<String> = s
+        .split('\n')
+        .map(|l| {
+            if l.trim().is_empty() {
+                return String::new();
+            }
+            let mut col = 0;
+            let mut rest = l;
+            while col < n {
+                match rest.chars().next() {
+                    Some(' ') => {
+                        col += 1;
+                        rest = &rest[1..];
+                    }
+                    Some('\t') if (col / 8 + 1) * 8 <= n => {
+                        col = (col / 8 + 1) * 8;
+                        rest = &rest[1..];
+                    }
+                    _ => break,
+                }
+            }
+            rest.to_string()
+        })
+        .collect();
+    lines.join("\n")
 }
 
 /// The tool's run of a block: program and arguments, the block's text
@@ -235,6 +329,31 @@ mod tests {
         );
         assert!(block_at(ORG, ORG.find("More").unwrap()).is_none());
         assert!(block_at("#+begin_src python\nx\n#+end_src\n", 20).is_none());
+    }
+
+    #[test]
+    fn the_code_given_to_the_tool() {
+        // Indented under its heading, a journal's own heading (a comment
+        // to the tools) escaped with a comma.
+        let org = "* Money\n  #+begin_src ledger :cmdline bal\n  ,* January\n  2026/01/01 Shop\n      Expenses:Food  10 EUR\n      Assets:Cash\n\n  2026/01/02 Kiosk\n      Expenses:Food  1 EUR\n      Assets:Cash\n  #+end_src\n";
+        let b = block_at(org, org.find("Shop").unwrap()).expect("a block");
+        assert!(!b.preserve);
+        assert_eq!(
+            code(org, &b),
+            "* January\n2026/01/01 Shop\n    Expenses:Food  10 EUR\n    Assets:Cash\n\n2026/01/02 Kiosk\n    Expenses:Food  1 EUR\n    Assets:Cash\n"
+        );
+        // `,#+` too; `-i` keeps the indentation, not the escapes.
+        let kept = "#+begin_src hledger -i :cmdline bal\n  ,#+ note\n  2026-01-01 Shop\n      a  1\n      b\n#+end_src\n";
+        let b = block_at(kept, 40).expect("a block");
+        assert!(b.preserve);
+        assert_eq!(
+            code(kept, &b),
+            "  #+ note\n  2026-01-01 Shop\n      a  1\n      b\n"
+        );
+        // Not indented: as written.
+        let b = block_at(ORG, ORG.find("Shop").unwrap()).unwrap();
+        assert_eq!(code(ORG, &b), format!("{}\n", &ORG[b.body.clone()]));
+        assert_eq!(remove_indentation("\t\tx\n\ty"), "\tx\ny");
     }
 
     #[test]

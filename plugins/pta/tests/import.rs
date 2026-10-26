@@ -140,6 +140,35 @@ fn a_statement_without_rules() {
     assert!(text.contains("assets:bank:ziraat"), "{text}");
 }
 
+/// The template's rules read a statement whose months and days are
+/// written with one digit and with two: hledger's `%m` takes only two.
+#[test]
+fn dates_without_a_leading_zero() {
+    let c = Copy::of("hledger", "unpadded");
+    let csv = c.path("us.csv");
+    let text = "Date,Description,Amount\n2/13/2026,SHOP,-12.00\n02/14/2026,CAFE,-3.50\n3/2/2026,KIOSK,-1.00\n";
+    std::fs::write(&csv, text).expect("statement");
+    std::fs::write(
+        c.0.join("us.csv.rules"),
+        import::rules_template("us.csv", text, "assets:bank:ziraat"),
+    )
+    .expect("rules");
+    let journal = c.path("2026.journal");
+    let Some((out, err, ok)) = run(
+        "hledger",
+        &import::hledger_command(&journal, &csv, None, true),
+        &c.0,
+    ) else {
+        return;
+    };
+    assert!(ok, "{err}");
+    let (n, text) = import::drafted(Dialect::Hledger, &out);
+    assert_eq!(n, 3, "{out}");
+    for date in ["2026-02-13", "2026-02-14", "2026-03-02"] {
+        assert!(text.contains(date), "{date}: {text}");
+    }
+}
+
 #[test]
 fn ledgers_conversion() {
     let c = Copy::of("ledger", "convert");
