@@ -667,6 +667,92 @@ fn a_merge_in_conflict() {
     assert!(actions::commit("Merge\n", &CommitKind::New, false, &repo).is_err());
 }
 
+/// The commands of a commit's menu (DESIGN.md, 2.4): a check-out detaches
+/// HEAD; a revert and a cherry-pick of a merge go against its first
+/// parent; a reset is soft, mixed or hard; a fixup needs something staged.
+#[test]
+fn a_commits_commands() {
+    let mut t = T::new("commit-menu");
+    let hash = |t: &mut T, rev: &str| {
+        String::from_utf8(t.ok(&["rev-parse", rev]))
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    let run = |t: &mut T, c: &GitCommand| t.git.run(c).unwrap();
+    t.write("f", "base\n");
+    t.commit_all("Base");
+    let base = hash(&mut t, "HEAD");
+    t.ok(&["switch", "-q", "-c", "topic"]);
+    t.write("g", "g\n");
+    t.commit_all("Add g");
+    t.ok(&["switch", "-q", "main"]);
+    t.write("f", "main\n");
+    t.commit_all("Main");
+    t.ok(&["merge", "-q", "--no-ff", "--no-edit", "topic"]);
+    let merge = hash(&mut t, "HEAD");
+    // Checked out: HEAD detached there, the branch where it was.
+    let out = run(&mut t, &cmd::checkout_detached(&base));
+    assert!(out.success(), "{}", out.message());
+    assert!(t.ok(&["branch", "--show-current"]).is_empty());
+    assert_eq!(t.read("f"), "base\n");
+    t.ok(&["switch", "-q", "main"]);
+    // A merge is reverted and picked against its first parent; git
+    // refuses it otherwise.
+    assert!(!run(&mut t, &cmd::revert(&merge, false)).success());
+    let out = run(&mut t, &cmd::revert(&merge, true));
+    assert!(out.success(), "{}", out.message());
+    assert!(!t.dir.join("g").exists());
+    let subject = t.ok(&["log", "-1", "--format=%s"]);
+    assert_eq!(subject, b"Revert \"Merge branch 'topic'\"\n");
+    let out = run(&mut t, &cmd::cherry_pick(&merge, true));
+    assert!(out.success(), "{}", out.message());
+    assert_eq!(t.read("g"), "g\n");
+    // A fixup of nothing staged is refused before git is asked.
+    let repo = t.repo();
+    let fixup = CommitKind::Fixup(base.clone());
+    assert!(actions::commit("", &fixup, false, &repo).is_err());
+    // Soft: what came after is staged; mixed: it is in the files only;
+    // hard: the files as the commit has them.
+    let out = run(&mut t, &cmd::reset(cmd::Reset::Soft, &base));
+    assert!(out.success(), "{}", out.message());
+    assert_eq!(hash(&mut t, "HEAD"), base);
+    assert_eq!(t.ok(&["diff", "--cached", "--name-only"]), b"f\ng\n");
+    let out = run(&mut t, &cmd::reset(cmd::Reset::Mixed, &base));
+    assert!(out.success(), "{}", out.message());
+    assert_eq!(t.ok(&["diff", "--cached", "--name-only"]), b"");
+    assert_eq!(t.read("f"), "main\n");
+    let out = run(&mut t, &cmd::reset(cmd::Reset::Hard, &base));
+    assert!(out.success(), "{}", out.message());
+    assert_eq!(t.read("f"), "base\n");
+}
+
+/// A file read through git, as the user's commit template is: its text
+/// whatever its last line, its `#` lines kept; nothing for an empty file
+/// and for a missing one; a relative path is the folder's git runs in,
+/// an absolute one anywhere.
+#[test]
+fn a_file_read_through_git() {
+    let mut t = T::new("read-file");
+    let read = |t: &mut T, path: &str| {
+        let out = t.git.run(&cmd::read_file(path)).unwrap();
+        diff::added_text(&out.stdout)
+    };
+    t.write("t.txt", "Subject\n\n# A hint\n\n");
+    t.write("nn.txt", "No line feed");
+    t.write("empty.txt", "");
+    assert_eq!(read(&mut t, "t.txt"), "Subject\n\n# A hint\n\n");
+    let absolute = t.dir.join("nn.txt").display().to_string();
+    assert_eq!(read(&mut t, &absolute), "No line feed");
+    assert_eq!(read(&mut t, "empty.txt"), "");
+    assert_eq!(read(&mut t, "missing.txt"), "");
+    // Nothing of the repository is changed by it.
+    assert_eq!(
+        t.ok(&["status", "--porcelain"]),
+        b"?? empty.txt\n?? nn.txt\n?? t.txt\n"
+    );
+}
+
 #[test]
 fn the_process_log_keeps_what_ran() {
     let mut t = T::new("process");

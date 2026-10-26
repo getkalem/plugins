@@ -1,6 +1,7 @@
 //! The commit message as a document (DESIGN.md, 2.4 and G7): `c c`, Amend
 //! and Reword open the repository's `COMMIT_EDITMSG` in the editor, filled
-//! as git fills it for its editor (the amended commit's message first);
+//! as git fills it for its editor (the amended commit's message first, a
+//! new commit's the user's `commit.template`, read through git);
 //! saving it commits with what it says, git leaving out its `#` lines,
 //! and closing it without a commit cancels, as `git commit` with an
 //! editor and Magit's message buffer do. Kalem's plugin documents are
@@ -32,11 +33,64 @@ pub(super) struct Message {
     /// Its first text, written into its document by [`WRITE`] once
     /// Kalem has opened it.
     fill: Option<String>,
+    /// The user's template a new commit's message started with: saved as
+    /// it was, it is not committed, as `git commit` refuses it with its
+    /// editor (with `-F` git takes it).
+    template: Option<String>,
 }
 
 impl App {
+    /// A new commit's message opened as a document, starting with the
+    /// user's template (`commit.template`) as git starts it: its path asked
+    /// of git first.
+    pub(super) fn message_new(&mut self, out: &mut Vec<Effect>, root: &str) {
+        let why = Pending::Template {
+            root: root.to_string(),
+            read: false,
+        };
+        self.run(out, Some(root.to_string()), cmd::commit_template(), why);
+    }
+
+    /// Git answered for the user's template: its path (`--path` expands
+    /// `~`; a relative one is the repository root's, where `git commit`
+    /// reads it and this runs), whose text git is asked next, the plugin
+    /// reading no file itself; then (`read`) its text, which starts the
+    /// message. No template, or one git cannot read (where `git commit`
+    /// with its editor stops), starts it empty.
+    pub(super) fn template_done(
+        &mut self,
+        out: &mut Vec<Effect>,
+        root: String,
+        read: bool,
+        result: Result<Output, String>,
+    ) {
+        if read {
+            let text = match &result {
+                Ok(o) if !o.truncated => crate::git::diff::added_text(&o.stdout),
+                _ => String::new(),
+            };
+            return self.message_open(out, &root, CommitKind::New, text);
+        }
+        // `git config` ends with 1 when the setting is not there.
+        let path = match &result {
+            Ok(o) if o.success() => String::from_utf8_lossy(&o.stdout)
+                .trim_end_matches(['\n', '\r'])
+                .to_string(),
+            _ => String::new(),
+        };
+        if path.is_empty() {
+            return self.message_open(out, &root, CommitKind::New, String::new());
+        }
+        let why = Pending::Template {
+            root: root.clone(),
+            read: true,
+        };
+        self.run(out, Some(root), cmd::read_file(&path), why);
+    }
+
     /// The message of a commit of kind `kind` in the repository at `root`
-    /// opened as a document, starting with `old` (the amended commit's).
+    /// opened as a document, starting with `old`: the amended commit's
+    /// message, or a new one's template.
     pub(super) fn message_open(
         &mut self,
         out: &mut Vec<Effect>,
@@ -84,7 +138,12 @@ impl App {
             id: "file.open".into(),
             args: super::json_object(&[("path", &path)]),
         });
-        let fill = (!kept).then(|| template(&repo, &kind, &old));
+        // A new commit's template as it is, a line feed and the comments,
+        // as git writes it; an amended commit's message trimmed.
+        let fill = (!kept).then(|| match &kind {
+            CommitKind::New => format!("{old}{}", template(&repo, &kind, "")),
+            _ => template(&repo, &kind, &old),
+        });
         if fill.is_some() {
             out.push(Effect::RunCommand {
                 id: WRITE.into(),
@@ -95,6 +154,7 @@ impl App {
             "Write the message: saving commits, closing without saving cancels".into(),
             Level::Info,
         ));
+        let template = (kind == CommitKind::New && !cleaned(&old).is_empty()).then_some(old);
         self.message = Some(Message {
             root,
             kind,
@@ -102,6 +162,7 @@ impl App {
             open: true,
             committing: false,
             fill,
+            template,
         });
     }
 
@@ -121,7 +182,8 @@ impl App {
             .is_some_and(|m| super::same_path(&m.path, path))
     }
 
-    /// The message's document saved: committed with what it says.
+    /// The message's document saved: committed with what it says; one
+    /// started from the user's template is read back through git first.
     pub(super) fn message_saved(&mut self, out: &mut Vec<Effect>) {
         let Some(m) = self.message.as_mut() else {
             return;
@@ -130,6 +192,57 @@ impl App {
             return;
         }
         m.committing = true;
+        if m.template.is_some() {
+            let (root, path) = (m.root.clone(), m.path.clone());
+            self.run(out, Some(root), cmd::read_file(&path), Pending::MessageRead);
+            return;
+        }
+        self.message_commit(out);
+    }
+
+    /// The message saved, started from the user's template, read back: as
+    /// the template was, it is not committed ("you did not edit the
+    /// message", `git commit` says), else it is.
+    pub(super) fn message_read_done(
+        &mut self,
+        out: &mut Vec<Effect>,
+        result: Result<Output, String>,
+    ) {
+        let Some(m) = self.message.as_mut() else {
+            return;
+        };
+        let text = match &result {
+            Ok(o) if !o.truncated => crate::git::diff::added_text(&o.stdout),
+            _ => String::new(),
+        };
+        if !m
+            .template
+            .as_deref()
+            .is_some_and(|t| cleaned(t) == cleaned(&text))
+        {
+            return self.message_commit(out);
+        }
+        if m.open {
+            m.committing = false;
+            out.push(Effect::Notify(
+                "Not committed: the message is the template as it was; edit it, or close it to cancel"
+                    .into(),
+                Level::Warning,
+            ));
+        } else {
+            self.message = None;
+            out.push(Effect::Notify(
+                "The commit is cancelled: its message was closed as the template was".into(),
+                Level::Info,
+            ));
+        }
+    }
+
+    /// The message's commit run, with what its file says.
+    fn message_commit(&mut self, out: &mut Vec<Effect>) {
+        let Some(m) = self.message.as_ref() else {
+            return;
+        };
         let (root, command) = (
             m.root.clone(),
             cmd::commit_file(&m.path, &m.kind, self.settings.signoff),
@@ -262,4 +375,22 @@ pub fn template(repo: &Repo, kind: &CommitKind, old: &str) -> String {
     }
     s.push_str("#\n");
     s
+}
+
+/// A message as `--cleanup=strip` leaves it, to tell a template saved as
+/// it was: its `#` lines and trailing spaces left out, blank lines at
+/// either end left out and those in a row made one.
+fn cleaned(text: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    for l in text.lines().filter(|l| !l.starts_with('#')) {
+        let l = l.trim_end();
+        if l.is_empty() && lines.last().is_none_or(|p| p.is_empty()) {
+            continue;
+        }
+        lines.push(l);
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
 }

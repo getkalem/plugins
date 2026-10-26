@@ -439,6 +439,36 @@ fn c_unquote(s: &[u8]) -> Option<(Vec<u8>, usize)> {
     None
 }
 
+/// The text a diff from nothing adds ([`crate::git::cmd::read_file`]): its
+/// first file's added lines, the last without its line feed when git says
+/// it had none; empty when git printed no such diff (an empty file, one it
+/// could not read, a binary one).
+pub fn added_text(out: &[u8]) -> String {
+    let Ok(d) = parse(out) else {
+        return String::new();
+    };
+    let mut text = Vec::new();
+    for l in d
+        .files
+        .iter()
+        .take(1)
+        .flat_map(|f| &f.hunks)
+        .flat_map(|h| &h.lines)
+    {
+        match l.kind {
+            LineKind::Added => {
+                text.extend_from_slice(&l.text);
+                text.push(b'\n');
+            }
+            LineKind::NoNewline => {
+                text.pop();
+            }
+            _ => {}
+        }
+    }
+    String::from_utf8_lossy(&text).into_owned()
+}
+
 /// One file's counts from `git diff --numstat -z`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NumStat {
