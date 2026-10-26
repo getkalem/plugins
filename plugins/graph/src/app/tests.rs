@@ -3275,3 +3275,81 @@ fn a_template_inserted_from_the_palette() {
         "{out:?}"
     );
 }
+
+#[test]
+fn a_vaults_block_without_an_id_referred_to() {
+    // As Obsidian's Copy block link: Insert Block Reference on a block
+    // with no ^id writes one at the block's end (six letters and digits,
+    // as Obsidian makes them) and inserts [[Note#^id]]; a heading is
+    // linked by its text. Completion after [[Note#^ offers every block, an
+    // id promised to one without, written into the note once the link is
+    // saved.
+    let m = Memory::new(&[
+        ("/v/.obsidian/app.json", "{}"),
+        (
+            "/v/Target.md",
+            "# Plans\n\nA plan of two\nlines\n\n- an item\n",
+        ),
+        ("/v/Notes.md", "x\n"),
+    ]);
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/v/Notes.md");
+    let pick = |app: &mut App, label: &str| -> Vec<Effect> {
+        let out = app.command(&m, "graph.insertBlockRef", &ctx("/v/Notes.md", "x\n", 1));
+        let Effect::Pick { token, items, .. } = &out[0] else {
+            panic!("{out:?}")
+        };
+        let i = items
+            .iter()
+            .position(|(l, _)| l == label)
+            .unwrap_or_else(|| panic!("{items:?}"));
+        app.answer(&m, *token, Answer::Picked(Some(vec![i as u32])))
+    };
+    let inserted = |out: &[Effect]| -> String {
+        out.iter()
+            .find_map(|e| match e {
+                Effect::Run { id, args } if id == "graph.insertText" => {
+                    serde_json::from_str::<serde_json::Value>(args).ok()?["text"]
+                        .as_str()
+                        .map(str::to_string)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{out:?}"))
+    };
+    assert_eq!(inserted(&pick(&mut app, "Plans")), "[[Target#Plans]]");
+    let link = inserted(&pick(&mut app, "A plan of two"));
+    let id = link
+        .strip_prefix("[[Target#^")
+        .and_then(|l| l.strip_suffix("]]"))
+        .unwrap_or_else(|| panic!("{link}"));
+    assert_eq!(id.len(), 6, "{id}");
+    assert!(
+        id.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    );
+    assert_eq!(
+        m.read("/v/Target.md").unwrap(),
+        format!("# Plans\n\nA plan of two\nlines ^{id}\n\n- an item\n")
+    );
+    // Completion: the item offered with a promised id, written once the
+    // link is saved.
+    let text = "see [[Target#^an";
+    let found = app.complete(&m, "refs", Some("/v/Notes.md"), text, 0, text.len());
+    let item = found
+        .iter()
+        .find(|s| s.label == "an item")
+        .unwrap_or_else(|| panic!("{found:?}"));
+    let promised = item
+        .insert
+        .trim_start_matches('^')
+        .trim_end_matches("]]")
+        .to_string();
+    m.write("/v/Notes.md", &format!("see [[Target#^{promised}]]\n"))
+        .unwrap();
+    app.saved(&m, "/v/Notes.md");
+    assert_eq!(
+        m.read("/v/Target.md").unwrap(),
+        format!("# Plans\n\nA plan of two\nlines ^{id}\n\n- an item ^{promised}\n")
+    );
+}

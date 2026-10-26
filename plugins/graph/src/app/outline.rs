@@ -321,31 +321,58 @@ impl App {
             id: "graph.insertText".into(),
             args: serde_json::json!({ "text": text }).to_string(),
         };
+        // A reference as the graph writes one: Logseq's `((id))`, a
+        // vault's link to the note and the block's `^id`.
+        let name = page
+            .and_then(|(_, p)| p)
+            .map_or(String::new(), |p| files::stem_ext(&p).0.to_string());
+        let link = |id: &str| match kind {
+            Kind::Logseq => format!("(({id}))"),
+            Kind::Obsidian => format!("[[{name}#^{id}]]"),
+        };
         if let Some(id) = &choice.id {
-            return vec![insert(match kind {
-                Kind::Logseq => format!("(({id}))"),
-                Kind::Obsidian => {
-                    let name = page
-                        .and_then(|(_, p)| p)
-                        .map_or(String::new(), |p| files::stem_ext(&p).0.to_string());
-                    format!("[[{name}#^{id}]]")
-                }
-            })];
+            return vec![insert(link(id))];
         }
-        if kind == Kind::Obsidian {
-            return vec![Effect::Notify(
-                "Only blocks with a ^id can be referred to in a vault yet".into(),
-                Level::Info,
-            )];
-        }
-        let id = self.new_id(&format!("{}:{}:{}", choice.rel, choice.line, choice.text));
+        // The block as the index has it: a heading or not, and the id it
+        // gets in a vault.
+        let found = index
+            .file(&choice.rel)
+            .and_then(|d| {
+                d.scanned
+                    .blocks
+                    .iter()
+                    .find(|b| b.line == choice.line && b.text == choice.text)
+            })
+            .map(|b| (b.heading.is_some(), index.block_id_for(&choice.rel, b)));
+        let id = match (kind, found) {
+            // A vault's heading is linked by its text, as Obsidian links
+            // it; another block gets Obsidian's ` ^id`.
+            (Kind::Obsidian, Some((true, _))) => {
+                return vec![insert(format!("[[{name}#{}]]", choice.text.trim()))];
+            }
+            (Kind::Obsidian, Some((false, id))) => id,
+            (Kind::Obsidian, None) => {
+                return vec![Effect::Notify(
+                    "The block is no longer there: index again".into(),
+                    Level::Warning,
+                )];
+            }
+            (Kind::Logseq, _) => {
+                self.new_id(&format!("{}:{}:{}", choice.rel, choice.line, choice.text))
+            }
+        };
         let path = self.indexes[root].graph.path(&choice.rel);
         // In the document the command came from: the editor writes both.
         if from.as_deref() == Some(choice.rel.as_str()) {
             return vec![Effect::Run {
                 id: "graph.refBlockNow".into(),
-                args: serde_json::json!({ "line": choice.line, "text": choice.text, "id": id })
-                    .to_string(),
+                args: serde_json::json!({
+                    "line": choice.line,
+                    "text": choice.text,
+                    "id": id,
+                    "link": link(&id),
+                })
+                .to_string(),
             }];
         }
         if self.dirty.contains(&path) {
@@ -367,13 +394,17 @@ impl App {
         let Some(e) = find_block_in(&text, choice.line, &choice.text, flavor)
             .and_then(|line| edit::add_id(&text, flavor, line, &id))
         else {
-            return vec![Effect::Notify(
-                format!(
+            let why = match kind {
+                Kind::Obsidian => {
+                    "A table's or a code block's id goes on a line of its own: add it in Obsidian"
+                        .to_string()
+                }
+                Kind::Logseq => format!(
                     "The block is no longer in {}: index again",
                     files::file_name(&path)
                 ),
-                Level::Warning,
-            )];
+            };
+            return vec![Effect::Notify(why, Level::Warning)];
         };
         if let Err(e) = files.write(&path, &edit::apply(&text, &[e])) {
             return vec![Effect::Notify(e, Level::Error)];
@@ -383,7 +414,7 @@ impl App {
             i.update(files, &path);
         }
         out.extend(self.refresh(root));
-        out.push(insert(format!("(({id}))")));
+        out.push(insert(link(&id)));
         out
     }
 
@@ -397,10 +428,20 @@ impl App {
         for root in roots {
             let due: Vec<(String, String, u32, String)> = {
                 let index = &self.indexes[&root];
+                // A vault's block references are counted by note and
+                // anchor (`NOTE#^id`).
                 index
                     .promised()
                     .into_iter()
-                    .filter(|(id, ..)| !index.block_backlinks(id).is_empty())
+                    .filter(|(id, rel, ..)| {
+                        let key = match index.graph.kind {
+                            Kind::Logseq => Some(id.clone()),
+                            Kind::Obsidian => {
+                                index.page_of(rel).map(|p| format!("{}#^{id}", p.key))
+                            }
+                        };
+                        key.is_some_and(|k| !index.block_backlinks(&k).is_empty())
+                    })
                     .collect()
             };
             for (id, rel, line, text) in due {
@@ -658,6 +699,9 @@ impl App {
                 let line = args["line"].as_u64().unwrap_or(0) as u32;
                 let block = args["text"].as_str().unwrap_or_default();
                 let new = args["id"].as_str().unwrap_or_default();
+                let link = args["link"]
+                    .as_str()
+                    .map_or_else(|| format!("(({new}))"), str::to_string);
                 match find_block_in(text, line, block, flavor)
                     .and_then(|l| edit::add_id(text, flavor, l, new))
                 {
@@ -665,7 +709,7 @@ impl App {
                         let at = Edit {
                             start: cursor,
                             end: cursor,
-                            text: format!("(({new}))"),
+                            text: link,
                         };
                         // The id line, then the reference, in the order of
                         // the text.

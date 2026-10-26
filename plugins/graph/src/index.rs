@@ -1041,9 +1041,21 @@ impl Index {
 
     /// An id for block `b` of file `rel`, which has none, for a reference
     /// typed to it before the id is written into the file: the same for
-    /// the same block, a UUID of version 4 made from it. Until then
-    /// [`Index::block`] finds the block by it.
+    /// the same block ([`Index::block_id_for`]). Until then [`Index::block`]
+    /// finds the block by it.
     pub fn promise(&self, rel: &str, b: &Block) -> String {
+        let id = self.block_id_for(rel, b);
+        self.promised
+            .borrow_mut()
+            .insert(id.clone(), (rel.to_string(), b.line, b.text.clone()));
+        id
+    }
+
+    /// The id block `b` of file `rel` is given, the same for the same
+    /// block: in a Logseq graph a UUID of version 4 made from it; in a
+    /// vault six letters and digits, as Obsidian makes them, none another
+    /// block of the note has.
+    pub fn block_id_for(&self, rel: &str, b: &Block) -> String {
         let fnv = |salt: u8| {
             let mut h: u64 = 0xcbf2_9ce4_8422_2325;
             let line = b.line.to_le_bytes();
@@ -1059,9 +1071,32 @@ impl Index {
             }
             h
         };
+        if self.graph.kind == Kind::Obsidian {
+            const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+            let taken = |id: &str| {
+                self.files
+                    .get(rel)
+                    .is_some_and(|d| d.scanned.blocks.iter().any(|x| x.id.as_deref() == Some(id)))
+            };
+            let mut salt = 3;
+            loop {
+                let mut h = fnv(salt);
+                let id: String = (0..6)
+                    .map(|_| {
+                        let c = DIGITS[(h % 36) as usize] as char;
+                        h /= 36;
+                        c
+                    })
+                    .collect();
+                if !taken(&id) || salt == u8::MAX {
+                    return id;
+                }
+                salt += 1;
+            }
+        }
         let (x, y) = (fnv(1), fnv(2));
         let hex = format!("{x:016x}{y:016x}");
-        let id = format!(
+        format!(
             "{}-{}-4{}-{:x}{}-{}",
             &hex[0..8],
             &hex[8..12],
@@ -1069,11 +1104,7 @@ impl Index {
             8 + (y >> 62) as u8 % 4,
             &hex[17..20],
             &hex[20..32]
-        );
-        self.promised
-            .borrow_mut()
-            .insert(id.clone(), (rel.to_string(), b.line, b.text.clone()));
-        id
+        )
     }
 
     /// The ids promised and not written yet: each with its block's file,
