@@ -78,7 +78,7 @@ In a journal, under `SPC m` in Vim's command mode, where Doom Emacs's `:lang led
 | `SPC m m` | The Journal's commands, to pick |
 | | Tool Version: what the journal's tool says it is (`--version`), from the menu or the palette |
 | `SPC m i`, `SPC m e`, `SPC m r` | In a CSV statement: Import Statement, Edit the Statement's Rules, Pair with the Reconciliation (Vim's command mode; in the Word-like profile, from the palette) |
-| Enter | On a posting, in the Word-like profile: aligns it, then a new line |
+| Enter | On a posting, in the Word-like profile: aligns it, then a new line; at the end of a transaction's first line, a new line indented for its first posting |
 
 In the plugin's documents (both profiles; in Vim's command mode): **Check**: Enter the problem's place, `r` again, `q` or Escape close. **Balance**: Tab, Left and Right fold, Enter the account's register, `p` period, `d` depth, `v` market value, `r` again, `q` close. **Register**: Enter the posting, `p` period, `v` market value, `r` again, `q` close. **Reconcile**: Tab marks the posting pending or not, Enter the posting, `t` the statement's balance, `C` finish, `r` again, `q` close. **Import**: `i` import, `e` the rules, `r` again, `q` close. **Report**: `p` period, `o` another report, `r` again, `q` close. Escape closes each of them too. `?` lists them.
 
@@ -208,7 +208,7 @@ The tool's problems are also drawn in the journal as a language server's diagnos
 
 *Align Amounts* (`SPC m =` in Vim's command mode; the palette's Journal group) puts the amounts' last digits of the transaction at the cursor, or of every transaction selected, at one column: the setting `amount_column`, 52 as in ledger-mode, or 0 for as near the accounts as the longest posting allows. Only the blanks between account and amount change, two at the least: the amount as you wrote it (sign, decimal mark, digit groups, commodity and its side), a cost, a lot, a balance assertion and a comment stay as they are, and a posting without an amount is left alone. A value expression (`(-$132.00)`) is aligned by its closing parenthesis, a posting with a balance assertion alone by the assertion's amount. One undo step.
 
-With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode: in the Word-like profile, and in Vim's insert mode too.
+With `align_on_enter` (on), Enter on a posting aligns it first, as in ledger-mode: in the Word-like profile, and in Vim's insert mode too. Enter at the end of a transaction's first line starts its first posting, indented as the plugin writes postings (four blanks, Beancount's two).
 
 Format Document (`SPC c f`), and saving with `editor.format_on_save` on, align every transaction's amounts at `amount_column`, as Align Amounts aligns the transactions selected; nothing else of the journal changes (hledger-lsp's formatting is left unused, and `hledger print` rewrites a journal). In a Beancount journal the server's formatting comes first when the server runs. A formatter set in Kalem's settings comes before both: `[formatters] beancount = "bean-format -"`, or `off`.
 

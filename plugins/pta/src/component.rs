@@ -430,9 +430,22 @@ fn align(line: bool) {
     }
 }
 
-/// Enter in a journal: the posting aligned first when `align_on_enter`
-/// is on, then Kalem's own new line, which runs once this returns.
+/// Enter in a journal: at the end of a transaction's header, a new line
+/// with the posting indent (`write::header_newline`), which Kalem's own
+/// new line would not give the first posting; else the posting aligned
+/// first when `align_on_enter` is on, then Kalem's own new line, which
+/// runs once this returns.
 fn newline() -> Result<String, String> {
+    let sel = editor::selected();
+    if sel.anchor == sel.head
+        && let Some((d, _)) = dialect_here()
+        && let Some(line) = write::header_newline(&editor::text(None), d, sel.head as usize)
+    {
+        // Inserted at the cursor, which goes after it.
+        editor::insert(None, &line);
+        editor::transact("New Line");
+        return Ok("null".into());
+    }
     if align::Settings::read(settings::own).on_enter {
         align(true);
     }

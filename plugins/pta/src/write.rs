@@ -845,11 +845,7 @@ pub fn new_transaction(
             Dialect::Beancount => format!("{dated} * \"{}\" \"\"\n", payee.replace('"', "'")),
             _ => format!("{dated} {payee}\n"),
         };
-        let indent = if dialect == Dialect::Beancount {
-            "  "
-        } else {
-            "    "
-        };
+        let indent = posting_indent(dialect);
         let text = format!("{head}{indent}\n");
         let at = head.len() + indent.len();
         return (text, at);
@@ -961,6 +957,32 @@ fn fresh_posting(line: &str, dialect: Dialect) -> Option<String> {
         }
     }
     changed.then_some(out)
+}
+
+/// The indent of the postings the plugin writes: four blanks, as hledger
+/// and Ledger print them, Beancount's two, as `bean-format` writes them.
+pub fn posting_indent(dialect: Dialect) -> &'static str {
+    if dialect == Dialect::Beancount {
+        "  "
+    } else {
+        "    "
+    }
+}
+
+/// Enter at `at`, the end of a transaction's header line (only blanks
+/// after it on the line): a new line, ended as the text ends its lines,
+/// and the posting indent ([`posting_indent`]), where Kalem's own new
+/// line copies the header's indent, none; none on another line, or with
+/// the description after the cursor.
+pub fn header_newline(text: &str, dialect: Dialect, at: usize) -> Option<String> {
+    let at = at.min(text.len());
+    let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[at..].find('\n').map_or(text.len(), |i| at + i);
+    // The line alone: a transaction's header is one there too.
+    if !text[at..end].trim().is_empty() || transactions(&text[start..end], dialect).is_empty() {
+        return None;
+    }
+    Some(format!("{}{}", line_ending(text), posting_indent(dialect)))
 }
 
 /// The account of the posting on the line holding `at`: after its
@@ -1379,6 +1401,42 @@ mod tests {
             Some("Assets:Bank")
         );
         assert_eq!(account_at(b, b.find("receipt").unwrap(), Beancount), None);
+    }
+
+    #[test]
+    fn enter_on_a_header() {
+        let t = "2026-01-02 * Shop\n    expenses:food  10 EUR\n    assets:bank\n";
+        let end = t.find('\n').unwrap();
+        assert_eq!(header_newline(t, Hledger, end).as_deref(), Some("\n    "));
+        // Blanks after the cursor: still at its end.
+        let blanks = "2026-01-02 Shop  \n";
+        assert_eq!(
+            header_newline(blanks, Ledger, 15).as_deref(),
+            Some("\n    ")
+        );
+        // A date alone, at the text's end; CRLF.
+        assert_eq!(
+            header_newline("2026-01-02", Hledger, 10).as_deref(),
+            Some("\n    ")
+        );
+        let crlf = "2026/01/02 Shop\r\n    a  1\r\n";
+        assert_eq!(
+            header_newline(crlf, Ledger, 15).as_deref(),
+            Some("\r\n    ")
+        );
+        // In the description, on a posting, on a directive: Kalem's own.
+        assert_eq!(header_newline(t, Hledger, end - 2), None);
+        let posting = t.find("expenses").unwrap() + 20;
+        assert_eq!(header_newline(t, Hledger, posting), None);
+        assert_eq!(header_newline("account assets:bank\n", Hledger, 19), None);
+        // Beancount: a transaction's header, two blanks; a dated
+        // directive, none.
+        let b = "2026-01-01 open Assets:Cash\n2026-01-02 * \"Shop\" \"\"\n";
+        assert_eq!(header_newline(b, Beancount, 27), None);
+        assert_eq!(
+            header_newline(b, Beancount, b.len() - 1).as_deref(),
+            Some("\n  ")
+        );
     }
 
     #[test]
