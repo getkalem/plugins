@@ -202,7 +202,9 @@ pub(crate) fn field(header: &str) -> String {
 /// hledger's `date-format` for a statement's date (`2026-02-03`,
 /// `03.02.2026`, `03/02/2026`, `2/3/2026`): day first where the first
 /// part is above 12, or the separator is a dot; month first for a slash
-/// whose second part is above 12.
+/// whose second part is above 12. A day and a month before the year are
+/// read with `%-d` and `%-m`, which take `2/13/2026` and `02/13/2026`
+/// alike: hledger's `%d` and `%m` want two digits.
 pub(crate) fn date_format(date: &str) -> String {
     let d = date.trim().trim_matches('"');
     let sep = d.chars().find(|c| !c.is_ascii_digit()).unwrap_or('-');
@@ -216,9 +218,9 @@ pub(crate) fn date_format(date: &str) -> String {
     }
     let day_first = sep == '.' || num(parts[0]) > 12 || (num(parts[1]) <= 12 && sep != '/');
     if day_first {
-        format!("%d{sep}%m{sep}%Y")
+        format!("%-d{sep}%-m{sep}%Y")
     } else {
-        format!("%m{sep}%d{sep}%Y")
+        format!("%-m{sep}%-d{sep}%Y")
     }
 }
 
@@ -384,9 +386,10 @@ mod tests {
         assert!(!r.contains("decimal-mark"));
         let tr = "Tarih;Açıklama;Tutar;Bakiye\n03.02.2026;MIGROS;-412,50;63.284,75\n";
         let r = rules_template("ekstre.csv", tr, "assets:bank");
-        assert!(r.contains("separator ;\nfields date, description, amount, balance\ndate-format %d.%m.%Y\ndecimal-mark ,\n"), "{r}");
-        assert_eq!(date_format("2/13/2026"), "%m/%d/%Y");
-        assert_eq!(date_format("13/02/2026"), "%d/%m/%Y");
+        assert!(r.contains("separator ;\nfields date, description, amount, balance\ndate-format %-d.%-m.%Y\ndecimal-mark ,\n"), "{r}");
+        assert_eq!(date_format("2/13/2026"), "%-m/%-d/%Y");
+        assert_eq!(date_format("02/13/2026"), "%-m/%-d/%Y");
+        assert_eq!(date_format("13/02/2026"), "%-d/%-m/%Y");
         assert_eq!(field(" Txn Code "), "txn_code");
     }
 }
