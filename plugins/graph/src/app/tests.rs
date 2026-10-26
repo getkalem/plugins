@@ -1988,6 +1988,98 @@ fn a_vaults_note_renamed_after_a_dotted_capital_i() {
     );
 }
 
+/// Files in memory found by their names in either case, as macOS's file
+/// system finds them.
+struct NoCase(Memory);
+
+impl NoCase {
+    /// `path` as a file there writes it, in whatever case.
+    fn real(&self, path: &str) -> String {
+        files::parent(path)
+            .and_then(|dir| self.0.list(dir).ok())
+            .and_then(|l| {
+                l.into_iter()
+                    .find(|p| p.to_lowercase() == path.to_lowercase())
+            })
+            .unwrap_or_else(|| path.to_string())
+    }
+}
+
+impl Files for NoCase {
+    fn read(&self, path: &str) -> Result<String, String> {
+        self.0.read(&self.real(path))
+    }
+
+    fn list(&self, dir: &str) -> Result<Vec<String>, String> {
+        self.0.list(dir)
+    }
+
+    fn write(&self, path: &str, text: &str) -> Result<(), String> {
+        self.0.write(&self.real(path), text)
+    }
+
+    fn rename(&self, from: &str, to: &str) -> Result<(), String> {
+        if self.0.get(&self.real(to)).is_some() {
+            return Err(format!("{to} exists already"));
+        }
+        self.0.rename(&self.real(from), to)
+    }
+}
+
+#[test]
+fn a_logseq_page_renamed_keeps_its_folder_and_its_extension() {
+    // As Logseq's compute-new-file-path: an Org page of a Markdown graph
+    // stays Org (it became `pages/Diary.md`), a page in a folder of its
+    // own stays there (it went to `pages/`); and a name in another case
+    // only renames the same file, which macOS finds at the new path too
+    // (it was refused as existing).
+    let m = NoCase(Memory::new(&[
+        ("/w/notes/logseq/config.edn", "{}"),
+        ("/w/notes/pages/Notes.org", "* x\n"),
+        ("/w/notes/pages/projects/Old.md", "- y\n"),
+        ("/w/notes/pages/kalem.md", "- z\n"),
+        ("/w/notes/pages/Other.md", "- [[Notes]] [[Old]] [[kalem]]\n"),
+        ("/w/notes/pages/Free.md", "- free\n"),
+    ]));
+    let mut app = App::new(Settings::default());
+    app.opened(&m, "/w/notes/pages/Free.md");
+    let rename = |app: &mut App, key: &str, title: &str| {
+        let mut c = ctx("/w/notes/pages/Free.md", "- free\n", 0);
+        c.args = format!(r#"{{"root":"/w/notes","key":"{key}","title":"{title}"}}"#);
+        app.command(&m, "graph.renameNow", &c)
+    };
+    rename(&mut app, "notes", "Diary");
+    assert_eq!(
+        m.0.get("/w/notes/pages/Diary.org").as_deref(),
+        Some("* x\n")
+    );
+    rename(&mut app, "old", "New");
+    assert_eq!(
+        m.0.get("/w/notes/pages/projects/New.md").as_deref(),
+        Some("- y\n")
+    );
+    let out = rename(&mut app, "kalem", "Kalem");
+    assert_eq!(
+        m.0.get("/w/notes/pages/Kalem.md").as_deref(),
+        Some("- z\n"),
+        "{out:?}"
+    );
+    assert_eq!(m.0.get("/w/notes/pages/kalem.md"), None);
+    assert_eq!(
+        m.0.get("/w/notes/pages/Other.md").unwrap(),
+        "- [[Diary]] [[New]] [[Kalem]]\n"
+    );
+    // One file for it in the index, at its new path, though its old one
+    // still reads.
+    let i = app.index("/w/notes").unwrap();
+    assert_eq!(
+        i.page("kalem").and_then(|p| p.path.as_deref()),
+        Some("pages/Kalem.md")
+    );
+    assert!(i.file("pages/kalem.md").is_none());
+    assert!(i.problems.is_empty(), "{:?}", i.problems);
+}
+
 #[test]
 fn files_changed_on_disk_are_read_together() {
     let m = logseq();

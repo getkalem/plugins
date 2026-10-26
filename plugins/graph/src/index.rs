@@ -335,6 +335,21 @@ impl Index {
         self.derive();
     }
 
+    /// The file `path` (absolute) left out without reading it: one renamed
+    /// in its name's case only, which a file system that ignores case
+    /// (macOS's) still reads at its old path. Whether it was there.
+    pub fn forget(&mut self, path: &str) -> bool {
+        let path = files::normalize(path);
+        let Some(rel) = files::relative(&self.graph.root, &path).map(str::to_string) else {
+            return false;
+        };
+        let gone = self.remove(&rel);
+        if gone {
+            self.derive();
+        }
+        gone
+    }
+
     fn in_folders(&self, rel: &str) -> bool {
         // Every folder the graph does not hide ([`Graph::is_hidden`]).
         !self.graph.is_hidden(rel)

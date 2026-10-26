@@ -747,25 +747,38 @@ impl App {
         // The page's file renamed with it (Kalem's plugin API 0.2.12): a
         // vault's note always, as Obsidian renames it; a Logseq page named
         // by its file, as Logseq renames it (one with `title::` keeps its
-        // file, its `title::` changed).
+        // file, its `title::` changed). Its folder and its extension stay,
+        // as Logseq's compute-new-file-path keeps them: an Org page of a
+        // Markdown graph stays Org, one in `pages/projects/` stays there.
         let moved: Option<(String, String)> = page.path.as_ref().and_then(|rel| {
             let by_file = vault || !page.props.iter().any(|(k, _)| k == "title");
             if !by_file || index.graph.read_only {
                 return None;
             }
-            let to = if vault {
-                let name = format!("{title}.md");
-                match rel.rsplit_once('/') {
-                    Some((dir, _)) => format!("{dir}/{name}"),
-                    None => name,
-                }
+            let name = if vault {
+                format!("{title}.md")
             } else {
-                index.page_path(title, None)
+                let ext = files::file_name(rel)
+                    .rsplit_once('.')
+                    .map_or("md", |(_, e)| e);
+                format!("{}.{ext}", crate::names::title_to_file(title))
+            };
+            let to = match rel.rsplit_once('/') {
+                Some((dir, _)) => format!("{dir}/{name}"),
+                None => name,
             };
             (to != *rel).then(|| (rel.clone(), to))
         });
+        // Its name in another case only (`kalem` to `Kalem`): the same
+        // file, which a file system that ignores case (macOS's) finds at
+        // the new path too; no other file is there.
+        let case_only = moved
+            .as_ref()
+            .is_some_and(|(from, to)| from.to_lowercase() == to.to_lowercase());
+        let mut forgotten: Option<String> = None;
         if let Some((_, to)) = &moved
-            && (index.file(to).is_some() || files.read(&index.graph.path(to)).is_ok())
+            && (index.file(to).is_some()
+                || (!case_only && files.read(&index.graph.path(to)).is_ok()))
         {
             return vec![Effect::Notify(
                 format!("{to} exists: Kalem does not merge pages"),
@@ -858,8 +871,24 @@ impl App {
                 self.indexes[root].graph.path(from),
                 self.indexes[root].graph.path(to),
             );
-            match files.rename(&from, &to) {
+            // Its name's case only changed: through a name of its own,
+            // as Kalem refuses a path that exists, and where case is
+            // ignored the new one does.
+            let renamed = if case_only {
+                let step = format!("{from}.renaming");
+                files.rename(&from, &step).and_then(|()| {
+                    files.rename(&step, &to).inspect_err(|_| {
+                        let _ = files.rename(&step, &from);
+                    })
+                })
+            } else {
+                files.rename(&from, &to)
+            };
+            match renamed {
                 Ok(()) => {
+                    if case_only {
+                        forgotten = Some(from.clone());
+                    }
                     written.push(from.clone());
                     written.push(to.clone());
                     if self.dirty.remove(&from) {
@@ -879,7 +908,12 @@ impl App {
         }
         for p in &written {
             if let Some(i) = self.indexes.get_mut(root) {
-                i.update(files, p);
+                // Its old path still read where case is ignored: left out.
+                if forgotten.as_deref() == Some(p.as_str()) {
+                    i.forget(p);
+                } else {
+                    i.update(files, p);
+                }
             }
         }
         out.push(Effect::Notify(
